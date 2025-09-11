@@ -1,6 +1,6 @@
 # Batch processing files (may contain API keys and sensitive data)
 batch_jobs
-
+to-review
 # Python cache and virtual environments
 __pycache__/
 *.py[cod]
@@ -47,3 +47,6 @@ Thumbs.db
 .env
 *.key
 secrets.txt
+
+# Scratch folder for notes and planning
+scratch/

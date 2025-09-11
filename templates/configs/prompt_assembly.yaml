@@ -1,0 +1,57 @@
+prompt_types:
+  parameter_extraction:
+    base_prompt: prompts/base/qsp_parameter_extraction_prompt.md
+    template: templates/parameter_metadata_template.yaml
+    examples:
+      - templates/examples/k_ECM_fib_sec_example.yaml
+    placeholders:
+      - name: TEMPLATE
+        source: template_file
+        description: "Insert the parameter metadata template"
+      - name: EXAMPLES
+        source: example_files
+        description: "Insert example filled templates"
+      - name: PARAMETER_INFO
+        source: runtime
+        description: "Parameter-specific information (name, units, definition)"
+      - name: MODEL_CONTEXT
+        source: runtime
+        description: "Mathematical role and biological context"
+
+  metadata_conversion:
+    base_prompt: prompts/base/metadata_conversion_template.md
+    template: templates/parameter_metadata_template.yaml
+    placeholders:
+      - name: TEMPLATE
+        source: template_file
+        description: "Insert the new format template"
+      - name: OLD_METADATA
+        source: runtime
+        description: "Old format metadata to convert"
+
+  parameter_checklist:
+    base_prompt: prompts/base/parameter_checklist.md
+    placeholders:
+      - name: DOCUMENTATION
+        source: runtime
+        description: "Parameter documentation to review"
+
+# Configuration for how to handle different placeholder sources
+placeholder_sources:
+  template_file:
+    format: "yaml_code_block"  # Wrap in ```yaml ... ```
+    prefix: "Below is the metadata template for your reference:\n\n"
+    
+  example_files:
+    format: "yaml_code_block"  # Wrap in ```yaml ... ```
+    prefix: "A complete example of well-constructed metadata:\n\n"
+    
+  runtime:
+    format: "raw"  # Insert as-is
+    prefix: ""
+
+# Global settings
+settings:
+  preserve_existing_placeholders: true  # Keep existing placeholders like ## PARAMETER_TO_SEARCH:
+  validate_yaml: true  # Validate YAML files before insertion
+  allow_multiple_examples: true  # Allow multiple example files

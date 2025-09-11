@@ -20,10 +20,10 @@ def clean_template(text: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)  # collapse >2 blank lines
     return cleaned
 
-def load_inputs(params_path: Path, reactions_path: Path, template_path: Path):
+def load_inputs(params_path: Path, reactions_path: Path, template_path: Path = None):
     params_df = pd.read_csv(params_path)
     reactions_df = pd.read_csv(reactions_path)
-    template_text = template_path.read_text()
+    template_text = template_path.read_text() if template_path else ""
     need_params = {"Name", "Units", "Definition"}
     need_rxns = {"Parameter", "Reaction", "ReactionRate", "OtherParameters", "OtherSpeciesWithNotes"}
     miss_p = need_params - set(params_df.columns)
