@@ -9,7 +9,7 @@ from openai import OpenAI
 
 def load_api_key():
     """Load API key from .env file."""
-    env_file = Path(__file__).parent.parent.parent / ".env"
+    env_file = Path(".env")
     if env_file.exists():
         with open(env_file) as f:
             for line in f:
@@ -18,12 +18,11 @@ def load_api_key():
     raise ValueError("OPENAI_API_KEY not found in .env file")
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: monitor_batch.py batch_id [--download]")
+    if len(sys.argv) != 2:
+        print("Usage: batch_monitor.py batch_id")
         sys.exit(1)
     
     batch_id = sys.argv[1]
-    download = "--download" in sys.argv
     
     client = OpenAI(api_key=load_api_key())
     batch = client.batches.retrieve(batch_id)
@@ -32,7 +31,7 @@ def main():
     if batch.request_counts:
         print(f"Completed: {batch.request_counts.completed}/{batch.request_counts.total}")
     
-    if batch.status == "completed" and download:
+    if batch.status == "completed":
         if batch.output_file_id:
             content = client.files.content(batch.output_file_id)
             

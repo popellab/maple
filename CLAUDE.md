@@ -19,7 +19,7 @@ python scripts/create_batch.py [input.csv]
 python scripts/upload_batch.py batch_jobs/batch_requests.jsonl
 
 # Monitor batch progress and download when complete
-python scripts/batch_monitor.py batch_<id> --download
+python scripts/batch_monitor.py batch_<id>
 
 # Unpack results to YAML files in target QSP project/to-review/
 python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../your-qsp-project
@@ -29,7 +29,7 @@ python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../your-qsp
 
 - `create_batch.py`: Can be called with no args (uses defaults), with just input CSV, or with all 5 args (input CSV, params CSV, reactions CSV, template MD, output JSONL)
 - `upload_batch.py`: Requires JSONL file path, expects OpenAI API key in `../.env` file
-- `batch_monitor.py`: Requires batch ID, use `--download` flag to save results when complete
+- `batch_monitor.py`: Requires batch ID, automatically downloads results when batch is complete
 - `unpack_results.py`: Extracts YAML from batch results to specified QSP project's `to-review/` directory structure
 
 ## Architecture

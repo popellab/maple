@@ -10,7 +10,7 @@ from openai import OpenAI
 
 def load_api_key():
     """Load API key from .env file."""
-    env_file = Path(__file__).parent.parent.parent / ".env"
+    env_file = Path(".env")
     if env_file.exists():
         with open(env_file) as f:
             for line in f:
