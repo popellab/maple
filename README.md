@@ -10,16 +10,21 @@ This toolkit automates the extraction of quantitative systems pharmacology (QSP)
 
 ```
 ├── scripts/           # Core automation scripts
-│   ├── create_batch.py       # Create batch extraction requests
-│   ├── prompt_assembly.py    # Modular prompt assembly system
-│   ├── upload_batch.py       # Upload to OpenAI batch API
-│   ├── batch_monitor.py      # Monitor batch progress
-│   ├── unpack_results.py     # Extract results to YAML files
+│   ├── create_parameter_batch.py   # Create parameter extraction batches
+│   ├── create_pooling_metadata_batch.py  # Create pooling metadata batches
+│   ├── batch_creator.py       # Base classes for batch creation
+│   ├── parameter_utils.py     # Parameter processing utilities
+│   ├── prompt_assembly.py     # Modular prompt assembly system
+│   ├── upload_batch.py        # Upload to OpenAI batch API
+│   ├── batch_monitor.py       # Monitor batch progress
+│   ├── unpack_results.py      # Extract results to YAML files
+│   ├── inspect_jsonl.py       # Debug utility for batch files
 │   └── batch_workflow_commands.sh  # Complete workflow
 ├── prompts/base/     # Base prompt files with placeholders
 ├── templates/        # Modular prompt components
 │   ├── configs/              # Prompt assembly configuration
 │   ├── parameter_metadata_template.yaml
+│   ├── prior_metadata_template.yaml
 │   └── examples/             # Example filled templates
 ├── data/            # Reference data and examples
 ├── examples/        # Example workflows and outputs
@@ -40,15 +45,18 @@ The toolkit uses a **modular prompt assembly system** that builds prompts from r
 
 ### Basic Usage
 ```bash
-# Create batch requests (uses new prompt assembly system)
-python scripts/create_batch.py [input.csv]
+# Create parameter extraction batch requests
+python scripts/create_parameter_batch.py input.csv params.csv reactions.csv
 
 # Upload and process
-python scripts/upload_batch.py batch_jobs/batch_requests.jsonl
+python scripts/upload_batch.py batch_jobs/parameter_requests.jsonl
 python scripts/batch_monitor.py batch_<id>
 
 # Extract results to parameter storage
 python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-parameter-storage
+
+# Optional: Add pooling metadata to existing studies
+python scripts/create_pooling_metadata_batch.py ../qsp-parameter-storage/to-review
 ```
 
 The complete workflow is documented in `scripts/batch_workflow_commands.sh`.
@@ -71,8 +79,22 @@ The toolkit features a **generalized prompt assembly system** that:
 - **Examples** (`templates/examples/`): Example filled templates
 - **Assembly engine** (`scripts/prompt_assembly.py`): Combines components into final prompts
 
-## Integration
+## Architecture
 
+### Class-based Batch Creation
+The system uses a modular class-based architecture:
+
+- **`BatchCreator`** (base class): Common functionality for all batch types
+- **`ParameterBatchCreator`**: Handles parameter extraction from literature
+- **`PoolingMetadataBatchCreator`**: Adds statistical metadata to existing studies
+- **CLI scripts**: Simple interfaces to the batch creator classes
+
+### Parameter Processing
+- **`parameter_utils.py`**: Utilities for loading and processing parameter data
+- **`prompt_assembly.py`**: Modular system for building prompts from components
+- **Templates and examples**: Reusable prompt components in `templates/`
+
+### Integration with Parameter Storage
 The workflow tools target the central parameter storage repository:
 
 ```bash

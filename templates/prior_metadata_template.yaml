@@ -1,0 +1,42 @@
+parameter_name: "PARAMETER_NAME"
+parameter_units: "UNITS"
+
+pooled_statistics:
+  mean: NUMERIC_VALUE
+  median: NUMERIC_VALUE  
+  std: NUMERIC_VALUE
+  q25: NUMERIC_VALUE
+  q75: NUMERIC_VALUE
+  min: NUMERIC_VALUE
+  max: NUMERIC_VALUE
+  n_total_samples: INTEGER_VALUE
+
+studies:
+  STUDY_ID_1:
+    file: "study_STUDY_ID_1.npz"
+    weight: NUMERIC_WEIGHT  # Inverse-variance weight (0-1, normalized)
+    context_weight: NUMERIC_CONTEXT_WEIGHT  # Quality/relevance weight (0-1)
+    link_sd: NUMERIC_LINK_SD  # Standard deviation on link scale
+    link_function: "identity | log | logit"  # Transformation applied
+    n_samples: INTEGER_SAMPLES  # Number of posterior draws from study
+    source_path: "PATH_TO_SOURCE_YAML"
+  STUDY_ID_2:
+    file: "study_STUDY_ID_2.npz"
+    weight: NUMERIC_WEIGHT
+    context_weight: NUMERIC_CONTEXT_WEIGHT
+    link_sd: NUMERIC_LINK_SD
+    link_function: "identity | log | logit"
+    n_samples: INTEGER_SAMPLES
+    source_path: "PATH_TO_SOURCE_YAML"
+
+pooling_config:
+  method: "inverse_variance_weighted"
+  total_target_draws: INTEGER_TARGET_DRAWS  # Default: 200000
+  tau_squared: NUMERIC_TAU  # Between-study heterogeneity variance (default: 0.0)
+  random_seed: INTEGER_SEED  # Default: 123
+
+generation_info:
+  cancer_type: "CANCER_TYPE"  # Inferred from path structure
+  generated_date: "ISO_DATETIME"  # ISO format timestamp
+  source_studies: INTEGER_COUNT  # Number of studies pooled
+  pooling_method: "inverse_variance_weighted"

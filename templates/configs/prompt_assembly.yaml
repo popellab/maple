@@ -36,6 +36,20 @@ prompt_types:
         source: runtime
         description: "Parameter documentation to review"
 
+  prior_metadata:
+    base_prompt: prompts/base/prior_metadata_prompt.md
+    template: templates/prior_metadata_template.yaml
+    placeholders:
+      - name: TEMPLATE
+        source: template_file
+        description: "Insert the prior metadata template"
+      - name: PARAMETER_INFO
+        source: runtime
+        description: "Parameter name, units, and basic information"
+      - name: STUDY_DATA
+        source: runtime
+        description: "Information about studies to be pooled"
+
 # Configuration for how to handle different placeholder sources
 placeholder_sources:
   template_file:

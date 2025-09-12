@@ -12,8 +12,8 @@ This repository contains LLM workflow automation tools for extracting quantitati
 The main workflow commands are documented in `scripts/batch_workflow_commands.sh`:
 
 ```bash
-# Create batch requests from CSV using new prompt assembly system
-python scripts/create_batch.py [input.csv] [params.csv] [reactions.csv] [output.jsonl]
+# Create parameter extraction batch requests from CSV
+python scripts/create_parameter_batch.py input.csv params.csv reactions.csv
 
 # Upload to OpenAI batch API
 python scripts/upload_batch.py batch_jobs/batch_requests.jsonl
@@ -27,10 +27,12 @@ python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-para
 
 ### Individual Script Usage
 
-- `create_batch.py`: Uses new modular prompt assembly system. Can be called with no args (uses defaults), with just input CSV, or with all 4 args (input CSV, params CSV, reactions CSV, output JSONL)
+- `create_parameter_batch.py`: Creates parameter extraction batch requests. Requires input.csv, params.csv, and reactions.csv arguments
+- `create_pooling_metadata_batch.py`: Creates batch requests to add pooling metadata to existing study YAML files
 - `upload_batch.py`: Requires JSONL file path, expects OpenAI API key in `.env` file
 - `batch_monitor.py`: Requires batch ID, automatically downloads results when batch is complete
 - `unpack_results.py`: Extracts YAML from batch results to `qsp-parameter-storage/to-review/` directory structure
+- `inspect_jsonl.py`: Debug utility for examining batch request/response files
 
 ## Architecture
 
@@ -42,8 +44,12 @@ prompts/base/                    # Base prompt files with placeholders
 templates/
 ├── configs/prompt_assembly.yaml # Configuration for prompt assembly  
 ├── parameter_metadata_template.yaml
+├── prior_metadata_template.yaml
 └── examples/k_ECM_fib_sec_example.yaml
-scripts/prompt_assembly.py       # Prompt assembly engine
+scripts/
+├── prompt_assembly.py          # Prompt assembly engine
+├── batch_creator.py            # Base classes for batch creation
+└── parameter_utils.py          # Parameter processing utilities
 ```
 
 ### Data Flow
@@ -58,10 +64,21 @@ scripts/prompt_assembly.py       # Prompt assembly engine
 - `data/model_context.csv`: Reaction context with Parameter, Reaction, ReactionRate, OtherParameters, OtherSpeciesWithNotes columns
 - `templates/configs/prompt_assembly.yaml`: Configuration controlling how prompts are assembled
 - `templates/parameter_metadata_template.yaml`: YAML template for parameter metadata
+- `templates/prior_metadata_template.yaml`: YAML template for prior metadata generation
 - `templates/examples/`: Example filled templates for different parameters
 
+### Class-based Batch Creation Architecture
+Batch creation uses a modular class-based system:
+
+- `scripts/batch_creator.py`: Base `BatchCreator` class with common functionality
+- `ParameterBatchCreator`: For parameter extraction requests (uses prompt assembly system)
+- `PoolingMetadataBatchCreator`: For adding statistical metadata to existing YAMLs
+- CLI scripts (`create_parameter_batch.py`, `create_pooling_metadata_batch.py`) provide simple interfaces
+
 ### Script Dependencies
-- `create_batch.py` uses `prompt_assembly.py` and functions from `generate_prompts.py`
+- `scripts/parameter_utils.py`: Utilities for parameter processing (CSV loading, model context generation)
+- `scripts/prompt_assembly.py`: Modular prompt assembly from templates and examples  
+- `scripts/batch_creator.py`: Class-based batch creation with shared functionality
 - All API scripts expect `OPENAI_API_KEY` in `.env` file (current directory)
 - `unpack_results.py` writes to `../qsp-parameter-storage/to-review/`
 - `create_pooling_metadata_batch.py` reads from `../qsp-parameter-storage/to-review/`
@@ -72,10 +89,11 @@ scripts/prompt_assembly.py       # Prompt assembly engine
 - Results are saved to `batch_jobs/` directory (gitignored)
 - Batch IDs are tracked in `.batch_id` files alongside JSONL files
 
-### Prompt Assembly Benefits
-- **Modular**: Templates and examples are reusable across different prompt types
-- **Maintainable**: Changes to templates only need to be made once
-- **Extensible**: New prompt types can be added through configuration
+### Architecture Benefits
+- **Modular Prompts**: Templates and examples are reusable across different prompt types
+- **Class-based Batching**: Common batch functionality shared via inheritance
+- **Maintainable**: Changes to templates or batch logic only need to be made once
+- **Extensible**: New prompt types and batch creators can be added easily
 - **Flexible**: Components can be mixed and matched for different use cases
 
 ## Integration Points
@@ -97,3 +115,11 @@ Example usage:
 python scripts/unpack_results.py batch_results.jsonl ../qsp-parameter-storage
 python scripts/create_pooling_metadata_batch.py ../qsp-parameter-storage/to-review
 ```
+
+# Important Instructions
+
+## Code Standards
+- **No backward compatibility**: Use clean, modern interfaces without legacy support
+- **Class-focused architecture**: Prefer class-based designs over functional approaches  
+- **No main runners in libraries**: Only CLI scripts should have `if __name__ == "__main__":` blocks. Never add them to class files, utility modules, or library code
+- **Explicit interfaces**: Require all necessary arguments, avoid complex default logic

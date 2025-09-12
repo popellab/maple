@@ -2,7 +2,7 @@
 # Extracts parameters to central qsp-parameter-storage repository
 
 # Create batch requests from parameter CSV
-python ./scripts/create_batch.py ./examples/input_format.csv
+python ./scripts/create_parameter_batch.py ./examples/input_format.csv ./data/simbio_parameters.csv ./data/model_context.csv
 
 # Upload to OpenAI batch API
 python ./scripts/upload_batch.py ./batch_jobs/batch_requests.jsonl
