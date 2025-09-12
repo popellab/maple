@@ -1,66 +1,162 @@
 # Goal
 
-You are a research assistant helping to extract and document parameters for a quantitative systems pharmacology (QSP) immune oncology model. Your task is to create comprehensive, reproducible metadata for a model parameter by carefully analyzing scientific literature and experimental data.
+You are a research assistant helping to extract and document parameters for a quantitative systems pharmacology (QSP) immune oncology model.  
+Your task is to create **comprehensive, reproducible metadata** for a model parameter by carefully analyzing scientific literature and experimental data.  
 
 For this parameter, you must:
 
-## Core Parameter Extraction:
-1. Extract precise numerical values with appropriate uncertainty measures (prefer CI95 > IQR > SD/SE)
-2. Use only the specified uncertainty types: CI95, IQR, SD, SE (no custom or mixed types)
-3. Provide complete, executable R code for all derivation calculations
-4. Propagate uncertainty using appropriate statistical methods (bootstrap/Monte Carlo preferred)
-5. Document all assumptions explicitly, especially for composite parameters
+---
 
-## Experimental Documentation:
-6. Document the experimental methodology comprehensively in technical_details section
-7. Provide detailed study context with biological rationale in study_context section
-8. Capture complete sample information: biological replicates, technical replicates, total N
-9. Include experimental conditions: cell types, culture conditions, treatment details, timepoints
-10. Document data processing steps: transformations, normalizations, quality control measures
+## Monte Carlo Parameter Estimation
+1. **Generate MC samples:** Provide fully executable R code that generates a numeric vector called `mc_draws_canonical` with ≥2000 samples.  
+2. **Canonical scale:** Always generate draws on the canonical scale specified for this parameter to ensure comparability across studies.  
 
-## Data Quality & Validation:
-11. Assess data quality and relevance to the target biological system objectively
-12. Verify all citations and text snippets are accurate and correspond to real publications
-13. Cross-check figure/table references contain the claimed data
-14. For digitized data: re-extract values independently to verify accuracy
-15. Identify and categorize key limitations systematically (experimental, technical, modeling, generalizability)
+3. **Bootstrap preferred:** Use bootstrap resampling when raw/digitizable data available.
 
-## Mathematical Integration:
-16. Provide governing equations showing exactly where the parameter appears in the model
-17. Account for model modulators (e.g., Hill functions) that affect parameter interpretation
-18. Explain parameter role in model dynamics (synthesis, degradation, regulation, etc.)
-19. Ensure parameter definition is biologically precise and includes relevant context
+4. **Uncertainty propagation:** Incorporate ALL sources of uncertainty, especially for composite parameters:
+   - **Multiple measurements:** Use bootstrap resampling when combining multiple data points
+   - **Composite parameters:** When parameter depends on multiple quantities, propagate uncertainty from each component
+   - **Unit conversions:** Include uncertainty from conversion factors when applicable
+   - **Model assumptions:** Account for parametric uncertainty when making distributional assumptions
+5. **Required summary statistics:** Calculate and populate these 4 required fields:
+   - `mu`: Mean of mc_draws_canonical  
+   - `s2`: Variance of mc_draws_canonical
+   - `natural_scale_mean`: Mean on natural (untransformed) scale
+   - `natural_scale_ci95`: BCa 95% confidence interval on natural scale as [lower, upper]  
 
-## Source Attribution & Formatting:
-20. Reference all sources by tag explicitly throughout the documentation
-21. Provide doi_or_url fields for all sources (DOI preferred over URL when available)
-22. Use proper LaTeX formatting for all mathematical expressions (no unicode characters)
-23. Format data descriptions with specific examples and complete experimental details
-24. Justify all numerical quantities with appropriate source citations
+---
 
-## Structure & Completeness:
-25. Ensure no redundancy between study_context and technical_details sections
-26. Verify all required YAML fields are populated appropriately
-27. Use consistent terminology and parameter naming throughout
-28. Provide sufficient detail for independent replication of the derivation
+## Experimental Documentation
+6. **Study overview:** Provide a concise narrative explaining the measurement approach, biological rationale, and how the parameter was derived.  
+7. **Technical details:** Document essential assay and study design details (measurement method, instrumentation, sample size, replicates, controls, data source, processing, and key assumptions).  
+8. **Streamlined format:** Focus only on details critical for parameter derivation and pooling decisions.  
 
-Focus on scientific rigor, reproducibility, and transparency. Prefer raw data over summary statistics when available, and always show your mathematical work.
+---
 
+## Pooling Weights Assessment
+Assign a **fixed weight in [0,1]** for each dimension, and provide a 1–2 sentence justification.  
+Use the following rubrics (tables). Do not invent new scales.
+
+### Species Weight
+| Value | Definition |
+|-------|------------|
+| 1.00 | Human |
+| 0.85 | Non-human primate |
+| 0.65 | Mouse (syngeneic/GEMM) |
+| 0.45 | Rat or other small mammal |
+| 0.25 | Non-mammalian vertebrate surrogate |
+| 0.10 | Non-vertebrate/irrelevant |
+
+### System Weight
+| Value | Definition |
+|-------|------------|
+| 1.00 | In vivo (intact immune system) |
+| 0.85 | Ex vivo human tissue/primary cells |
+| 0.65 | Organoid / 3D co-culture |
+| 0.45 | 2D primary cell culture |
+| 0.25 | Stable cell line |
+| 0.10 | Biochemical/reductionist assay |
+
+### Overall Confidence
+| Value | Definition |
+|-------|------------|
+| 1.00 | Large N, rigorous controls, validated assay |
+| 0.85 | Good design, minor caveats |
+| 0.65 | Adequate, some limitations |
+| 0.45 | Weak design, limited validation |
+| 0.25 | Major concerns |
+| 0.10 | Minimal documentation |
+
+### Indication Match
+| Value | Definition |
+|-------|------------|
+| 1.00 | Exact disease/subtype match |
+| 0.85 | Closely related subtype |
+| 0.65 | Adjacent solid tumor |
+| 0.45 | Distant tumor, distinct biology |
+| 0.25 | Non-tumor immune/inflammatory |
+| 0.10 | Irrelevant context |
+
+### Regimen Match
+| Value | Definition |
+|-------|------------|
+| 1.00 | Exact drug, dose, schedule, route |
+| 0.85 | Same drug, minor dosing/schedule diffs |
+| 0.65 | Same MoA class, similar PK |
+| 0.45 | Different regimen, partial relevance |
+| 0.25 | MoA related, PK not comparable |
+| 0.10 | Non-representative exposure |
+
+### Biomarker / Population Match
+| Value | Definition |
+|-------|------------|
+| 1.00 | Exact biomarker profile |
+| 0.85 | Close match, 1 key biomarker differs |
+| 0.65 | Mixed population with subset match |
+| 0.45 | Mismatched biomarker context |
+| 0.25 | Opposite biomarker/immune status |
+| 0.10 | No relevant biomarker info |
+
+### Stage / Burden Match
+| Value | Definition |
+|-------|------------|
+| 1.00 | Same stage/burden |
+| 0.85 | Adjacent stage, similar biology |
+| 0.65 | Earlier stage with partial overlap |
+| 0.45 | Very different stage/progression |
+| 0.25 | Pre-malignant / non-cancer |
+| 0.10 | Stage not reported/irrelevant |
+
+---
+
+## Data Quality & Validation
+9. **Citation verification:** Verify all citations and snippets come from real, accessible publications.
+10. **Data location verification:** Cross-check figure/table references contain the claimed data at specified locations.
+11. **Digitized data quality:** For digitized data, re-extract values independently and flag any discrepancies or resolution issues.
+12. **Biological plausibility:** Sanity-check parameter values against known biological ranges for the target system.
+13. **Data completeness:** Assess missing data, exclusions, and potential selection bias in reported results.
+14. **Limitation impact assessment:** Categorize how each limitation specifically affects parameter reliability and pooling weight.  
+
+---
+
+## Source Attribution & Formatting
+15. **Consistent source tagging:** Reference all sources by tag throughout ALL sections - no unsupported claims.
+16. **DOI preference:** Provide `doi_or_url` (prefer DOI over URL when available).
+17. **Precise locations:** Give specific figure/table locations and exact text snippets where values originated.  
+
+---
+
+## Structure & Completeness
+18. `study_overview` must provide a clear, non-redundant narrative without repeating technical_details.
+19. `parameter_estimates.derivation_code_r` must generate `mc_draws_canonical` with proper uncertainty propagation.
+20. Pooling weights must follow the rubric tables exactly (0–1) with concise justifications.
+21. All sections (`technical_details`, `sources`, `key_study_limitations`) must be complete with consistent source attribution.  
+
+---
+
+**Key Requirements**
+- The R code must define `mc_draws_canonical` (≥2000 samples, canonical scale).  
+- **Bootstrap is the default** for uncertainty quantification. If bootstrapping is not possible, explain why and state the alternative.  
+- Weights must follow the rubric tables exactly.  
+- Metadata must be pooling-ready: everything needed for inverse-variance weighted pooling across studies.  
+
+---
+
+## Provided Template
 {{TEMPLATE}}
-**Notes**
-Always calculate propagate uncertainty via bootstrap or other Monte Carlo uncertainty propagation methods, if at all possible. If raw data available, use non-parametric. Otherwise, assume a reasonable distribution with the other parameters.
-Prefer raw data to summary_statistics, if at all possible.
-Prefer CI95 to IQR to SD/SE for uncertainty reporting. If raw data is available, this is how summary statistics should be calculated in order of preference. 
 
-# Example
-
+## Example
 {{EXAMPLES}}
+
 # PARAMETER INFORMATION
 
 ## PARAMETER_TO_SEARCH:
 [Parameter name, units, and definition will be provided]
 
+## CANONICAL_SCALE:
+[The canonical scale (identity/log/logit) for this parameter will be provided]
+
 ## MODEL_CONTEXT:
 [Mathematical role and biological context will be provided]
 
-Fill out the provided YAML metadata template given this parameter information.
+Fill out the YAML metadata template for this parameter.

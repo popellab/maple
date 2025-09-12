@@ -1,100 +1,154 @@
-parameter_name: "PARAMETER_NAME"
-parameter_units: "UNITS"
-parameter_definition: "Clear, concise, one-sentence definition of what this parameter represents biologically. Should specify the biological process, cell type/compartment, and any key modulating factors. Include units and typical range when helpful for interpretation."
+# Brief narrative summary of how this parameter was measured and derived
+study_overview: |
+  This study measures [PARAMETER_NAME] by [BIOLOGICAL_MEASUREMENT_APPROACH]. Parameter was derived from [DATA_TYPE - e.g., time-course, dose-response, equilibrium] data using [DERIVATION_METHOD] (SOURCE_TAG).
 
-mathematical_role: |
-  **Governing Equation(s):**
-  Provide the specific mathematical equation(s) where this parameter appears, using proper LaTeX formatting:
-  $$\frac{d(\text{Species})}{dt} = k_{\text{param}} \cdot \text{[regulatory terms]} \cdot \text{[species concentrations]}$$
-  
-  **Parameter Role:**
-  Describe exactly how this parameter affects the model dynamics. For rate constants, specify what process it controls (synthesis, degradation, transport, etc.). For Hill coefficients, EC50 values, or other modulating parameters, explain how they shape the dose-response relationship.
-  
-  **Units Interpretation:**
-  Briefly explain what the units mean in biological context (e.g., "per day" = turnover rate, "nanomolar" = concentration for half-maximal effect).
-
-study_context: |
-  This parameter quantifies [WHAT] using data from [EXPERIMENTAL_SYSTEM]. The study [WHAT_WAS_DONE] (SOURCE_TAG). [MEASUREMENT_APPROACH] was used as [BIOLOGICAL_RATIONALE] (SOURCE_TAG). [HOW_PARAMETER_DERIVED_FROM_DATA] (SOURCE_TAG).
-  
-  **Context:** [SPECIES] [TISSUE/CELLS] studied [IN_VITRO/IN_VIVO]; [CONDITION_DETAILS].
-
+# Essential experimental details needed to understand parameter derivation
 technical_details: |
-  **Experimental Method:**
-  - Primary assay/measurement technique: [SPECIFIC_ASSAY_NAME] (SOURCE_TAG)
-  - Detection method: [DETECTION_PRINCIPLE, e.g., ELISA, flow cytometry, microscopy] (SOURCE_TAG)
-  - Instrumentation: [SPECIFIC_INSTRUMENTS_USED] (SOURCE_TAG)
-  - Culture conditions: [MEDIUM, ATMOSPHERE, TEMPERATURE, CO2] for [DURATION] (SOURCE_TAG)
-  - Cell seeding: [NUMBER] cells per [VESSEL_TYPE]; confluence at [TIMEPOINT] (SOURCE_TAG)
-  - Treatment protocol: [CONCENTRATIONS, TIMING, DELIVERY_METHOD] (SOURCE_TAG)
-  
-  **Study Design:**
-  - Sample size: [TOTAL_N] ([BREAKDOWN_BY_GROUP]) (SOURCE_TAG)
-  - Biological replicates: [NUMBER] independent [CELL_PREPARATIONS/ANIMALS/DONORS] (SOURCE_TAG)
-  - Technical replicates: [NUMBER] [WELLS/MEASUREMENTS] per biological replicate (SOURCE_TAG)
-  - Study duration: [TIME] [UNITS] with measurements at [TIMEPOINTS] (SOURCE_TAG)
-  - Experimental design: [RANDOMIZED/PAIRED/CROSSOVER] with [CONTROLS_DESCRIPTION] (SOURCE_TAG)
-  - Potential covariates: [DONOR_AGE, PASSAGE_NUMBER, BATCH_EFFECTS, etc.]
-  
-  **Data Description:**
-  Provide detailed description of experimental data used for parameter estimation:
-  - **Raw measurements:** [EXACT_READOUTS with UNITS, CONDITIONS, TIMEPOINTS] (SOURCE_TAG)
-  - **Sample information:** [SAMPLE_SIZES, REPLICATES, EXPERIMENTAL_GROUPS] (SOURCE_TAG)  
-  - **Experimental conditions:** [CELL_TYPES, CULTURE_CONDITIONS, TREATMENTS, TIMING] (SOURCE_TAG)
-  - **Measurement details:** [ASSAY_SPECIFICATIONS, DETECTION_LIMITS, CALIBRATION] (SOURCE_TAG)
-  - **Quality control:** [EXCLUSION_CRITERIA, OUTLIER_HANDLING, VALIDATION] (SOURCE_TAG)
-  
-  **Data Processing:**
-  - Raw data extraction: [METHOD, e.g., digitized from Figure X, provided in Table Y] (SOURCE_TAG)
-  - Data transformations: [NORMALIZATIONS, LOG_TRANSFORMS, UNIT_CONVERSIONS] (SOURCE_TAG)
-  - Statistical approach: [POINT_ESTIMATES, UNCERTAINTY_QUANTIFICATION] (SOURCE_TAG)
-  - Computational tools: [SOFTWARE_USED, e.g., WebPlotDigitizer, R, GraphPad] (SOURCE_TAG)
-  - Assumptions made: [KEY_ASSUMPTIONS_FOR_CALCULATIONS] (SOURCE_TAG)
+  **Measurement:** [ASSAY_TYPE] using [DETECTION_METHOD] (SOURCE_TAG)
+  **Study design:** [SAMPLE_SIZE] samples, [REPLICATION_DESCRIPTION] (SOURCE_TAG) 
+  **Data source:** [HOW_DATA_EXTRACTED - digitized/table/supplemental] (SOURCE_TAG)
+  **Key assumptions:** [CRITICAL_ASSUMPTIONS_FOR_PARAMETER_DERIVATION] (SOURCE_TAG)
 
-quality_metrics:
-  overall_quality: "HIGH | MEDIUM | LOW"  # Based on design, controls, validation
-  relevance_to_target: "HIGH | MEDIUM | LOW"  # How well this matches target context
-  
 parameter_estimates:
-  parameter_location_type: "mean | median | mode"        # Central tendency measure used (MUST BE ONE OF THESE)
-  parameter_location_value: NUMERIC_OR_NULL               # Numerical value of location parameter
-  parameter_uncertainty_type: "CI95 | IQR | SD | SE"           # Uncertainty measure type (standard deviation, standard error, confidence interval) (MUST BE ONE OF THESE)
-  parameter_uncertainty_value: NUMERIC_OR_NULL                 # Numerical value of scale parameter
+  # Required summary statistics (calculated from MC samples)
+  mu: NUMERIC_VALUE  # Mean of mc_draws_canonical
+  s2: NUMERIC_VALUE  # Variance of mc_draws_canonical  
+  natural_scale_mean: NUMERIC_VALUE  # Mean on natural (untransformed) scale
+  natural_scale_ci95: [NUMERIC_LOWER, NUMERIC_UPPER]  # 95% CI on natural scale
   
-  derivation_process:
-    location_and_uncertainty_derivation_code: |                   # Complete R code for parameter calculation:
-      ```r
-      pairs <- list(c(1, 70.0, 65.0), c(2, 56.0, 40.0), c(3, 54.0, 51.0))
-      x1 <- 1.0; x2 <- 4.0  # mg/mL
-      ec50_values <- sapply(pairs, function(p) {
-        y1 <- p[2]/100; y2 <- p[3]/100
-        H1 <- 1.0 - y1; H2 <- 1.0 - y2
-        A1 <- 1.0/H1 - 1.0; A2 <- 1.0/H2 - 1.0
-        h <- log(A2/A1) / log(x2/x1)
-        x1 * (A1^(1.0/h))
+  # Generate Monte Carlo samples using bootstrap on the specified canonical scale
+  # REQUIREMENTS for the R code below:
+  #   - Create vector 'mc_draws_canonical' with >= 2000 samples using bootstrap
+  #   - Use the canonical scale provided for this parameter (identity/log/logit)
+  #   - Calculate and populate the 4 required fields above: mu, s2, natural_scale_mean, natural_scale_ci95
+  derivation_code_r: |
+    ```r
+    library(boot)
+    
+    # Composite parameter example: Drug clearance from concentration and half-life data
+    # This demonstrates uncertainty propagation for parameters derived from multiple sources
+    
+    # 1) Define raw measurements with uncertainty ---------------------------------
+    # Concentration measurements (mg/L) with measurement error
+    conc_data <- data.frame(
+      timepoint = c(0.5, 1, 2, 4, 8, 12),  # hours
+      concentration = c(45.2, 38.1, 31.5, 22.8, 12.4, 6.2),  # mg/L
+      cv_percent = c(8.5, 6.2, 7.1, 9.3, 12.1, 15.8)  # measurement CV%
+    )
+    
+    # Volume of distribution from separate study (L/kg) with uncertainty
+    vd_mean <- 2.1  # L/kg
+    vd_se <- 0.3    # standard error from literature
+    
+    # 2) Define composite estimator with uncertainty propagation --------------
+    clearance_estimator <- function(data, indices) {
+      # Resample concentration data
+      d <- data[indices, , drop = FALSE]
+      
+      # Add measurement error to each concentration (CV-based uncertainty)
+      conc_with_error <- sapply(1:nrow(d), function(i) {
+        cv <- d$cv_percent[i] / 100
+        sd_conc <- d$concentration[i] * cv
+        # Assumption: Measurement error is normally distributed
+        rnorm(1, d$concentration[i], sd_conc)
       })
-      # Convert nM to mg/mL: ec50_values * 450.5e-6  
-      ec50_mgmL <- ec50_values * 450.5e-6
-      mean(log10(ec50_mgmL))  # Log-transform due to right-skew
-      sd(log10(ec50_mgmL)) / sqrt(length(ec50_mgmL))  # SE of log10 values
-      ```
+      
+      # Fit exponential decay to get elimination rate constant (ke)
+      # Model: C(t) = C0 * exp(-ke * t), so log(C) = log(C0) - ke * t
+      # Assumption: First-order elimination kinetics apply
+      log_conc <- log(pmax(conc_with_error, 0.01))  # Floor at 0.01 to avoid log(0)
+      lm_fit <- lm(log_conc ~ d$timepoint)
+      ke <- -coef(lm_fit)[2]  # elimination rate constant (1/hr)
+      # Note: Ignoring fitting uncertainty here for simplicity
+      
+      # Sample volume of distribution with literature uncertainty
+      # Assumption: Vd follows normal distribution around literature mean
+      vd_sample <- rnorm(1, vd_mean, vd_se)
+      
+      # Calculate clearance = ke * Vd (L/hr/kg)
+      # This propagates uncertainty from both ke estimation and Vd literature value
+      clearance <- ke * vd_sample
+      
+      return(clearance)
+    }
+    
+    # 3) Use provided canonical scale ----------------------------------------
+    canonical_scale <- "log"  # Use the canonical scale provided for this parameter
+    
+    # 4) Run bootstrap with uncertainty propagation ---------------------------
+    set.seed(123)
+    B <- 5000
+    boot_out <- boot(data = conc_data, statistic = clearance_estimator, R = B)
+    
+    # Extract replicates as natural-scale draws
+    mc_draws_natural <- boot_out$t[,1]
+    
+    # Remove any extreme outliers (> 99.9th percentile)
+    q999 <- quantile(mc_draws_natural, 0.999, na.rm = TRUE)
+    mc_draws_natural <- mc_draws_natural[mc_draws_natural <= q999 & !is.na(mc_draws_natural)]
+    
+    # 5) Apply canonical transformation ---------------------------------------
+    transform_vec <- function(x, scale) {
+      if (scale == "identity") return(x)
+      if (scale == "log")     return(log(pmax(x, .Machine$double.eps)))
+      if (scale == "logit")   return(qlogis(pmin(pmax(x, 1e-12), 1 - 1e-12)))
+      stop("Unknown canonical scale")
+    }
+    mc_draws_canonical <- transform_vec(mc_draws_natural, canonical_scale)
+    
+    # Required summary statistics
+    mu <- mean(mc_draws_canonical)
+    s2 <- var(mc_draws_canonical)
+    natural_scale_mean <- mean(mc_draws_natural)
+    
+    # BCa 95% CI on natural scale
+    bca_ci <- boot.ci(boot_out, type = "bca", conf = 0.95)
+    natural_scale_ci95 <- c(bca_ci$bca[4], bca_ci$bca[5])  # [lower, upper]
+    
+    # Result: mc_draws_canonical contains samples with all uncertainty sources propagated
+    ```
 
+pooling_weights:
+  # Assign fixed weights using rubric tables from prompt. Provide 1-2 sentence justification for each.
+  species_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use species rubric: 1.00=Human, 0.85=NHP, 0.65=Mouse, 0.45=Rat, 0.25=Non-mammal, 0.10=Irrelevant
+    justification: "[Species and why it gets this specific rubric value]"
+  system_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use system rubric: 1.00=In vivo, 0.85=Ex vivo, 0.65=Organoid, 0.45=2D primary, 0.25=Cell line, 0.10=Biochemical
+    justification: "[System type and why it gets this specific rubric value]"
+  overall_confidence:
+    value: RUBRIC_VALUE_0_TO_1  # Use confidence rubric: 1.00=Rigorous, 0.85=Good, 0.65=Adequate, 0.45=Weak, 0.25=Major concerns, 0.10=Minimal
+    justification: "[Study quality and why it gets this specific rubric value]"
+  indication_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use indication rubric: 1.00=Exact match, 0.85=Close subtype, 0.65=Adjacent tumor, 0.45=Distant, 0.25=Non-tumor, 0.10=Irrelevant
+    justification: "[Indication relevance and why it gets this specific rubric value]"
+  regimen_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use regimen rubric: 1.00=Exact, 0.85=Minor diffs, 0.65=Same MoA, 0.45=Partial relevance, 0.25=MoA related, 0.10=Non-representative
+    justification: "[Treatment similarity and why it gets this specific rubric value]"
+  biomarker_population_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use biomarker rubric: 1.00=Exact profile, 0.85=Close match, 0.65=Mixed population, 0.45=Mismatched, 0.25=Opposite, 0.10=No info
+    justification: "[Biomarker/population match and why it gets this specific rubric value]"
+  stage_burden_match:
+    value: RUBRIC_VALUE_0_TO_1_OR_NULL  # Use stage rubric: 1.00=Same stage, 0.85=Adjacent, 0.65=Earlier, 0.45=Very different, 0.25=Pre-malignant, 0.10=Not reported. Optional field.
+    justification: "[Stage/burden match and why it gets this specific rubric value, if relevant]"
+
+# Important limitations and their specific impact on parameter reliability and pooling weight
 key_study_limitations: |
-  List the most important limitations that could affect parameter reliability or generalizability:
-  - **Experimental Design:** Sample size, controls, replication, statistical power (SOURCE_TAG)
-  - **Biological Relevance:** Species differences (human vs. mouse), in vitro vs. in vivo, cell lines vs. primary cells (SOURCE_TAG)
-  - **Technical Issues:** Assay limitations, measurement precision, data extraction methods (SOURCE_TAG)
-  - **Modeling Assumptions:** Simplifications made during parameter derivation, fixed vs. fitted values (SOURCE_TAG)
-  - **Uncertainty Sources:** Missing data, figure digitization, unit conversions, composite calculations (SOURCE_TAG)
-  - **Generalizability:** Patient population, disease stage, treatment context differences (SOURCE_TAG)
+  - **Sample size/power:** [statistical limitations, small N, underpowered comparisons → increases parameter uncertainty, may warrant lower pooling weight] (SOURCE_TAG)  
+  - **Measurement issues:** [assay limitations, detection limits, calibration problems → affects measurement precision, consider downweighting if severe] (SOURCE_TAG)
+  - **Data extraction:** [digitization errors, missing data points, unit conversion uncertainties → introduces additional noise, impacts confidence in estimate] (SOURCE_TAG)  
+  - **Biological context:** [species differences, system limitations, population mismatch → affects biological relevance, captured in species/system/population weights] (SOURCE_TAG)
+  - **Methodological concerns:** [key assumptions, model simplifications, potential biases → may systematically bias parameter estimate, consider exclusion if severe] (SOURCE_TAG)
 
+# Source citations with specific locations where parameter data was found
 sources:
   PRIMARY_KEY:
     citation: "FULL_CITATION"
     doi_or_url: "DOI_OR_URL_OR_NA"
-    figure_or_table: "SPECIFIC_LOCATION (e.g., Fig. 1A; Table 2; p. 123 lines 15–20)"
-    text_snippet: "Exact line of text where values came from, if available"
+    figure_or_table: "Fig./Table/Page"
+    text_snippet: "Exact text line(s) where values came from"
   SECONDARY_KEY:
-    citation: "WHY_INCLUDED (e.g., assay datasheet, biomarker stoichiometry)"
+    citation: "FULL_CITATION"
     doi_or_url: "DOI_OR_URL_OR_NA"
-    figure_or_table: "SPECIFIC_LOCATION (e.g., Fig. 1A; Table 2; p. 123 lines 15–20)"
-    text_snippet: "Exact line of text where values came from, if available"
+    figure_or_table: "Fig./Table/Page"
+    text_snippet: "Exact text line(s)"
