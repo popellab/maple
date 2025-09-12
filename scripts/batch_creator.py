@@ -157,29 +157,51 @@ class ParameterBatchCreator(BatchCreator):
     def get_batch_type(self) -> str:
         return "parameter"
     
-    def process(self, input_csv: Path, params_csv: Path, reactions_csv: Path) -> List[Dict[str, Any]]:
+    def load_parameter_definition(self, cancer_type: str, parameter_name: str, 
+                                parameter_storage_dir: Path = None) -> Optional[Dict[str, Any]]:
         """
-        Process parameter extraction inputs and generate batch requests.
+        Load parameter definition from storage directory.
+        
+        Args:
+            cancer_type: Cancer type for the parameter
+            parameter_name: Name of the parameter
+            parameter_storage_dir: Path to parameter storage directory
+            
+        Returns:
+            Parameter definition dict or None if not found
+        """
+        if parameter_storage_dir is None:
+            # Default to sibling directory
+            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+            
+        definition_path = (parameter_storage_dir / "parameter-definitions" / 
+                          cancer_type / parameter_name / "definition.yaml")
+        
+        if not definition_path.exists():
+            print(f"Warning: Parameter definition not found at {definition_path}")
+            return None
+            
+        try:
+            import yaml
+            with open(definition_path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            print(f"Warning: Could not load parameter definition from {definition_path}: {e}")
+            return None
+    
+    def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
+        """
+        Process parameter extraction inputs and generate batch requests using stored parameter definitions.
         
         Args:
             input_csv: CSV file with cancer_type and parameter_name columns
-            params_csv: CSV file with parameter definitions
-            reactions_csv: CSV file with reaction/model context
+            parameter_storage_dir: Optional path to parameter storage directory
             
         Returns:
             List of batch request dictionaries
         """
         import csv
-        from parameter_utils import (
-            load_inputs, index_param_info, render_parameter_to_search,
-            build_model_context
-        )
-        
-        # Load parameter and reaction data
-        params_df, reactions_df, _ = load_inputs(
-            Path(params_csv), Path(reactions_csv), None
-        )
-        param_info = index_param_info(params_df)
+        from parameter_utils import render_parameter_to_search
         
         # Process CSV and create requests
         requests = []
@@ -188,23 +210,29 @@ class ParameterBatchCreator(BatchCreator):
                 cancer_type = row['cancer_type']
                 parameter_name = row['parameter_name']
                 
-                # Get parameter info
-                param_row = params_df[params_df["Name"].astype(str) == parameter_name].iloc[0]
-                name = str(param_row.get("Name", "")).strip()
-                units = str(param_row.get("Units", "")).strip()
-                definition = str(param_row.get("Definition", "")).strip()
+                # Load parameter definition (required for extraction)
+                param_def = self.load_parameter_definition(cancer_type, parameter_name, parameter_storage_dir)
+                if not param_def:
+                    print(f"Warning: No parameter definition found for {cancer_type}/{parameter_name}, skipping")
+                    continue
                 
-                # Build parameter info block
-                parameter_block = render_parameter_to_search(name, units, definition)
+                # Extract all needed info from parameter definition
+                name = param_def.get("parameter_name", parameter_name)
+                units = param_def.get("parameter_units", "")
+                definition = param_def.get("parameter_definition", "")
+                canonical_scale = param_def.get("canonical_scale", "NOT_PROVIDED")
+                mathematical_role = param_def.get("mathematical_role", "")
                 
-                # Build model context
-                rxns = reactions_df[reactions_df["Parameter"].astype(str) == name]
-                model_context_block = build_model_context(name, rxns, param_info)
-                model_context_block += f"\n**Target Cancer Type:** {cancer_type}\n"
+                # Build parameter info block with cancer type
+                parameter_block = render_parameter_to_search(name, units, definition, cancer_type)
+                
+                # Use mathematical role as model context
+                model_context_block = mathematical_role
                 
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
                     "PARAMETER_INFO": parameter_block,
+                    "CANONICAL_SCALE": canonical_scale,
                     "MODEL_CONTEXT": model_context_block
                 }
                 
@@ -375,5 +403,77 @@ class PoolingMetadataBatchCreator(BatchCreator):
                 print(f"  - {yaml_info['relative_path']}")
         else:
             print("No YAML files found that need pooling metadata updates.")
+        
+        return requests
+
+
+class ParameterDefinitionBatchCreator(BatchCreator):
+    """
+    Creates batch requests for parameter definition generation.
+    
+    Processes parameter/cancer_type combinations from input CSV, generating
+    prompts that create standardized parameter definitions with canonical scales.
+    """
+    
+    def get_batch_type(self) -> str:
+        return "parameter_definition"
+    
+    def process(self, input_csv: Path, params_csv: Path, reactions_csv: Path) -> List[Dict[str, Any]]:
+        """
+        Process parameter definition inputs and generate batch requests.
+        
+        Args:
+            input_csv: CSV file with cancer_type and parameter_name columns
+            params_csv: CSV file with parameter definitions
+            reactions_csv: CSV file with reaction/model context
+            
+        Returns:
+            List of batch request dictionaries
+        """
+        import csv
+        from parameter_utils import (
+            load_inputs, index_param_info, render_parameter_to_search,
+            build_model_context
+        )
+        
+        # Load parameter and reaction data
+        params_df, reactions_df, _ = load_inputs(
+            Path(params_csv), Path(reactions_csv), None
+        )
+        param_info = index_param_info(params_df)
+        
+        # Process CSV and create requests
+        requests = []
+        with open(input_csv, 'r', encoding='utf-8') as f:
+            for i, row in enumerate(csv.DictReader(f)):
+                cancer_type = row['cancer_type']
+                parameter_name = row['parameter_name']
+                
+                # Get parameter info
+                param_row = params_df[params_df["Name"].astype(str) == parameter_name].iloc[0]
+                name = str(param_row.get("Name", "")).strip()
+                units = str(param_row.get("Units", "")).strip()
+                definition = str(param_row.get("Definition", "")).strip()
+                
+                # Build parameter info block with cancer type
+                parameter_block = render_parameter_to_search(name, units, definition, cancer_type)
+                
+                # Build model context
+                rxns = reactions_df[reactions_df["Parameter"].astype(str) == name]
+                model_context_block = build_model_context(name, rxns, param_info)
+                
+                # Prepare runtime data for prompt assembly
+                runtime_data = {
+                    "PARAMETER_INFO": parameter_block,
+                    "MODEL_CONTEXT": model_context_block
+                }
+                
+                # Assemble the prompt
+                prompt = self.prompt_assembler.assemble_prompt("parameter_definition", runtime_data)
+                
+                # Create batch request
+                custom_id = f"defn_{cancer_type}_{parameter_name}_{i}"
+                request = self.create_request(custom_id, prompt)
+                requests.append(request)
         
         return requests

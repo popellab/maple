@@ -150,13 +150,12 @@ Use the following rubrics (tables). Do not invent new scales.
 
 # PARAMETER INFORMATION
 
-## PARAMETER_TO_SEARCH:
-[Parameter name, units, and definition will be provided]
+{{PARAMETER_INFO}}
 
 ## CANONICAL_SCALE:
-[The canonical scale (identity/log/logit) for this parameter will be provided]
+{{CANONICAL_SCALE}}
 
 ## MODEL_CONTEXT:
-[Mathematical role and biological context will be provided]
+{{MODEL_CONTEXT}}
 
 Fill out the YAML metadata template for this parameter.

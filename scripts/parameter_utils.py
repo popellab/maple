@@ -84,7 +84,7 @@ def parse_other_params_list(s: str) -> List[str]:
     return re.findall(r"'([^']+)'", s)
 
 
-def render_parameter_to_search(name: str, units: str, definition: str) -> str:
+def render_parameter_to_search(name: str, units: str, definition: str, cancer_type: str = None) -> str:
     """
     Render a parameter information block for prompt generation.
     
@@ -92,18 +92,15 @@ def render_parameter_to_search(name: str, units: str, definition: str) -> str:
         name: Parameter name
         units: Parameter units
         definition: Parameter definition/description
+        cancer_type: Optional cancer type for this parameter
         
     Returns:
         Formatted parameter information block
     """
-    explanation = (
-        "**Field meaning:**\n"
-        "- **Name**: The model parameter identifier to focus on.\n"
-        "- **Units**: The unit system used for this parameter.\n"
-        "- **Definition**: Short description of what this parameter represents.\n"
-    )
-    descriptor = f"**Parameter:** {name} [{units}] — {definition}".strip(" —")
-    return explanation + "\n" + descriptor
+    base_info = f"**Parameter Name:** {name}\n**Units:** {units}\n**Definition:** {definition}"
+    if cancer_type:
+        base_info += f"\n**Target Cancer Type:** {cancer_type}"
+    return base_info
 
 
 def render_other_params_details(other_params: List[str], param_info: Dict[str, Dict[str, str]]) -> str:
@@ -194,9 +191,8 @@ def build_model_context(param_name: str, rxns: pd.DataFrame, param_info: Dict[st
         Formatted model context block
     """
     if rxns.empty:
-        body = (f"{param_name} is currently not referenced in any reactions "
+        return (f"{param_name} is currently not referenced in any reactions "
                 f"according to the provided mapping table.")
-        return body + "\n\n" + TARGET_BIO_CONTEXT
 
     bullets = []
     for _, row in rxns.iterrows():
@@ -219,6 +215,6 @@ def build_model_context(param_name: str, rxns: pd.DataFrame, param_info: Dict[st
             )
         )
 
-    # Add biological context block beneath the reaction info
+    # Return just the mathematical context without biological priority guidelines
     header = "Mathematical role and biological context for this parameter based on the model:\n"
-    return header + "\n".join(bullets) + "\n\n" + TARGET_BIO_CONTEXT
+    return header + "\n".join(bullets)

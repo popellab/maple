@@ -11,10 +11,16 @@ from pathlib import Path
 
 def extract_yaml_from_content(content):
     """Extract YAML section from content."""
-    # Find YAML code block
+    # First try to find YAML code block
     yaml_match = re.search(r'```yaml\n(.*?)\n```', content, re.DOTALL)
     if yaml_match:
         return yaml_match.group(1)
+    
+    # If no code block found, check if the content is direct YAML
+    # (Look for YAML-like structure starting with parameter_name, etc.)
+    if re.match(r'^\s*parameter_name\s*:', content, re.MULTILINE):
+        return content.strip()
+    
     return None
 
 def extract_first_source_tag(yaml_content):
@@ -68,24 +74,36 @@ def main():
             # GPT-5 response structure: body.output[1].content[0].text
             content = response["body"]["output"][1]["content"][0]["text"]
             
-            # Parse custom_id: cancer_type_parameter_name_index
+            # Parse custom_id and determine directory structure
             parts = custom_id.split('_')
-            cancer_type = parts[0]
-            parameter_name = '_'.join(parts[1:-1])  # Everything except first and last
             
-            # Create parameter directory in to-review (in main QSP project)
-            param_dir = target_project_path / "to-review" / cancer_type / parameter_name
+            # Handle parameter definitions vs regular parameter extractions
+            if parts[0] == "defn":
+                # Parameter definition: defn_CANCER_TYPE_PARAMETER_NAME_INDEX
+                cancer_type = parts[1]
+                parameter_name = '_'.join(parts[2:-1])  # Everything between cancer_type and index
+                # Put in parameter-definitions directory
+                param_dir = target_project_path / "parameter-definitions" / cancer_type / parameter_name
+                filename_default = "definition.yaml"
+            else:
+                # Regular parameter extraction: CANCER_TYPE_PARAMETER_NAME_INDEX  
+                cancer_type = parts[0]
+                parameter_name = '_'.join(parts[1:-1])  # Everything except first and last
+                # Put in to-review directory
+                param_dir = target_project_path / "to-review" / cancer_type / parameter_name
+                filename_default = "metadata.yaml"
+            
             param_dir.mkdir(parents=True, exist_ok=True)
             
             # Extract YAML content
             yaml_content = extract_yaml_from_content(content)
             if yaml_content:
-                # Get first source tag for filename
+                # Get first source tag for filename, with appropriate default
                 first_source = extract_first_source_tag(yaml_content)
                 if first_source:
                     yaml_filename = f"{first_source}.yaml"
                 else:
-                    yaml_filename = "metadata.yaml"
+                    yaml_filename = filename_default
                 
                 # Get unique filename
                 yaml_path = get_unique_filename(param_dir / yaml_filename)

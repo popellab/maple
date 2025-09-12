@@ -8,6 +8,13 @@ This repository contains LLM workflow automation tools for extracting quantitati
 
 ## Key Commands
 
+### Python Environment Setup
+**IMPORTANT:** Always activate the virtual environment before running Python scripts:
+
+```bash
+source venv/bin/activate
+```
+
 ### Core Batch Workflow
 The main workflow commands are documented in `scripts/batch_workflow_commands.sh`:
 
@@ -27,12 +34,15 @@ python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-para
 
 ### Individual Script Usage
 
-- `create_parameter_batch.py`: Creates parameter extraction batch requests. Requires input.csv, params.csv, and reactions.csv arguments
+- `create_parameter_definition_batch.py`: Creates parameter definition batch requests. Requires input.csv, params.csv, and reactions.csv arguments
+- `create_parameter_batch.py`: Creates parameter extraction batch requests. Requires only input.csv (uses stored parameter definitions)
 - `create_pooling_metadata_batch.py`: Creates batch requests to add pooling metadata to existing study YAML files
-- `upload_batch.py`: Requires JSONL file path, expects OpenAI API key in `.env` file
+- `upload_batch.py`: Uploads to OpenAI batch API (slower, handles large volumes). Requires JSONL file path, expects OpenAI API key in `.env` file
+- `upload_immediate.py`: Processes requests immediately via Responses API (faster feedback, good for testing). Requires JSONL file path, expects OpenAI API key in `.env` file
 - `batch_monitor.py`: Requires batch ID, automatically downloads results when batch is complete
 - `unpack_results.py`: Extracts YAML from batch results to `qsp-parameter-storage/to-review/` directory structure
 - `inspect_jsonl.py`: Debug utility for examining batch request/response files
+- `extract_prompt.py`: Extracts prompt text from batch requests and saves to `scratch/` directory for examination
 
 ## Architecture
 
@@ -53,15 +63,23 @@ scripts/
 ```
 
 ### Data Flow
+
+**Parameter Definition Workflow:**
 1. Input CSV with cancer_type and parameter_name columns
-2. Scripts generate parameter info and model context from CSV data files
-3. **Prompt assembly system** combines base prompts + templates + examples + runtime data
+2. Generate parameter definitions with canonical scales using `create_parameter_definition_batch.py`
+3. Store parameter definitions in `../qsp-parameter-storage/parameter-definitions/{cancer_type}/{parameter_name}/definition.yaml`
+
+**Parameter Extraction Workflow:**
+1. Same input CSV with cancer_type and parameter_name columns
+2. Scripts load complete parameter definitions (name, units, definition, canonical_scale, mathematical_role) from storage
+3. **Prompt assembly system** combines base prompts + templates + examples + parameter definition data
 4. Batch processing via OpenAI API creates structured YAML outputs
 5. Results are unpacked to `../qsp-parameter-storage/to-review/{cancer_type}/{parameter_name}/` for review
 
 ### Key Data Files
-- `data/simbio_parameters.csv`: Parameter definitions with Name, Units, Definition, References columns
-- `data/model_context.csv`: Reaction context with Parameter, Reaction, ReactionRate, OtherParameters, OtherSpeciesWithNotes columns
+- `data/simbio_parameters.csv`: Parameter definitions with Name, Units, Definition, References columns (used for parameter definition creation)
+- `data/model_context.csv`: Reaction context with Parameter, Reaction, ReactionRate, OtherParameters, OtherSpeciesWithNotes columns (used for parameter definition creation)
+- `../qsp-parameter-storage/parameter-definitions/`: Stored parameter definitions (used for parameter extraction)
 - `templates/configs/prompt_assembly.yaml`: Configuration controlling how prompts are assembled
 - `templates/parameter_metadata_template.yaml`: YAML template for parameter metadata
 - `templates/prior_metadata_template.yaml`: YAML template for prior metadata generation

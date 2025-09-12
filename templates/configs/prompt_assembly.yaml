@@ -14,6 +14,9 @@ prompt_types:
       - name: PARAMETER_INFO
         source: runtime
         description: "Parameter-specific information (name, units, definition)"
+      - name: CANONICAL_SCALE
+        source: runtime
+        description: "The canonical scale for this parameter (identity/log/logit)"
       - name: MODEL_CONTEXT
         source: runtime
         description: "Mathematical role and biological context"
@@ -49,6 +52,20 @@ prompt_types:
       - name: STUDY_DATA
         source: runtime
         description: "Information about studies to be pooled"
+
+  parameter_definition:
+    base_prompt: prompts/base/parameter_definition_prompt.md
+    template: templates/parameter_definition_template.yaml
+    placeholders:
+      - name: TEMPLATE
+        source: template_file
+        description: "Insert the parameter definition template"
+      - name: PARAMETER_INFO
+        source: runtime
+        description: "Parameter name, units, and basic information"
+      - name: MODEL_CONTEXT
+        source: runtime
+        description: "Mathematical role and biological context"
 
 # Configuration for how to handle different placeholder sources
 placeholder_sources:

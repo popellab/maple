@@ -63,16 +63,9 @@ Your job is to take this information and create a comprehensive parameter defini
 
 # PARAMETER INFORMATION
 
-## PARAMETER_NAME:
-[Parameter name will be provided]
-
-## PARAMETER_UNITS: 
-[Units will be provided]
-
-## PARAMETER_DEFINITION:
-[Basic definition will be provided]
+{{PARAMETER_INFO}}
 
 ## MODEL_CONTEXT:
-[Mathematical and biological context will be provided]
+{{MODEL_CONTEXT}}
 
 Fill out the parameter definition template using this information.
