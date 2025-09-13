@@ -39,7 +39,7 @@ def load_inputs(params_path: Path, reactions_path: Path, template_path: Path = N
     
     # Validate required columns
     need_params = {"Name", "Units", "Definition"}
-    need_rxns = {"Parameter", "Reaction", "ReactionRate", "OtherParameters", "OtherSpeciesWithNotes"}
+    need_rxns = {"Parameter", "Reaction", "ReactionRate", "Rule", "RuleType", "OtherParameters", "OtherSpeciesWithNotes"}
     miss_p = need_params - set(params_df.columns)
     miss_r = need_rxns - set(reactions_df.columns)
     
@@ -184,18 +184,24 @@ def build_model_context(param_name: str, rxns: pd.DataFrame, param_info: Dict[st
     
     Args:
         param_name: Name of the parameter to build context for
-        rxns: DataFrame with reaction information for this parameter
+        rxns: DataFrame with reaction and rule information for this parameter
         param_info: Parameter lookup dictionary from index_param_info()
         
     Returns:
         Formatted model context block
     """
     if rxns.empty:
-        return (f"{param_name} is currently not referenced in any reactions "
+        return (f"{param_name} is currently not referenced in any reactions or rules "
                 f"according to the provided mapping table.")
 
+    # Separate reactions and rules
+    reactions = rxns[rxns['Reaction'].notna() & (rxns['Reaction'].astype(str).str.strip() != '')]
+    rules = rxns[rxns['Rule'].notna() & (rxns['Rule'].astype(str).str.strip() != '')]
+
     bullets = []
-    for _, row in rxns.iterrows():
+    
+    # Process reactions
+    for _, row in reactions.iterrows():
         other_params_str = row.get("OtherParameters", "")
         other_params = parse_other_params_list(other_params_str)
         other_params_details = render_other_params_details(other_params, param_info)
@@ -214,6 +220,31 @@ def build_model_context(param_name: str, rxns: pd.DataFrame, param_info: Dict[st
                 species_details
             )
         )
+
+    # Process rules
+    for _, row in rules.iterrows():
+        other_params_str = row.get("OtherParameters", "")
+        other_params = parse_other_params_list(other_params_str)
+        other_params_details = render_other_params_details(other_params, param_info)
+        species_details = render_species_comp_details(row.get("OtherSpeciesWithNotes", ""))
+
+        bullets.append(
+            "- **Rule:** `{}`\n"
+            "  - **Type:** {}\n"
+            "  - **Other parameters in rule:** {}\n"
+            "{}\n"
+            "{}".format(
+                row.get("Rule", ""),
+                row.get("RuleType", ""),
+                other_params_str if (isinstance(other_params_str, str) and other_params_str.strip()) else "[]",
+                other_params_details,
+                species_details
+            )
+        )
+
+    if not bullets:
+        return (f"{param_name} is currently not referenced in any reactions or rules "
+                f"according to the provided mapping table.")
 
     # Return just the mathematical context without biological priority guidelines
     header = "Mathematical role and biological context for this parameter based on the model:\n"

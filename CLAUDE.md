@@ -50,7 +50,7 @@ python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-para
 This repository uses a generalized prompt assembly system that builds prompts from modular components:
 
 ```
-prompts/base/                    # Base prompt files with placeholders
+prompts/                         # Base prompt files with placeholders
 templates/
 ├── configs/prompt_assembly.yaml # Configuration for prompt assembly  
 ├── parameter_metadata_template.yaml

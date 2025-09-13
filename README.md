@@ -20,7 +20,7 @@ This toolkit automates the extraction of quantitative systems pharmacology (QSP)
 │   ├── unpack_results.py      # Extract results to YAML files
 │   ├── inspect_jsonl.py       # Debug utility for batch files
 │   └── batch_workflow_commands.sh  # Complete workflow
-├── prompts/base/     # Base prompt files with placeholders
+├── prompts/          # Base prompt files with placeholders
 ├── templates/        # Modular prompt components
 │   ├── configs/              # Prompt assembly configuration
 │   ├── parameter_metadata_template.yaml
@@ -74,7 +74,7 @@ The toolkit features a **generalized prompt assembly system** that:
 - **Supports extensibility**: New prompt types can be added through configuration
 
 ### Prompt Components
-- **Base prompts** (`prompts/base/`): Core instructions with placeholder markers
+- **Base prompts** (`prompts/`): Core instructions with placeholder markers
 - **Templates** (`templates/`): YAML templates and configuration files
 - **Examples** (`templates/examples/`): Example filled templates
 - **Assembly engine** (`scripts/prompt_assembly.py`): Combines components into final prompts

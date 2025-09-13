@@ -450,7 +450,13 @@ class ParameterDefinitionBatchCreator(BatchCreator):
                 parameter_name = row['parameter_name']
                 
                 # Get parameter info
-                param_row = params_df[params_df["Name"].astype(str) == parameter_name].iloc[0]
+                param_matches = params_df[params_df["Name"].astype(str) == parameter_name]
+                if param_matches.empty:
+                    print(f"Warning: Parameter '{parameter_name}' not found in params_df, skipping")
+                    print(f"Available parameters: {sorted(params_df['Name'].astype(str).tolist())}")
+                    continue
+                
+                param_row = param_matches.iloc[0]
                 name = str(param_row.get("Name", "")).strip()
                 units = str(param_row.get("Units", "")).strip()
                 definition = str(param_row.get("Definition", "")).strip()

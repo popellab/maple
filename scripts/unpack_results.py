@@ -16,8 +16,17 @@ def extract_yaml_from_content(content):
     if yaml_match:
         return yaml_match.group(1)
     
-    # If no code block found, check if the content is direct YAML
-    # (Look for YAML-like structure starting with parameter_name, etc.)
+    # If no code block found, try parsing the entire content as YAML
+    # This handles cases where LLM forgot the ```yaml tags but generated valid YAML
+    try:
+        # Test if the entire content can be parsed as YAML
+        yaml.safe_load(content.strip())
+        return content.strip()
+    except yaml.YAMLError:
+        pass
+    
+    # Legacy fallback: check if content starts with parameter_name
+    # (kept for backwards compatibility, though above should catch this too)
     if re.match(r'^\s*parameter_name\s*:', content, re.MULTILINE):
         return content.strip()
     

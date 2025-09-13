@@ -159,3 +159,11 @@ Use the following rubrics (tables). Do not invent new scales.
 {{MODEL_CONTEXT}}
 
 Fill out the YAML metadata template for this parameter.
+
+**IMPORTANT: Format your response as follows:**
+```yaml
+# Your complete YAML metadata here
+# Fill out all sections of the template above
+```
+
+Make sure to wrap your entire YAML response in ```yaml code block tags as shown above.

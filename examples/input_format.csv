@@ -1,7 +1,0 @@
-cancer_type,parameter_name
-PDAC,k_C1_growth
-HCC,gamma_T_aPD1
-NSCLC,q_CD8_T_in
-BASE,ECM_50_T_exh
-TNBC,n_CD8_clones
-CRC,k_ArgI_sec

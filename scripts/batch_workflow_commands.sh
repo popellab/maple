@@ -2,7 +2,7 @@
 # Extracts parameters to central qsp-parameter-storage repository
 
 # STEP 1: Create parameter definitions with canonical scales (run first)
-python ./scripts/create_parameter_definition_batch.py ./batch_jobs/pdac_parameters_test.csv ./data/simbio_parameters.csv ./data/model_context.csv
+python ./scripts/create_parameter_definition_batch.py ./batch_jobs/pdac_parameters.csv ./data/simbio_parameters.csv ./data/model_context.csv
 
 python ./scripts/inspect_jsonl.py batch_jobs/parameter_definition_requests.jsonl 1
 # Optional: Extract prompt to examine more easily

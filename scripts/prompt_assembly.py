@@ -4,6 +4,7 @@ Prompt assembly system for QSP LLM workflows.
 Handles loading, assembling, and generating prompts from modular components.
 """
 
+import re
 import yaml
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -84,12 +85,24 @@ class PromptAssembler:
                 examples = prompt_config.get("examples", [])
                 example_contents = []
                 for example_path in examples:
-                    example_content = self.load_example(example_path)
-                    example_contents.append(example_content)
+                    full_example_path = self.base_dir / example_path
+                    if full_example_path.exists():
+                        example_content = self.load_example(example_path)
+                        example_contents.append(example_content)
                 
-                combined_examples = "\n\n".join(example_contents)
-                source_config = self.config["placeholder_sources"]["example_files"]
-                replacement_content = self.format_content(combined_examples, source_config)
+                if example_contents:
+                    combined_examples = "\n\n".join(example_contents)
+                    source_config = self.config["placeholder_sources"]["example_files"]
+                    replacement_content = self.format_content(combined_examples, source_config)
+                else:
+                    # No example files found - remove the placeholder entirely
+                    replacement_content = ""
+                    
+                    # Also remove preceding "## Example" header if it exists
+                    example_header_pattern = r"## Example\s*\n\s*" + re.escape(placeholder_tag)
+                    if re.search(example_header_pattern, prompt_text):
+                        prompt_text = re.sub(example_header_pattern, "", prompt_text)
+                        continue  # Skip the normal replacement since we already handled it
                 
             elif source == "runtime":
                 if placeholder_name in runtime_data:

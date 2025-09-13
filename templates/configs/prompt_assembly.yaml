@@ -1,6 +1,6 @@
 prompt_types:
   parameter_extraction:
-    base_prompt: prompts/base/qsp_parameter_extraction_prompt.md
+    base_prompt: prompts/qsp_parameter_extraction_prompt.md
     template: templates/parameter_metadata_template.yaml
     examples:
       - templates/examples/k_ECM_fib_sec_example.yaml
@@ -22,7 +22,7 @@ prompt_types:
         description: "Mathematical role and biological context"
 
   metadata_conversion:
-    base_prompt: prompts/base/metadata_conversion_template.md
+    base_prompt: prompts/metadata_conversion_template.md
     template: templates/parameter_metadata_template.yaml
     placeholders:
       - name: TEMPLATE
@@ -33,14 +33,14 @@ prompt_types:
         description: "Old format metadata to convert"
 
   parameter_checklist:
-    base_prompt: prompts/base/parameter_checklist.md
+    base_prompt: prompts/parameter_checklist.md
     placeholders:
       - name: DOCUMENTATION
         source: runtime
         description: "Parameter documentation to review"
 
   prior_metadata:
-    base_prompt: prompts/base/prior_metadata_prompt.md
+    base_prompt: prompts/prior_metadata_prompt.md
     template: templates/prior_metadata_template.yaml
     placeholders:
       - name: TEMPLATE
@@ -54,7 +54,7 @@ prompt_types:
         description: "Information about studies to be pooled"
 
   parameter_definition:
-    base_prompt: prompts/base/parameter_definition_prompt.md
+    base_prompt: prompts/parameter_definition_prompt.md
     template: templates/parameter_definition_template.yaml
     placeholders:
       - name: TEMPLATE
