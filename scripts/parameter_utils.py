@@ -42,12 +42,12 @@ def load_inputs(params_path: Path, reactions_path: Path, template_path: Path = N
     need_rxns = {"Parameter", "Reaction", "ReactionRate", "Rule", "RuleType", "OtherParameters", "OtherSpeciesWithNotes"}
     miss_p = need_params - set(params_df.columns)
     miss_r = need_rxns - set(reactions_df.columns)
-    
+
     if miss_p:
         raise ValueError(f"Parameters CSV missing columns: {sorted(miss_p)}")
     if miss_r:
         raise ValueError(f"Reactions CSV missing columns: {sorted(miss_r)}")
-        
+
     return params_df, reactions_df, template_text
 
 
@@ -249,3 +249,83 @@ def build_model_context(param_name: str, rxns: pd.DataFrame, param_info: Dict[st
     # Return just the mathematical context without biological priority guidelines
     header = "Mathematical role and biological context for this parameter based on the model:\n"
     return header + "\n".join(bullets)
+
+
+def collect_existing_studies(cancer_type: str, parameter_name: str,
+                           parameter_storage_dir: Path = None) -> str:
+    """
+    Collect information about existing studies for a given parameter.
+
+    Args:
+        cancer_type: Cancer type for the parameter
+        parameter_name: Name of the parameter
+        parameter_storage_dir: Path to parameter storage directory (defaults to ../qsp-parameter-storage)
+
+    Returns:
+        Formatted string describing existing studies, or empty string if none exist
+    """
+    import yaml
+
+    if parameter_storage_dir is None:
+        # Default to sibling directory
+        parameter_storage_dir = Path(__file__).parent.parent.parent / "qsp-parameter-storage"
+
+    # Look for existing study YAMLs in to-review directory
+    study_dir = parameter_storage_dir / "to-review" / cancer_type / parameter_name
+
+    if not study_dir.exists():
+        return ""
+
+    # Find all YAML files (excluding prior_metadata.yaml)
+    yaml_files = [f for f in study_dir.glob("*.yaml")
+                  if f.name != "prior_metadata.yaml"]
+
+    if not yaml_files:
+        return ""
+
+    # Collect study information
+    existing_studies = []
+
+    for yaml_file in sorted(yaml_files):
+        try:
+            with open(yaml_file, 'r', encoding='utf-8') as f:
+                study_data = yaml.safe_load(f)
+
+            if not study_data:
+                continue
+
+            study_id = yaml_file.stem
+            study_info = f"### Study: {study_id}\n"
+
+            # Extract study overview
+            if 'study_overview' in study_data:
+                overview = study_data['study_overview'].strip()
+                # Truncate if too long
+                if len(overview) > 500:
+                    overview = overview[:497] + "..."
+                study_info += f"**Overview:** {overview}\n\n"
+
+            # Extract sources
+            if 'sources' in study_data and study_data['sources']:
+                study_info += "**Sources already extracted from:**\n"
+                for source_key, source_data in study_data['sources'].items():
+                    if isinstance(source_data, dict):
+                        citation = source_data.get('citation', source_key)
+                        study_info += f"- {citation}\n"
+                study_info += "\n"
+
+            existing_studies.append(study_info)
+
+        except Exception as e:
+            print(f"Warning: Could not process {yaml_file}: {e}")
+            continue
+
+    if not existing_studies:
+        return ""
+
+    # Format the complete section
+    header = "\n## Existing Studies for This Parameter\n\n"
+    header += "**IMPORTANT:** The following studies have already been extracted for this parameter. "
+    header += "DO NOT re-extract data from these sources. Instead, find NEW studies not listed below.\n\n"
+
+    return header + "\n".join(existing_studies)
