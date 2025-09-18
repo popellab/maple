@@ -86,7 +86,7 @@ def main():
             # Parse custom_id and determine directory structure
             parts = custom_id.split('_')
             
-            # Handle parameter definitions vs regular parameter extractions
+            # Handle different batch types based on custom_id prefix
             if parts[0] == "defn":
                 # Parameter definition: defn_CANCER_TYPE_PARAMETER_NAME_INDEX
                 cancer_type = parts[1]
@@ -94,8 +94,15 @@ def main():
                 # Put in parameter-definitions directory
                 param_dir = target_project_path / "parameter-definitions" / cancer_type / parameter_name
                 filename_default = "definition.yaml"
+            elif parts[0] == "quick":
+                # Quick estimate: quick_CANCER_TYPE_PARAMETER_NAME_INDEX
+                cancer_type = parts[1]
+                parameter_name = '_'.join(parts[2:-1])  # Everything between cancer_type and index
+                # Put in to-review/quick-estimates directory
+                param_dir = target_project_path / "to-review" / "quick-estimates" / cancer_type / parameter_name
+                filename_default = "quick_estimate.yaml"
             else:
-                # Regular parameter extraction: CANCER_TYPE_PARAMETER_NAME_INDEX  
+                # Regular parameter extraction: CANCER_TYPE_PARAMETER_NAME_INDEX
                 cancer_type = parts[0]
                 parameter_name = '_'.join(parts[1:-1])  # Everything except first and last
                 # Put in to-review directory
