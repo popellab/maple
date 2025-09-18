@@ -1,0 +1,31 @@
+# Quick ballpark estimate for parameter
+parameter_estimate:
+  # The ballpark numerical value for this parameter
+  value: NUMERIC_VALUE
+
+  # Plausible range for this parameter [min, max]
+  range: [MIN_VALUE, MAX_VALUE]
+
+  # Units for the parameter value
+  units: "UNITS_STRING"
+
+  # Your confidence in this estimate (High/Medium/Low)
+  confidence_level: "CONFIDENCE_LEVEL"
+
+  # Brief explanation of the estimate and key assumptions
+  justification: |
+    Brief explanation of how this estimate was derived, what source(s) were used,
+    and any key assumptions or limitations. Keep this concise but informative.
+
+# The primary source for this estimate
+source:
+  citation: "FULL_CITATION"
+  doi_or_url: "DOI_OR_URL_OR_NA"
+  location: "Figure/Table/Page where value was found"
+  text_snippet: "Exact text or data point that supports this estimate"
+
+# Important caveats or limitations of this estimate
+limitations: |
+  - Key limitation 1 (e.g., species difference, measurement method, etc.)
+  - Key limitation 2 (e.g., limited sample size, indirect measurement, etc.)
+  - Any other important caveats that affect the reliability of this estimate
