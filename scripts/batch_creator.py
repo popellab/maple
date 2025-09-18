@@ -192,58 +192,62 @@ class ParameterBatchCreator(BatchCreator):
     def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
         """
         Process parameter extraction inputs and generate batch requests using stored parameter definitions.
-        
+
         Args:
             input_csv: CSV file with cancer_type and parameter_name columns
             parameter_storage_dir: Optional path to parameter storage directory
-            
+
         Returns:
             List of batch request dictionaries
         """
         import csv
-        from parameter_utils import render_parameter_to_search
-        
+        from parameter_utils import render_parameter_to_search, collect_existing_studies
+
         # Process CSV and create requests
         requests = []
         with open(input_csv, 'r', encoding='utf-8') as f:
             for i, row in enumerate(csv.DictReader(f)):
                 cancer_type = row['cancer_type']
                 parameter_name = row['parameter_name']
-                
+
                 # Load parameter definition (required for extraction)
                 param_def = self.load_parameter_definition(cancer_type, parameter_name, parameter_storage_dir)
                 if not param_def:
                     print(f"Warning: No parameter definition found for {cancer_type}/{parameter_name}, skipping")
                     continue
-                
+
                 # Extract all needed info from parameter definition
                 name = param_def.get("parameter_name", parameter_name)
                 units = param_def.get("parameter_units", "")
                 definition = param_def.get("parameter_definition", "")
                 canonical_scale = param_def.get("canonical_scale", "NOT_PROVIDED")
                 mathematical_role = param_def.get("mathematical_role", "")
-                
+
                 # Build parameter info block with cancer type
                 parameter_block = render_parameter_to_search(name, units, definition, cancer_type)
-                
+
                 # Use mathematical role as model context
                 model_context_block = mathematical_role
-                
+
+                # Collect existing studies for this parameter
+                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
+
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
+                    "EXISTING_STUDIES": existing_studies,
                     "PARAMETER_INFO": parameter_block,
                     "CANONICAL_SCALE": canonical_scale,
                     "MODEL_CONTEXT": model_context_block
                 }
-                
+
                 # Assemble the prompt
                 prompt = self.prompt_assembler.assemble_prompt("parameter_extraction", runtime_data)
-                
+
                 # Create batch request
                 custom_id = f"{cancer_type}_{parameter_name}_{i}"
                 request = self.create_request(custom_id, prompt)
                 requests.append(request)
-        
+
         return requests
 
 
@@ -407,6 +411,112 @@ class PoolingMetadataBatchCreator(BatchCreator):
         return requests
 
 
+class QuickEstimateBatchCreator(BatchCreator):
+    """
+    Creates batch requests for quick parameter estimation from scientific literature.
+
+    Processes CSV input with cancer_type and parameter_name columns, generating
+    simplified prompts that ask for ballpark estimates with sources rather than
+    comprehensive metadata extraction.
+    """
+
+    def get_batch_type(self) -> str:
+        return "quick_estimate"
+
+    def load_parameter_definition(self, cancer_type: str, parameter_name: str,
+                                parameter_storage_dir: Path = None) -> Optional[Dict[str, Any]]:
+        """
+        Load parameter definition from storage directory.
+
+        Args:
+            cancer_type: Cancer type for the parameter
+            parameter_name: Name of the parameter
+            parameter_storage_dir: Path to parameter storage directory
+
+        Returns:
+            Parameter definition dict or None if not found
+        """
+        if parameter_storage_dir is None:
+            # Default to sibling directory
+            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+
+        definition_path = (parameter_storage_dir / "parameter-definitions" /
+                          cancer_type / parameter_name / "definition.yaml")
+
+        if not definition_path.exists():
+            print(f"Warning: Parameter definition not found at {definition_path}")
+            return None
+
+        try:
+            import yaml
+            with open(definition_path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            print(f"Warning: Could not load parameter definition from {definition_path}: {e}")
+            return None
+
+    def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
+        """
+        Process quick estimation inputs and generate batch requests using stored parameter definitions.
+
+        Args:
+            input_csv: CSV file with cancer_type and parameter_name columns
+            parameter_storage_dir: Optional path to parameter storage directory
+
+        Returns:
+            List of batch request dictionaries
+        """
+        import csv
+        from parameter_utils import render_parameter_to_search, collect_existing_studies
+
+        # Process CSV and create requests
+        requests = []
+        with open(input_csv, 'r', encoding='utf-8') as f:
+            for i, row in enumerate(csv.DictReader(f)):
+                cancer_type = row['cancer_type']
+                parameter_name = row['parameter_name']
+
+                # Load parameter definition (required for extraction)
+                param_def = self.load_parameter_definition(cancer_type, parameter_name, parameter_storage_dir)
+                if not param_def:
+                    print(f"Warning: No parameter definition found for {cancer_type}/{parameter_name}, skipping")
+                    continue
+
+                # Extract all needed info from parameter definition
+                name = param_def.get("parameter_name", parameter_name)
+                units = param_def.get("parameter_units", "")
+                definition = param_def.get("parameter_definition", "")
+                canonical_scale = param_def.get("canonical_scale", "NOT_PROVIDED")
+                mathematical_role = param_def.get("mathematical_role", "")
+
+                # Build parameter info block with cancer type
+                parameter_block = render_parameter_to_search(name, units, definition, cancer_type)
+
+                # Use mathematical role as model context
+                model_context_block = mathematical_role
+
+                # Collect existing studies for this parameter
+                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
+
+                # Prepare runtime data for prompt assembly
+                runtime_data = {
+                    "EXISTING_STUDIES": existing_studies,
+                    "PARAMETER_INFO": parameter_block,
+                    "CANONICAL_SCALE": canonical_scale,
+                    "MODEL_CONTEXT": model_context_block
+                }
+
+                # Assemble the prompt using the quick_estimation prompt type
+                prompt = self.prompt_assembler.assemble_prompt("quick_estimation", runtime_data)
+
+                # Create batch request
+                custom_id = f"quick_{cancer_type}_{parameter_name}_{i}"
+                request = self.create_request(custom_id, prompt, reasoning_effort="medium")
+                requests.append(request)
+
+        return requests
+
+
 class ParameterDefinitionBatchCreator(BatchCreator):
     """
     Creates batch requests for parameter definition generation.
@@ -418,68 +528,316 @@ class ParameterDefinitionBatchCreator(BatchCreator):
     def get_batch_type(self) -> str:
         return "parameter_definition"
     
-    def process(self, input_csv: Path, params_csv: Path, reactions_csv: Path) -> List[Dict[str, Any]]:
+    def process(self, input_csv: Path, params_csv: Path, reactions_csv: Path,
+                skip_existing: bool = True) -> List[Dict[str, Any]]:
         """
         Process parameter definition inputs and generate batch requests.
-        
+
         Args:
             input_csv: CSV file with cancer_type and parameter_name columns
-            params_csv: CSV file with parameter definitions
+            params_csv: CSV file with parameter names/units (simbio_parameters.csv)
             reactions_csv: CSV file with reaction/model context
-            
+            skip_existing: If True, skip parameters that already have definitions (default: True)
+
         Returns:
             List of batch request dictionaries
         """
         import csv
-        from parameter_utils import (
-            load_inputs, index_param_info, render_parameter_to_search,
-            build_model_context
-        )
-        
-        # Load parameter and reaction data
-        params_df, reactions_df, _ = load_inputs(
-            Path(params_csv), Path(reactions_csv), None
-        )
-        param_info = index_param_info(params_df)
-        
+        import pandas as pd
+        from parameter_utils import render_parameter_to_search, build_model_context, index_param_info
+
+        # Load simbio parameters for name/units
+        simbio_df = pd.read_csv(params_csv)
+
+        # Load parameter definitions
+        definitions_path = self.base_dir / "data" / "parameter_definitions.csv"
+        if definitions_path.exists():
+            definitions_df = pd.read_csv(definitions_path)
+        else:
+            print(f"Warning: Parameter definitions file not found at {definitions_path}")
+            definitions_df = pd.DataFrame(columns=['cancer_type', 'parameter_name', 'definition'])
+
+        # Load reactions for model context
+        reactions_df = pd.read_csv(reactions_csv)
+
+        # Create parameter info index for model context building
+        # Simple index just with name->units mapping since we don't have full definitions yet
+        param_info = {}
+        for _, row in simbio_df.iterrows():
+            name = str(row.get("Name", "")).strip()
+            units = str(row.get("Units", "")).strip()
+            param_info[name] = {
+                "Units": units,
+                "Definition": "",
+                "References": ""
+            }
+
+        # Check parameter storage directory for existing definitions
+        parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+
         # Process CSV and create requests
         requests = []
+        skipped_count = 0
         with open(input_csv, 'r', encoding='utf-8') as f:
             for i, row in enumerate(csv.DictReader(f)):
                 cancer_type = row['cancer_type']
                 parameter_name = row['parameter_name']
-                
-                # Get parameter info
-                param_matches = params_df[params_df["Name"].astype(str) == parameter_name]
-                if param_matches.empty:
-                    print(f"Warning: Parameter '{parameter_name}' not found in params_df, skipping")
-                    print(f"Available parameters: {sorted(params_df['Name'].astype(str).tolist())}")
+
+                # Check if definition already exists
+                if skip_existing:
+                    definition_path = (parameter_storage_dir / "parameter-definitions" /
+                                     cancer_type / parameter_name / "definition.yaml")
+                    if definition_path.exists():
+                        print(f"Skipping {cancer_type}/{parameter_name} - definition already exists")
+                        skipped_count += 1
+                        continue
+
+                # Get parameter name/units from simbio_parameters
+                simbio_matches = simbio_df[simbio_df["Name"].astype(str) == parameter_name]
+                if simbio_matches.empty:
+                    print(f"Warning: Parameter '{parameter_name}' not found in simbio_parameters.csv, skipping")
                     continue
-                
-                param_row = param_matches.iloc[0]
-                name = str(param_row.get("Name", "")).strip()
-                units = str(param_row.get("Units", "")).strip()
-                definition = str(param_row.get("Definition", "")).strip()
-                
+
+                simbio_row = simbio_matches.iloc[0]
+                name = str(simbio_row.get("Name", "")).strip()
+                units = str(simbio_row.get("Units", "")).strip()
+
+                # Get definition from parameter_definitions.csv
+                # First try exact cancer_type match
+                def_matches = definitions_df[
+                    (definitions_df["cancer_type"].astype(str) == cancer_type) &
+                    (definitions_df["parameter_name"].astype(str) == parameter_name)
+                ]
+
+                # If no exact match, try any cancer type for this parameter
+                if def_matches.empty:
+                    def_matches = definitions_df[
+                        definitions_df["parameter_name"].astype(str) == parameter_name
+                    ]
+
+                if def_matches.empty:
+                    # Check if Notes column exists in simbio_parameters and use as fallback
+                    notes = str(simbio_row.get("Notes", "")).strip()
+                    if notes:
+                        print(f"Info: Using Notes from simbio_parameters.csv as definition for '{parameter_name}' (not found in parameter_definitions.csv)")
+                        definition = notes
+                    else:
+                        print(f"Warning: No definition found for parameter '{parameter_name}' in either parameter_definitions.csv or simbio_parameters Notes column, skipping")
+                        continue
+                else:
+                    definition = str(def_matches.iloc[0].get("definition", "")).strip()
+                    if len(def_matches) > 1 and definitions_df[
+                        (definitions_df["cancer_type"].astype(str) == cancer_type) &
+                        (definitions_df["parameter_name"].astype(str) == parameter_name)
+                    ].empty:
+                        # Used fallback definition from different cancer type
+                        fallback_cancer = str(def_matches.iloc[0].get("cancer_type", ""))
+                        print(f"Info: Using definition for '{parameter_name}' from {fallback_cancer} (no {cancer_type}-specific definition found)")
+
                 # Build parameter info block with cancer type
                 parameter_block = render_parameter_to_search(name, units, definition, cancer_type)
-                
+
                 # Build model context
                 rxns = reactions_df[reactions_df["Parameter"].astype(str) == name]
                 model_context_block = build_model_context(name, rxns, param_info)
-                
+
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
                     "PARAMETER_INFO": parameter_block,
                     "MODEL_CONTEXT": model_context_block
                 }
-                
+
                 # Assemble the prompt
                 prompt = self.prompt_assembler.assemble_prompt("parameter_definition", runtime_data)
-                
+
                 # Create batch request
                 custom_id = f"defn_{cancer_type}_{parameter_name}_{i}"
                 request = self.create_request(custom_id, prompt)
                 requests.append(request)
-        
+
+        # Print summary
+        if skip_existing and skipped_count > 0:
+            print(f"Skipped {skipped_count} parameters with existing definitions")
+        print(f"Created {len(requests)} parameter definition requests")
+
+        return requests
+
+
+class ParameterChecklistBatchCreator(BatchCreator):
+    """
+    Creates batch requests for parameter checklist auditing.
+
+    Combines parameter definitions (for context) with study metadata YAMLs (for auditing)
+    to generate checklist prompts for quality assurance of parameter extractions.
+    """
+
+    def get_batch_type(self) -> str:
+        return "checklist"
+
+    def load_parameter_definition(self, cancer_type: str, parameter_name: str,
+                                parameter_storage_dir: Path = None) -> Optional[str]:
+        """
+        Load parameter definition YAML as text for context.
+
+        Args:
+            cancer_type: Cancer type for the parameter
+            parameter_name: Name of the parameter
+            parameter_storage_dir: Path to parameter storage directory
+
+        Returns:
+            Parameter definition YAML as string or None if not found
+        """
+        if parameter_storage_dir is None:
+            # Default to sibling directory
+            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+
+        definition_path = (parameter_storage_dir / "parameter-definitions" /
+                          cancer_type / parameter_name / "definition.yaml")
+
+        if not definition_path.exists():
+            print(f"Warning: Parameter definition not found at {definition_path}")
+            return None
+
+        try:
+            with open(definition_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            print(f"Warning: Could not load parameter definition from {definition_path}: {e}")
+            return None
+
+    def load_study_yaml(self, yaml_path: Path) -> Optional[str]:
+        """
+        Load study YAML file as text for auditing.
+
+        Args:
+            yaml_path: Path to the study YAML file
+
+        Returns:
+            YAML content as string or None if error
+        """
+        try:
+            with open(yaml_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            print(f"Warning: Could not load study YAML from {yaml_path}: {e}")
+            return None
+
+    def load_checklist_prompt_template(self) -> str:
+        """
+        Load the parameter checklist prompt template.
+
+        Returns:
+            Checklist prompt template with placeholders
+        """
+        checklist_path = self.base_dir / "prompts" / "parameter_checklist.md"
+        with open(checklist_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    def create_checklist_prompt(self, parameter_definition: str, study_yaml: str) -> str:
+        """
+        Create checklist prompt by filling placeholders.
+
+        Args:
+            parameter_definition: Parameter definition YAML as string
+            study_yaml: Study metadata YAML as string
+
+        Returns:
+            Complete checklist prompt
+        """
+        template = self.load_checklist_prompt_template()
+
+        # Fill placeholders
+        prompt = template.replace("{{PARAMETER_DEFINITION}}", parameter_definition)
+        prompt = prompt.replace("{{DOCUMENTATION}}", study_yaml)
+
+        return prompt
+
+    def process(self, input_csv: Path, parameter_storage_dir: Path = None,
+                to_review_dir: Path = None) -> List[Dict[str, Any]]:
+        """
+        Process checklist inputs and generate batch requests.
+
+        Args:
+            input_csv: CSV file with cancer_type and parameter_name columns
+            parameter_storage_dir: Optional path to parameter storage directory
+            to_review_dir: Optional path to to-review directory
+
+        Returns:
+            List of batch request dictionaries
+        """
+        import csv
+
+        # Set default directories
+        if parameter_storage_dir is None:
+            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+        if to_review_dir is None:
+            # Use parameter storage to-review first (standard workflow), then local as fallback
+            param_storage_to_review = parameter_storage_dir / "to-review"
+            local_to_review = self.base_dir / "to-review"
+            if param_storage_to_review.exists():
+                to_review_dir = param_storage_to_review
+            elif local_to_review.exists():
+                to_review_dir = local_to_review
+            else:
+                # Default to parameter storage path even if it doesn't exist (will give clear error)
+                to_review_dir = param_storage_to_review
+
+        requests = []
+
+        with open(input_csv, 'r', encoding='utf-8') as f:
+            for i, row in enumerate(csv.DictReader(f)):
+                cancer_type = row['cancer_type']
+                parameter_name = row['parameter_name']
+
+                # Load parameter definition for context
+                param_definition = self.load_parameter_definition(
+                    cancer_type, parameter_name, parameter_storage_dir
+                )
+                if not param_definition:
+                    print(f"Warning: No parameter definition found for {cancer_type}/{parameter_name}, skipping")
+                    continue
+
+                # Find study YAML files to audit
+                study_dir = to_review_dir / cancer_type / parameter_name
+                if not study_dir.exists():
+                    print(f"Warning: Study directory not found: {study_dir}, skipping")
+                    continue
+
+                # Find YAML files (excluding prior_metadata.yaml)
+                yaml_files = [f for f in study_dir.glob("*.yaml")
+                             if f.name != "prior_metadata.yaml"]
+
+                if not yaml_files:
+                    print(f"Warning: No study YAML files found in {study_dir}, skipping")
+                    continue
+
+                # Create request for each study YAML
+                for j, yaml_file in enumerate(yaml_files):
+                    study_yaml = self.load_study_yaml(yaml_file)
+                    if not study_yaml:
+                        continue
+
+                    # Create checklist prompt
+                    prompt = self.create_checklist_prompt(param_definition, study_yaml)
+
+                    # Create batch request
+                    study_id = yaml_file.stem
+                    custom_id = f"checklist_{cancer_type}_{parameter_name}_{study_id}_{i}_{j}"
+
+                    request = self.create_request(
+                        custom_id,
+                        prompt,
+                        reasoning_effort="high",
+                        metadata={
+                            "cancer_type": cancer_type,
+                            "parameter_name": parameter_name,
+                            "study_id": study_id,
+                            "yaml_file": str(yaml_file),
+                            "relative_path": str(yaml_file.relative_to(to_review_dir))
+                        }
+                    )
+
+                    requests.append(request)
+                    print(f"  Created checklist request for {cancer_type}/{parameter_name}/{study_id}")
+
         return requests
