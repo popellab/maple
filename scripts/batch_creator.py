@@ -841,3 +841,100 @@ class ParameterChecklistBatchCreator(BatchCreator):
                     print(f"  Created checklist request for {cancer_type}/{parameter_name}/{study_id}")
 
         return requests
+
+
+class ConstraintValidationBatchCreator(BatchCreator):
+    """
+    Creates batch requests for constraint validation test generation from biological expectations.
+
+    Processes CSV input with constraint descriptions or biological expectations, generating
+    prompts that create MATLAB unit test-style constraint validation definitions.
+    """
+
+    def get_batch_type(self) -> str:
+        return "constraint_validation"
+
+    def process(self, input_csv: Path, model_context_csv: Path = None) -> List[Dict[str, Any]]:
+        """
+        Process constraint validation inputs and generate batch requests.
+
+        Args:
+            input_csv: CSV file with constraint_id and constraint_description columns
+            model_context_csv: Optional CSV file with model structure information
+
+        Returns:
+            List of batch request dictionaries
+        """
+        import csv
+        import pandas as pd
+
+        # Load model context if provided
+        model_context_info = {}
+        if model_context_csv and Path(model_context_csv).exists():
+            model_df = pd.read_csv(model_context_csv)
+            # Create a lookup for model variables and their descriptions
+            for _, row in model_df.iterrows():
+                var_name = str(row.get("Variable", "")).strip()
+                if var_name:
+                    model_context_info[var_name] = {
+                        "description": str(row.get("Description", "")).strip(),
+                        "units": str(row.get("Units", "")).strip(),
+                        "compartment": str(row.get("Compartment", "")).strip()
+                    }
+
+        # Process CSV and create requests
+        requests = []
+        with open(input_csv, 'r', encoding='utf-8') as f:
+            for i, row in enumerate(csv.DictReader(f)):
+                constraint_id = row.get('constraint_id', f'constraint_{i}')
+                constraint_description = row.get('constraint_description', '')
+
+                if not constraint_description.strip():
+                    print(f"Warning: Empty constraint description for {constraint_id}, skipping")
+                    continue
+
+                # Build constraint info block
+                constraint_info = f"**Constraint ID:** {constraint_id}\n\n"
+                constraint_info += f"**Biological Expectation:**\n{constraint_description}"
+
+                # Add cancer type and parameter context if available
+                cancer_type = row.get('cancer_type', '')
+                parameter_context = row.get('parameter_context', '')
+                if cancer_type:
+                    constraint_info += f"\n\n**Cancer Type Context:** {cancer_type}"
+                if parameter_context:
+                    constraint_info += f"\n\n**Parameter Context:** {parameter_context}"
+
+                # Build model context block
+                model_context_block = "**Model Structure Information:**\n\n"
+                if model_context_info:
+                    model_context_block += "Available model variables and their descriptions:\n\n"
+                    for var_name, info in model_context_info.items():
+                        model_context_block += f"- `{var_name}`: {info['description']}"
+                        if info['units']:
+                            model_context_block += f" (units: {info['units']})"
+                        if info['compartment']:
+                            model_context_block += f" [compartment: {info['compartment']}]"
+                        model_context_block += "\n"
+                else:
+                    model_context_block += "No specific model context provided. Use standard SimBiology variable naming conventions."
+
+                # Collect existing constraints (placeholder for now)
+                existing_constraints = "No existing constraint validation tests provided for comparison."
+
+                # Prepare runtime data for prompt assembly
+                runtime_data = {
+                    "EXISTING_CONSTRAINTS": existing_constraints,
+                    "CONSTRAINT_INFO": constraint_info,
+                    "MODEL_CONTEXT": model_context_block
+                }
+
+                # Assemble the prompt
+                prompt = self.prompt_assembler.assemble_prompt("constraint_validation", runtime_data)
+
+                # Create batch request
+                custom_id = f"constraint_{constraint_id}_{i}"
+                request = self.create_request(custom_id, prompt, reasoning_effort="high")
+                requests.append(request)
+
+        return requests

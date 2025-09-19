@@ -90,6 +90,28 @@ prompt_types:
         source: runtime
         description: "Mathematical role and biological context"
 
+  constraint_validation:
+    base_prompt: prompts/constraint_validation_prompt.md
+    template: templates/constraint_validation_template.yaml
+    examples:
+      - templates/examples/constraint_validation_example.yaml
+    placeholders:
+      - name: EXISTING_CONSTRAINTS
+        source: runtime
+        description: "Information about existing constraint validation tests for similar biological questions"
+      - name: TEMPLATE
+        source: template_file
+        description: "Insert the constraint validation template"
+      - name: EXAMPLES
+        source: example_files
+        description: "Insert example filled constraint validation templates"
+      - name: CONSTRAINT_INFO
+        source: runtime
+        description: "Biological expectation or clinical constraint to be formalized"
+      - name: MODEL_CONTEXT
+        source: runtime
+        description: "Model structure and relevant variables for constraint implementation"
+
 # Configuration for how to handle different placeholder sources
 placeholder_sources:
   template_file:

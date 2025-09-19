@@ -1,0 +1,163 @@
+# Test statistic definition
+test_statistic:
+  # Name and mathematical definition
+  name: "TEST_STATISTIC_NAME"
+  description: |
+    Brief description of what this test statistic measures biologically and how it should be interpreted.
+
+  # Mathematical definition of the test statistic
+  definition: |
+    Mathematical definition of the test statistic:
+    [MATHEMATICAL_FORMULA_OR_DESCRIPTION]
+
+  # Model output extraction specification
+  model_output:
+    formula: "MODEL_SPECIES_NAME"  # e.g., "V_T.TumorVolume", "V_P.T_eff", "V_T.TumorVolume / V_T.TotalVolume". Note this can be a derived quantity from the model as well.
+    # Time window for test statistic evaluation (relative to scenario time window)
+    time_window: TIME_SPECIFICATION  # Single timepoint (90), range [0, 90], or list [30, 60, 90] - days relative to scenario start
+
+# Scenario specification following schedule_dosing parameterization
+scenario:
+  # Drug list and dosing parameters (following QSPIO_PDAC schedule_dosing format)
+  drugs: ["DRUG_NAME_1", "DRUG_NAME_2"]  # Valid drugs: nivolumab, atezolizumab, ipilimumab, pembrolizumab, entinostat, nabPaclitaxel, tremelimumab, GVAX, cabozantinib, aCD47
+
+  # Dosing parameters (drug_name + "_dose" and drug_name + "_schedule")
+  dosing_parameters:
+    drug_name_dose: NUMERIC_VALUE  # Units depend on drug (mg/kg, mg, cells, etc.)
+    drug_name_schedule: [START_DAY, INTERVAL_DAYS, NUM_DOSES]  # [start, interval, repeat] format
+    # Add additional drugs as needed:
+    # other_drug_dose: NUMERIC_VALUE
+    # other_drug_schedule: [START_DAY, INTERVAL_DAYS, NUM_DOSES]
+
+  # Patient parameters
+  patient_weight: NUMERIC_VALUE  # kg (default: 80)
+  patient_bsa: NUMERIC_VALUE_OR_NULL  # m² (default: 1.9, optional - body surface area for drugs dosed per m² like chemotherapy)
+
+  # Simulation timeframe
+  time_window: [START_TIME, END_TIME]  # days, e.g., [0, 365] (should encompass test statistic time window)
+
+# Brief narrative summary of the biological expectation and experimental basis
+study_overview: |
+  This constraint quantifies the expected distribution of [TEST_STATISTIC_NAME] under [DOSING_SCENARIO] based on [MEASUREMENT_APPROACH]. The test statistic captures [BIOLOGICAL_INTERPRETATION] and was derived from [DATA_TYPE - e.g., time-course, endpoint, AUC] data using [DERIVATION_METHOD] (SOURCE_TAG).
+
+# Essential experimental details needed to understand the test statistic derivation
+technical_details: |
+  **Measurement:** [ASSAY_TYPE] using [DETECTION_METHOD] (SOURCE_TAG)
+  **Study design:** [SAMPLE_SIZE] samples, [REPLICATION_DESCRIPTION] (SOURCE_TAG)
+  **Data source:** [HOW_DATA_EXTRACTED - digitized/table/supplemental] (SOURCE_TAG)
+  **Test statistic definition:** [MATHEMATICAL_DEFINITION_OF_STATISTIC] (SOURCE_TAG)
+  **Key assumptions:** [CRITICAL_ASSUMPTIONS_FOR_STATISTIC_DERIVATION] (SOURCE_TAG)
+
+# Expected distribution parameters from literature (calculated from MC samples)
+expected_distribution:
+  mean: NUMERIC_VALUE  # Mean of the test statistic
+  variance: NUMERIC_VALUE  # Variance of the test statistic
+  ci95: [NUMERIC_LOWER, NUMERIC_UPPER]  # 95% confidence interval
+
+# R code for uncertainty quantification of the test statistic
+# REQUIREMENTS:
+#   - Create vector 'mc_draws' with >= 2000 samples using bootstrap/resampling
+#   - Calculate and populate the 3 required distribution fields: mean, variance, ci95
+derivation_code_r: |
+  ```r
+  library(boot)
+
+  # Example: Peak concentration test statistic from PK time-course data
+
+  # 1) Define raw measurements with uncertainty ---------------------------------
+  # Time-course concentration data (representative example)
+  conc_data <- data.frame(
+    time_hours = c(0.5, 1, 2, 4, 8, 12, 24),  # post-dose timepoints
+    concentration = c(45.2, 52.1, 48.3, 42.8, 32.4, 22.6, 8.2),  # ng/mL
+    cv_percent = c(8.5, 6.2, 7.1, 9.3, 12.1, 15.8, 25.0)  # measurement CV%
+  )
+
+  # 2) Define test statistic estimator with uncertainty propagation ------------
+  peak_conc_estimator <- function(data, indices) {
+    # Resample time-course data
+    d <- data[indices, , drop = FALSE]
+
+    # Add measurement error to each concentration (CV-based uncertainty)
+    conc_with_error <- sapply(1:nrow(d), function(i) {
+      cv <- d$cv_percent[i] / 100
+      sd_conc <- d$concentration[i] * cv
+      # Assumption: Measurement error is log-normally distributed
+      rlnorm(1, log(d$concentration[i]), cv)
+    })
+
+    # Calculate test statistic: peak concentration (Cmax)
+    # Alternative statistics: AUC (trapz), time-to-peak, fold-change, etc.
+    peak_conc <- max(conc_with_error, na.rm = TRUE)
+
+    return(peak_conc)
+  }
+
+  # 3) Run bootstrap with uncertainty propagation ---------------------------
+  set.seed(123)
+  B <- 5000
+  boot_out <- boot(data = conc_data, statistic = peak_conc_estimator, R = B)
+
+  # Extract replicates
+  mc_draws <- boot_out$t[,1]
+
+  # Remove any extreme outliers or invalid values
+  mc_draws <- mc_draws[!is.na(mc_draws) & mc_draws > 0]
+  q999 <- quantile(mc_draws, 0.999, na.rm = TRUE)
+  mc_draws <- mc_draws[mc_draws <= q999]
+
+  # Required summary statistics
+  mean_stat <- mean(mc_draws)
+  variance_stat <- var(mc_draws)
+
+  # BCa 95% CI
+  bca_ci <- boot.ci(boot_out, type = "bca", conf = 0.95)
+  ci95_stat <- c(bca_ci$bca[4], bca_ci$bca[5])  # [lower, upper]
+
+  # Result: mc_draws contains test statistic samples with all uncertainty propagated
+  ```
+
+# Validation context and quality assessment
+validation_weights:
+  # Assign fixed weights using rubric tables. Provide 1-2 sentence justification for each.
+  species_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use species rubric: 1.00=Human, 0.85=NHP, 0.65=Mouse, 0.45=Rat, 0.25=Non-mammal, 0.10=Irrelevant
+    justification: "[Species and why it gets this specific rubric value]"
+  system_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use system rubric: 1.00=In vivo, 0.85=Ex vivo, 0.65=Organoid, 0.45=2D primary, 0.25=Cell line, 0.10=Biochemical
+    justification: "[System type and why it gets this specific rubric value]"
+  overall_confidence:
+    value: RUBRIC_VALUE_0_TO_1  # Use confidence rubric: 1.00=Rigorous, 0.85=Good, 0.65=Adequate, 0.45=Weak, 0.25=Major concerns, 0.10=Minimal
+    justification: "[Study quality and why it gets this specific rubric value]"
+  indication_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use indication rubric: 1.00=Exact match, 0.85=Close subtype, 0.65=Adjacent tumor, 0.45=Distant, 0.25=Non-tumor, 0.10=Irrelevant
+    justification: "[Indication relevance and why it gets this specific rubric value]"
+  regimen_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use regimen rubric: 1.00=Exact, 0.85=Minor diffs, 0.65=Same MoA, 0.45=Partial relevance, 0.25=MoA related, 0.10=Non-representative
+    justification: "[Treatment similarity and why it gets this specific rubric value]"
+  biomarker_population_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use biomarker rubric: 1.00=Exact profile, 0.85=Close match, 0.65=Mixed population, 0.45=Mismatched, 0.25=Opposite, 0.10=No info
+    justification: "[Biomarker/population match and why it gets this specific rubric value]"
+  stage_burden_match:
+    value: RUBRIC_VALUE_0_TO_1_OR_NULL  # Use stage rubric: 1.00=Same stage, 0.85=Adjacent, 0.65=Earlier, 0.45=Very different, 0.25=Pre-malignant, 0.10=Not reported. Optional field.
+    justification: "[Stage/burden match and why it gets this specific rubric value, if relevant]"
+
+# Important limitations and their specific impact on test statistic reliability and validation weight
+key_study_limitations: |
+  - **Sample size/power:** [statistical limitations, small N, underpowered comparisons → increases test statistic uncertainty, may warrant lower validation weight] (SOURCE_TAG)
+  - **Measurement issues:** [assay limitations, detection limits, calibration problems → affects test statistic precision, consider downweighting if severe] (SOURCE_TAG)
+  - **Data extraction:** [digitization errors, missing data points, unit conversion uncertainties → introduces additional noise, impacts confidence in estimate] (SOURCE_TAG)
+  - **Biological context:** [species differences, system limitations, population mismatch → affects biological relevance, captured in species/system/population weights] (SOURCE_TAG)
+  - **Methodological concerns:** [key assumptions, model simplifications, potential biases → may systematically bias test statistic, consider exclusion if severe] (SOURCE_TAG)
+
+# Source citations with specific locations where test statistic data was found
+sources:
+  PRIMARY_KEY:
+    citation: "FULL_CITATION"
+    doi_or_url: "DOI_OR_URL_OR_NA"
+    figure_or_table: "Fig./Table/Page"
+    text_snippet: "Exact text line(s) where values came from"
+  SECONDARY_KEY:
+    citation: "FULL_CITATION"
+    doi_or_url: "DOI_OR_URL_OR_NA"
+    figure_or_table: "Fig./Table/Page"
+    text_snippet: "Exact text line(s)"
