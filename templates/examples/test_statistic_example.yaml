@@ -12,12 +12,6 @@ test_statistic:
 
     max(abs((sim_volume - ref_volume) / ref_volume)) at evaluation timepoints
 
-  # Model output extraction specification
-  model_output:
-    formula: "V_T.TumorVolume"  # Primary tumor volume compartment
-    # Time window for test statistic evaluation (relative to scenario time window)
-    time_window: [0, 60, 120, 180, 240]  # Specific evaluation timepoints matching reference data
-
 # Scenario specification following schedule_dosing parameterization
 scenario:
   # Drug list and dosing parameters (following QSPIO_PDAC schedule_dosing format)
@@ -34,6 +28,62 @@ scenario:
 
   # Simulation timeframe
   time_window: [0, 365]  # days - encompasses all evaluation timepoints
+
+  # Model output computation specification
+  model_output:
+    code: |
+      % Compute tumor volume envelope deviation using SimBiology's `select` function.
+      % This evaluates max deviation from ±10% envelope around reference trajectory.
+      %
+      % Inputs:
+      %   simData    - SimBiology SimData object (must log V_T.TumorVolume)
+      %   ref_data   - (optional) reference trajectory data; uses built-in if not provided
+      %
+      % Output:
+      %   max_deviation - maximum percentage deviation from envelope (unitless)
+      function max_deviation = compute_envelope_deviation(simData, ref_data)
+        % Reference trajectory timepoints and volumes
+        if nargin < 2 || isempty(ref_data)
+          ref_timepoints = [0, 60, 120, 180, 240]; % days
+          ref_volumes = [2.5, 3.1, 3.9, 4.2, 4.5]; % cm³
+        else
+          ref_timepoints = ref_data.time;
+          ref_volumes = ref_data.volume;
+        end
+
+        % Query for tumor volume in compartment V_T
+        query = {'Type','species', 'Name','TumorVolume', 'Compartment','V_T'};
+        [t, x, names] = select(simData, query);
+
+        if isempty(x)
+          error('compute_envelope_deviation:NoData', ...
+                'No data for V_T.TumorVolume. Ensure logging is enabled.');
+        end
+
+        sim_volumes = x(:,1);
+
+        % Interpolate simulated volumes at reference timepoints
+        sim_at_ref = interp1(t, sim_volumes, ref_timepoints, 'linear', 'extrap');
+
+        % Calculate ±10% envelope around reference
+        envelope_upper = ref_volumes * 1.1;
+        envelope_lower = ref_volumes * 0.9;
+
+        % Calculate deviations from envelope
+        deviations = zeros(size(ref_timepoints));
+        for i = 1:length(ref_timepoints)
+          if sim_at_ref(i) > envelope_upper(i)
+            deviations(i) = (sim_at_ref(i) - envelope_upper(i)) / ref_volumes(i);
+          elseif sim_at_ref(i) < envelope_lower(i)
+            deviations(i) = (envelope_lower(i) - sim_at_ref(i)) / ref_volumes(i);
+          else
+            deviations(i) = 0; % within envelope
+          end
+        end
+
+        % Return maximum deviation
+        max_deviation = max(abs(deviations));
+      end
 
 # Brief narrative summary of the biological expectation and experimental basis
 study_overview: |

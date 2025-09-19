@@ -843,23 +843,23 @@ class ParameterChecklistBatchCreator(BatchCreator):
         return requests
 
 
-class ConstraintValidationBatchCreator(BatchCreator):
+class TestStatisticBatchCreator(BatchCreator):
     """
-    Creates batch requests for constraint validation test generation from biological expectations.
+    Creates batch requests for test statistic generation from biological expectations.
 
-    Processes CSV input with constraint descriptions or biological expectations, generating
-    prompts that create MATLAB unit test-style constraint validation definitions.
+    Processes CSV input with test statistic descriptions and biological expectations, generating
+    prompts that create comprehensive test statistic definitions for QSP model validation.
     """
 
     def get_batch_type(self) -> str:
-        return "constraint_validation"
+        return "test_statistic"
 
     def process(self, input_csv: Path, model_context_csv: Path = None) -> List[Dict[str, Any]]:
         """
-        Process constraint validation inputs and generate batch requests.
+        Process test statistic inputs and generate batch requests.
 
         Args:
-            input_csv: CSV file with constraint_id and constraint_description columns
+            input_csv: CSV file with test_statistic_id and biological expectation columns
             model_context_csv: Optional CSV file with model structure information
 
         Returns:
@@ -886,29 +886,27 @@ class ConstraintValidationBatchCreator(BatchCreator):
         requests = []
         with open(input_csv, 'r', encoding='utf-8') as f:
             for i, row in enumerate(csv.DictReader(f)):
-                constraint_id = row.get('constraint_id', f'constraint_{i}')
-                constraint_description = row.get('constraint_description', '')
+                test_statistic_id = row.get('test_statistic_id', f'test_stat_{i}')
+                model_context = row.get('model_context', '')
+                scenario_context = row.get('scenario_context', '')
+                species_formula = row.get('species_formula', '')
 
-                if not constraint_description.strip():
-                    print(f"Warning: Empty constraint description for {constraint_id}, skipping")
+                if not model_context.strip():
+                    print(f"Warning: Empty model context for {test_statistic_id}, skipping")
                     continue
 
-                # Build constraint info block
-                constraint_info = f"**Constraint ID:** {constraint_id}\n\n"
-                constraint_info += f"**Biological Expectation:**\n{constraint_description}"
+                if not scenario_context.strip():
+                    print(f"Warning: Empty scenario context for {test_statistic_id}, skipping")
+                    continue
 
-                # Add cancer type and parameter context if available
-                cancer_type = row.get('cancer_type', '')
-                parameter_context = row.get('parameter_context', '')
-                if cancer_type:
-                    constraint_info += f"\n\n**Cancer Type Context:** {cancer_type}"
-                if parameter_context:
-                    constraint_info += f"\n\n**Parameter Context:** {parameter_context}"
+                if not species_formula.strip():
+                    print(f"Warning: Empty species formula for {test_statistic_id}, skipping")
+                    continue
 
-                # Build model context block
-                model_context_block = "**Model Structure Information:**\n\n"
+                # Use provided context directly, with optional model context CSV enhancement
+                model_context_block = model_context
                 if model_context_info:
-                    model_context_block += "Available model variables and their descriptions:\n\n"
+                    model_context_block += "\n\n**Additional Model Variables:**\n\n"
                     for var_name, info in model_context_info.items():
                         model_context_block += f"- `{var_name}`: {info['description']}"
                         if info['units']:
@@ -916,24 +914,26 @@ class ConstraintValidationBatchCreator(BatchCreator):
                         if info['compartment']:
                             model_context_block += f" [compartment: {info['compartment']}]"
                         model_context_block += "\n"
-                else:
-                    model_context_block += "No specific model context provided. Use standard SimBiology variable naming conventions."
 
-                # Collect existing constraints (placeholder for now)
-                existing_constraints = "No existing constraint validation tests provided for comparison."
+                # Use provided scenario context directly
+                scenario_context_block = scenario_context
+
+                # Collect existing test statistics (placeholder for now)
+                existing_test_statistics = "No existing test statistics provided for comparison."
 
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
-                    "EXISTING_CONSTRAINTS": existing_constraints,
-                    "CONSTRAINT_INFO": constraint_info,
-                    "MODEL_CONTEXT": model_context_block
+                    "EXISTING_TEST_STATISTICS": existing_test_statistics,
+                    "MODEL_CONTEXT": model_context_block,
+                    "SCENARIO_CONTEXT": scenario_context_block,
+                    "SPECIES_FORMULA": species_formula
                 }
 
                 # Assemble the prompt
-                prompt = self.prompt_assembler.assemble_prompt("constraint_validation", runtime_data)
+                prompt = self.prompt_assembler.assemble_prompt("test_statistic", runtime_data)
 
                 # Create batch request
-                custom_id = f"constraint_{constraint_id}_{i}"
+                custom_id = f"test_stat_{test_statistic_id}_{i}"
                 request = self.create_request(custom_id, prompt, reasoning_effort="high")
                 requests.append(request)
 

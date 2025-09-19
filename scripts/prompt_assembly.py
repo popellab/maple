@@ -41,13 +41,31 @@ class PromptAssembler:
         """Format content based on source configuration."""
         format_type = source_config.get("format", "raw")
         prefix = source_config.get("prefix", "")
-        
+
         if format_type == "yaml_code_block":
             return f"{prefix}```yaml\n{content}\n```"
         elif format_type == "raw":
             return f"{prefix}{content}"
         else:
             return content
+
+    def _get_example_title(self, example_path: Path) -> str:
+        """Extract a meaningful title from example file path."""
+        path = Path(example_path)
+        filename = path.stem
+
+        # Convert common naming patterns to readable titles
+        if "test_statistic_example" in filename:
+            return "Tumor Volume Envelope Deviation Test Statistic"
+        elif "test_statistic_derived_example" in filename:
+            return "CD8+/Treg Ratio Peak Test Statistic"
+        elif filename.endswith("_example"):
+            # Generic pattern: remove _example and capitalize
+            base_name = filename.replace("_example", "").replace("_", " ").title()
+            return f"{base_name} Example"
+        else:
+            # Default: capitalize and replace underscores
+            return filename.replace("_", " ").title()
             
     def assemble_prompt(self, prompt_type: str, runtime_data: Dict[str, str]) -> str:
         """Assemble a complete prompt from components."""
@@ -89,11 +107,22 @@ class PromptAssembler:
                     if full_example_path.exists():
                         example_content = self.load_example(example_path)
                         example_contents.append(example_content)
-                
+
                 if example_contents:
-                    combined_examples = "\n\n".join(example_contents)
-                    source_config = self.config["placeholder_sources"]["example_files"]
-                    replacement_content = self.format_content(combined_examples, source_config)
+                    # If multiple examples, add headers to separate them
+                    if len(example_contents) > 1:
+                        formatted_examples = []
+                        for i, content in enumerate(example_contents, 1):
+                            header = f"#### Example {i}: {self._get_example_title(examples[i-1])}"
+                            formatted_examples.append(f"{header}\n\n```yaml\n{content}\n```")
+                        combined_examples = "\n\n".join(formatted_examples)
+                        # Don't apply additional formatting since we've already added yaml blocks
+                        replacement_content = f"A complete example of well-constructed metadata:\n\n{combined_examples}"
+                    else:
+                        # Single example - use normal formatting
+                        combined_examples = example_contents[0]
+                        source_config = self.config["placeholder_sources"]["example_files"]
+                        replacement_content = self.format_content(combined_examples, source_config)
                 else:
                     # No example files found - remove the placeholder entirely
                     replacement_content = ""

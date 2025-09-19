@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Create batch requests for constraint validation test generation from biological expectations.
+Create batch requests for test statistic generation from biological expectations.
 
-This script processes a CSV file containing constraint descriptions and generates
-OpenAI batch API requests to create MATLAB unit test-style constraint validation
-definitions for QSP model validation.
+This script processes a CSV file containing biological expectations and generates
+OpenAI batch API requests to create test statistic definitions for QSP model
+validation based on literature data.
 
 Input CSV format:
-- constraint_id: Unique identifier for the constraint
-- constraint_description: Biological expectation or clinical constraint to be formalized
-- cancer_type: (optional) Cancer type context
-- parameter_context: (optional) Related parameter context
+- test_statistic_id: Unique identifier for the test statistic
+- model_context: Model structure and variable information
+- scenario_context: Experimental scenario and biological context
+- species_formula: Model species formula (e.g., "V_T.TumorVolume", "V_T.T_eff / V_T.T_reg")
 
 Optional model context CSV format:
 - Variable: Model variable name
@@ -19,11 +19,11 @@ Optional model context CSV format:
 - Compartment: Model compartment
 
 Usage:
-    python scripts/create_constraint_validation_batch.py input.csv [model_context.csv]
+    python scripts/create_test_statistic_batch.py input.csv [model_context.csv]
 
 Examples:
-    python scripts/create_constraint_validation_batch.py constraints.csv
-    python scripts/create_constraint_validation_batch.py constraints.csv model_variables.csv
+    python scripts/create_test_statistic_batch.py test_statistics.csv
+    python scripts/create_test_statistic_batch.py test_statistics.csv model_variables.csv
 """
 
 import argparse
@@ -34,12 +34,12 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from scripts.batch_creator import ConstraintValidationBatchCreator
+from scripts.batch_creator import TestStatisticBatchCreator
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Create constraint validation batch requests from CSV input",
+        description="Create test statistic batch requests from CSV input",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
@@ -47,7 +47,7 @@ def main():
     parser.add_argument(
         "input_csv",
         type=Path,
-        help="CSV file with constraint_id and constraint_description columns"
+        help="CSV file with test_statistic_id, model_context, scenario_context, and species_formula columns"
     )
 
     parser.add_argument(
@@ -60,7 +60,7 @@ def main():
     parser.add_argument(
         "-o", "--output",
         type=Path,
-        help="Output path for batch requests JSONL file (default: batch_jobs/constraint_validation_requests.jsonl)"
+        help="Output path for batch requests JSONL file (default: batch_jobs/test_statistic_requests.jsonl)"
     )
 
     args = parser.parse_args()
@@ -76,11 +76,11 @@ def main():
         sys.exit(1)
 
     # Create batch creator
-    creator = ConstraintValidationBatchCreator(project_root)
+    creator = TestStatisticBatchCreator(project_root)
 
     # Process and create batch requests
     try:
-        print(f"Processing constraint validation input from {args.input_csv}")
+        print(f"Processing test statistic input from {args.input_csv}")
         if args.model_context_csv:
             print(f"Using model context from {args.model_context_csv}")
 
@@ -90,7 +90,7 @@ def main():
             model_context_csv=args.model_context_csv
         )
 
-        print(f"✓ Constraint validation batch requests created: {output_path}")
+        print(f"✓ Test statistic batch requests created: {output_path}")
         print(f"Next steps:")
         print(f"  1. Upload batch: python scripts/upload_batch.py {output_path}")
         print(f"  2. Monitor progress: python scripts/batch_monitor.py <batch_id>")

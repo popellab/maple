@@ -10,12 +10,6 @@ test_statistic:
     Mathematical definition of the test statistic:
     [MATHEMATICAL_FORMULA_OR_DESCRIPTION]
 
-  # Model output extraction specification
-  model_output:
-    formula: "MODEL_SPECIES_NAME"  # e.g., "V_T.TumorVolume", "V_P.T_eff", "V_T.TumorVolume / V_T.TotalVolume". Note this can be a derived quantity from the model as well.
-    # Time window for test statistic evaluation (relative to scenario time window)
-    time_window: TIME_SPECIFICATION  # Single timepoint (90), range [0, 90], or list [30, 60, 90] - days relative to scenario start
-
 # Scenario specification following schedule_dosing parameterization
 scenario:
   # Drug list and dosing parameters (following QSPIO_PDAC schedule_dosing format)
@@ -34,7 +28,53 @@ scenario:
   patient_bsa: NUMERIC_VALUE_OR_NULL  # m² (default: 1.9, optional - body surface area for drugs dosed per m² like chemotherapy)
 
   # Simulation timeframe
-  time_window: [START_TIME, END_TIME]  # days, e.g., [0, 365] (should encompass test statistic time window)
+  time_window: [START_TIME, END_TIME]  # days, e.g., [0, 365] (should encompass test statistic evaluation period)
+
+  # Model output computation specification
+  model_output:
+    code: |
+      % Compute test statistic from model simulation data using SimBiology's `select` function.
+      % This code transforms the raw model species into the specific test statistic.
+      %
+      % Example for tumor volume ratio computation:
+      % TVR = V_T.TumorVolume(assessment_day) / V_T.TumorVolume(baseline)
+      %
+      % Inputs:
+      %   simData         - SimBiology SimData object (must log required species)
+      %   assessment_day  - (optional) scalar day for evaluation; default = [DEFAULT_DAY]
+      %
+      % Output:
+      %   test_statistic  - computed test statistic value (appropriate units)
+      function test_statistic = compute_test_statistic(simData, assessment_day)
+        if nargin < 2 || isempty(assessment_day)
+          assessment_day = [DEFAULT_DAY]; % default assessment timepoint
+        end
+
+        % Build query for the target species (modify for your specific species)
+        query = {'Type','species', 'Name','[SPECIES_NAME]', 'Compartment','[COMPARTMENT_NAME]'};
+
+        % Use SimBiology's select to retrieve time and data
+        [t, x, names] = select(simData, query);
+
+        if isempty(x)
+          error('compute_test_statistic:NoData', ...
+                'No data returned by select query. Ensure species logging is enabled.');
+        end
+        if size(x,2) ~= 1
+          error('compute_test_statistic:NonUnique', ...
+                'Query returned %d columns; expected exactly 1. Refine the select query.', size(x,2));
+        end
+
+        % Extract the time series data
+        species_data = x(:,1);
+
+        % Implement your specific test statistic computation here
+        % Example: ratio at assessment vs baseline
+        baseline_value = interp1(t, species_data, 0, 'linear', 'extrap');
+        assessment_value = interp1(t, species_data, assessment_day, 'linear', 'extrap');
+
+        test_statistic = [COMPUTATION_LOGIC]; % Replace with actual computation
+      end
 
 # Brief narrative summary of the biological expectation and experimental basis
 study_overview: |
@@ -54,7 +94,7 @@ expected_distribution:
   variance: NUMERIC_VALUE  # Variance of the test statistic
   ci95: [NUMERIC_LOWER, NUMERIC_UPPER]  # 95% confidence interval
 
-# R code for uncertainty quantification of the test statistic
+# R code for uncertainty quantification of the test statistic from literature sources
 # REQUIREMENTS:
 #   - Create vector 'mc_draws' with >= 2000 samples using bootstrap/resampling
 #   - Calculate and populate the 3 required distribution fields: mean, variance, ci95

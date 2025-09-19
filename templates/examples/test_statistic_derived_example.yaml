@@ -12,12 +12,6 @@ test_statistic:
 
     max(V_T.T_eff / V_T.T_reg) over evaluation period
 
-  # Model output extraction specification
-  model_output:
-    formula: "V_T.T_eff / V_T.T_reg"  # Derived ratio of effector to regulatory T cells in tumor
-    # Time window for test statistic evaluation (relative to scenario time window)
-    time_window: [14, 42]  # Peak expected between days 14-42 post-treatment initiation
-
 # Scenario specification following schedule_dosing parameterization
 scenario:
   # Drug list and dosing parameters (following QSPIO_PDAC schedule_dosing format)
@@ -36,6 +30,60 @@ scenario:
 
   # Simulation timeframe
   time_window: [0, 120]  # days - encompasses treatment period and follow-up
+
+  # Model output computation specification
+  model_output:
+    code: |
+      % Compute peak CD8+/Treg ratio using SimBiology's `select` function.
+      % This evaluates the maximum ratio over the evaluation window.
+      %
+      % Inputs:
+      %   simData       - SimBiology SimData object (must log V_T.T_eff and V_T.T_reg)
+      %   eval_window   - (optional) [start_day, end_day]; default = [14, 42]
+      %
+      % Output:
+      %   peak_ratio    - maximum CD8+/Treg ratio during evaluation window (unitless)
+      function peak_ratio = compute_cd8_treg_peak(simData, eval_window)
+        if nargin < 2 || isempty(eval_window)
+          eval_window = [14, 42]; % default evaluation window
+        end
+
+        % Query for CD8+ T effector cells in tumor compartment V_T
+        query_cd8 = {'Type','species', 'Name','T_eff', 'Compartment','V_T'};
+        [t_cd8, x_cd8, ~] = select(simData, query_cd8);
+
+        % Query for regulatory T cells in tumor compartment V_T
+        query_treg = {'Type','species', 'Name','T_reg', 'Compartment','V_T'};
+        [t_treg, x_treg, ~] = select(simData, query_treg);
+
+        if isempty(x_cd8) || isempty(x_treg)
+          error('compute_cd8_treg_peak:NoData', ...
+                'Missing data for V_T.T_eff or V_T.T_reg. Ensure logging is enabled.');
+        end
+
+        % Extract time series data
+        cd8_counts = x_cd8(:,1);
+        treg_counts = x_treg(:,1);
+
+        % Find evaluation timepoints within the window
+        eval_mask = (t_cd8 >= eval_window(1)) & (t_cd8 <= eval_window(2));
+        eval_times = t_cd8(eval_mask);
+
+        if isempty(eval_times)
+          error('compute_cd8_treg_peak:NoEvalData', ...
+                'No timepoints found in evaluation window [%g, %g]', eval_window(1), eval_window(2));
+        end
+
+        % Interpolate both cell counts at evaluation timepoints
+        cd8_at_eval = interp1(t_cd8, cd8_counts, eval_times, 'linear', 'extrap');
+        treg_at_eval = interp1(t_treg, treg_counts, eval_times, 'linear', 'extrap');
+
+        % Calculate CD8+/Treg ratios (handle division by zero)
+        ratios = cd8_at_eval ./ max(treg_at_eval, 1e-12); % avoid division by zero
+
+        % Return peak ratio
+        peak_ratio = max(ratios);
+      end
 
 # Brief narrative summary of the biological expectation and experimental basis
 study_overview: |
