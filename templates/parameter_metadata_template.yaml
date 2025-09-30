@@ -34,8 +34,6 @@ derivation_explanation: |
 #   - Calculate and populate the 4 required fields: mean, variance, ci95, units
 derivation_code_r: |
     ```r
-    library(boot)
-
     # Composite parameter example: Drug clearance from concentration and half-life data
     # This demonstrates uncertainty propagation for parameters derived from multiple sources
 
@@ -51,17 +49,22 @@ derivation_code_r: |
     vd_mean <- 2.1  # L/kg
     vd_se <- 0.3    # standard error from literature
 
-    # 2) Define composite estimator with uncertainty propagation --------------
-    clearance_estimator <- function(data, indices) {
-      # Resample concentration data
-      d <- data[indices, , drop = FALSE]
+    # 2) Run manual bootstrap with uncertainty propagation --------------------
+    set.seed(123)
+    B <- 5000
+    mc_draws <- numeric(B)
+
+    for (i in 1:B) {
+      # Resample rows with replacement (bootstrap)
+      boot_indices <- sample(1:nrow(conc_data), replace = TRUE)
+      d <- conc_data[boot_indices, ]
 
       # Add measurement error to each concentration (CV-based uncertainty)
-      conc_with_error <- sapply(1:nrow(d), function(i) {
-        cv <- d$cv_percent[i] / 100
-        sd_conc <- d$concentration[i] * cv
+      conc_with_error <- sapply(1:nrow(d), function(j) {
+        cv <- d$cv_percent[j] / 100
+        sd_conc <- d$concentration[j] * cv
         # Assumption: Measurement error is normally distributed
-        rnorm(1, d$concentration[i], sd_conc)
+        rnorm(1, d$concentration[j], sd_conc)
       })
 
       # Fit exponential decay to get elimination rate constant (ke)
@@ -78,19 +81,10 @@ derivation_code_r: |
 
       # Calculate clearance = ke * Vd (L/hr/kg)
       # This propagates uncertainty from both ke estimation and Vd literature value
-      clearance <- ke * vd_sample
-
-      return(clearance)
+      mc_draws[i] <- ke * vd_sample
     }
 
-    # 3) Run bootstrap with uncertainty propagation ---------------------------
-    set.seed(123)
-    B <- 5000
-    boot_out <- boot(data = conc_data, statistic = clearance_estimator, R = B)
-
-    # Extract replicates
-    mc_draws <- boot_out$t[,1]
-
+    # 3) Clean and summarize bootstrap samples --------------------------------
     # Remove any extreme outliers (> 99.9th percentile) or invalid values
     mc_draws <- mc_draws[!is.na(mc_draws) & mc_draws > 0]
     q999 <- quantile(mc_draws, 0.999, na.rm = TRUE)
