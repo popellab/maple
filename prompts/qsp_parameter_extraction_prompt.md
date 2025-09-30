@@ -157,12 +157,41 @@ Use the following rubrics (tables). Do not invent new scales.
 ## MODEL_CONTEXT:
 {{MODEL_CONTEXT}}
 
-Fill out the YAML metadata template for this parameter.
+Fill out the metadata template for this parameter.
 
-**IMPORTANT: Format your response as follows:**
-```yaml
-# Your complete YAML metadata here
-# Fill out all sections of the template above
+**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON):
+```json
+{
+  "mathematical_role": "Describe the mathematical role...",
+  "parameter_range": "positive_reals",
+  "study_overview": "This study measures...",
+  "technical_details": "**Measurement:** ...\n**Study design:** ...",
+  "parameter_estimates": {
+    "mean": 0.123,
+    "variance": 0.001,
+    "ci95": [0.1, 0.15],
+    "units": "1/day"
+  },
+  "derivation_explanation": "**Step 1:** ...",
+  "derivation_code_r": "```r\nset.seed(123)\nB <- 5000\n```",
+  "pooling_weights": {
+    "species_match": {"value": 1.0, "justification": "Human study"},
+    "system_match": {"value": 1.0, "justification": "In vivo"}
+  },
+  "key_study_limitations": "- **Sample size:** ...",
+  "sources": {
+    "SOURCE_TAG": {
+      "citation": "Author et al. Journal. Year;vol:pages.",
+      "doi_or_url": "https://doi.org/...",
+      "figure_or_table": "Figure 1A",
+      "text_snippet": "Exact quote from paper"
+    }
+  }
+}
 ```
 
-Make sure to wrap your entire YAML response in ```yaml code block tags as shown above.
+Requirements for JSON response:
+- Wrap your entire response in ```json code block tags
+- Use proper JSON syntax (all strings quoted, proper escaping)
+- Use `\n` for line breaks in multi-line strings
+- Numeric values should be actual numbers, not strings (except placeholders)
