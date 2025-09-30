@@ -149,53 +149,99 @@ class BatchCreator(ABC):
 class ParameterBatchCreator(BatchCreator):
     """
     Creates batch requests for parameter extraction from scientific literature.
-    
-    Processes CSV input with cancer_type and parameter_name columns, generating
-    prompts that combine parameter definitions with model context information.
+
+    Processes CSV input with embedded parameter definitions and model context, generating
+    prompts for comprehensive literature extraction. Requires columns: cancer_type,
+    parameter_name, parameter_units, parameter_description, model_context, definition_hash.
     """
     
     def get_batch_type(self) -> str:
         return "parameter"
-    
-    def load_parameter_definition(self, cancer_type: str, parameter_name: str, 
-                                parameter_storage_dir: Path = None) -> Optional[Dict[str, Any]]:
+
+    def format_model_context(self, model_context_json: str) -> str:
         """
-        Load parameter definition from storage directory.
-        
+        Parse and format the model context JSON into readable text for the LLM.
+
         Args:
-            cancer_type: Cancer type for the parameter
-            parameter_name: Name of the parameter
-            parameter_storage_dir: Path to parameter storage directory
-            
+            model_context_json: JSON string containing reactions_and_rules with model context
+
         Returns:
-            Parameter definition dict or None if not found
+            Formatted markdown text describing the model context
         """
-        if parameter_storage_dir is None:
-            # Default to sibling directory
-            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
-            
-        definition_path = (parameter_storage_dir / "parameter-definitions" / 
-                          cancer_type / parameter_name / "definition.yaml")
-        
-        if not definition_path.exists():
-            print(f"Warning: Parameter definition not found at {definition_path}")
-            return None
-            
+        import json
+
         try:
-            import yaml
-            with open(definition_path, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
-        except Exception as e:
-            print(f"Warning: Could not load parameter definition from {definition_path}: {e}")
-            return None
+            context_data = json.loads(model_context_json)
+        except json.JSONDecodeError as e:
+            return f"Error parsing model context: {e}"
+
+        output = []
+
+        # Add derived from context if available
+        if "derived_from_context" in context_data:
+            derived = context_data["derived_from_context"]
+            if derived:
+                output.append("## Parameter Context")
+                for item in derived:
+                    output.append(f"- **{item.get('name', 'Unknown')}**: {item.get('description', 'No description')}")
+                output.append("")
+
+        # Add reactions and rules
+        if "reactions_and_rules" in context_data:
+            reactions = context_data["reactions_and_rules"]
+            if reactions:
+                output.append("## Model Usage")
+                output.append(f"This parameter appears in {len(reactions)} reaction(s) and/or rule(s):")
+                output.append("")
+
+                for i, rxn in enumerate(reactions, 1):
+                    # Reaction or rule
+                    if rxn.get("reaction"):
+                        output.append(f"### {i}. Reaction: `{rxn['reaction']}`")
+                        if rxn.get("reaction_rate"):
+                            output.append(f"**Rate:** `{rxn['reaction_rate']}`")
+                    elif rxn.get("rule"):
+                        output.append(f"### {i}. Rule ({rxn.get('rule_type', 'unknown type')})")
+                        output.append(f"**Expression:** `{rxn['rule']}`")
+
+                    output.append("")
+
+                    # Other parameters
+                    other_params = rxn.get("other_parameters", [])
+                    if other_params:
+                        output.append("**Related Parameters:**")
+                        for param in other_params:
+                            name = param.get("name", "Unknown")
+                            desc = param.get("description", "")
+                            if desc:
+                                output.append(f"- `{name}`: {desc}")
+                            else:
+                                output.append(f"- `{name}`")
+                        output.append("")
+
+                    # Other species
+                    other_species = rxn.get("other_species", [])
+                    if other_species:
+                        output.append("**Related Species:**")
+                        for species in other_species:
+                            name = species.get("name", "Unknown")
+                            desc = species.get("description", "")
+                            if desc:
+                                output.append(f"- `{name}`: {desc}")
+                            else:
+                                output.append(f"- `{name}`")
+                        output.append("")
+
+        return "\n".join(output) if output else "No model context available."
     
     def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
         """
-        Process parameter extraction inputs and generate batch requests using stored parameter definitions.
+        Process parameter extraction inputs and generate batch requests.
 
         Args:
-            input_csv: CSV file with cancer_type and parameter_name columns
-            parameter_storage_dir: Optional path to parameter storage directory
+            input_csv: CSV file with columns: cancer_type, parameter_name, parameter_units,
+                      parameter_description, model_context (JSON), definition_hash
+            parameter_storage_dir: Optional path to parameter storage directory for existing studies
 
         Returns:
             List of batch request dictionaries
@@ -206,28 +252,24 @@ class ParameterBatchCreator(BatchCreator):
         # Process CSV and create requests
         requests = []
         with open(input_csv, 'r', encoding='utf-8') as f:
-            for i, row in enumerate(csv.DictReader(f)):
+            reader = csv.DictReader(f)
+
+            for i, row in enumerate(reader):
                 cancer_type = row['cancer_type']
                 parameter_name = row['parameter_name']
+                units = row.get('parameter_units', '')
+                definition = row.get('parameter_description', '')
+                model_context_json = row.get('model_context', '{}')
+                definition_hash = row.get('definition_hash', '')
 
-                # Load parameter definition (required for extraction)
-                param_def = self.load_parameter_definition(cancer_type, parameter_name, parameter_storage_dir)
-                if not param_def:
-                    print(f"Warning: No parameter definition found for {cancer_type}/{parameter_name}, skipping")
-                    continue
-
-                # Extract all needed info from parameter definition
-                name = param_def.get("parameter_name", parameter_name)
-                units = param_def.get("parameter_units", "")
-                definition = param_def.get("parameter_definition", "")
-                canonical_scale = param_def.get("canonical_scale", "NOT_PROVIDED")
-                mathematical_role = param_def.get("mathematical_role", "")
+                # Format the model context from JSON
+                model_context_block = self.format_model_context(model_context_json)
 
                 # Build parameter info block with cancer type
-                parameter_block = render_parameter_to_search(name, units, definition, cancer_type)
+                parameter_block = render_parameter_to_search(parameter_name, units, definition, cancer_type)
 
-                # Use mathematical role as model context
-                model_context_block = mathematical_role
+                # Use definition hash as canonical scale identifier if available
+                canonical_scale = definition_hash if definition_hash else "NOT_PROVIDED"
 
                 # Collect existing studies for this parameter
                 existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
