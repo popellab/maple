@@ -1,5 +1,5 @@
 # Complete parameter definition and extraction workflow
-# Extracts parameters to central qsp-parameter-storage repository
+# Extracts parameters to central qsp-metadata-storage repository
 
 # STEP 1: Create parameter definitions with canonical scales (run first)
 # Note: Uses simbio_parameters.csv for Name/Units, loads definitions from data/parameter_definitions.csv
@@ -19,12 +19,12 @@ python ./scripts/upload_immediate.py ./batch_jobs/parameter_definition_requests.
 
 # Unpack parameter definitions to storage (creates canonical scales)
 # Use corresponding results file based on upload method chosen above:
-python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-parameter-storage
+python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/parameter_estimates
 # OR (if using immediate processing):
-python ./scripts/unpack_results.py ./batch_jobs/parameter_definition_requests_immediate_results.jsonl ../qsp-parameter-storage
+python ./scripts/unpack_results.py ./batch_jobs/parameter_definition_requests_immediate_results.jsonl ../qsp-metadata-storage/parameter_estimates
 
 # STEP 2: Create parameter extraction requests (uses parameter definitions from step 1)
-python ./scripts/create_parameter_batch.py ./batch_jobs/pd1_50.csv
+python ./scripts/create_parameter_batch.py ./batch_jobs/input_data/core_extraction_input_7bd60509.csv
 
 python ./scripts/inspect_jsonl.py batch_jobs/parameter_requests.jsonl 1
 # Optional: Extract prompt to examine more easily
@@ -38,14 +38,14 @@ python ./scripts/batch_monitor.py batch_{batch_id}
 # Option 2: Immediate processing (faster feedback, good for testing)
 python ./scripts/upload_immediate.py ./batch_jobs/parameter_requests.jsonl
 
-# Unpack results to central parameter storage
+# Unpack results to central metadata storage
 # Use corresponding results file based on upload method chosen above:
-python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-parameter-storage
+python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/parameter_estimates
 # OR (if using immediate processing):
-python ./scripts/unpack_results.py ./batch_jobs/parameter_requests_immediate_results.jsonl ../qsp-parameter-storage
+python ./scripts/unpack_results.py ./batch_jobs/parameter_requests_immediate_results.jsonl ../qsp-metadata-storage/parameter_estimates
 
 # Optional: Create checklist batch requests for quality assurance auditing
-# (Audits parameter extractions in ../qsp-parameter-storage/to-review/)
+# (Audits parameter extractions in ../qsp-metadata-storage/parameter_estimates/to-review/)
 python ./scripts/create_checklist_batch.py ./batch_jobs/pdac_parameters_test.csv
 
 python ./scripts/inspect_jsonl.py batch_jobs/checklist_requests.jsonl 1
@@ -81,11 +81,11 @@ python ./scripts/batch_monitor.py batch_{batch_id}
 # Option 2: Immediate processing (faster feedback, good for testing)
 python ./scripts/upload_immediate.py ./batch_jobs/quick_estimate_requests.jsonl
 
-# Unpack quick estimate results to central parameter storage
+# Unpack quick estimate results to central metadata storage
 # Use corresponding results file based on upload method chosen above:
-python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-parameter-storage
+python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/parameter_estimates
 # OR (if using immediate processing):
-python ./scripts/unpack_results.py ./batch_jobs/quick_estimate_requests_immediate_results.jsonl ../qsp-parameter-storage
+python ./scripts/unpack_results.py ./batch_jobs/quick_estimate_requests_immediate_results.jsonl ../qsp-metadata-storage/parameter_estimates
 
 # TEST STATISTIC WORKFLOW: Generate test statistics for model validation from literature
 # (Quantifies expected distributions of model-derived quantities based on experimental data)

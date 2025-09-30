@@ -4,7 +4,7 @@ This repository contains scripts and workflows for automated parameter extractio
 
 ## Overview
 
-This toolkit automates the extraction of quantitative systems pharmacology (QSP) parameters from research papers using OpenAI's batch API. It's designed to extract parameters to the central `qsp-parameter-storage` repository.
+This toolkit automates the extraction of quantitative systems pharmacology (QSP) parameters from research papers using OpenAI's batch API. It's designed to extract parameters to the central `qsp-metadata-storage` repository.
 
 ## Directory Structure
 
@@ -52,18 +52,18 @@ python scripts/create_parameter_batch.py input.csv params.csv reactions.csv
 python scripts/upload_batch.py batch_jobs/parameter_requests.jsonl
 python scripts/batch_monitor.py batch_<id>
 
-# Extract results to parameter storage
-python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-parameter-storage
+# Extract results to metadata storage
+python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates
 
 # Optional: Add pooling metadata to existing studies
-python scripts/create_pooling_metadata_batch.py ../qsp-parameter-storage/to-review
+python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates/to-review
 ```
 
 The complete workflow is documented in `scripts/batch_workflow_commands.sh`.
 
 ## Integration
 
-This repository is designed to work with the central `qsp-parameter-storage` repository. Extracted parameters are written to the `to-review/` directory in the parameter storage for validation and integration into the central parameter database.
+This repository is designed to work with the central `qsp-metadata-storage` repository. Extracted parameters are written to the `parameter_estimates/to-review/` directory in the metadata storage for validation and integration into the central parameter database.
 
 ## Modular Prompt System
 
@@ -99,10 +99,10 @@ The workflow tools target the central parameter storage repository:
 
 ```bash
 # Extract parameters to central storage
-python scripts/unpack_results.py batch_results.jsonl ../qsp-parameter-storage
+python scripts/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates
 
 # Process pooling metadata from central storage
-python scripts/create_pooling_metadata_batch.py ../qsp-parameter-storage/to-review
+python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates/to-review
 ```
 
 This supports the three-tier QSP architecture where individual projects reference parameters from the central storage rather than storing duplicate copies.

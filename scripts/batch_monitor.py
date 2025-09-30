@@ -46,10 +46,10 @@ def main():
             print(f"Downloaded: {output_file}")
 
             # Print next command
-            print(f"\nNext: Unpack results to parameter storage:")
-            print(f"  python scripts/unpack_results.py {output_file} ../qsp-parameter-storage [input_csv]")
+            print(f"\nNext: Unpack results to metadata storage:")
+            print(f"  python scripts/unpack_results.py {output_file} ../qsp-metadata-storage/parameter_estimates [input_csv]")
             print(f"\nOr with overwrite (replaces existing files):")
-            print(f"  python scripts/unpack_results.py {output_file} ../qsp-parameter-storage [input_csv] --overwrite")
+            print(f"  python scripts/unpack_results.py {output_file} ../qsp-metadata-storage/parameter_estimates [input_csv] --overwrite")
 
 if __name__ == "__main__":
     main()

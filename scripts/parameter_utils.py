@@ -259,7 +259,7 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
     Args:
         cancer_type: Cancer type for the parameter
         parameter_name: Name of the parameter
-        parameter_storage_dir: Path to parameter storage directory (defaults to ../qsp-parameter-storage)
+        parameter_storage_dir: Path to parameter storage directory (defaults to ../qsp-metadata-storage/parameter_estimates)
 
     Returns:
         Formatted string describing existing studies, or empty string if none exist
@@ -268,7 +268,7 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
 
     if parameter_storage_dir is None:
         # Default to sibling directory
-        parameter_storage_dir = Path(__file__).parent.parent.parent / "qsp-parameter-storage"
+        parameter_storage_dir = Path(__file__).parent.parent.parent / "qsp-metadata-storage" / "parameter_estimates"
 
     # Look for existing study YAMLs in to-review directory
     study_dir = parameter_storage_dir / "to-review" / cancer_type / parameter_name

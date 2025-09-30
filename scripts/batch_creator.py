@@ -476,7 +476,7 @@ class QuickEstimateBatchCreator(BatchCreator):
         """
         if parameter_storage_dir is None:
             # Default to sibling directory
-            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+            parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
 
         definition_path = (parameter_storage_dir / "parameter-definitions" /
                           cancer_type / parameter_name / "definition.yaml")
@@ -610,8 +610,8 @@ class ParameterDefinitionBatchCreator(BatchCreator):
                 "References": ""
             }
 
-        # Check parameter storage directory for existing definitions
-        parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+        # Check metadata storage directory for existing definitions
+        parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
 
         # Process CSV and create requests
         requests = []
@@ -727,7 +727,7 @@ class ParameterChecklistBatchCreator(BatchCreator):
         """
         if parameter_storage_dir is None:
             # Default to sibling directory
-            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+            parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
 
         definition_path = (parameter_storage_dir / "parameter-definitions" /
                           cancer_type / parameter_name / "definition.yaml")
@@ -807,7 +807,7 @@ class ParameterChecklistBatchCreator(BatchCreator):
 
         # Set default directories
         if parameter_storage_dir is None:
-            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+            parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
         if to_review_dir is None:
             # Use parameter storage to-review first (standard workflow), then local as fallback
             param_storage_to_review = parameter_storage_dir / "to-review"
