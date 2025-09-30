@@ -1,6 +1,7 @@
 # Batch processing files (may contain API keys and sensitive data)
 batch_jobs
 to-review
+input_data
 # Python cache and virtual environments
 __pycache__/
 *.py[cod]
