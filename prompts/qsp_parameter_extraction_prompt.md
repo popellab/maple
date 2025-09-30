@@ -21,7 +21,7 @@ For this parameter, you must:
 4. **Required summary statistics:** Calculate and populate these 4 required fields:
    - `mean`: Mean of mc_draws
    - `variance`: Variance of mc_draws
-   - `ci95`: BCa 95% confidence interval as [lower, upper]
+   - `ci95`: 95% percentile confidence interval as [lower, upper]
    - `units`: Units string for the parameter  
 
 ---

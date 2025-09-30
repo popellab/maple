@@ -100,9 +100,8 @@ derivation_code_r: |
     mean_param <- mean(mc_draws)
     variance_param <- var(mc_draws)
 
-    # BCa 95% CI
-    bca_ci <- boot.ci(boot_out, type = "bca", conf = 0.95)
-    ci95_param <- c(bca_ci$bca[4], bca_ci$bca[5])  # [lower, upper]
+    # 95% percentile CI
+    ci95_param <- quantile(mc_draws, probs = c(0.025, 0.975))  # [lower, upper]
 
     # Result: mc_draws contains parameter samples with all uncertainty sources propagated
     ```
