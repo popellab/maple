@@ -172,13 +172,13 @@ Fill out the metadata template for this parameter.
     "ci95": [0.1, 0.15],
     "units": "1/day"
   },
-  "derivation_explanation": "**Step 1:** ...",
-  "derivation_code_r": "```r\nset.seed(123)\nB <- 5000\n```",
+  "derivation_explanation": "**Step 1:** ...\n\n**Step 2:** ...",
+  "derivation_code_r": "set.seed(123)\nB <- 5000\nmc_draws <- rnorm(B, mean=0.5, sd=0.1)",
   "pooling_weights": {
     "species_match": {"value": 1.0, "justification": "Human study"},
     "system_match": {"value": 1.0, "justification": "In vivo"}
   },
-  "key_study_limitations": "- **Sample size:** ...",
+  "key_study_limitations": "- **Sample size:** ...\n- **Measurement issues:** ...",
   "sources": {
     "SOURCE_TAG": {
       "citation": "Author et al. Journal. Year;vol:pages.",
@@ -193,5 +193,7 @@ Fill out the metadata template for this parameter.
 Requirements for JSON response:
 - Wrap your entire response in ```json code block tags
 - Use proper JSON syntax (all strings quoted, proper escaping)
-- Use `\n` for line breaks in multi-line strings
+- Use `\n` for line breaks in multi-line strings (NOT Markdown `  \n` or other formatting)
+- For `derivation_code_r`: provide ONLY the raw R code without ```r wrapper tags
+- Use `\n\n` (double newline) to separate paragraphs or list items
 - Numeric values should be actual numbers, not strings (except placeholders)
