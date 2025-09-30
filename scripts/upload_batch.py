@@ -38,7 +38,9 @@ def main():
     )
     
     print(f"Batch ID: {batch.id}")
-    
+    print(f"\nTo monitor this batch, run:")
+    print(f"python scripts/batch_monitor.py {batch.id}")
+
     # Save batch info to batch_jobs directory
     jsonl_path = Path(jsonl_file)
     batch_id_file = jsonl_path.parent / f"{jsonl_path.stem}.batch_id"

@@ -10,7 +10,8 @@ Input CSV format:
 - test_statistic_id: Unique identifier for the test statistic
 - model_context: Model structure and variable information
 - scenario_context: Experimental scenario and biological context
-- species_formula: Model species formula (e.g., "V_T.TumorVolume", "V_T.T_eff / V_T.T_reg")
+- required_species: Comma-separated list of model species (e.g., "V_T.TumorVolume", "V_T.T_eff,V_T.T_reg")
+- derived_species_description: Biological description of what the derived species represents
 
 Optional model context CSV format:
 - Variable: Model variable name
@@ -47,7 +48,7 @@ def main():
     parser.add_argument(
         "input_csv",
         type=Path,
-        help="CSV file with test_statistic_id, model_context, scenario_context, and species_formula columns"
+        help="CSV file with test_statistic_id, model_context, scenario_context, required_species, and derived_species_description columns"
     )
 
     parser.add_argument(

@@ -44,6 +44,8 @@ def main():
             with open(output_file, 'wb') as f:
                 f.write(content.content)
             print(f"Downloaded: {output_file}")
+            print(f"\nTo unpack results, run:")
+            print(f"python scripts/unpack_results.py {output_file} ../qsp-parameter-storage")
 
 if __name__ == "__main__":
     main()

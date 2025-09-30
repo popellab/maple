@@ -3,7 +3,7 @@
 
 # STEP 1: Create parameter definitions with canonical scales (run first)
 # Note: Uses simbio_parameters.csv for Name/Units, loads definitions from data/parameter_definitions.csv
-python ./scripts/create_parameter_definition_batch.py ./batch_jobs/pdac_parameters_modules.csv ./data/simbio_parameters.csv ./data/model_context.csv
+python ./scripts/create_parameter_definition_batch.py ./batch_jobs/pdac_gvax_params_2.csv ./data/simbio_parameters.csv ./data/model_context.csv --force
 
 python ./scripts/inspect_jsonl.py batch_jobs/parameter_definition_requests.jsonl 1
 # Optional: Extract prompt to examine more easily
@@ -21,10 +21,10 @@ python ./scripts/upload_immediate.py ./batch_jobs/parameter_definition_requests.
 # Use corresponding results file based on upload method chosen above:
 python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-parameter-storage
 # OR (if using immediate processing):
-python ./scripts/unpack_results.py ./batch_jobs/parameter_definition_requests_immediate_results.jsonl ../qsp-parameter-storage
+python ./scripts/unpack_results.py ./batch_jobs/parameter_definition_requests_immediate_results.jsonl ../qsp-parameter-storage --overwrite
 
 # STEP 2: Create parameter extraction requests (uses parameter definitions from step 1)
-python ./scripts/create_parameter_batch.py ./batch_jobs/pd1_50.csv
+python ./scripts/create_parameter_batch.py ./batch_jobs/pdac_gvax_params_2.csv
 
 python ./scripts/inspect_jsonl.py batch_jobs/parameter_requests.jsonl 1
 # Optional: Extract prompt to examine more easily
@@ -67,7 +67,7 @@ python ./scripts/upload_immediate.py ./batch_jobs/checklist_requests.jsonl
 
 # QUICK ESTIMATION WORKFLOW: Fast ballpark estimates with sources
 # (Alternative to full parameter extraction when you need quick estimates)
-python ./scripts/create_quick_estimate_batch.py ./batch_jobs/pd1_50.csv
+python ./scripts/create_quick_estimate_batch.py ./batch_jobs/pdac_gvax_params_2.csv
 
 python ./scripts/inspect_jsonl.py batch_jobs/quick_estimate_requests.jsonl 1
 # Optional: Extract prompt to examine more easily
@@ -85,7 +85,7 @@ python ./scripts/upload_immediate.py ./batch_jobs/quick_estimate_requests.jsonl
 # Use corresponding results file based on upload method chosen above:
 python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-parameter-storage
 # OR (if using immediate processing):
-python ./scripts/unpack_results.py ./batch_jobs/quick_estimate_requests_immediate_results.jsonl ../qsp-parameter-storage
+python ./scripts/unpack_results.py ./batch_jobs/quick_estimate_requests_immediate_results.jsonl ../qsp-parameter-storage --overwrite
 
 # TEST STATISTIC WORKFLOW: Generate test statistics for model validation from literature
 # (Quantifies expected distributions of model-derived quantities based on experimental data)
@@ -97,7 +97,7 @@ python ./scripts/unpack_results.py ./batch_jobs/quick_estimate_requests_immediat
 # See scratch/test_statistic_input_example.csv for complete examples
 
 # Create test statistic batch requests
-python ./scripts/create_test_statistic_batch.py ./batch_jobs/test_statistic_input_example.csv
+python ./scripts/create_test_statistic_batch.py ./batch_jobs/pdac_pretreatment_metrics.csv
 
 # Optional: Include model context CSV with variable descriptions
 # python ./scripts/create_test_statistic_batch.py ./batch_jobs/test_statistic_examples.csv ./data/model_variables.csv
@@ -114,10 +114,11 @@ python ./scripts/batch_monitor.py batch_{batch_id}
 # Option 2: Immediate processing (faster feedback, good for testing)
 python ./scripts/upload_immediate.py ./batch_jobs/test_statistic_requests.jsonl
 
-# Process test statistic results manually - these are YAML test statistic definitions
+# Unpack test statistic results - creates YAML test statistic definitions
 # Use corresponding results file based on upload method chosen above:
-# batch_jobs/batch_{batch_id}_results.jsonl (for batch processing)
-# batch_jobs/test_statistic_requests_immediate_results.jsonl (for immediate processing)
+python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-parameter-storage
+# OR (if using immediate processing):
+python ./scripts/unpack_results.py ./batch_jobs/test_statistic_requests_immediate_results.jsonl ../qsp-parameter-storage --overwrite
 
 # Note: Test statistic results are YAML files with statistical distributions and R code
 # that can be integrated into your model validation framework

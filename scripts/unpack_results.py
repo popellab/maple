@@ -3,6 +3,7 @@
 Unpack batch results to parameter folders.
 """
 
+import argparse
 import json
 import re
 import sys
@@ -43,15 +44,15 @@ def extract_first_source_tag(yaml_content):
         pass
     return None
 
-def get_unique_filename(base_path):
-    """Get a unique filename by adding v2, v3, etc. if file exists."""
-    if not base_path.exists():
+def get_unique_filename(base_path, overwrite=False):
+    """Get a unique filename by adding v2, v3, etc. if file exists (unless overwrite is True)."""
+    if overwrite or not base_path.exists():
         return base_path
-    
+
     stem = base_path.stem
     suffix = base_path.suffix
     parent = base_path.parent
-    
+
     counter = 2
     while True:
         new_name = f"{stem}_v{counter}{suffix}"
@@ -61,13 +62,17 @@ def get_unique_filename(base_path):
         counter += 1
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: unpack_results.py results.jsonl target_project_dir")
-        print("       target_project_dir: path to the QSP project directory")
-        sys.exit(1)
-    
-    results_file = sys.argv[1]
-    target_project_dir = sys.argv[2]
+    parser = argparse.ArgumentParser(description='Unpack batch results to parameter folders')
+    parser.add_argument('results_file', help='Path to the results JSONL file')
+    parser.add_argument('target_project_dir', help='Path to the QSP project directory')
+    parser.add_argument('--overwrite', action='store_true',
+                       help='Overwrite existing files instead of creating versioned files')
+
+    args = parser.parse_args()
+
+    results_file = args.results_file
+    target_project_dir = args.target_project_dir
+    overwrite = args.overwrite
     target_project_path = Path(target_project_dir).resolve()
     
     with open(results_file, 'r') as f:
@@ -121,8 +126,8 @@ def main():
                 else:
                     yaml_filename = filename_default
                 
-                # Get unique filename
-                yaml_path = get_unique_filename(param_dir / yaml_filename)
+                # Get unique filename (or original if overwrite is True)
+                yaml_path = get_unique_filename(param_dir / yaml_filename, overwrite)
                 
                 # Save YAML file
                 with open(yaml_path, 'w', encoding='utf-8') as f:
