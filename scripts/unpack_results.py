@@ -123,7 +123,14 @@ def prepend_header_fields(json_content: str, header_data: Dict) -> str:
     complete_data['parameter_units'] = header_data['parameter_units']
     complete_data['parameter_definition'] = header_data['parameter_definition']
     complete_data['cancer_type'] = header_data['cancer_type']
-    complete_data['tags'] = header_data['tags']
+
+    # Add tags with "ai-generated" marker
+    tags = header_data.get('tags', [])
+    if not isinstance(tags, list):
+        tags = []
+    if 'ai-generated' not in tags:
+        tags.append('ai-generated')
+    complete_data['tags'] = tags
 
     # Parse and add model_context (it's JSON in the CSV)
     if header_data['model_context']:
