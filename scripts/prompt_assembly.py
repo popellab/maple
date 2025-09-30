@@ -40,33 +40,24 @@ class PromptAssembler:
 
         # Check if this is a parameter metadata template (has parameter_name field)
         if 'parameter_name:' in content:
-            # Parse YAML to extract only the fields we want in the prompt
-            try:
-                full_template = yaml.safe_load(content)
+            # Filter header fields using text manipulation to preserve formatting
+            # Find the start of mathematical_role field (first field after header)
+            lines = content.split('\n')
 
-                # Fields to exclude from prompt (will be added back during unpacking)
-                header_fields = [
-                    'parameter_name',
-                    'parameter_units',
-                    'parameter_definition',
-                    'cancer_type',
-                    'tags',
-                    'model_context',
-                    'context_hash'
-                ]
+            # Find index where mathematical_role starts
+            math_role_idx = None
+            for i, line in enumerate(lines):
+                if line.startswith('mathematical_role:'):
+                    math_role_idx = i
+                    break
 
-                # Create filtered template with only prompt-relevant fields
-                filtered_template = {k: v for k, v in full_template.items()
-                                   if k not in header_fields}
-
-                # Convert back to YAML string, preserving formatting
-                return yaml.dump(filtered_template,
-                               default_flow_style=False,
-                               allow_unicode=True,
-                               sort_keys=False)
-            except Exception as e:
-                # If parsing fails, return original content
-                print(f"Warning: Could not filter template fields: {e}")
+            if math_role_idx is not None:
+                # Keep only from mathematical_role onward
+                filtered_lines = lines[math_role_idx:]
+                return '\n'.join(filtered_lines)
+            else:
+                # If we can't find mathematical_role, return original
+                print(f"Warning: Could not find mathematical_role field in template")
                 return content
         else:
             # For non-parameter templates, return as-is
