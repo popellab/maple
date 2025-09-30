@@ -179,7 +179,7 @@ def main():
             
             # Parse custom_id and determine directory structure
             parts = custom_id.split('_')
-            
+
             # Handle different batch types based on custom_id prefix
             if parts[0] == "defn":
                 # Parameter definition: defn_CANCER_TYPE_PARAMETER_NAME_INDEX
@@ -187,24 +187,27 @@ def main():
                 parameter_name = '_'.join(parts[2:-1])  # Everything between cancer_type and index
                 # Put in parameter-definitions directory
                 param_dir = target_project_path / "parameter-definitions" / cancer_type / parameter_name
+                param_dir.mkdir(parents=True, exist_ok=True)
                 filename_default = "definition.yaml"
+                use_flat_structure = False
             elif parts[0] == "quick":
                 # Quick estimate: quick_CANCER_TYPE_PARAMETER_NAME_INDEX
                 cancer_type = parts[1]
                 parameter_name = '_'.join(parts[2:-1])  # Everything between cancer_type and index
                 # Put in to-review/quick-estimates directory
                 param_dir = target_project_path / "to-review" / "quick-estimates" / cancer_type / parameter_name
+                param_dir.mkdir(parents=True, exist_ok=True)
                 filename_default = "quick_estimate.yaml"
+                use_flat_structure = False
             else:
                 # Regular parameter extraction: CANCER_TYPE_PARAMETER_NAME_INDEX
+                # Save directly to parameter_estimates with flat structure
                 cancer_type = parts[0]
                 parameter_name = '_'.join(parts[1:-1])  # Everything except first and last
-                # Put in to-review directory
-                param_dir = target_project_path / "to-review" / cancer_type / parameter_name
-                filename_default = "metadata.yaml"
-            
-            param_dir.mkdir(parents=True, exist_ok=True)
-            
+                param_dir = target_project_path  # Flat structure at parameter_estimates level
+                filename_default = None  # Will be computed from metadata
+                use_flat_structure = True
+
             # Extract YAML content
             yaml_content = extract_yaml_from_content(content)
             if yaml_content:
@@ -212,13 +215,26 @@ def main():
                 key = (cancer_type, parameter_name)
                 if key in param_metadata:
                     yaml_content = prepend_header_fields(yaml_content, param_metadata[key])
-
-                # Get first source tag for filename, with appropriate default
-                first_source = extract_first_source_tag(yaml_content)
-                if first_source:
-                    yaml_filename = f"{first_source}.yaml"
+                    definition_hash = param_metadata[key].get('context_hash', '')
                 else:
-                    yaml_filename = filename_default
+                    definition_hash = ''
+
+                # Determine filename based on structure type
+                if use_flat_structure:
+                    # New format: {param_name}_{author_year}_{definition_hash}.yaml
+                    author_year = extract_first_source_tag(yaml_content)
+                    if author_year and definition_hash:
+                        yaml_filename = f"{parameter_name}_{author_year}_{definition_hash}.yaml"
+                    else:
+                        # Fallback if missing components
+                        yaml_filename = f"{parameter_name}_unknown.yaml"
+                else:
+                    # Legacy format: use first source tag or default
+                    first_source = extract_first_source_tag(yaml_content)
+                    if first_source:
+                        yaml_filename = f"{first_source}.yaml"
+                    else:
+                        yaml_filename = filename_default
 
                 # Get unique filename
                 yaml_path = get_unique_filename(param_dir / yaml_filename)
@@ -227,7 +243,10 @@ def main():
                 with open(yaml_path, 'w', encoding='utf-8') as f:
                     f.write(yaml_content)
 
-                print(f"Saved: {cancer_type}/{parameter_name}/{yaml_path.name}")
+                if use_flat_structure:
+                    print(f"Saved: {yaml_path.name}")
+                else:
+                    print(f"Saved: {cancer_type}/{parameter_name}/{yaml_path.name}")
             else:
                 print(f"No YAML found: {cancer_type}/{parameter_name}")
 

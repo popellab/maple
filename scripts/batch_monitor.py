@@ -46,10 +46,9 @@ def main():
             print(f"Downloaded: {output_file}")
 
             # Print next command
-            print(f"\nNext: Unpack results to metadata storage:")
-            print(f"  python scripts/unpack_results.py {output_file} ../qsp-metadata-storage/parameter_estimates [input_csv]")
-            print(f"\nOr with overwrite (replaces existing files):")
-            print(f"  python scripts/unpack_results.py {output_file} ../qsp-metadata-storage/parameter_estimates [input_csv] --overwrite")
+            print(f"\nNext: Unpack results to parameter_estimates:")
+            print(f"  python scripts/unpack_results.py {output_file} ../qsp-metadata-storage/parameter_estimates input_csv")
+            print(f"\nNote: input_csv is required for header fields (parameter_name, units, definition, etc.)")
 
 if __name__ == "__main__":
     main()

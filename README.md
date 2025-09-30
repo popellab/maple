@@ -53,17 +53,17 @@ python scripts/upload_batch.py batch_jobs/parameter_requests.jsonl
 python scripts/batch_monitor.py batch_<id>
 
 # Extract results to metadata storage
-python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates
+python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
 
 # Optional: Add pooling metadata to existing studies
-python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates/to-review
+python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
 ```
 
 The complete workflow is documented in `scripts/batch_workflow_commands.sh`.
 
 ## Integration
 
-This repository is designed to work with the central `qsp-metadata-storage` repository. Extracted parameters are written to the `parameter_estimates/to-review/` directory in the metadata storage for validation and integration into the central parameter database.
+This repository is designed to work with the central `qsp-metadata-storage` repository. Extracted parameters are written directly to the `parameter_estimates/` directory with a flat structure. Filename format: `{param_name}_{author_year}_{definition_hash}.yaml`
 
 ## Modular Prompt System
 
@@ -99,10 +99,10 @@ The workflow tools target the central parameter storage repository:
 
 ```bash
 # Extract parameters to central storage
-python scripts/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates
+python scripts/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
 
 # Process pooling metadata from central storage
-python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates/to-review
+python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
 ```
 
 This supports the three-tier QSP architecture where individual projects reference parameters from the central storage rather than storing duplicate copies.

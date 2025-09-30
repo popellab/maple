@@ -38,14 +38,14 @@ python ./scripts/batch_monitor.py batch_{batch_id}
 # Option 2: Immediate processing (faster feedback, good for testing)
 python ./scripts/upload_immediate.py ./batch_jobs/parameter_requests.jsonl
 
-# Unpack results to central metadata storage
+# Unpack results to central metadata storage (flat structure)
 # Use corresponding results file based on upload method chosen above:
-python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/parameter_estimates
+python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/parameter_estimates ./batch_jobs/input_data/core_extraction_input.csv
 # OR (if using immediate processing):
-python ./scripts/unpack_results.py ./batch_jobs/parameter_requests_immediate_results.jsonl ../qsp-metadata-storage/parameter_estimates
+python ./scripts/unpack_results.py ./batch_jobs/parameter_requests_immediate_results.jsonl ../qsp-metadata-storage/parameter_estimates ./batch_jobs/input_data/core_extraction_input.csv
 
 # Optional: Create checklist batch requests for quality assurance auditing
-# (Audits parameter extractions in ../qsp-metadata-storage/parameter_estimates/to-review/)
+# (Audits parameter extractions in ../qsp-metadata-storage/parameter_estimates/)
 python ./scripts/create_checklist_batch.py ./batch_jobs/pdac_parameters_test.csv
 
 python ./scripts/inspect_jsonl.py batch_jobs/checklist_requests.jsonl 1
@@ -81,11 +81,11 @@ python ./scripts/batch_monitor.py batch_{batch_id}
 # Option 2: Immediate processing (faster feedback, good for testing)
 python ./scripts/upload_immediate.py ./batch_jobs/quick_estimate_requests.jsonl
 
-# Unpack quick estimate results to central metadata storage
+# Unpack quick estimate results to central metadata storage (flat structure)
 # Use corresponding results file based on upload method chosen above:
-python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/parameter_estimates
+python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/parameter_estimates ./batch_jobs/pd1_50.csv
 # OR (if using immediate processing):
-python ./scripts/unpack_results.py ./batch_jobs/quick_estimate_requests_immediate_results.jsonl ../qsp-metadata-storage/parameter_estimates
+python ./scripts/unpack_results.py ./batch_jobs/quick_estimate_requests_immediate_results.jsonl ../qsp-metadata-storage/parameter_estimates ./batch_jobs/pd1_50.csv
 
 # TEST STATISTIC WORKFLOW: Generate test statistics for model validation from literature
 # (Quantifies expected distributions of model-derived quantities based on experimental data)

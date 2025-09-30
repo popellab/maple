@@ -809,16 +809,15 @@ class ParameterChecklistBatchCreator(BatchCreator):
         if parameter_storage_dir is None:
             parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
         if to_review_dir is None:
-            # Use parameter storage to-review first (standard workflow), then local as fallback
-            param_storage_to_review = parameter_storage_dir / "to-review"
+            # Use parameter storage with flat structure (standard workflow), then local as fallback
             local_to_review = self.base_dir / "to-review"
-            if param_storage_to_review.exists():
-                to_review_dir = param_storage_to_review
+            if parameter_storage_dir.exists():
+                to_review_dir = parameter_storage_dir
             elif local_to_review.exists():
                 to_review_dir = local_to_review
             else:
                 # Default to parameter storage path even if it doesn't exist (will give clear error)
-                to_review_dir = param_storage_to_review
+                to_review_dir = parameter_storage_dir
 
         requests = []
 
@@ -835,18 +834,13 @@ class ParameterChecklistBatchCreator(BatchCreator):
                     print(f"Warning: No parameter definition found for {cancer_type}/{parameter_name}, skipping")
                     continue
 
-                # Find study YAML files to audit
-                study_dir = to_review_dir / cancer_type / parameter_name
-                if not study_dir.exists():
-                    print(f"Warning: Study directory not found: {study_dir}, skipping")
-                    continue
-
-                # Find YAML files (excluding prior_metadata.yaml)
-                yaml_files = [f for f in study_dir.glob("*.yaml")
+                # Find study YAML files to audit (flat structure)
+                # Pattern: {parameter_name}_*.yaml
+                yaml_files = [f for f in to_review_dir.glob(f"{parameter_name}_*.yaml")
                              if f.name != "prior_metadata.yaml"]
 
                 if not yaml_files:
-                    print(f"Warning: No study YAML files found in {study_dir}, skipping")
+                    print(f"Warning: No study YAML files found for parameter {parameter_name}, skipping")
                     continue
 
                 # Create request for each study YAML

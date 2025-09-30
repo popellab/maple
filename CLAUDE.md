@@ -29,7 +29,7 @@ python scripts/upload_batch.py batch_jobs/batch_requests.jsonl
 python scripts/batch_monitor.py batch_<id>
 
 # Unpack results to YAML files in central metadata storage
-python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates
+python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
 ```
 
 ### Individual Script Usage
@@ -40,7 +40,7 @@ python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-meta
 - `upload_batch.py`: Uploads to OpenAI batch API (slower, handles large volumes). Requires JSONL file path, expects OpenAI API key in `.env` file
 - `upload_immediate.py`: Processes requests immediately via Responses API (faster feedback, good for testing). Requires JSONL file path, expects OpenAI API key in `.env` file
 - `batch_monitor.py`: Requires batch ID, automatically downloads results when batch is complete
-- `unpack_results.py`: Extracts YAML from batch results to `qsp-metadata-storage/parameter_estimates/to-review/` directory structure
+- `unpack_results.py`: Extracts YAML from batch results directly to `qsp-metadata-storage/parameter_estimates/` with flat structure. Format: `{param_name}_{author_year}_{definition_hash}.yaml`
 - `inspect_jsonl.py`: Debug utility for examining batch request/response files
 - `extract_prompt.py`: Extracts prompt text from batch requests and saves to `scratch/` directory for examination
 
@@ -74,7 +74,7 @@ scripts/
 2. Scripts load complete parameter definitions (name, units, definition, canonical_scale, mathematical_role) from storage
 3. **Prompt assembly system** combines base prompts + templates + examples + parameter definition data
 4. Batch processing via OpenAI API creates structured YAML outputs
-5. Results are unpacked to `../qsp-metadata-storage/parameter_estimates/to-review/{cancer_type}/{parameter_name}/` for review
+5. Results are unpacked directly to `../qsp-metadata-storage/parameter_estimates/` with filename format: `{param_name}_{author_year}_{definition_hash}.yaml`
 
 ### Key Data Files
 - `data/simbio_parameters.csv`: Parameter definitions with Name, Units, Definition, References columns (used for parameter definition creation)
@@ -98,8 +98,8 @@ Batch creation uses a modular class-based system:
 - `scripts/prompt_assembly.py`: Modular prompt assembly from templates and examples  
 - `scripts/batch_creator.py`: Class-based batch creation with shared functionality
 - All API scripts expect `OPENAI_API_KEY` in `.env` file (current directory)
-- `unpack_results.py` writes to `../qsp-metadata-storage/parameter_estimates/to-review/`
-- `create_pooling_metadata_batch.py` reads from `../qsp-metadata-storage/parameter_estimates/to-review/`
+- `unpack_results.py` writes directly to `../qsp-metadata-storage/parameter_estimates/` with flat structure
+- `create_pooling_metadata_batch.py` reads from `../qsp-metadata-storage/parameter_estimates/`
 
 ### Batch Processing Model
 - Uses OpenAI's batch API with GPT-5 model and high reasoning effort
@@ -120,18 +120,19 @@ Batch creation uses a modular class-based system:
 
 This repository integrates with the central metadata storage system:
 - Reads API key from `.env` file (current directory)
-- Writes extracted parameters to `../qsp-metadata-storage/parameter_estimates/to-review/` directory
+- Writes extracted parameters directly to `../qsp-metadata-storage/parameter_estimates/` with flat structure
+- Filename format: `{param_name}_{author_year}_{definition_hash}.yaml`
 - Assumes `qsp-metadata-storage` repository exists as sibling directory
 
 ## Standard Usage
 
-- `unpack_results.py`: Extracts to `../qsp-metadata-storage/parameter_estimates` by default
-- `create_pooling_metadata_batch.py`: Reads from `../qsp-metadata-storage/parameter_estimates/to-review/`
+- `unpack_results.py`: Extracts directly to `../qsp-metadata-storage/parameter_estimates` with flat structure
+- `create_pooling_metadata_batch.py`: Reads from `../qsp-metadata-storage/parameter_estimates/`
 
 Example usage:
 ```bash
-python scripts/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates
-python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates/to-review
+python scripts/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
+python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
 ```
 
 # Important Instructions

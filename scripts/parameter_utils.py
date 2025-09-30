@@ -270,15 +270,11 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
         # Default to sibling directory
         parameter_storage_dir = Path(__file__).parent.parent.parent / "qsp-metadata-storage" / "parameter_estimates"
 
-    # Look for existing study YAMLs in to-review directory
-    study_dir = parameter_storage_dir / "to-review" / cancer_type / parameter_name
-
-    if not study_dir.exists():
+    if not parameter_storage_dir.exists():
         return ""
 
-    # Find all YAML files (excluding prior_metadata.yaml)
-    yaml_files = [f for f in study_dir.glob("*.yaml")
-                  if f.name != "prior_metadata.yaml"]
+    # Find all YAML files matching {parameter_name}_*.yaml pattern (flat structure)
+    yaml_files = list(parameter_storage_dir.glob(f"{parameter_name}_*.yaml"))
 
     if not yaml_files:
         return ""
