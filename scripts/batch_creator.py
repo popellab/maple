@@ -268,8 +268,9 @@ class ParameterBatchCreator(BatchCreator):
                 # Build parameter info block with cancer type
                 parameter_block = render_parameter_to_search(parameter_name, units, definition, cancer_type)
 
-                # Collect existing studies for this parameter
-                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
+                # Skip collecting existing studies to avoid YAML parsing errors
+                # existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
+                existing_studies = ""
 
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
@@ -533,8 +534,9 @@ class QuickEstimateBatchCreator(BatchCreator):
                 # Use mathematical role as model context
                 model_context_block = mathematical_role
 
-                # Collect existing studies for this parameter
-                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
+                # Skip collecting existing studies to avoid YAML parsing errors
+                # existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
+                existing_studies = ""
 
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
