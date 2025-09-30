@@ -33,45 +33,24 @@ scenario:
   # Model output computation specification
   model_output:
     code: |
-      % Compute test statistic from model simulation data using SimBiology's `select` function.
-      % This code transforms the raw model species into the specific test statistic.
-      %
-      % Example for tumor volume ratio computation:
-      % TVR = V_T.TumorVolume(assessment_day) / V_T.TumorVolume(baseline)
+      % Compute test statistic from pre-extracted model simulation vectors.
+      % The test harness extracts all required species from simData prior to calling this function.
+      % Function inputs are named after the species in REQUIRED_SPECIES with dots converted to underscores.
       %
       % Inputs:
-      %   simData         - SimBiology SimData object (must log required species)
-      %   assessment_day  - (optional) scalar day for evaluation; default = [DEFAULT_DAY]
+      %   time            - time vector (days)
+      %   [SPECIES_ARGS]  - species vectors named after REQUIRED_SPECIES (e.g., V_T_TumorVolume, V_T_T_eff, V_T_T_reg)
+      %   [OTHER_ARGS]    - additional parameters as needed
       %
       % Output:
       %   test_statistic  - computed test statistic value (appropriate units)
-      function test_statistic = compute_test_statistic(simData, assessment_day)
-        if nargin < 2 || isempty(assessment_day)
-          assessment_day = [DEFAULT_DAY]; % default assessment timepoint
-        end
-
-        % Build query for the target species (modify for your specific species)
-        query = {'Type','species', 'Name','[SPECIES_NAME]', 'Compartment','[COMPARTMENT_NAME]'};
-
-        % Use SimBiology's select to retrieve time and data
-        [t, x, names] = select(simData, query);
-
-        if isempty(x)
-          error('compute_test_statistic:NoData', ...
-                'No data returned by select query. Ensure species logging is enabled.');
-        end
-        if size(x,2) ~= 1
-          error('compute_test_statistic:NonUnique', ...
-                'Query returned %d columns; expected exactly 1. Refine the select query.', size(x,2));
-        end
-
-        % Extract the time series data
-        species_data = x(:,1);
-
+      function test_statistic = compute_test_statistic(time, [SPECIES_ARGS], [OTHER_ARGS])
         % Implement your specific test statistic computation here
-        % Example: ratio at assessment vs baseline
-        baseline_value = interp1(t, species_data, 0, 'linear', 'extrap');
-        assessment_value = interp1(t, species_data, assessment_day, 'linear', 'extrap');
+        % IMPORTANT: Use the exact variable names from REQUIRED_SPECIES (dots → underscores)
+        % Example: if REQUIRED_SPECIES = "V_T.TumorVolume", use variable V_T_TumorVolume
+        assessment_day = [DEFAULT_DAY];
+        baseline_value = interp1(time, [SPECIES_NAME], 0, 'linear', 'extrap');
+        assessment_value = interp1(time, [SPECIES_NAME], assessment_day, 'linear', 'extrap');
 
         test_statistic = [COMPUTATION_LOGIC]; % Replace with actual computation
       end
@@ -93,6 +72,19 @@ expected_distribution:
   mean: NUMERIC_VALUE  # Mean of the test statistic
   variance: NUMERIC_VALUE  # Variance of the test statistic
   ci95: [NUMERIC_LOWER, NUMERIC_UPPER]  # 95% confidence interval
+  units: "UNITS_STRING"  # Units of the test statistic (e.g., "cells", "pg/mL", "dimensionless", "cm³")
+
+# Step-by-step explanation of the R derivation code
+derivation_explanation: |
+  **Step 1:** [Describe the dataset setup - number of patients, measurement method, timepoints]
+
+  **Step 2:** [Explain the bootstrap resampling and how measurement noise is added]
+
+  **Step 3:** [Detail the test statistic calculation process for each bootstrap sample]
+
+  **Step 4:** [Describe the repetition process and number of bootstrap samples]
+
+  **Step 5:** [Explain how final statistics are calculated and what the numbers represent]
 
 # R code for uncertainty quantification of the test statistic from literature sources
 # REQUIREMENTS:

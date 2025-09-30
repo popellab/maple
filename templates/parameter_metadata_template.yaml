@@ -1,3 +1,41 @@
+# ============================================================================
+# PARAMETER DEFINITION (from model context)
+# ============================================================================
+
+parameter_name: "PARAMETER_NAME"
+parameter_units: "UNITS"
+parameter_definition: |
+  [One-sentence definition of what this parameter represents biologically. Must specify:
+  - The biological process being quantified (e.g., "rate of T cell activation", "binding affinity between drug and receptor")
+  - Cell type/compartment where process occurs (e.g., "in tumor-infiltrating CD8+ T cells", "at the tumor-blood interface")
+  - Key modulating factors if applicable (e.g., "in presence of IL-2", "under hypoxic conditions")
+  - Typical physiological range when known (e.g., "typically 0.1-10 nM in human plasma")]
+
+canonical_scale: "CANONICAL_SCALE"  # Must be exactly one of: identity, log, logit
+canonical_scale_rationale: |
+  [Brief justification for canonical scale choice based on parameter properties:
+  - If identity: "Parameter has symmetric distribution and finite range"
+  - If log: "Parameter is strictly positive and varies over multiple orders of magnitude"
+  - If logit: "Parameter is bounded between 0 and 1 (probability/fraction/binding fraction)"]
+
+# Tags for categorization and search
+tags: ["TAG1", "TAG2", "TAG3"]  # e.g., ["t-cell", "proliferation", "tumor", "kinetic-rate"]
+
+# Model context snapshot (automatically populated by export_model_definitions.py)
+model_context:
+  - reaction: "REACTION_NAME"
+    reaction_rate: "REACTION_RATE_FORMULA"
+    rule: "RULE_FORMULA_OR_EMPTY"
+    rule_type: "RULE_TYPE_OR_EMPTY"
+    other_parameters: ["param1:hash1", "param2:hash2"]  # Related parameters with hashes
+    other_species: ["species1:hash1", "species2:hash2"]  # Related species with hashes
+
+context_hash: "CONTEXT_HASH"  # Content-based hash of model_context for matching
+
+# ============================================================================
+# STUDY DATA (from literature extraction)
+# ============================================================================
+
 # Brief narrative summary of how this parameter was measured and derived
 study_overview: |
   This study measures [PARAMETER_NAME] by [BIOLOGICAL_MEASUREMENT_APPROACH]. Parameter was derived from [DATA_TYPE - e.g., time-course, dose-response, equilibrium] data using [DERIVATION_METHOD] (SOURCE_TAG).

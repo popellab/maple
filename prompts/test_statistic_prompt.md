@@ -18,8 +18,8 @@ For this test statistic, you must:
 
 ## Scenario & Model Integration
 4. **Dosing scenario specification:** Configure the experimental scenario using the appropriate `schedule_dosing` format with appropriate drugs, doses, schedules, and patient parameters.
-5. **Model output computation:** Provide MATLAB/SimBiology code that extracts and transforms the exact model species into the test statistic. **CRITICAL: The test statistic must be computed from the exact model species formula provided, not from proxy measures.** Use SimBiology's `select` function with proper compartment-qualified queries.
-6. **Code structure requirements:** Include proper error handling, interpolation methods, and clear documentation of the transformation from raw model species to test statistic value.
+5. **Model output computation:** Provide MATLAB code that transforms pre-extracted model species vectors into the test statistic. **CRITICAL: The test statistic must be computed from the exact model species formula provided, not from proxy measures.** The test harness handles SimBiology data extraction and provides named vectors.
+6. **Code structure requirements:** Write a `compute_test_statistic` function that takes `time` and relevant species vectors as inputs, and returns the test statistic value. Focus on the core transformation logic.
 
 ---
 
@@ -27,6 +27,7 @@ For this test statistic, you must:
 7. **Uncertainty quantification:** Generate Monte Carlo samples (≥2000) using bootstrap/resampling methods that capture all sources of experimental uncertainty. **The derivation code must transform literature data (e.g., response rates, imaging measurements) into the expected distribution for the exact model species formula.**
 8. **Distribution parameters:** Calculate mean, variance, and 95% confidence interval from the resampled data for the model species, not proxy measures.
 9. **Robust estimation:** Handle measurement error, biological variability, and methodological uncertainties appropriately while maintaining focus on the target model output.
+10. **Code explanation:** Provide a step-by-step explanation of the R bootstrap methodology that is specific to your dataset and statistical approach.
 
 ---
 
@@ -60,7 +61,7 @@ Use the provided test statistic template structure with these key sections:
 - `validation_weights`: Quality assessment using standardized rubrics
 - `sources`: Detailed citation information with specific data locations
 
-**Key Enhancement:** The `model_output` section is nested within `scenario` and contains executable MATLAB code that demonstrates how to extract and transform the target model species into the test statistic using SimBiology's `select` function.
+**Key Enhancement:** The `model_output` section is nested within `scenario` and contains a MATLAB `compute_test_statistic` function that transforms pre-extracted model species vectors into the test statistic value.
 
 ---
 
@@ -72,11 +73,15 @@ Use the provided test statistic template structure with these key sections:
 ### Scenario Context
 {{SCENARIO_CONTEXT}}
 
-### Species Formula
-The test statistic should be computed from this model output:
-```
-{{SPECIES_FORMULA}}
-```
+### Required Species with Units
+The test statistic should be computed using these model species with their corresponding units:
+
+{{REQUIRED_SPECIES_WITH_UNITS}}
+
+**IMPORTANT:** These units must be used consistently in both your MATLAB `compute_test_statistic` function and your R derivation code. Ensure that your test statistic calculations, literature data transformations, and final results all use appropriate unit conversions to match these model species units.
+
+### Derived Species Description
+{{DERIVED_SPECIES_DESCRIPTION}}
 
 ### Template
 {{TEMPLATE}}
@@ -90,19 +95,20 @@ Fill out the YAML test statistic template for the specified biological expectati
 
 ## CRITICAL REQUIREMENTS
 
-**Species Formula Compliance:** The test statistic MUST be computed from the exact model species formula provided (`{{SPECIES_FORMULA}}`). Do NOT use proxy measures or clinical endpoints as substitutes. If the literature data provides proxy measures (like ORR, progression-free survival, etc.), your derivation code must transform these into the expected distribution for the actual model output.
+**Species Formula Compliance:** The test statistic MUST be computed from the exact model species listed in `{{REQUIRED_SPECIES}}`. Do NOT use proxy measures or clinical endpoints as substitutes. If the literature data provides proxy measures (like ORR, progression-free survival, etc.), your derivation code must transform these into the expected distribution for the actual model output described in `{{DERIVED_SPECIES_DESCRIPTION}}`.
 
 **Example Transformation Approach:**
-- If species formula is `V_T.TumorVolume` and literature provides ORR data, derive the expected tumor volume reduction distribution that would produce the observed response rates
-- If species formula is `V_T.T_eff / V_T.T_reg` and literature provides immune activation markers, derive the expected T cell ratio distribution
-- The final test statistic samples in `mc_draws` must represent the model species, not the literature proxy measure
+- If required species is `V_T.TumorVolume` and literature provides ORR data, derive the expected tumor volume reduction distribution that would produce the observed response rates
+- If required species includes `V_T.T_eff,V_T.T_reg` and literature provides immune activation markers, derive the expected T cell ratio distribution
+- The final test statistic samples in `mc_draws` must represent the derived species, not the literature proxy measure
 
 **Code Implementation Requirements:**
-- Write MATLAB functions that use `select(simData, {'Type','species', 'Name','[SPECIES_NAME]', 'Compartment','[COMPARTMENT_NAME]'})` to extract model species
-- Include proper error handling for missing data or logging issues
+- Write a `compute_test_statistic` function that takes `time` vector and named species vectors as inputs
+- **CRITICAL**: Function inputs will be named exactly after the species in `{{REQUIRED_SPECIES}}` (e.g., if required_species is `V_T.TumorVolume,V_T.T_eff`, your function signature should be `compute_test_statistic(time, V_T_TumorVolume, V_T_T_eff)`)
+- **Variable naming**: Convert dots to underscores in species names for MATLAB variables (e.g., `V_T.TumorVolume` becomes `V_T_TumorVolume`)
 - Use interpolation methods (e.g., `interp1`) when evaluating at specific timepoints
-- Document all function inputs, outputs, and assumptions clearly
-- Show the complete transformation from raw model species to final test statistic value
+- Document function inputs, outputs, and transformation logic clearly
+- Focus on the core mathematical transformation from species vectors to test statistic value
 
 ---
 

@@ -112,9 +112,12 @@ prompt_types:
       - name: SCENARIO_CONTEXT
         source: runtime
         description: "Experimental scenario and dosing context information"
-      - name: SPECIES_FORMULA
+      - name: REQUIRED_SPECIES_WITH_UNITS
         source: runtime
-        description: "Model species formula for test statistic computation"
+        description: "Required species with their units information formatted for clarity"
+      - name: DERIVED_SPECIES_DESCRIPTION
+        source: runtime
+        description: "Biological description of what the derived species/test statistic represents"
 
 # Configuration for how to handle different placeholder sources
 placeholder_sources:
