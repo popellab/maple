@@ -2,7 +2,8 @@
 """
 Unpack batch results to parameter folders.
 
-Adds header fields from input CSV to unpacked JSON files.
+Extracts JSON from LLM responses, adds header fields from input CSV,
+and saves as properly-formatted YAML files.
 """
 
 import json
@@ -99,14 +100,14 @@ def load_parameter_metadata(input_csv: Path) -> Dict[Tuple[str, str], Dict]:
 
 def prepend_header_fields(json_content: str, header_data: Dict) -> str:
     """
-    Prepend header fields to LLM-generated JSON content.
+    Prepend header fields to LLM-generated JSON content and convert to YAML.
 
     Args:
         json_content: JSON from LLM response
         header_data: Header fields to prepend
 
     Returns:
-        Complete JSON with header fields
+        Complete YAML with header fields
     """
     # Parse the LLM JSON
     try:
@@ -117,6 +118,10 @@ def prepend_header_fields(json_content: str, header_data: Dict) -> str:
 
     # Build complete document with header fields first
     complete_data = {}
+
+    # Add header section comment
+    header_comment = "# PARAMETER DEFINITION (from model context)\n"
+    header_comment += "# " + "=" * 76 + "\n"
 
     # Add header fields in order
     complete_data['parameter_name'] = header_data['parameter_name']
@@ -145,10 +150,14 @@ def prepend_header_fields(json_content: str, header_data: Dict) -> str:
     # Add all LLM-generated fields
     complete_data.update(llm_data)
 
-    # Convert to formatted JSON string
-    json_str = json.dumps(complete_data, indent=2, ensure_ascii=False)
+    # Convert to YAML string with header comment
+    # PyYAML will properly escape everything, avoiding the original YAML issues
+    yaml_str = yaml.dump(complete_data,
+                        default_flow_style=False,
+                        allow_unicode=True,
+                        sort_keys=False)
 
-    return json_str
+    return header_comment + yaml_str
 
 def main():
     if len(sys.argv) < 3:
@@ -224,18 +233,18 @@ def main():
 
                 # Determine filename based on structure type
                 if use_flat_structure:
-                    # New format: {param_name}_{author_year}_{definition_hash}.json
+                    # New format: {param_name}_{author_year}_{definition_hash}.yaml
                     author_year = extract_first_source_tag(json_content, is_json=True)
                     if author_year and definition_hash:
-                        file_name = f"{parameter_name}_{author_year}_{definition_hash}.json"
+                        file_name = f"{parameter_name}_{author_year}_{definition_hash}.yaml"
                     else:
                         # Fallback if missing components
-                        file_name = f"{parameter_name}_unknown.json"
+                        file_name = f"{parameter_name}_unknown.yaml"
                 else:
                     # Legacy format: use first source tag or default
                     first_source = extract_first_source_tag(json_content, is_json=True)
                     if first_source:
-                        file_name = f"{first_source}.json"
+                        file_name = f"{first_source}.yaml"
                     else:
                         # Keep yaml extension for legacy batch types (defn, quick)
                         file_name = filename_default
@@ -243,7 +252,7 @@ def main():
                 # Get unique filename
                 file_path = get_unique_filename(param_dir / file_name)
 
-                # Save JSON file
+                # Save as YAML file (converted from JSON)
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(json_content)
 

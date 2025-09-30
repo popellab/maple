@@ -1,29 +1,7 @@
 # Complete parameter definition and extraction workflow
 # Extracts parameters to central qsp-metadata-storage repository
 
-# STEP 1: Create parameter definitions with canonical scales (run first)
-# Note: Uses simbio_parameters.csv for Name/Units, loads definitions from data/parameter_definitions.csv
-python ./scripts/create_parameter_definition_batch.py ./batch_jobs/pdac_parameters_modules.csv ./data/simbio_parameters.csv ./data/model_context.csv
-
-python ./scripts/inspect_jsonl.py batch_jobs/parameter_definition_requests.jsonl 1
-# Optional: Extract prompt to examine more easily
-python ./scripts/extract_prompt.py batch_jobs/parameter_definition_requests.jsonl 0
-
-# Upload parameter definitions batch (choose one method):
-# Option 1: Batch processing (slower, handles large volumes)
-python ./scripts/upload_batch.py ./batch_jobs/parameter_definition_requests.jsonl
-python ./scripts/batch_monitor.py batch_{batch_id}
-
-# Option 2: Immediate processing (faster feedback, good for testing)
-python ./scripts/upload_immediate.py ./batch_jobs/parameter_definition_requests.jsonl
-
-# Unpack parameter definitions to storage (creates canonical scales)
-# Use corresponding results file based on upload method chosen above:
-python ./scripts/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/parameter_estimates
-# OR (if using immediate processing):
-python ./scripts/unpack_results.py ./batch_jobs/parameter_definition_requests_immediate_results.jsonl ../qsp-metadata-storage/parameter_estimates
-
-# STEP 2: Create parameter extraction requests (uses parameter definitions from step 1)
+# STEP 1: Create parameter extraction requests
 python ./scripts/create_parameter_batch.py ./batch_jobs/input_data/core_extraction_input_7bd60509.csv
 
 python ./scripts/inspect_jsonl.py batch_jobs/parameter_requests.jsonl 1

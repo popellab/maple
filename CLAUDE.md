@@ -40,7 +40,7 @@ python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-meta
 - `upload_batch.py`: Uploads to OpenAI batch API (slower, handles large volumes). Requires JSONL file path, expects OpenAI API key in `.env` file
 - `upload_immediate.py`: Processes requests immediately via Responses API (faster feedback, good for testing). Requires JSONL file path, expects OpenAI API key in `.env` file
 - `batch_monitor.py`: Requires batch ID, automatically downloads results when batch is complete
-- `unpack_results.py`: Extracts YAML from batch results directly to `qsp-metadata-storage/parameter_estimates/` with flat structure. Format: `{param_name}_{author_year}_{definition_hash}.yaml`
+- `unpack_results.py`: Extracts JSON from batch results, converts to YAML, and saves to `qsp-metadata-storage/parameter_estimates/` with flat structure. Format: `{param_name}_{author_year}_{definition_hash}.yaml`
 - `inspect_jsonl.py`: Debug utility for examining batch request/response files
 - `extract_prompt.py`: Extracts prompt text from batch requests and saves to `scratch/` directory for examination
 
