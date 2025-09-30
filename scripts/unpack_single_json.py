@@ -2,136 +2,149 @@
 """
 Unpack a single JSON file (e.g., from chat interface) to YAML.
 
-This is a convenience script for manually extracted parameters.
+Automatically extracts metadata from JSON and saves to qsp-metadata-storage
+with proper filename format.
 """
 
 import json
 import sys
 import yaml
 from pathlib import Path
-from typing import Dict
 
 
-def convert_json_to_yaml(json_file: Path, output_file: Path, header_data: Dict = None):
+def extract_first_source_tag(data: dict) -> str:
+    """Extract the first source tag from sources field."""
+    try:
+        if 'sources' in data and isinstance(data['sources'], dict):
+            return list(data['sources'].keys())[0]
+    except Exception:
+        pass
+    return None
+
+
+def get_unique_filename(base_path: Path) -> Path:
+    """Get a unique filename by adding v2, v3, etc. if file exists."""
+    if not base_path.exists():
+        return base_path
+
+    stem = base_path.stem
+    suffix = base_path.suffix
+    parent = base_path.parent
+
+    counter = 2
+    while True:
+        new_name = f"{stem}_v{counter}{suffix}"
+        new_path = parent / new_name
+        if not new_path.exists():
+            return new_path
+        counter += 1
+
+
+def convert_json_to_yaml(json_file: Path, output_dir: Path = None):
     """
-    Convert a JSON file to YAML with optional header fields.
+    Convert a JSON file to YAML and save to qsp-metadata-storage.
+
+    Extracts metadata from JSON to construct filename automatically.
 
     Args:
         json_file: Path to input JSON file
-        output_file: Path to output YAML file
-        header_data: Optional dict with header fields (parameter_name, units, etc.)
+        output_dir: Optional output directory (defaults to ../qsp-metadata-storage/parameter_estimates)
     """
     # Read JSON file
     with open(json_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    # If header data provided, prepend it
-    if header_data:
-        complete_data = {}
+    # Extract required fields from JSON
+    parameter_name = data.get('parameter_name')
+    context_hash = data.get('context_hash')
 
-        # Add header comment
-        header_comment = "# PARAMETER DEFINITION (from model context)\n"
-        header_comment += "# " + "=" * 76 + "\n"
+    if not parameter_name:
+        print("Error: JSON must contain 'parameter_name' field")
+        sys.exit(1)
 
-        # Add header fields if provided
-        if 'parameter_name' in header_data:
-            complete_data['parameter_name'] = header_data['parameter_name']
-        if 'parameter_units' in header_data:
-            complete_data['parameter_units'] = header_data['parameter_units']
-        if 'parameter_definition' in header_data:
-            complete_data['parameter_definition'] = header_data['parameter_definition']
-        if 'cancer_type' in header_data:
-            complete_data['cancer_type'] = header_data['cancer_type']
+    if not context_hash:
+        print("Warning: No 'context_hash' field found, using 'unknown'")
+        context_hash = 'unknown'
 
-        # Add tags with "ai-generated" marker
-        tags = header_data.get('tags', [])
-        if not isinstance(tags, list):
-            tags = []
-        if 'ai-generated' not in tags:
-            tags.append('ai-generated')
-        complete_data['tags'] = tags
+    # Extract first source tag for filename
+    author_year = extract_first_source_tag(data)
+    if not author_year:
+        print("Warning: No sources found, using 'unknown' for author_year")
+        author_year = 'unknown'
 
-        if 'model_context' in header_data:
-            complete_data['model_context'] = header_data['model_context']
-        if 'context_hash' in header_data:
-            complete_data['context_hash'] = header_data['context_hash']
+    # Add "ai-generated" tag if not present
+    tags = data.get('tags', [])
+    if not isinstance(tags, list):
+        tags = []
+    if 'ai-generated' not in tags:
+        tags.append('ai-generated')
+    data['tags'] = tags
 
-        # Add LLM-generated fields
-        complete_data.update(data)
+    # Add header comment
+    header_comment = "# PARAMETER DEFINITION (from model context)\n"
+    header_comment += "# " + "=" * 76 + "\n"
 
-        # Convert to YAML
-        yaml_str = yaml.dump(complete_data,
-                            default_flow_style=False,
-                            allow_unicode=True,
-                            sort_keys=False)
+    # Convert to YAML
+    yaml_str = yaml.dump(data,
+                        default_flow_style=False,
+                        allow_unicode=True,
+                        sort_keys=False)
 
-        final_output = header_comment + yaml_str
-    else:
-        # No header data, just convert JSON to YAML
-        final_output = yaml.dump(data,
-                                default_flow_style=False,
-                                allow_unicode=True,
-                                sort_keys=False)
+    final_output = header_comment + yaml_str
+
+    # Determine output directory
+    if output_dir is None:
+        # Default to qsp-metadata-storage/parameter_estimates
+        script_dir = Path(__file__).parent
+        output_dir = script_dir.parent.parent / "qsp-metadata-storage" / "parameter_estimates"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Construct filename: {param_name}_{author_year}_{context_hash}.yaml
+    filename = f"{parameter_name}_{author_year}_{context_hash}.yaml"
+    output_file = get_unique_filename(output_dir / filename)
 
     # Write YAML file
-    output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(final_output)
 
-    print(f"Converted {json_file} -> {output_file}")
+    print(f"Saved: {output_file}")
+    print(f"  Parameter: {parameter_name}")
+    print(f"  Source: {author_year}")
+    print(f"  Hash: {context_hash}")
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: unpack_single_json.py input.json output.yaml [options]")
+    if len(sys.argv) < 2:
+        print("Usage: unpack_single_json.py input.json [output_dir]")
         print("")
-        print("Options:")
-        print("  --param-name NAME        Parameter name")
-        print("  --param-units UNITS      Parameter units")
-        print("  --param-def DEFINITION   Parameter definition")
-        print("  --cancer-type TYPE       Cancer type")
-        print("  --context-hash HASH      Context hash")
+        print("Extracts metadata from JSON and saves to qsp-metadata-storage")
+        print("with filename format: {param_name}_{author_year}_{context_hash}.yaml")
         print("")
-        print("Example:")
-        print("  python scripts/unpack_single_json.py chat_response.json output.yaml \\")
-        print("    --param-name k_fib_death \\")
-        print("    --param-units '1/day' \\")
-        print("    --cancer-type PDAC")
+        print("The JSON must contain:")
+        print("  - parameter_name (required)")
+        print("  - context_hash (optional, defaults to 'unknown')")
+        print("  - sources (optional, first key used for author_year)")
+        print("")
+        print("Examples:")
+        print("  # Save to default location (../qsp-metadata-storage/parameter_estimates)")
+        print("  python scripts/unpack_single_json.py chat_response.json")
+        print("")
+        print("  # Save to custom directory")
+        print("  python scripts/unpack_single_json.py chat_response.json /path/to/output")
         sys.exit(1)
 
     json_file = Path(sys.argv[1])
-    output_file = Path(sys.argv[2])
 
     if not json_file.exists():
         print(f"Error: {json_file} not found")
         sys.exit(1)
 
-    # Parse optional header arguments
-    header_data = {}
-    i = 3
-    while i < len(sys.argv):
-        arg = sys.argv[i]
-        if arg == '--param-name' and i + 1 < len(sys.argv):
-            header_data['parameter_name'] = sys.argv[i + 1]
-            i += 2
-        elif arg == '--param-units' and i + 1 < len(sys.argv):
-            header_data['parameter_units'] = sys.argv[i + 1]
-            i += 2
-        elif arg == '--param-def' and i + 1 < len(sys.argv):
-            header_data['parameter_definition'] = sys.argv[i + 1]
-            i += 2
-        elif arg == '--cancer-type' and i + 1 < len(sys.argv):
-            header_data['cancer_type'] = sys.argv[i + 1]
-            i += 2
-        elif arg == '--context-hash' and i + 1 < len(sys.argv):
-            header_data['context_hash'] = sys.argv[i + 1]
-            i += 2
-        else:
-            print(f"Warning: Unknown argument {arg}")
-            i += 1
+    # Optional output directory
+    output_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 
     # Convert
-    convert_json_to_yaml(json_file, output_file, header_data if header_data else None)
+    convert_json_to_yaml(json_file, output_dir)
 
 
 if __name__ == "__main__":
