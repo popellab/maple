@@ -150,12 +150,22 @@ def prepend_header_fields(json_content: str, header_data: Dict) -> str:
     # Add all LLM-generated fields
     complete_data.update(llm_data)
 
+    # Custom representer for multi-line strings
+    def str_representer(dumper, data):
+        if '\n' in data:
+            # Use literal block style for multi-line strings
+            return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+        return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+    yaml.add_representer(str, str_representer, Dumper=yaml.SafeDumper)
+
     # Convert to YAML string with header comment
-    # PyYAML will properly escape everything, avoiding the original YAML issues
     yaml_str = yaml.dump(complete_data,
+                        Dumper=yaml.SafeDumper,
                         default_flow_style=False,
                         allow_unicode=True,
-                        sort_keys=False)
+                        sort_keys=False,
+                        width=1000)
 
     return header_comment + yaml_str
 
@@ -233,13 +243,13 @@ def main():
 
                 # Determine filename based on structure type
                 if use_flat_structure:
-                    # New format: {param_name}_{author_year}_{definition_hash}.yaml
+                    # New format: {param_name}_{author_year}_{cancer_type}_{definition_hash}.yaml
                     author_year = extract_first_source_tag(json_content, is_json=True)
                     if author_year and definition_hash:
-                        file_name = f"{parameter_name}_{author_year}_{definition_hash}.yaml"
+                        file_name = f"{parameter_name}_{author_year}_{cancer_type}_{definition_hash}.yaml"
                     else:
                         # Fallback if missing components
-                        file_name = f"{parameter_name}_unknown.yaml"
+                        file_name = f"{parameter_name}_{cancer_type}_unknown.yaml"
                 else:
                     # Legacy format: use first source tag or default
                     first_source = extract_first_source_tag(json_content, is_json=True)
