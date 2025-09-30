@@ -10,27 +10,26 @@ For this parameter, you must:
 ---
 
 ## Monte Carlo Parameter Estimation
-1. **Generate MC samples:** Provide fully executable R code that generates a numeric vector called `mc_draws_canonical` with ≥2000 samples.  
-2. **Canonical scale:** Always generate draws on the canonical scale specified for this parameter to ensure comparability across studies.  
+1. **Generate MC samples:** Provide fully executable R code that generates a numeric vector called `mc_draws` with ≥2000 samples.
+2. **Bootstrap preferred:** Use bootstrap resampling when raw/digitizable data available.
 
-3. **Bootstrap preferred:** Use bootstrap resampling when raw/digitizable data available.
-
-4. **Uncertainty propagation:** Incorporate ALL sources of uncertainty, especially for composite parameters:
+3. **Uncertainty propagation:** Incorporate ALL sources of uncertainty, especially for composite parameters:
    - **Multiple measurements:** Use bootstrap resampling when combining multiple data points
    - **Composite parameters:** When parameter depends on multiple quantities, propagate uncertainty from each component
    - **Unit conversions:** Include uncertainty from conversion factors when applicable
    - **Model assumptions:** Account for parametric uncertainty when making distributional assumptions
-5. **Required summary statistics:** Calculate and populate these 4 required fields:
-   - `mu`: Mean of mc_draws_canonical  
-   - `s2`: Variance of mc_draws_canonical
-   - `natural_scale_mean`: Mean on natural (untransformed) scale
-   - `natural_scale_ci95`: BCa 95% confidence interval on natural scale as [lower, upper]  
+4. **Required summary statistics:** Calculate and populate these 4 required fields:
+   - `mean`: Mean of mc_draws
+   - `variance`: Variance of mc_draws
+   - `ci95`: BCa 95% confidence interval as [lower, upper]
+   - `units`: Units string for the parameter  
 
 ---
 
 ## Experimental Documentation
-6. **Study overview:** Provide a concise narrative explaining the measurement approach, biological rationale, and how the parameter was derived.  
-7. **Technical details:** Document essential assay and study design details (measurement method, instrumentation, sample size, replicates, controls, data source, processing, and key assumptions).  
+5. **Study overview:** Provide a concise narrative explaining the measurement approach, biological rationale, and how the parameter was derived.
+6. **Technical details:** Document essential assay and study design details (measurement method, instrumentation, sample size, replicates, controls, data source, processing, and key assumptions).
+7. **Derivation explanation:** Provide a step-by-step plain-language explanation of the R derivation code (5 steps recommended).
 8. **Streamlined format:** Focus only on details critical for parameter derivation and pooling decisions.  
 
 ---
@@ -130,16 +129,17 @@ Use the following rubrics (tables). Do not invent new scales.
 
 ## Structure & Completeness
 18. `study_overview` must provide a clear, non-redundant narrative without repeating technical_details.
-19. `parameter_estimates.derivation_code_r` must generate `mc_draws_canonical` with proper uncertainty propagation.
-20. Pooling weights must follow the rubric tables exactly (0–1) with concise justifications.
-21. All sections (`technical_details`, `sources`, `key_study_limitations`) must be complete with consistent source attribution.  
+19. `derivation_explanation` must provide a clear step-by-step plain-language explanation of the R code.
+20. `derivation_code_r` must generate `mc_draws` with proper uncertainty propagation.
+21. Pooling weights must follow the rubric tables exactly (0–1) with concise justifications.
+22. All sections (`technical_details`, `derivation_explanation`, `sources`, `key_study_limitations`) must be complete with consistent source attribution.
 
 ---
 
 **Key Requirements**
-- The R code must define `mc_draws_canonical` (≥2000 samples, canonical scale).  
-- **Bootstrap is the default** for uncertainty quantification. If bootstrapping is not possible, explain why and state the alternative.  
-- Weights must follow the rubric tables exactly.  
+- The R code must define `mc_draws` (≥2000 samples).
+- **Bootstrap is the default** for uncertainty quantification. If bootstrapping is not possible, explain why and state the alternative.
+- Weights must follow the rubric tables exactly.
 - Metadata must be pooling-ready: everything needed for inverse-variance weighted pooling across studies.  
 
 ---
@@ -153,9 +153,6 @@ Use the following rubrics (tables). Do not invent new scales.
 # PARAMETER INFORMATION
 
 {{PARAMETER_INFO}}
-
-## CANONICAL_SCALE:
-{{CANONICAL_SCALE}}
 
 ## MODEL_CONTEXT:
 {{MODEL_CONTEXT}}

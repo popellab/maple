@@ -268,9 +268,6 @@ class ParameterBatchCreator(BatchCreator):
                 # Build parameter info block with cancer type
                 parameter_block = render_parameter_to_search(parameter_name, units, definition, cancer_type)
 
-                # Use definition hash as canonical scale identifier if available
-                canonical_scale = definition_hash if definition_hash else "NOT_PROVIDED"
-
                 # Collect existing studies for this parameter
                 existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
 
@@ -278,7 +275,6 @@ class ParameterBatchCreator(BatchCreator):
                 runtime_data = {
                     "EXISTING_STUDIES": existing_studies,
                     "PARAMETER_INFO": parameter_block,
-                    "CANONICAL_SCALE": canonical_scale,
                     "MODEL_CONTEXT": model_context_block
                 }
 

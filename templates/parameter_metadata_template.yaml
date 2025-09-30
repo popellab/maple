@@ -11,23 +11,34 @@ technical_details: |
 
 parameter_estimates:
   # Required summary statistics (calculated from MC samples)
-  mu: NUMERIC_VALUE  # Mean of mc_draws_canonical
-  s2: NUMERIC_VALUE  # Variance of mc_draws_canonical  
-  natural_scale_mean: NUMERIC_VALUE  # Mean on natural (untransformed) scale
-  natural_scale_ci95: [NUMERIC_LOWER, NUMERIC_UPPER]  # 95% CI on natural scale
-  
-  # Generate Monte Carlo samples using bootstrap on the specified canonical scale
-  # REQUIREMENTS for the R code below:
-  #   - Create vector 'mc_draws_canonical' with >= 2000 samples using bootstrap
-  #   - Use the canonical scale provided for this parameter (identity/log/logit)
-  #   - Calculate and populate the 4 required fields above: mu, s2, natural_scale_mean, natural_scale_ci95
-  derivation_code_r: |
+  mean: NUMERIC_VALUE  # Mean of the parameter
+  variance: NUMERIC_VALUE  # Variance of the parameter
+  ci95: [NUMERIC_LOWER, NUMERIC_UPPER]  # 95% confidence interval
+  units: "UNITS_STRING"  # Units of the parameter (e.g., "1/day", "nM", "dimensionless")
+
+# Step-by-step explanation of the R derivation code
+derivation_explanation: |
+  **Step 1:** [Describe the dataset setup - number of patients/samples, measurement method, timepoints]
+
+  **Step 2:** [Explain the bootstrap resampling and how measurement noise/uncertainty is added]
+
+  **Step 3:** [Detail the parameter calculation process for each bootstrap sample]
+
+  **Step 4:** [Describe the repetition process and number of bootstrap samples]
+
+  **Step 5:** [Explain how final statistics are calculated and what the numbers represent]
+
+# R code for uncertainty quantification of the parameter from literature sources
+# REQUIREMENTS:
+#   - Create vector 'mc_draws' with >= 2000 samples using bootstrap/resampling
+#   - Calculate and populate the 4 required fields: mean, variance, ci95, units
+derivation_code_r: |
     ```r
     library(boot)
-    
+
     # Composite parameter example: Drug clearance from concentration and half-life data
     # This demonstrates uncertainty propagation for parameters derived from multiple sources
-    
+
     # 1) Define raw measurements with uncertainty ---------------------------------
     # Concentration measurements (mg/L) with measurement error
     conc_data <- data.frame(
@@ -35,16 +46,16 @@ parameter_estimates:
       concentration = c(45.2, 38.1, 31.5, 22.8, 12.4, 6.2),  # mg/L
       cv_percent = c(8.5, 6.2, 7.1, 9.3, 12.1, 15.8)  # measurement CV%
     )
-    
+
     # Volume of distribution from separate study (L/kg) with uncertainty
     vd_mean <- 2.1  # L/kg
     vd_se <- 0.3    # standard error from literature
-    
+
     # 2) Define composite estimator with uncertainty propagation --------------
     clearance_estimator <- function(data, indices) {
       # Resample concentration data
       d <- data[indices, , drop = FALSE]
-      
+
       # Add measurement error to each concentration (CV-based uncertainty)
       conc_with_error <- sapply(1:nrow(d), function(i) {
         cv <- d$cv_percent[i] / 100
@@ -52,7 +63,7 @@ parameter_estimates:
         # Assumption: Measurement error is normally distributed
         rnorm(1, d$concentration[i], sd_conc)
       })
-      
+
       # Fit exponential decay to get elimination rate constant (ke)
       # Model: C(t) = C0 * exp(-ke * t), so log(C) = log(C0) - ke * t
       # Assumption: First-order elimination kinetics apply
@@ -60,52 +71,40 @@ parameter_estimates:
       lm_fit <- lm(log_conc ~ d$timepoint)
       ke <- -coef(lm_fit)[2]  # elimination rate constant (1/hr)
       # Note: Ignoring fitting uncertainty here for simplicity
-      
+
       # Sample volume of distribution with literature uncertainty
       # Assumption: Vd follows normal distribution around literature mean
       vd_sample <- rnorm(1, vd_mean, vd_se)
-      
+
       # Calculate clearance = ke * Vd (L/hr/kg)
       # This propagates uncertainty from both ke estimation and Vd literature value
       clearance <- ke * vd_sample
-      
+
       return(clearance)
     }
-    
-    # 3) Use provided canonical scale ----------------------------------------
-    canonical_scale <- "log"  # Use the canonical scale provided for this parameter
-    
-    # 4) Run bootstrap with uncertainty propagation ---------------------------
+
+    # 3) Run bootstrap with uncertainty propagation ---------------------------
     set.seed(123)
     B <- 5000
     boot_out <- boot(data = conc_data, statistic = clearance_estimator, R = B)
-    
-    # Extract replicates as natural-scale draws
-    mc_draws_natural <- boot_out$t[,1]
-    
-    # Remove any extreme outliers (> 99.9th percentile)
-    q999 <- quantile(mc_draws_natural, 0.999, na.rm = TRUE)
-    mc_draws_natural <- mc_draws_natural[mc_draws_natural <= q999 & !is.na(mc_draws_natural)]
-    
-    # 5) Apply canonical transformation ---------------------------------------
-    transform_vec <- function(x, scale) {
-      if (scale == "identity") return(x)
-      if (scale == "log")     return(log(pmax(x, .Machine$double.eps)))
-      if (scale == "logit")   return(qlogis(pmin(pmax(x, 1e-12), 1 - 1e-12)))
-      stop("Unknown canonical scale")
-    }
-    mc_draws_canonical <- transform_vec(mc_draws_natural, canonical_scale)
-    
+
+    # Extract replicates
+    mc_draws <- boot_out$t[,1]
+
+    # Remove any extreme outliers (> 99.9th percentile) or invalid values
+    mc_draws <- mc_draws[!is.na(mc_draws) & mc_draws > 0]
+    q999 <- quantile(mc_draws, 0.999, na.rm = TRUE)
+    mc_draws <- mc_draws[mc_draws <= q999]
+
     # Required summary statistics
-    mu <- mean(mc_draws_canonical)
-    s2 <- var(mc_draws_canonical)
-    natural_scale_mean <- mean(mc_draws_natural)
-    
-    # BCa 95% CI on natural scale
+    mean_param <- mean(mc_draws)
+    variance_param <- var(mc_draws)
+
+    # BCa 95% CI
     bca_ci <- boot.ci(boot_out, type = "bca", conf = 0.95)
-    natural_scale_ci95 <- c(bca_ci$bca[4], bca_ci$bca[5])  # [lower, upper]
-    
-    # Result: mc_draws_canonical contains samples with all uncertainty sources propagated
+    ci95_param <- c(bca_ci$bca[4], bca_ci$bca[5])  # [lower, upper]
+
+    # Result: mc_draws contains parameter samples with all uncertainty sources propagated
     ```
 
 pooling_weights:
