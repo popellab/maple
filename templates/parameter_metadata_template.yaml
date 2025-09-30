@@ -7,6 +7,8 @@ parameter_definition: |
   Quantifies CD8+ T cell expansion rate in tumor tissue, typically 0.05-0.3 per day
   in human solid tumors.
 
+cancer_type: "CORE"  # Target cancer type or indication (e.g., NSCLC, PDAC, CORE)
+
 tags: ["t-cell", "proliferation", "kinetic-rate", "tumor", "cd8"]
 
 # Model context snapshot at time of study extraction

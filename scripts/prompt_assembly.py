@@ -28,9 +28,49 @@ class PromptAssembler:
         return self.config
         
     def load_template(self, template_path: Path) -> str:
-        """Load a template file."""
+        """
+        Load a template file, excluding header fields.
+
+        For parameter templates, excludes fields from parameter_name through context_hash
+        (these are added back during result unpacking). Only includes fields from
+        mathematical_role onward for the LLM prompt.
+        """
         with open(self.base_dir / template_path, 'r', encoding='utf-8') as f:
-            return f.read()
+            content = f.read()
+
+        # Check if this is a parameter metadata template (has parameter_name field)
+        if 'parameter_name:' in content:
+            # Parse YAML to extract only the fields we want in the prompt
+            try:
+                full_template = yaml.safe_load(content)
+
+                # Fields to exclude from prompt (will be added back during unpacking)
+                header_fields = [
+                    'parameter_name',
+                    'parameter_units',
+                    'parameter_definition',
+                    'cancer_type',
+                    'tags',
+                    'model_context',
+                    'context_hash'
+                ]
+
+                # Create filtered template with only prompt-relevant fields
+                filtered_template = {k: v for k, v in full_template.items()
+                                   if k not in header_fields}
+
+                # Convert back to YAML string, preserving formatting
+                return yaml.dump(filtered_template,
+                               default_flow_style=False,
+                               allow_unicode=True,
+                               sort_keys=False)
+            except Exception as e:
+                # If parsing fails, return original content
+                print(f"Warning: Could not filter template fields: {e}")
+                return content
+        else:
+            # For non-parameter templates, return as-is
+            return content
             
     def load_example(self, example_path: Path) -> str:
         """Load an example file."""
