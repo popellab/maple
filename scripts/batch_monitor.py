@@ -34,16 +34,22 @@ def main():
     if batch.status == "completed":
         if batch.output_file_id:
             content = client.files.content(batch.output_file_id)
-            
-            # Save to batch_jobs directory  
+
+            # Save to batch_jobs directory
             script_dir = Path(__file__).parent
             batch_jobs_dir = script_dir.parent / "batch_jobs"
             batch_jobs_dir.mkdir(exist_ok=True)
-            
+
             output_file = batch_jobs_dir / f"{batch_id}_results.jsonl"
             with open(output_file, 'wb') as f:
                 f.write(content.content)
             print(f"Downloaded: {output_file}")
+
+            # Print next command
+            print(f"\nNext: Unpack results to parameter storage:")
+            print(f"  python scripts/unpack_results.py {output_file} ../qsp-parameter-storage [input_csv]")
+            print(f"\nOr with overwrite (replaces existing files):")
+            print(f"  python scripts/unpack_results.py {output_file} ../qsp-parameter-storage [input_csv] --overwrite")
 
 if __name__ == "__main__":
     main()
