@@ -1,3 +1,42 @@
+# PARAMETER DEFINITION (from model context)
+# ============================================================================
+parameter_name: "k_T_prolif"
+parameter_units: "1/day"
+parameter_definition: |
+  T cell proliferation rate in tumor microenvironment in presence of growth signals.
+  Quantifies CD8+ T cell expansion rate in tumor tissue, typically 0.05-0.3 per day
+  in human solid tumors.
+
+tags: ["t-cell", "proliferation", "kinetic-rate", "tumor", "cd8"]
+
+# Model context snapshot at time of study extraction
+model_context:
+  - reaction: "T_proliferation"
+    reaction_rate: "k_T_prolif * T_eff * growth_signal"
+    rule: ""
+    rule_type: ""
+    other_parameters: ["k_T_death:a3f4b21c", "IL2_EC50:b7e9d2a1"]
+    other_species: ["V_T.T_eff:c8d2e4f6", "V_T.IL2:f3a7c9e2"]
+
+  - reaction: "IL2_dependent_prolif"
+    reaction_rate: "k_T_prolif * T_eff * IL2/(IL2_EC50 + IL2)"
+    rule: ""
+    rule_type: ""
+    other_parameters: ["IL2_EC50:b7e9d2a1"]
+    other_species: ["V_T.T_eff:c8d2e4f6", "V_T.IL2:f3a7c9e2"]
+
+context_hash: "a1b2c3d4"  # Short hash for filename matching
+
+mathematical_role: |
+  Describe the mathematical role of this parameter in the model equations.
+  Examples:
+  - "Rate constant in mass action kinetics"
+  - "Michaelis constant in Hill function"
+  - "Scaling factor for unit conversion"
+  - "Exponent in power law relationship"
+
+parameter_range: "positive_reals"  # Options: "positive_reals", "[0,1]", "reals", or custom like "[0,100]"
+
 # Brief narrative summary of how this parameter was measured and derived
 study_overview: |
   This study measures [PARAMETER_NAME] by [BIOLOGICAL_MEASUREMENT_APPROACH]. Parameter was derived from [DATA_TYPE - e.g., time-course, dose-response, equilibrium] data using [DERIVATION_METHOD] (SOURCE_TAG).
