@@ -30,6 +30,9 @@ python scripts/batch_monitor.py batch_<id>
 
 # Unpack results to YAML files in central parameter storage
 python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-parameter-storage
+
+# Unpack with overwrite (replaces existing files instead of creating versioned files)
+python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-parameter-storage --overwrite
 ```
 
 ### Individual Script Usage
@@ -40,7 +43,7 @@ python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-para
 - `upload_batch.py`: Uploads to OpenAI batch API (slower, handles large volumes). Requires JSONL file path, expects OpenAI API key in `.env` file
 - `upload_immediate.py`: Processes requests immediately via Responses API (faster feedback, good for testing). Requires JSONL file path, expects OpenAI API key in `.env` file
 - `batch_monitor.py`: Requires batch ID, automatically downloads results when batch is complete
-- `unpack_results.py`: Extracts YAML from batch results to `qsp-parameter-storage/to-review/` directory structure
+- `unpack_results.py`: Extracts YAML from batch results to `qsp-parameter-storage/to-review/` directory structure. Use `--overwrite` to replace existing files instead of creating versioned files
 - `inspect_jsonl.py`: Debug utility for examining batch request/response files
 - `extract_prompt.py`: Extracts prompt text from batch requests and saves to `scratch/` directory for examination
 
