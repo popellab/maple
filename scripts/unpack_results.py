@@ -98,7 +98,7 @@ def load_parameter_metadata(input_csv: Path) -> Dict[Tuple[str, str], Dict]:
 
     return metadata
 
-def prepend_header_fields(json_content: str, header_data: Dict) -> str:
+def prepend_header_fields(json_content: str, header_data: Dict) -> tuple[str, str]:
     """
     Prepend header fields to LLM-generated JSON content and convert to YAML.
 
@@ -107,14 +107,22 @@ def prepend_header_fields(json_content: str, header_data: Dict) -> str:
         header_data: Header fields to prepend
 
     Returns:
-        Complete YAML with header fields
+        Tuple of (YAML string with header fields, author_year from sources)
     """
     # Parse the LLM JSON
     try:
         llm_data = json.loads(json_content)
     except Exception as e:
         print(f"Warning: Could not parse LLM JSON: {e}")
-        return json_content
+        return json_content, None
+
+    # Extract author_year from sources before converting to YAML
+    author_year = None
+    if 'sources' in llm_data and isinstance(llm_data['sources'], dict):
+        try:
+            author_year = list(llm_data['sources'].keys())[0]
+        except:
+            pass
 
     # Build complete document with header fields first
     complete_data = {}
@@ -167,7 +175,7 @@ def prepend_header_fields(json_content: str, header_data: Dict) -> str:
                         sort_keys=False,
                         width=1000)
 
-    return header_comment + yaml_str
+    return header_comment + yaml_str, author_year
 
 def main():
     if len(sys.argv) < 3:
@@ -235,16 +243,18 @@ def main():
             if json_content:
                 # Prepend header fields if metadata available
                 key = (cancer_type, parameter_name)
+                author_year = None
                 if key in param_metadata:
-                    json_content = prepend_header_fields(json_content, param_metadata[key])
+                    json_content, author_year = prepend_header_fields(json_content, param_metadata[key])
                     definition_hash = param_metadata[key].get('context_hash', '')
                 else:
                     definition_hash = ''
+                    # Extract author_year from JSON even without metadata
+                    author_year = extract_first_source_tag(json_content, is_json=True)
 
                 # Determine filename based on structure type
                 if use_flat_structure:
                     # New format: {param_name}_{author_year}_{cancer_type}_{definition_hash}.yaml
-                    author_year = extract_first_source_tag(json_content, is_json=True)
                     if author_year and definition_hash:
                         file_name = f"{parameter_name}_{author_year}_{cancer_type}_{definition_hash}.yaml"
                     else:
