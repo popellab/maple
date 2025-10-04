@@ -59,11 +59,10 @@ class BatchCreator(ABC):
                 "reasoning": {"effort": reasoning_effort}
             }
         }
-        
-        # Add metadata if provided
-        if "metadata" in kwargs:
-            request["metadata"] = kwargs["metadata"]
-            
+
+        # Note: metadata parameter is ignored - OpenAI Batch API doesn't support it
+        # Metadata should be encoded in custom_id if needed
+
         return request
     
     def write_batch_file(self, requests: List[Dict], output_path: Path) -> None:
@@ -149,53 +148,99 @@ class BatchCreator(ABC):
 class ParameterBatchCreator(BatchCreator):
     """
     Creates batch requests for parameter extraction from scientific literature.
-    
-    Processes CSV input with cancer_type and parameter_name columns, generating
-    prompts that combine parameter definitions with model context information.
+
+    Processes CSV input with embedded parameter definitions and model context, generating
+    prompts for comprehensive literature extraction. Requires columns: cancer_type,
+    parameter_name, parameter_units, parameter_description, model_context, definition_hash.
     """
     
     def get_batch_type(self) -> str:
         return "parameter"
-    
-    def load_parameter_definition(self, cancer_type: str, parameter_name: str, 
-                                parameter_storage_dir: Path = None) -> Optional[Dict[str, Any]]:
+
+    def format_model_context(self, model_context_json: str) -> str:
         """
-        Load parameter definition from storage directory.
-        
+        Parse and format the model context JSON into readable text for the LLM.
+
         Args:
-            cancer_type: Cancer type for the parameter
-            parameter_name: Name of the parameter
-            parameter_storage_dir: Path to parameter storage directory
-            
+            model_context_json: JSON string containing reactions_and_rules with model context
+
         Returns:
-            Parameter definition dict or None if not found
+            Formatted markdown text describing the model context
         """
-        if parameter_storage_dir is None:
-            # Default to sibling directory
-            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
-            
-        definition_path = (parameter_storage_dir / "parameter-definitions" / 
-                          cancer_type / parameter_name / "definition.yaml")
-        
-        if not definition_path.exists():
-            print(f"Warning: Parameter definition not found at {definition_path}")
-            return None
-            
+        import json
+
         try:
-            import yaml
-            with open(definition_path, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
-        except Exception as e:
-            print(f"Warning: Could not load parameter definition from {definition_path}: {e}")
-            return None
+            context_data = json.loads(model_context_json)
+        except json.JSONDecodeError as e:
+            return f"Error parsing model context: {e}"
+
+        output = []
+
+        # Add derived from context if available
+        if "derived_from_context" in context_data:
+            derived = context_data["derived_from_context"]
+            if derived:
+                output.append("## Parameter Context")
+                for item in derived:
+                    output.append(f"- **{item.get('name', 'Unknown')}**: {item.get('description', 'No description')}")
+                output.append("")
+
+        # Add reactions and rules
+        if "reactions_and_rules" in context_data:
+            reactions = context_data["reactions_and_rules"]
+            if reactions:
+                output.append("## Model Usage")
+                output.append(f"This parameter appears in {len(reactions)} reaction(s) and/or rule(s):")
+                output.append("")
+
+                for i, rxn in enumerate(reactions, 1):
+                    # Reaction or rule
+                    if rxn.get("reaction"):
+                        output.append(f"### {i}. Reaction: `{rxn['reaction']}`")
+                        if rxn.get("reaction_rate"):
+                            output.append(f"**Rate:** `{rxn['reaction_rate']}`")
+                    elif rxn.get("rule"):
+                        output.append(f"### {i}. Rule ({rxn.get('rule_type', 'unknown type')})")
+                        output.append(f"**Expression:** `{rxn['rule']}`")
+
+                    output.append("")
+
+                    # Other parameters
+                    other_params = rxn.get("other_parameters", [])
+                    if other_params:
+                        output.append("**Related Parameters:**")
+                        for param in other_params:
+                            name = param.get("name", "Unknown")
+                            desc = param.get("description", "")
+                            if desc:
+                                output.append(f"- `{name}`: {desc}")
+                            else:
+                                output.append(f"- `{name}`")
+                        output.append("")
+
+                    # Other species
+                    other_species = rxn.get("other_species", [])
+                    if other_species:
+                        output.append("**Related Species:**")
+                        for species in other_species:
+                            name = species.get("name", "Unknown")
+                            desc = species.get("description", "")
+                            if desc:
+                                output.append(f"- `{name}`: {desc}")
+                            else:
+                                output.append(f"- `{name}`")
+                        output.append("")
+
+        return "\n".join(output) if output else "No model context available."
     
     def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
         """
-        Process parameter extraction inputs and generate batch requests using stored parameter definitions.
+        Process parameter extraction inputs and generate batch requests.
 
         Args:
-            input_csv: CSV file with cancer_type and parameter_name columns
-            parameter_storage_dir: Optional path to parameter storage directory
+            input_csv: CSV file with columns: cancer_type, parameter_name, parameter_units,
+                      parameter_description, model_context (JSON), definition_hash
+            parameter_storage_dir: Optional path to parameter storage directory for existing studies
 
         Returns:
             List of batch request dictionaries
@@ -206,37 +251,31 @@ class ParameterBatchCreator(BatchCreator):
         # Process CSV and create requests
         requests = []
         with open(input_csv, 'r', encoding='utf-8') as f:
-            for i, row in enumerate(csv.DictReader(f)):
+            reader = csv.DictReader(f)
+
+            for i, row in enumerate(reader):
                 cancer_type = row['cancer_type']
                 parameter_name = row['parameter_name']
+                units = row.get('parameter_units', '')
+                definition = row.get('parameter_description', '')
+                model_context_json = row.get('model_context', '{}')
+                definition_hash = row.get('definition_hash', '')
 
-                # Load parameter definition (required for extraction)
-                param_def = self.load_parameter_definition(cancer_type, parameter_name, parameter_storage_dir)
-                if not param_def:
-                    print(f"Warning: No parameter definition found for {cancer_type}/{parameter_name}, skipping")
-                    continue
-
-                # Extract all needed info from parameter definition
-                name = param_def.get("parameter_name", parameter_name)
-                units = param_def.get("parameter_units", "")
-                definition = param_def.get("parameter_definition", "")
-                canonical_scale = param_def.get("canonical_scale", "NOT_PROVIDED")
-                mathematical_role = param_def.get("mathematical_role", "")
+                # Format the model context from JSON
+                model_context_block = self.format_model_context(model_context_json)
 
                 # Build parameter info block with cancer type
-                parameter_block = render_parameter_to_search(name, units, definition, cancer_type)
+                parameter_block = render_parameter_to_search(parameter_name, units, definition, cancer_type)
 
-                # Use mathematical role as model context
-                model_context_block = mathematical_role
-
-                # Collect existing studies for this parameter
+                # Collect existing studies to avoid re-extracting from same sources
+                if parameter_storage_dir is None:
+                    parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
                 existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
 
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
                     "EXISTING_STUDIES": existing_studies,
                     "PARAMETER_INFO": parameter_block,
-                    "CANONICAL_SCALE": canonical_scale,
                     "MODEL_CONTEXT": model_context_block
                 }
 
@@ -415,53 +454,101 @@ class QuickEstimateBatchCreator(BatchCreator):
     """
     Creates batch requests for quick parameter estimation from scientific literature.
 
-    Processes CSV input with cancer_type and parameter_name columns, generating
+    Processes CSV input with embedded parameter definitions and model context, generating
     simplified prompts that ask for ballpark estimates with sources rather than
     comprehensive metadata extraction.
+
+    Required CSV columns: cancer_type, parameter_name, parameter_units, parameter_description,
+    model_context (JSON), definition_hash
     """
 
     def get_batch_type(self) -> str:
         return "quick_estimate"
 
-    def load_parameter_definition(self, cancer_type: str, parameter_name: str,
-                                parameter_storage_dir: Path = None) -> Optional[Dict[str, Any]]:
+    def format_model_context(self, model_context_json: str) -> str:
         """
-        Load parameter definition from storage directory.
+        Parse and format the model context JSON into readable text for the LLM.
 
         Args:
-            cancer_type: Cancer type for the parameter
-            parameter_name: Name of the parameter
-            parameter_storage_dir: Path to parameter storage directory
+            model_context_json: JSON string containing reactions_and_rules with model context
 
         Returns:
-            Parameter definition dict or None if not found
+            Formatted markdown text describing the model context
         """
-        if parameter_storage_dir is None:
-            # Default to sibling directory
-            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
-
-        definition_path = (parameter_storage_dir / "parameter-definitions" /
-                          cancer_type / parameter_name / "definition.yaml")
-
-        if not definition_path.exists():
-            print(f"Warning: Parameter definition not found at {definition_path}")
-            return None
+        import json
 
         try:
-            import yaml
-            with open(definition_path, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
-        except Exception as e:
-            print(f"Warning: Could not load parameter definition from {definition_path}: {e}")
-            return None
+            context_data = json.loads(model_context_json)
+        except json.JSONDecodeError as e:
+            return f"Error parsing model context: {e}"
+
+        output = []
+
+        # Add derived from context if available
+        if "derived_from_context" in context_data:
+            derived = context_data["derived_from_context"]
+            if derived:
+                output.append("## Parameter Context")
+                for item in derived:
+                    output.append(f"- **{item.get('name', 'Unknown')}**: {item.get('description', 'No description')}")
+                output.append("")
+
+        # Add reactions and rules
+        if "reactions_and_rules" in context_data:
+            reactions = context_data["reactions_and_rules"]
+            if reactions:
+                output.append("## Model Usage")
+                output.append(f"This parameter appears in {len(reactions)} reaction(s) and/or rule(s):")
+                output.append("")
+
+                for i, rxn in enumerate(reactions, 1):
+                    # Reaction or rule
+                    if rxn.get("reaction"):
+                        output.append(f"### {i}. Reaction: `{rxn['reaction']}`")
+                        if rxn.get("reaction_rate"):
+                            output.append(f"**Rate:** `{rxn['reaction_rate']}`")
+                    elif rxn.get("rule"):
+                        output.append(f"### {i}. Rule ({rxn.get('rule_type', 'unknown type')})")
+                        output.append(f"**Expression:** `{rxn['rule']}`")
+
+                    output.append("")
+
+                    # Other parameters
+                    other_params = rxn.get("other_parameters", [])
+                    if other_params:
+                        output.append("**Related Parameters:**")
+                        for param in other_params:
+                            name = param.get("name", "Unknown")
+                            desc = param.get("description", "")
+                            if desc:
+                                output.append(f"- `{name}`: {desc}")
+                            else:
+                                output.append(f"- `{name}`")
+                        output.append("")
+
+                    # Other species
+                    other_species = rxn.get("other_species", [])
+                    if other_species:
+                        output.append("**Related Species:**")
+                        for species in other_species:
+                            name = species.get("name", "Unknown")
+                            desc = species.get("description", "")
+                            if desc:
+                                output.append(f"- `{name}`: {desc}")
+                            else:
+                                output.append(f"- `{name}`")
+                        output.append("")
+
+        return "\n".join(output) if output else "No model context available."
 
     def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
         """
-        Process quick estimation inputs and generate batch requests using stored parameter definitions.
+        Process quick estimation inputs and generate batch requests.
 
         Args:
-            input_csv: CSV file with cancer_type and parameter_name columns
-            parameter_storage_dir: Optional path to parameter storage directory
+            input_csv: CSV file with columns: cancer_type, parameter_name, parameter_units,
+                      parameter_description, model_context (JSON), definition_hash
+            parameter_storage_dir: Optional path to parameter storage directory for existing studies
 
         Returns:
             List of batch request dictionaries
@@ -472,37 +559,31 @@ class QuickEstimateBatchCreator(BatchCreator):
         # Process CSV and create requests
         requests = []
         with open(input_csv, 'r', encoding='utf-8') as f:
-            for i, row in enumerate(csv.DictReader(f)):
+            reader = csv.DictReader(f)
+
+            for i, row in enumerate(reader):
                 cancer_type = row['cancer_type']
                 parameter_name = row['parameter_name']
+                units = row.get('parameter_units', '')
+                definition = row.get('parameter_description', '')
+                model_context_json = row.get('model_context', '{}')
+                definition_hash = row.get('definition_hash', '')
 
-                # Load parameter definition (required for extraction)
-                param_def = self.load_parameter_definition(cancer_type, parameter_name, parameter_storage_dir)
-                if not param_def:
-                    print(f"Warning: No parameter definition found for {cancer_type}/{parameter_name}, skipping")
-                    continue
-
-                # Extract all needed info from parameter definition
-                name = param_def.get("parameter_name", parameter_name)
-                units = param_def.get("parameter_units", "")
-                definition = param_def.get("parameter_definition", "")
-                canonical_scale = param_def.get("canonical_scale", "NOT_PROVIDED")
-                mathematical_role = param_def.get("mathematical_role", "")
+                # Format the model context from JSON
+                model_context_block = self.format_model_context(model_context_json)
 
                 # Build parameter info block with cancer type
-                parameter_block = render_parameter_to_search(name, units, definition, cancer_type)
+                parameter_block = render_parameter_to_search(parameter_name, units, definition, cancer_type)
 
-                # Use mathematical role as model context
-                model_context_block = mathematical_role
-
-                # Collect existing studies for this parameter
+                # Collect existing quick estimates to avoid re-using same sources
+                if parameter_storage_dir is None:
+                    parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "quick-estimates"
                 existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
 
-                # Prepare runtime data for prompt assembly
+                # Prepare runtime data for prompt assembly (no canonical_scale)
                 runtime_data = {
                     "EXISTING_STUDIES": existing_studies,
                     "PARAMETER_INFO": parameter_block,
-                    "CANONICAL_SCALE": canonical_scale,
                     "MODEL_CONTEXT": model_context_block
                 }
 
@@ -572,8 +653,8 @@ class ParameterDefinitionBatchCreator(BatchCreator):
                 "References": ""
             }
 
-        # Check parameter storage directory for existing definitions
-        parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+        # Check metadata storage directory for existing definitions
+        parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
 
         # Process CSV and create requests
         requests = []
@@ -689,7 +770,7 @@ class ParameterChecklistBatchCreator(BatchCreator):
         """
         if parameter_storage_dir is None:
             # Default to sibling directory
-            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+            parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
 
         definition_path = (parameter_storage_dir / "parameter-definitions" /
                           cancer_type / parameter_name / "definition.yaml")
@@ -769,18 +850,17 @@ class ParameterChecklistBatchCreator(BatchCreator):
 
         # Set default directories
         if parameter_storage_dir is None:
-            parameter_storage_dir = self.base_dir.parent / "qsp-parameter-storage"
+            parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
         if to_review_dir is None:
-            # Use parameter storage to-review first (standard workflow), then local as fallback
-            param_storage_to_review = parameter_storage_dir / "to-review"
+            # Use parameter storage with flat structure (standard workflow), then local as fallback
             local_to_review = self.base_dir / "to-review"
-            if param_storage_to_review.exists():
-                to_review_dir = param_storage_to_review
+            if parameter_storage_dir.exists():
+                to_review_dir = parameter_storage_dir
             elif local_to_review.exists():
                 to_review_dir = local_to_review
             else:
                 # Default to parameter storage path even if it doesn't exist (will give clear error)
-                to_review_dir = param_storage_to_review
+                to_review_dir = parameter_storage_dir
 
         requests = []
 
@@ -797,18 +877,13 @@ class ParameterChecklistBatchCreator(BatchCreator):
                     print(f"Warning: No parameter definition found for {cancer_type}/{parameter_name}, skipping")
                     continue
 
-                # Find study YAML files to audit
-                study_dir = to_review_dir / cancer_type / parameter_name
-                if not study_dir.exists():
-                    print(f"Warning: Study directory not found: {study_dir}, skipping")
-                    continue
-
-                # Find YAML files (excluding prior_metadata.yaml)
-                yaml_files = [f for f in study_dir.glob("*.yaml")
+                # Find study YAML files to audit (flat structure)
+                # Pattern: {parameter_name}_*.yaml
+                yaml_files = [f for f in to_review_dir.glob(f"{parameter_name}_*.yaml")
                              if f.name != "prior_metadata.yaml"]
 
                 if not yaml_files:
-                    print(f"Warning: No study YAML files found in {study_dir}, skipping")
+                    print(f"Warning: No study YAML files found for parameter {parameter_name}, skipping")
                     continue
 
                 # Create request for each study YAML
@@ -839,6 +914,639 @@ class ParameterChecklistBatchCreator(BatchCreator):
 
                     requests.append(request)
                     print(f"  Created checklist request for {cancer_type}/{parameter_name}/{study_id}")
+
+        return requests
+
+
+class ParameterChecklistFromJsonBatchCreator(BatchCreator):
+    """
+    Creates batch requests for parameter checklist auditing from raw JSON batch results.
+
+    Instead of reading unpacked YAML files, this reads the raw JSON responses from
+    batch_monitor output (before unpacking). This allows catching packing errors early
+    by checking the raw LLM responses.
+    """
+
+    def get_batch_type(self) -> str:
+        return "checklist_from_json"
+
+    def format_header_fields(self, header_data: dict) -> str:
+        """
+        Format header fields as YAML string for parameter definition context.
+
+        This matches the header format that unpack_results.py prepends to YAML files.
+
+        Args:
+            header_data: Dict with keys: parameter_name, parameter_units, parameter_definition,
+                        cancer_type, tags, model_context, context_hash
+
+        Returns:
+            Formatted YAML header string
+        """
+        import yaml
+        import json
+
+        # Build header data structure
+        complete_data = {}
+
+        # Add header fields in order
+        complete_data['parameter_name'] = header_data['parameter_name']
+        complete_data['parameter_units'] = header_data['parameter_units']
+        complete_data['parameter_definition'] = header_data['parameter_definition']
+        complete_data['cancer_type'] = header_data['cancer_type']
+
+        # Add tags with "ai-generated" marker
+        tags = header_data.get('tags', [])
+        if not isinstance(tags, list):
+            tags = []
+        if 'ai-generated' not in tags:
+            tags.append('ai-generated')
+        complete_data['tags'] = tags
+
+        # Parse and add model_context (it's JSON in the CSV)
+        if header_data.get('model_context'):
+            try:
+                model_context = json.loads(header_data['model_context'])
+                complete_data['model_context'] = model_context
+            except json.JSONDecodeError:
+                complete_data['model_context'] = header_data['model_context']
+
+        complete_data['context_hash'] = header_data.get('context_hash', '')
+
+        # Custom representer for multi-line strings
+        def str_representer(dumper, data):
+            if '\n' in data:
+                return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+            return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+        yaml.add_representer(str, str_representer, Dumper=yaml.SafeDumper)
+
+        # Add header comment
+        header_comment = "# PARAMETER DEFINITION (from model context)\n"
+        header_comment += "# " + "=" * 76 + "\n"
+
+        # Convert to YAML string
+        yaml_str = yaml.dump(complete_data,
+                            Dumper=yaml.SafeDumper,
+                            default_flow_style=False,
+                            allow_unicode=True,
+                            sort_keys=False,
+                            width=1000)
+
+        return header_comment + yaml_str
+
+    def load_checklist_prompt_template(self) -> str:
+        """
+        Load the parameter checklist prompt template.
+
+        Returns:
+            Checklist prompt template with placeholders
+        """
+        checklist_path = self.base_dir / "prompts" / "parameter_checklist.md"
+        with open(checklist_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    def extract_json_from_batch_result(self, result_line: dict) -> Optional[str]:
+        """
+        Extract JSON response from batch result line.
+
+        Args:
+            result_line: Single line from batch results JSONL (parsed as dict)
+
+        Returns:
+            Extracted JSON string or None if error
+        """
+        try:
+            # Navigate the batch response structure
+            output_items = result_line.get("response", {}).get("body", {}).get("output", [])
+
+            # Find the message output
+            for item in output_items:
+                if item.get("type") == "message":
+                    content = item.get("content", [])
+                    for content_item in content:
+                        if content_item.get("type") == "output_text":
+                            text = content_item.get("text", "")
+                            # Extract JSON from code fence
+                            if "```json" in text:
+                                start = text.find("```json") + 7
+                                end = text.find("```", start)
+                                if end > start:
+                                    return text[start:end].strip()
+                            return text
+            return None
+        except Exception as e:
+            print(f"Warning: Error extracting JSON from batch result: {e}")
+            return None
+
+    def create_checklist_prompt(self, parameter_definition: str, json_response: str) -> str:
+        """
+        Create checklist prompt by filling placeholders.
+
+        Args:
+            parameter_definition: Parameter definition YAML as string
+            json_response: JSON response from parameter extraction
+
+        Returns:
+            Complete checklist prompt
+        """
+        template = self.load_checklist_prompt_template()
+
+        # Fill placeholders
+        prompt = template.replace("{{PARAMETER_DEFINITION}}", parameter_definition)
+        prompt = prompt.replace("{{JSON_RESPONSE}}", json_response)
+
+        return prompt
+
+    def load_parameter_metadata_from_csv(self, input_csv: Path) -> dict:
+        """
+        Load parameter metadata from input CSV.
+
+        Returns dict keyed by (cancer_type, parameter_name) with metadata values.
+        """
+        import csv
+
+        metadata = {}
+
+        with open(input_csv, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                cancer_type = row['cancer_type']
+                parameter_name = row['parameter_name']
+
+                key = (cancer_type, parameter_name)
+                metadata[key] = {
+                    'parameter_name': parameter_name,
+                    'parameter_units': row.get('parameter_units', ''),
+                    'parameter_definition': row.get('parameter_description', ''),
+                    'cancer_type': cancer_type,
+                    'tags': [],
+                    'model_context': row.get('model_context', ''),
+                    'context_hash': row.get('definition_hash', '')
+                }
+
+        return metadata
+
+    def process(self, batch_results_jsonl: Path, input_csv: Path = None) -> List[Dict[str, Any]]:
+        """
+        Process batch results and generate checklist batch requests.
+
+        Args:
+            batch_results_jsonl: Path to batch results JSONL file from batch_monitor
+            input_csv: Path to input CSV with parameter metadata (for header fields)
+
+        Returns:
+            List of batch request dictionaries
+        """
+        import json
+
+        if not input_csv:
+            print("Error: input_csv is required to provide parameter header fields")
+            return []
+
+        # Load parameter metadata from CSV
+        param_metadata = self.load_parameter_metadata_from_csv(input_csv)
+
+        requests = []
+
+        # Read batch results
+        with open(batch_results_jsonl, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                result = json.loads(line)
+                custom_id = result.get("custom_id", "")
+
+                # Parse custom_id to extract cancer_type and parameter_name
+                # Expected format: {cancer_type}_{parameter_name}_{index}
+                parts = custom_id.split("_")
+                if len(parts) < 3:
+                    print(f"Warning: Cannot parse custom_id {custom_id}, skipping")
+                    continue
+
+                # Assume cancer_type is first part, parameter_name is everything except last part (index)
+                cancer_type = parts[0]
+                parameter_name = "_".join(parts[1:-1])
+
+                # Get parameter metadata from CSV
+                key = (cancer_type, parameter_name)
+                if key not in param_metadata:
+                    print(f"Warning: No parameter metadata found in CSV for {cancer_type}/{parameter_name}, skipping")
+                    continue
+
+                header_data = param_metadata[key]
+
+                # Format header fields as YAML
+                param_definition = self.format_header_fields(header_data)
+
+                # Extract JSON from batch result
+                json_response = self.extract_json_from_batch_result(result)
+                if not json_response:
+                    print(f"Warning: Could not extract JSON from result {custom_id}, skipping")
+                    continue
+
+                # Create checklist prompt
+                prompt = self.create_checklist_prompt(param_definition, json_response)
+
+                # Create batch request
+                checklist_custom_id = f"checklist_json_{custom_id}"
+
+                request = self.create_request(
+                    checklist_custom_id,
+                    prompt,
+                    reasoning_effort="high",
+                    metadata={
+                        "cancer_type": cancer_type,
+                        "parameter_name": parameter_name,
+                        "original_custom_id": custom_id
+                    }
+                )
+
+                requests.append(request)
+                print(f"  Created checklist request for {custom_id}")
+
+        return requests
+
+
+class JsonValidationBatchCreator(BatchCreator):
+    """
+    Creates batch requests for lightweight JSON validation and fixing.
+
+    Validates JSON structure and required fields from raw batch results,
+    fixing syntax errors and structural issues without deep content validation.
+    """
+
+    def get_batch_type(self) -> str:
+        return "json_validation"
+
+    def load_validation_prompt_template(self) -> str:
+        """Load the JSON validation prompt template."""
+        validation_path = self.base_dir / "prompts" / "json_validation.md"
+        with open(validation_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    def format_header_fields(self, header_data: dict) -> str:
+        """
+        Format header fields as YAML string for parameter definition context.
+
+        Reuses the same formatting as checklist batch creator.
+        """
+        import yaml
+        import json
+
+        # Build header data structure
+        complete_data = {}
+
+        # Add header fields in order
+        complete_data['parameter_name'] = header_data['parameter_name']
+        complete_data['parameter_units'] = header_data['parameter_units']
+        complete_data['parameter_definition'] = header_data['parameter_definition']
+        complete_data['cancer_type'] = header_data['cancer_type']
+
+        # Add tags
+        tags = header_data.get('tags', [])
+        if not isinstance(tags, list):
+            tags = []
+        if 'ai-generated' not in tags:
+            tags.append('ai-generated')
+        complete_data['tags'] = tags
+
+        # Parse and add model_context
+        if header_data.get('model_context'):
+            try:
+                model_context = json.loads(header_data['model_context'])
+                complete_data['model_context'] = model_context
+            except json.JSONDecodeError:
+                complete_data['model_context'] = header_data['model_context']
+
+        complete_data['context_hash'] = header_data.get('context_hash', '')
+
+        # Custom representer for multi-line strings
+        def str_representer(dumper, data):
+            if '\n' in data:
+                return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+            return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+        yaml.add_representer(str, str_representer, Dumper=yaml.SafeDumper)
+
+        # Add header comment
+        header_comment = "# PARAMETER DEFINITION (from model context)\n"
+        header_comment += "# " + "=" * 76 + "\n"
+
+        # Convert to YAML string
+        yaml_str = yaml.dump(complete_data,
+                            Dumper=yaml.SafeDumper,
+                            default_flow_style=False,
+                            allow_unicode=True,
+                            sort_keys=False,
+                            width=1000)
+
+        return header_comment + yaml_str
+
+    def extract_json_from_batch_result(self, result_line: dict) -> Optional[str]:
+        """Extract JSON response from batch result line."""
+        try:
+            # Navigate the batch response structure
+            output_items = result_line.get("response", {}).get("body", {}).get("output", [])
+
+            # Find the message output
+            for item in output_items:
+                if item.get("type") == "message":
+                    content = item.get("content", [])
+                    for content_item in content:
+                        if content_item.get("type") == "output_text":
+                            text = content_item.get("text", "")
+                            # Extract JSON from code fence
+                            if "```json" in text:
+                                start = text.find("```json") + 7
+                                end = text.find("```", start)
+                                if end > start:
+                                    return text[start:end].strip()
+                            return text
+            return None
+        except Exception as e:
+            print(f"Warning: Error extracting JSON from batch result: {e}")
+            return None
+
+    def create_validation_prompt(self, parameter_definition: str, json_response: str) -> str:
+        """Create validation prompt by filling placeholders."""
+        template = self.load_validation_prompt_template()
+
+        # Fill placeholders
+        prompt = template.replace("{{PARAMETER_DEFINITION}}", parameter_definition)
+        prompt = prompt.replace("{{JSON_RESPONSE}}", json_response)
+
+        return prompt
+
+    def load_parameter_metadata_from_csv(self, input_csv: Path) -> dict:
+        """Load parameter metadata from input CSV."""
+        import csv
+
+        metadata = {}
+
+        with open(input_csv, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                cancer_type = row['cancer_type']
+                parameter_name = row['parameter_name']
+
+                key = (cancer_type, parameter_name)
+                metadata[key] = {
+                    'parameter_name': parameter_name,
+                    'parameter_units': row.get('parameter_units', ''),
+                    'parameter_definition': row.get('parameter_description', ''),
+                    'cancer_type': cancer_type,
+                    'tags': [],
+                    'model_context': row.get('model_context', ''),
+                    'context_hash': row.get('definition_hash', '')
+                }
+
+        return metadata
+
+    def process(self, batch_results_jsonl: Path, input_csv: Path = None) -> List[Dict[str, Any]]:
+        """
+        Process batch results and generate JSON validation batch requests.
+
+        Args:
+            batch_results_jsonl: Path to batch results JSONL file from batch_monitor
+            input_csv: Path to input CSV with parameter metadata (for header fields)
+
+        Returns:
+            List of batch request dictionaries
+        """
+        import json
+
+        if not input_csv:
+            print("Error: input_csv is required to provide parameter header fields")
+            return []
+
+        # Load parameter metadata from CSV
+        param_metadata = self.load_parameter_metadata_from_csv(input_csv)
+
+        requests = []
+
+        # Read batch results
+        with open(batch_results_jsonl, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                result = json.loads(line)
+                custom_id = result.get("custom_id", "")
+
+                # Parse custom_id to extract cancer_type and parameter_name
+                # Expected format: {cancer_type}_{parameter_name}_{index}
+                parts = custom_id.split("_")
+                if len(parts) < 3:
+                    print(f"Warning: Cannot parse custom_id {custom_id}, skipping")
+                    continue
+
+                # Assume cancer_type is first part, parameter_name is everything except last part (index)
+                cancer_type = parts[0]
+                parameter_name = "_".join(parts[1:-1])
+
+                # Get parameter metadata from CSV
+                key = (cancer_type, parameter_name)
+                if key not in param_metadata:
+                    print(f"Warning: No parameter metadata found in CSV for {cancer_type}/{parameter_name}, skipping")
+                    continue
+
+                header_data = param_metadata[key]
+
+                # Format header fields as YAML
+                param_definition = self.format_header_fields(header_data)
+
+                # Extract JSON from batch result
+                json_response = self.extract_json_from_batch_result(result)
+                if not json_response:
+                    print(f"Warning: Could not extract JSON from result {custom_id}, skipping")
+                    continue
+
+                # Create validation prompt
+                prompt = self.create_validation_prompt(param_definition, json_response)
+
+                # Create batch request
+                validation_custom_id = f"validate_json_{custom_id}"
+
+                request = self.create_request(
+                    validation_custom_id,
+                    prompt,
+                    reasoning_effort="low"  # Low effort for simple validation
+                )
+
+                requests.append(request)
+                print(f"  Created validation request for {custom_id}")
+
+        return requests
+
+
+class SchemaConversionBatchCreator(BatchCreator):
+    """
+    Creates batch requests for converting YAML files from one schema version to another.
+
+    Flow:
+    1. Reads YAML files and strips header fields
+    2. Converts schemas and data to JSON
+    3. LLM receives: old schema (JSON), new schema (JSON), current data (JSON)
+    4. LLM returns: converted data (JSON)
+    5. Unpacking converts JSON back to YAML and adds original header fields
+
+    Header fields are stripped from both schemas and data before sending to LLM.
+    Everything is presented in JSON format for consistency and reliability.
+    """
+
+    def get_batch_type(self) -> str:
+        return "schema_conversion"
+
+    def load_schema_template(self, template_path: Path) -> str:
+        """
+        Load a schema template file, strip header fields, and convert to JSON.
+
+        Returns JSON content with header fields removed.
+        """
+        import yaml
+        import json
+
+        with open(template_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        try:
+            # Parse YAML
+            data = yaml.safe_load(content)
+
+            # Header fields to remove (everything down through context_hash)
+            header_fields = [
+                'parameter_name', 'parameter_units', 'parameter_definition',
+                'cancer_type', 'tags', 'model_context', 'context_hash',
+                'schema_version', 'derivation_id', 'derivation_timestamp'
+            ]
+
+            # Remove header fields
+            for field in header_fields:
+                data.pop(field, None)
+
+            # Convert to formatted JSON
+            json_str = json.dumps(data, indent=2, ensure_ascii=False)
+
+            return json_str
+        except Exception as e:
+            print(f"Warning: Could not strip header fields from schema template: {e}")
+            return content
+
+    def load_conversion_prompt_template(self) -> str:
+        """Load the schema conversion prompt template."""
+        conversion_path = self.base_dir / "prompts" / "schema_conversion.md"
+        with open(conversion_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    def create_conversion_prompt(self, old_schema: str, new_schema: str,
+                                 migration_notes: str, json_content: str) -> str:
+        """Create conversion prompt by filling placeholders."""
+        template = self.load_conversion_prompt_template()
+
+        prompt = template.replace("{{OLD_SCHEMA}}", old_schema)
+        prompt = prompt.replace("{{NEW_SCHEMA}}", new_schema)
+        prompt = prompt.replace("{{MIGRATION_NOTES}}", migration_notes)
+        prompt = prompt.replace("{{JSON_CONTENT}}", json_content)
+
+        return prompt
+
+    def strip_header_fields_and_convert_to_json(self, yaml_content: str) -> str:
+        """
+        Strip header fields from YAML content and convert to JSON.
+
+        Removes: parameter_name, parameter_units, parameter_definition,
+                 cancer_type, tags, model_context, context_hash
+
+        Args:
+            yaml_content: Full YAML content string
+
+        Returns:
+            JSON content with header fields removed
+        """
+        import yaml
+        import json
+
+        try:
+            data = yaml.safe_load(yaml_content)
+
+            # Header fields to remove (everything down through context_hash)
+            header_fields = [
+                'parameter_name', 'parameter_units', 'parameter_definition',
+                'cancer_type', 'tags', 'model_context', 'context_hash',
+                'schema_version', 'derivation_id', 'derivation_timestamp'
+            ]
+
+            # Remove header fields
+            for field in header_fields:
+                data.pop(field, None)
+
+            # Convert to formatted JSON
+            json_str = json.dumps(data, indent=2, ensure_ascii=False)
+
+            return json_str
+        except Exception as e:
+            print(f"Warning: Could not strip header fields and convert to JSON: {e}")
+            return yaml_content
+
+    def process(self, yaml_dir: Path, old_schema_path: Path, new_schema_path: Path,
+                migration_notes: str = "", pattern: str = "*.yaml") -> List[Dict[str, Any]]:
+        """
+        Process YAML files and generate schema conversion batch requests.
+
+        Args:
+            yaml_dir: Directory containing YAML files to convert
+            old_schema_path: Path to old schema template file
+            new_schema_path: Path to new schema template file
+            migration_notes: Optional migration instructions/notes
+            pattern: Glob pattern for matching YAML files (default: "*.yaml")
+
+        Returns:
+            List of batch request dictionaries
+        """
+        import yaml
+
+        # Load schema templates
+        old_schema = self.load_schema_template(old_schema_path)
+        new_schema = self.load_schema_template(new_schema_path)
+
+        if not migration_notes:
+            migration_notes = "No specific migration notes provided. Preserve all data and adapt structure to match new schema."
+
+        # Find all matching YAML files
+        yaml_files = list(Path(yaml_dir).glob(pattern))
+        print(f"Found {len(yaml_files)} YAML files matching pattern '{pattern}'")
+
+        requests = []
+
+        for yaml_file in yaml_files:
+            try:
+                # Read YAML content
+                with open(yaml_file, 'r', encoding='utf-8') as f:
+                    yaml_content = f.read()
+
+                # Parse to validate it's valid YAML
+                yaml.safe_load(yaml_content)
+
+                # Strip header fields and convert to JSON
+                json_content = self.strip_header_fields_and_convert_to_json(yaml_content)
+
+                # Create conversion prompt (with JSON content)
+                prompt = self.create_conversion_prompt(
+                    old_schema, new_schema, migration_notes, json_content
+                )
+
+                # Create custom ID from filename (preserves full path info for unpacking)
+                file_stem = yaml_file.stem
+                custom_id = f"schema_convert_{file_stem}"
+
+                request = self.create_request(
+                    custom_id,
+                    prompt,
+                    reasoning_effort="medium"
+                )
+
+                requests.append(request)
+                print(f"  Created conversion request for {yaml_file.name}")
+
+            except Exception as e:
+                print(f"  Warning: Could not process {yaml_file.name}: {e}")
+                continue
 
         return requests
 

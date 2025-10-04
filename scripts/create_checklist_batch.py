@@ -20,8 +20,8 @@ def main():
         print("")
         print("This script creates checklist batch requests for auditing parameter extractions.")
         print("It requires:")
-        print("  - Parameter definitions in ../qsp-parameter-storage/parameter-definitions/")
-        print("  - Study YAMLs to audit in ../qsp-parameter-storage/to-review/")
+        print("  - Parameter definitions in ../qsp-metadata-storage/parameter_estimates/parameter-definitions/")
+        print("  - Study YAMLs to audit in ../qsp-metadata-storage/parameter_estimates/")
         sys.exit(1)
 
     input_csv = Path(sys.argv[1])
