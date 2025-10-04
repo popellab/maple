@@ -17,6 +17,15 @@ For this parameter, you must:
 4. **Confidence assessment:** Indicate your confidence level (High/Medium/Low) in this estimate
 5. **Key assumptions:** Note any important assumptions or caveats
 
+### Seek Orthogonal Perspectives
+When searching for sources, **prioritize finding diverse methodological approaches** rather than similar studies:
+- **Different experimental systems:** If existing sources use cell lines, look for in vivo or clinical data
+- **Different measurement techniques:** If existing sources use flow cytometry, look for imaging, proteomics, or functional assays
+- **Different biological contexts:** If existing sources focus on steady-state, look for dynamic/kinetic measurements
+- **Different analytical frameworks:** If existing sources use direct measurement, look for model-derived or inference-based estimates
+
+**Goal:** Each new source should provide an independent "line of evidence" with minimal overlap in methodology or assumptions with previously used sources.
+
 ---
 
 ## Requirements
@@ -25,6 +34,7 @@ For this parameter, you must:
 - Prioritize speed over precision - this is for initial scoping, not final analysis
 - Use the most relevant and credible source you can find
 - Be explicit about limitations and confidence level
+- Do not use any references provided in the parameter information section - those are sources that have already been used.
 
 ---
 
@@ -35,18 +45,29 @@ For this parameter, you must:
 
 {{PARAMETER_INFO}}
 
-## CANONICAL_SCALE:
-{{CANONICAL_SCALE}}
-
 ## MODEL_CONTEXT:
 {{MODEL_CONTEXT}}
 
-Fill out the YAML template for this parameter with a quick ballpark estimate.
+Fill out the template for this parameter with a quick ballpark estimate.
 
-**IMPORTANT: Format your response as follows:**
-```yaml
-# Your complete YAML response here
-# Fill out all sections of the template above
+**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON):
+
+```json
+{
+  "ballpark_estimate": 0.123,
+  "plausible_range": {
+    "min": 0.05,
+    "max": 0.5
+  },
+  "units": "1/day",
+  "source_justification": "Based on Smith et al. 2020 (DOI: 10.1234/example)...",
+  "confidence_level": "Medium",
+  "key_assumptions": "Assumes first-order kinetics..."
+}
 ```
 
-Make sure to wrap your entire YAML response in ```yaml code block tags as shown above.
+Requirements for JSON response:
+- Wrap your entire response in ```json code block tags
+- Use proper JSON syntax (all strings quoted, proper escaping)
+- Numeric values should be actual numbers, not strings
+- Use `\n` for line breaks in multi-line strings
