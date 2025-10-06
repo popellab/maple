@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This repository contains LLM workflow automation tools for extracting quantitative systems pharmacology (QSP) parameters from scientific literature using OpenAI's batch API. The tools are designed to extract parameters to the central `qsp-metadata-storage` repository.
+This repository contains LLM workflow automation tools for extracting and validating quantitative systems pharmacology (QSP) metadata from scientific literature using OpenAI's batch API.
+
+**Supported Workflows:**
+- **Parameter extraction**: Extract parameter values, ranges, and statistical distributions with detailed literature tracking
+- **Quick estimates**: Generate rapid parameter estimates for model initialization
+- **Test statistics**: Create validation constraints from experimental data with uncertainty quantification
+- **Pooling metadata**: Add statistical pooling information to existing extractions
+
+All extracted metadata is stored in the central `qsp-metadata-storage` repository with flat file structures for easy access.
 
 ## Key Commands
 
@@ -15,21 +23,39 @@ This repository contains LLM workflow automation tools for extracting quantitati
 source venv/bin/activate
 ```
 
-### Core Batch Workflow
-The main workflow commands are documented in `scripts/batch_workflow_commands.sh`:
+### Workflow Examples
 
+**Parameter Extraction:**
 ```bash
-# Create parameter extraction batch requests from CSV
 python scripts/prepare/create_parameter_batch.py input.csv
-
-# Upload to OpenAI batch API
-python scripts/run/upload_batch.py batch_jobs/batch_requests.jsonl
-
-# Monitor batch progress and download when complete
+python scripts/run/upload_batch.py batch_jobs/parameter_requests.jsonl
 python scripts/run/batch_monitor.py batch_<id>
+python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
+  ../qsp-metadata-storage/parameter_estimates input.csv "" templates/parameter_metadata_template.yaml
+```
 
-# Unpack results to YAML files in central metadata storage
-python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
+**Quick Estimates:**
+```bash
+python scripts/prepare/create_quick_estimate_batch.py input.csv
+python scripts/run/upload_batch.py batch_jobs/quick_estimate_requests.jsonl
+python scripts/run/batch_monitor.py batch_<id>
+python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
+  ../qsp-metadata-storage/quick-estimates input.csv
+# Aggregate results
+python ../qspio-pdac/metadata/aggregate_quick_estimates.py input.csv \
+  ../qsp-metadata-storage/quick-estimates output/
+```
+
+**Test Statistics:**
+```bash
+python scripts/prepare/create_test_statistic_batch.py input.csv
+python scripts/run/upload_batch.py batch_jobs/test_statistic_requests.jsonl
+python scripts/run/batch_monitor.py batch_<id>
+python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
+  ../qsp-metadata-storage/test_statistics input.csv "" templates/test_statistic_template.yaml
+# Aggregate distributions
+python ../qspio-pdac/metadata/aggregate_test_statistics.py input.csv \
+  ../qsp-metadata-storage/test_statistics ../qsp-metadata-storage/scratch/
 ```
 
 ### Script Organization
@@ -75,13 +101,19 @@ This repository uses a generalized prompt assembly system that builds prompts fr
 
 ```
 prompts/                         # Base prompt files with placeholders
-templates/
+├── parameter_prompt.md
+├── quick_estimate_prompt.md
+├── test_statistic_prompt.md
+└── suggest_test_statistics_prompt.md
+templates/                       # YAML templates and examples
 ├── configs/prompt_assembly.yaml # Configuration for prompt assembly
-├── parameter_metadata_template.yaml
+├── parameter_metadata_template.yaml (v1 & v2)
+├── quick_estimate_template.yaml
+├── test_statistic_template.yaml
 ├── prior_metadata_template.yaml
-└── examples/k_ECM_fib_sec_example.yaml
+└── examples/                    # Example filled templates
 scripts/
-├── lib/
+├── lib/                         # Core libraries
 │   ├── prompt_assembly.py      # Prompt assembly engine
 │   ├── batch_creator.py        # Base classes for batch creation
 │   └── parameter_utils.py      # Parameter processing utilities
@@ -102,7 +134,21 @@ scripts/
 2. Scripts load complete parameter definitions (name, units, definition, canonical_scale, mathematical_role) from storage
 3. **Prompt assembly system** combines base prompts + templates + examples + parameter definition data
 4. Batch processing via OpenAI API creates structured YAML outputs
-5. Results are unpacked directly to `../qsp-metadata-storage/parameter_estimates/` with filename format: `{param_name}_{author_year}_{definition_hash}.yaml`
+5. Results are unpacked directly to `../qsp-metadata-storage/parameter_estimates/` with filename format: `{param_name}_{author_year}_{cancer_type}_{definition_hash}.yaml`
+
+**Quick Estimate Workflow:**
+1. Input CSV with cancer_type and parameter_name columns
+2. Scripts generate quick estimate prompts for rapid parameter initialization
+3. LLM generates estimates with ranges based on literature knowledge
+4. Results are unpacked to `../qsp-metadata-storage/quick-estimates/` with format: `{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
+5. Aggregation script pools estimates using lognormal statistics for positive-only parameters
+
+**Test Statistics Workflow:**
+1. Input CSV with test_statistic_id, scenario_context, required_species, and derived_species_description
+2. Scripts generate prompts with model context and scenario information
+3. LLM creates test statistic definitions with uncertainty quantification (R bootstrap code)
+4. Results are unpacked to `../qsp-metadata-storage/test_statistics/` with format: `{test_stat_id}_{cancer_type}_{context_hash}.yaml`
+5. Aggregation script pools distributions using inverse-variance weighting
 
 ### Key Data Files
 - `data/simbio_parameters.csv`: Parameter definitions with Name, Units, Definition, References columns (used for parameter definition creation)
@@ -148,9 +194,12 @@ Batch creation uses a modular class-based system:
 
 This repository integrates with the central metadata storage system:
 - Reads API key from `.env` file (current directory)
-- Writes extracted parameters directly to `../qsp-metadata-storage/parameter_estimates/` with flat structure
-- Filename format: `{param_name}_{author_year}_{definition_hash}.yaml`
+- Writes extracted metadata to different directories based on workflow type:
+  - **Parameter estimates**: `../qsp-metadata-storage/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
+  - **Quick estimates**: `../qsp-metadata-storage/quick-estimates/{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
+  - **Test statistics**: `../qsp-metadata-storage/test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
 - Assumes `qsp-metadata-storage` repository exists as sibling directory
+- Aggregation scripts in `qspio-pdac/metadata/` pool results from multiple sources
 
 ## Standard Usage
 

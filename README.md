@@ -4,7 +4,14 @@ This repository contains scripts and workflows for automated parameter extractio
 
 ## Overview
 
-This toolkit automates the extraction of quantitative systems pharmacology (QSP) parameters from research papers using OpenAI's batch API. It's designed to extract parameters to the central `qsp-metadata-storage` repository.
+This toolkit automates the extraction and validation of quantitative systems pharmacology (QSP) metadata from scientific literature using OpenAI's batch API. It supports multiple workflow types:
+
+- **Parameter extraction**: Extract parameter values, ranges, and statistical distributions
+- **Quick estimates**: Generate rapid parameter estimates for model initialization
+- **Test statistics**: Create validation constraints from experimental data
+- **Pooling metadata**: Add statistical pooling information to existing extractions
+
+All extracted metadata is stored in the central `qsp-metadata-storage` repository.
 
 ## Directory Structure
 
@@ -39,9 +46,15 @@ This toolkit automates the extraction of quantitative systems pharmacology (QSP)
 │   │   └── pretty_print_csv.py
 │   └── batch_workflow_commands.sh
 ├── prompts/          # Base prompt files with placeholders
-├── templates/        # Modular prompt components
+│   ├── parameter_prompt.md
+│   ├── quick_estimate_prompt.md
+│   ├── test_statistic_prompt.md
+│   └── suggest_test_statistics_prompt.md
+├── templates/        # YAML templates and examples
 │   ├── configs/              # Prompt assembly configuration
-│   ├── parameter_metadata_template.yaml
+│   ├── parameter_metadata_template.yaml (v1 & v2)
+│   ├── quick_estimate_template.yaml
+│   ├── test_statistic_template.yaml
 │   ├── prior_metadata_template.yaml
 │   └── examples/             # Example filled templates
 ├── data/            # Reference data and examples
@@ -61,7 +74,7 @@ This toolkit automates the extraction of quantitative systems pharmacology (QSP)
 
 The toolkit uses a **modular prompt assembly system** that builds prompts from reusable components:
 
-### Basic Usage
+### Parameter Extraction Workflow
 ```bash
 # Create parameter extraction batch requests
 python scripts/prepare/create_parameter_batch.py input.csv
@@ -71,17 +84,57 @@ python scripts/run/upload_batch.py batch_jobs/parameter_requests.jsonl
 python scripts/run/batch_monitor.py batch_<id>
 
 # Extract results to metadata storage
-python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
+python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
+  ../qsp-metadata-storage/parameter_estimates input.csv "" templates/parameter_metadata_template.yaml
+```
 
-# Optional: Add pooling metadata to existing studies
-python scripts/prepare/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
+### Quick Estimates Workflow
+```bash
+# Create quick estimate batch requests
+python scripts/prepare/create_quick_estimate_batch.py input.csv
+
+# Upload and process (same as above)
+python scripts/run/upload_batch.py batch_jobs/quick_estimate_requests.jsonl
+python scripts/run/batch_monitor.py batch_<id>
+
+# Extract results
+python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
+  ../qsp-metadata-storage/quick-estimates input.csv
+
+# Aggregate estimates (in qspio-pdac)
+python ../qspio-pdac/metadata/aggregate_quick_estimates.py input.csv \
+  ../qsp-metadata-storage/quick-estimates output/
+```
+
+### Test Statistics Workflow
+```bash
+# Create test statistic batch requests
+python scripts/prepare/create_test_statistic_batch.py input.csv
+
+# Upload and process (same as above)
+python scripts/run/upload_batch.py batch_jobs/test_statistic_requests.jsonl
+python scripts/run/batch_monitor.py batch_<id>
+
+# Extract results
+python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
+  ../qsp-metadata-storage/test_statistics input.csv "" templates/test_statistic_template.yaml
+
+# Aggregate distributions (in qspio-pdac)
+python ../qspio-pdac/metadata/aggregate_test_statistics.py input.csv \
+  ../qsp-metadata-storage/test_statistics ../qsp-metadata-storage/scratch/
 ```
 
 The complete workflow is documented in `scripts/batch_workflow_commands.sh`.
 
 ## Integration
 
-This repository is designed to work with the central `qsp-metadata-storage` repository. Extracted parameters are written directly to the `parameter_estimates/` directory with a flat structure. Filename format: `{param_name}_{author_year}_{definition_hash}.yaml`
+This repository is designed to work with the central `qsp-metadata-storage` repository. Different workflow types write to different directories:
+
+- **Parameter estimates**: `../qsp-metadata-storage/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{definition_hash}.yaml`
+- **Quick estimates**: `../qsp-metadata-storage/quick-estimates/{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
+- **Test statistics**: `../qsp-metadata-storage/test_statistics/{test_stat_id}_{cancer_type}_{context_hash}.yaml`
+
+Aggregation scripts in `qspio-pdac/metadata/` pool results from multiple sources for model initialization and validation.
 
 ## Modular Prompt System
 
