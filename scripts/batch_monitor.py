@@ -81,6 +81,9 @@ def main():
                 if batch_type == "quick_estimate":
                     target_dir = "../qsp-metadata-storage/quick-estimates"
                     template = "templates/quick_estimate_template.yaml"
+                elif batch_type == "test_stat":
+                    target_dir = "../qsp-metadata-storage/test_statistics"
+                    template = "templates/test_statistic_template.yaml"
                 elif batch_type.startswith("checklist") or batch_type.startswith("validate"):
                     target_dir = "../qsp-metadata-storage/parameter_estimates"
                     template = "templates/parameter_metadata_template.yaml"
@@ -94,9 +97,24 @@ def main():
                     # Quick estimates use v1 schema (no template needed)
                     if source_csv:
                         print(f"  python scripts/unpack_results.py {output_file} {target_dir} {source_csv}")
+                        print(f"\nThen aggregate estimates:")
+                        print(f"  python ../qspio-pdac/metadata/aggregate_quick_estimates.py {source_csv} {target_dir} output/")
                     else:
                         print(f"  python scripts/unpack_results.py {output_file} {target_dir} input_csv")
                         print(f"\nNote: Replace 'input_csv' with path to CSV used to create this batch")
+                        print(f"\nThen aggregate estimates:")
+                        print(f"  python ../qspio-pdac/metadata/aggregate_quick_estimates.py input_csv {target_dir} output/")
+                elif batch_type == "test_stat":
+                    # Test statistics need template for header fields
+                    if source_csv:
+                        print(f"  python scripts/unpack_results.py {output_file} {target_dir} {source_csv} \"\" {template}")
+                        print(f"\nThen aggregate test statistics:")
+                        print(f"  python ../qspio-pdac/metadata/aggregate_test_statistics.py {source_csv} {target_dir} ../qsp-metadata-storage/scratch/")
+                    else:
+                        print(f"  python scripts/unpack_results.py {output_file} {target_dir} input_csv \"\" {template}")
+                        print(f"\nNote: Replace 'input_csv' with path to CSV used to create this batch")
+                        print(f"\nThen aggregate test statistics:")
+                        print(f"  python ../qspio-pdac/metadata/aggregate_test_statistics.py input_csv {target_dir} ../qsp-metadata-storage/scratch/")
                 else:
                     # Other batch types need template for header fields
                     if source_csv:
