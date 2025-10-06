@@ -1,59 +1,59 @@
-# Test statistic definition
-test_statistic:
-  # Name and mathematical definition
-  name: "TEST_STATISTIC_NAME"
-  description: |
-    Brief description of what this test statistic measures biologically and how it should be interpreted.
+# Test statistic identifier
+test_statistic_id: TEST_STATISTIC_ID
 
-  # Mathematical definition of the test statistic
-  definition: |
-    Mathematical definition of the test statistic:
-    [MATHEMATICAL_FORMULA_OR_DESCRIPTION]
+# Cancer type / indication
+cancer_type: CANCER_TYPE
 
-# Scenario specification following schedule_dosing parameterization
-scenario:
-  # Drug list and dosing parameters (following QSPIO_PDAC schedule_dosing format)
-  drugs: ["DRUG_NAME_1", "DRUG_NAME_2"]  # Valid drugs: nivolumab, atezolizumab, ipilimumab, pembrolizumab, entinostat, nabPaclitaxel, tremelimumab, GVAX, cabozantinib, aCD47
+# Scenario context (experimental conditions)
+scenario_context: |
+  SCENARIO_CONTEXT_TEXT
 
-  # Dosing parameters (drug_name + "_dose" and drug_name + "_schedule")
-  dosing_parameters:
-    drug_name_dose: NUMERIC_VALUE  # Units depend on drug (mg/kg, mg, cells, etc.)
-    drug_name_schedule: [START_DAY, INTERVAL_DAYS, NUM_DOSES]  # [start, interval, repeat] format
-    # Add additional drugs as needed:
-    # other_drug_dose: NUMERIC_VALUE
-    # other_drug_schedule: [START_DAY, INTERVAL_DAYS, NUM_DOSES]
+# Required model species for computation
+required_species: REQUIRED_SPECIES
 
-  # Patient parameters
-  patient_weight: NUMERIC_VALUE  # kg (default: 80)
-  patient_bsa: NUMERIC_VALUE_OR_NULL  # m² (default: 1.9, optional - body surface area for drugs dosed per m² like chemotherapy)
+# Description of derived species / test statistic
+derived_species_description: |
+  DERIVED_SPECIES_DESCRIPTION
 
-  # Simulation timeframe
-  time_window: [START_TIME, END_TIME]  # days, e.g., [0, 365] (should encompass test statistic evaluation period)
+# Tags for categorization
+tags: []
 
-  # Model output computation specification
-  model_output:
-    code: |
-      % Compute test statistic from pre-extracted model simulation vectors.
-      % The test harness extracts all required species from simData prior to calling this function.
-      % Function inputs are named after the species in REQUIRED_SPECIES with dots converted to underscores.
-      %
-      % Inputs:
-      %   time            - time vector (days)
-      %   [SPECIES_ARGS]  - species vectors named after REQUIRED_SPECIES (e.g., V_T_TumorVolume, V_T_T_eff, V_T_T_reg)
-      %   [OTHER_ARGS]    - additional parameters as needed
-      %
-      % Output:
-      %   test_statistic  - computed test statistic value (appropriate units)
-      function test_statistic = compute_test_statistic(time, [SPECIES_ARGS], [OTHER_ARGS])
-        % Implement your specific test statistic computation here
-        % IMPORTANT: Use the exact variable names from REQUIRED_SPECIES (dots → underscores)
-        % Example: if REQUIRED_SPECIES = "V_T.TumorVolume", use variable V_T_TumorVolume
-        assessment_day = [DEFAULT_DAY];
-        baseline_value = interp1(time, [SPECIES_NAME], 0, 'linear', 'extrap');
-        assessment_value = interp1(time, [SPECIES_NAME], assessment_day, 'linear', 'extrap');
+# Context hash (identifies model + scenario combination)
+context_hash: CONTEXT_HASH
 
-        test_statistic = [COMPUTATION_LOGIC]; % Replace with actual computation
-      end
+# ============================================================================
+# LLM-GENERATED CONTENT BELOW
+# ============================================================================
+
+# Mathematical definition of the test statistic
+test_statistic_definition: |
+  Mathematical definition of the test statistic:
+  [MATHEMATICAL_FORMULA_OR_DESCRIPTION]
+
+# Model output computation specification
+model_output:
+  code: |
+    % Compute test statistic from pre-extracted model simulation vectors.
+    % The test harness extracts all required species from simData prior to calling this function.
+    % Function inputs are named after the species in REQUIRED_SPECIES with dots converted to underscores.
+    %
+    % Inputs:
+    %   time            - time vector (days)
+    %   [SPECIES_ARGS]  - species vectors named after REQUIRED_SPECIES (e.g., V_T_TumorVolume, V_T_T_eff, V_T_T_reg)
+    %   [OTHER_ARGS]    - additional parameters as needed
+    %
+    % Output:
+    %   test_statistic  - computed test statistic value (appropriate units)
+    function test_statistic = compute_test_statistic(time, [SPECIES_ARGS], [OTHER_ARGS])
+      % Implement your specific test statistic computation here
+      % IMPORTANT: Use the exact variable names from REQUIRED_SPECIES (dots → underscores)
+      % Example: if REQUIRED_SPECIES = "V_T.TumorVolume", use variable V_T_TumorVolume
+      assessment_day = [DEFAULT_DAY];
+      baseline_value = interp1(time, [SPECIES_NAME], 0, 'linear', 'extrap');
+      assessment_value = interp1(time, [SPECIES_NAME], assessment_day, 'linear', 'extrap');
+
+      test_statistic = [COMPUTATION_LOGIC]; % Replace with actual computation
+    end
 
 # Brief narrative summary of the biological expectation and experimental basis
 study_overview: |
@@ -181,15 +181,36 @@ key_study_limitations: |
   - **Biological context:** [species differences, system limitations, population mismatch → affects biological relevance, captured in species/system/population weights] (SOURCE_TAG)
   - **Methodological concerns:** [key assumptions, model simplifications, potential biases → may systematically bias test statistic, consider exclusion if severe] (SOURCE_TAG)
 
-# Source citations with specific locations where test statistic data was found
-sources:
-  PRIMARY_KEY:
+# Data sources: Primary studies from which test statistic distribution was derived
+data_sources:
+  PRIMARY_STUDY:
     citation: "FULL_CITATION"
-    doi_or_url: "DOI_OR_URL_OR_NA"
-    figure_or_table: "Fig./Table/Page"
-    text_snippet: "Exact text line(s) where values came from"
-  SECONDARY_KEY:
+    doi: "DOI_OR_NA"
+    data_extracted:
+      - description: "What specific data was extracted from this study (e.g., ORR at 8 weeks, median PFS, peak CD8/Treg ratio)"
+        value: NUMERIC_VALUE_OR_QUALITATIVE
+        units: "UNITS"
+        figure_or_table: "Fig./Table/Page"
+        text_snippet: "Exact text line(s) where values came from"
+        weight_in_synthesis: 0.5  # How much this data point contributed to final distribution (0-1)
+
+  SECONDARY_STUDY:
     citation: "FULL_CITATION"
-    doi_or_url: "DOI_OR_URL_OR_NA"
-    figure_or_table: "Fig./Table/Page"
-    text_snippet: "Exact text line(s)"
+    doi: "DOI_OR_NA"
+    data_extracted:
+      - description: "What specific data was extracted"
+        value: NUMERIC_VALUE
+        units: "UNITS"
+        figure_or_table: "Fig./Table/Page"
+        text_snippet: "Exact text line(s)"
+        weight_in_synthesis: 0.3
+
+# Methodological sources: Studies providing formulas, conversion factors, methods
+methodological_sources:
+  METHOD_REFERENCE:
+    citation: "FULL_CITATION"
+    doi: "DOI_OR_NA"
+    used_for: "Brief description (e.g., ORR to tumor volume conversion, assay calibration, biological context)"
+    formula_or_method: "Formula or method description if applicable"
+    figure_or_table: "Methods section or equation number"
+    text_snippet: "Relevant quote about the method"
