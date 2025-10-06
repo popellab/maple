@@ -16,10 +16,10 @@ For this test statistic, you must:
 
 ---
 
-## Scenario & Model Integration
-4. **Dosing scenario specification:** Configure the experimental scenario using the appropriate `schedule_dosing` format with appropriate drugs, doses, schedules, and patient parameters.
-5. **Model output computation:** Provide MATLAB code that transforms pre-extracted model species vectors into the test statistic. **CRITICAL: The test statistic must be computed from the exact model species formula provided, not from proxy measures.** The test harness handles SimBiology data extraction and provides named vectors.
-6. **Code structure requirements:** Write a `compute_test_statistic` function that takes `time` and relevant species vectors as inputs, and returns the test statistic value. Focus on the core transformation logic.
+## Model Integration
+4. **Model output computation:** Provide MATLAB code that transforms pre-extracted model species vectors into the test statistic. **CRITICAL: The test statistic must be computed from the exact model species provided, not from proxy measures.** The test harness handles SimBiology data extraction and provides named vectors.
+5. **Code structure requirements:** Write a `compute_test_statistic` function that takes `time` and relevant species vectors as inputs, and returns the test statistic value. Focus on the core transformation logic.
+6. **Scenario awareness:** Use the SCENARIO_CONTEXT provided below to understand the experimental context (drugs, dosing, patient parameters) that this test statistic applies to. This context is for your understanding only - do not generate a structured scenario object.
 
 ---
 
@@ -54,14 +54,15 @@ For this test statistic, you must:
 
 ## Template Structure
 Use the provided test statistic template structure with these key sections:
-- `test_statistic`: Mathematical definition of the test statistic computation
-- `scenario`: Dosing parameters, patient characteristics, and **nested `model_output` with MATLAB/SimBiology code**
+- `test_statistic_definition`: Mathematical definition of the test statistic computation
+- `model_output`: MATLAB code with `compute_test_statistic` function that transforms model species vectors into the test statistic value
 - `expected_distribution`: Statistical parameters derived from literature
 - `derivation_code_r`: Bootstrap/resampling code for uncertainty quantification
 - `validation_weights`: Quality assessment using standardized rubrics
-- `sources`: Detailed citation information with specific data locations
+- `data_sources`: Detailed citation information with specific data extraction tracking
+- `methodological_sources`: Background sources for methods, formulas, or context
 
-**Key Enhancement:** The `model_output` section is nested within `scenario` and contains a MATLAB `compute_test_statistic` function that transforms pre-extracted model species vectors into the test statistic value.
+**Note:** The scenario context (drugs, dosing, patient parameters) is provided in SCENARIO_CONTEXT below for your understanding, but you do not need to generate a structured scenario object.
 
 ---
 
@@ -112,10 +113,69 @@ Fill out the YAML test statistic template for the specified biological expectati
 
 ---
 
-**IMPORTANT: Format your response as follows:**
-```yaml
-# Your complete YAML test statistic definition here
-# Fill out all sections of the template above
+**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON):
+
+```json
+{
+  "test_statistic_definition": "Mathematical definition of the test statistic...",
+  "model_output": {
+    "code": "function test_statistic = compute_test_statistic(time, V_T_C1)\n  % Your MATLAB code here\nend"
+  },
+  "study_overview": "...",
+  "technical_details": "...",
+  "expected_distribution": {
+    "mean": 0.0,
+    "variance": 0.0,
+    "ci95": [0.0, 0.0],
+    "units": "..."
+  },
+  "derivation_explanation": "...",
+  "derivation_code_r": "...",
+  "validation_weights": {
+    "species_match": {"value": 0.0, "justification": "..."},
+    "system_match": {"value": 0.0, "justification": "..."},
+    "overall_confidence": {"value": 0.0, "justification": "..."},
+    "indication_match": {"value": 0.0, "justification": "..."},
+    "regimen_match": {"value": 0.0, "justification": "..."},
+    "biomarker_population_match": {"value": 0.0, "justification": "..."},
+    "stage_burden_match": {"value": 0.0, "justification": "..."}
+  },
+  "key_study_limitations": "...",
+  "data_sources": {
+    "PRIMARY_STUDY": {
+      "citation": "Full citation",
+      "doi": "DOI or NA",
+      "data_extracted": [
+        {
+          "description": "What data was extracted (e.g., ORR at 8 weeks)",
+          "value": 0.35,
+          "units": "proportion",
+          "figure_or_table": "Figure 2A",
+          "text_snippet": "Exact quote from paper",
+          "weight_in_synthesis": 0.6
+        }
+      ]
+    }
+  },
+  "methodological_sources": {
+    "METHOD_REF": {
+      "citation": "Full citation",
+      "doi": "DOI or NA",
+      "used_for": "ORR to tumor volume conversion",
+      "formula_or_method": "V = V0 * (1 - ORR * 0.7)",
+      "figure_or_table": "Methods section",
+      "text_snippet": "Relevant quote"
+    }
+  }
+}
 ```
 
-Make sure to wrap your entire YAML response in ```yaml code block tags as shown above.
+Requirements for JSON response:
+- Wrap your entire response in ```json code block tags
+- Use proper JSON syntax (all strings quoted, proper escaping)
+- Numeric values should be actual numbers, not strings
+- Use `\n` for line breaks in multi-line strings
+- Include ALL sections from the template: test_statistic_definition, model_output, study_overview, technical_details, expected_distribution, derivation_explanation, derivation_code_r, validation_weights, key_study_limitations, data_sources, methodological_sources
+- For model_output: Provide MATLAB code that computes the test statistic from the required species vectors (use SCENARIO_CONTEXT above for context on what scenario to consider)
+- For data_sources: Use detailed extraction tracking with description, value, units, figure_or_table, text_snippet, and weight_in_synthesis for each data point
+- For methodological_sources: Include used_for, formula_or_method (if applicable), figure_or_table, and text_snippet
