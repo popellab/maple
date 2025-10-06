@@ -15,7 +15,7 @@ from lib.batch_creator import ParameterDefinitionBatchCreator
 
 def main():
     script_dir = Path(__file__).parent
-    base_dir = script_dir.parent
+    base_dir = script_dir.parent.parent  # Project root, where templates/ is located
 
     parser = argparse.ArgumentParser(description="Create parameter definition batch requests")
     parser.add_argument("input_csv", help="CSV with cancer_type and parameter_name columns")

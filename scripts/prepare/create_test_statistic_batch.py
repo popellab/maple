@@ -20,11 +20,11 @@ Optional model context CSV format:
 - Compartment: Model compartment
 
 Usage:
-    python scripts/create_test_statistic_batch.py input.csv [model_context.csv]
+    python scripts/prepare/create_test_statistic_batch.py input.csv [model_context.csv]
 
 Examples:
-    python scripts/create_test_statistic_batch.py test_statistics.csv
-    python scripts/create_test_statistic_batch.py test_statistics.csv model_variables.csv
+    python scripts/prepare/create_test_statistic_batch.py test_statistics.csv
+    python scripts/prepare/create_test_statistic_batch.py test_statistics.csv model_variables.csv
 """
 
 import argparse
@@ -75,8 +75,12 @@ def main():
         print(f"Error: Model context CSV file '{args.model_context_csv}' not found")
         sys.exit(1)
 
+    # Set base directory to project root (where templates/ is located)
+    script_dir = Path(__file__).parent
+    base_dir = script_dir.parent.parent  # Project root
+
     # Create batch creator
-    creator = TestStatisticBatchCreator(project_root)
+    creator = TestStatisticBatchCreator(base_dir)
 
     # Process and create batch requests
     try:
@@ -92,8 +96,8 @@ def main():
 
         print(f"✓ Test statistic batch requests created: {output_path}")
         print(f"Next steps:")
-        print(f"  1. Upload batch: python scripts/upload_batch.py {output_path}")
-        print(f"  2. Monitor progress: python scripts/batch_monitor.py <batch_id>")
+        print(f"  1. Upload batch: python scripts/run/upload_batch.py {output_path}")
+        print(f"  2. Monitor progress: python scripts/run/batch_monitor.py <batch_id>")
         print(f"  3. Process results when complete")
 
     except Exception as e:

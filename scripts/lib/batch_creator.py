@@ -246,7 +246,7 @@ class ParameterBatchCreator(BatchCreator):
             List of batch request dictionaries
         """
         import csv
-        from parameter_utils import render_parameter_to_search, collect_existing_studies
+        from .parameter_utils import render_parameter_to_search, collect_existing_studies
 
         # Process CSV and create requests
         requests = []
@@ -554,7 +554,7 @@ class QuickEstimateBatchCreator(BatchCreator):
             List of batch request dictionaries
         """
         import csv
-        from parameter_utils import render_parameter_to_search, collect_existing_studies
+        from .parameter_utils import render_parameter_to_search, collect_existing_studies
 
         # Process CSV and create requests
         requests = []
@@ -625,7 +625,7 @@ class ParameterDefinitionBatchCreator(BatchCreator):
         """
         import csv
         import pandas as pd
-        from parameter_utils import render_parameter_to_search, build_model_context, index_param_info
+        from .parameter_utils import render_parameter_to_search, build_model_context, index_param_info
 
         # Load simbio parameters for name/units
         simbio_df = pd.read_csv(params_csv)

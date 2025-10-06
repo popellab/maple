@@ -22,8 +22,8 @@ from lib.batch_creator import PoolingMetadataBatchCreator
 
 def main():
     script_dir = Path(__file__).parent
-    base_dir = script_dir.parent
-    
+    base_dir = script_dir.parent.parent  # Project root, where templates/ is located
+
     # Parse arguments - now requires to_review_dir
     if len(sys.argv) < 2:
         print("Usage: create_pooling_metadata_batch.py to_review_dir [output.jsonl]")

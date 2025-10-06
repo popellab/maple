@@ -14,7 +14,7 @@ from lib.batch_creator import ParameterChecklistBatchCreator
 
 def main():
     script_dir = Path(__file__).parent
-    base_dir = script_dir.parent
+    base_dir = script_dir.parent.parent  # Project root, where templates/ is located
 
     # Requires input.csv with cancer_type and parameter_name columns
     if len(sys.argv) != 2:
@@ -42,10 +42,10 @@ def main():
     print("")
     print("Next steps:")
     print(f"  # Process immediately for testing:")
-    print(f"  python scripts/upload_immediate.py {output_path}")
+    print(f"  python scripts/run/upload_immediate.py {output_path}")
     print("")
     print(f"  # Or submit as batch job:")
-    print(f"  python scripts/upload_batch.py {output_path}")
+    print(f"  python scripts/run/upload_batch.py {output_path}")
 
 
 if __name__ == "__main__":
