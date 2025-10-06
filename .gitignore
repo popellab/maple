@@ -1,6 +1,7 @@
 # Batch processing files (may contain API keys and sensitive data)
 batch_jobs
 to-review
+input_data
 # Python cache and virtual environments
 __pycache__/
 *.py[cod]
@@ -13,8 +14,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
+!/scripts/lib/
 parts/
 sdist/
 var/

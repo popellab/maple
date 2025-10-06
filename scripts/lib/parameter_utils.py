@@ -259,7 +259,7 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
     Args:
         cancer_type: Cancer type for the parameter
         parameter_name: Name of the parameter
-        parameter_storage_dir: Path to parameter storage directory (defaults to ../qsp-parameter-storage)
+        parameter_storage_dir: Path to parameter storage directory (defaults to ../qsp-metadata-storage/parameter_estimates)
 
     Returns:
         Formatted string describing existing studies, or empty string if none exist
@@ -268,23 +268,19 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
 
     if parameter_storage_dir is None:
         # Default to sibling directory
-        parameter_storage_dir = Path(__file__).parent.parent.parent / "qsp-parameter-storage"
+        parameter_storage_dir = Path(__file__).parent.parent.parent / "qsp-metadata-storage" / "parameter_estimates"
 
-    # Look for existing study YAMLs in to-review directory
-    study_dir = parameter_storage_dir / "to-review" / cancer_type / parameter_name
-
-    if not study_dir.exists():
+    if not parameter_storage_dir.exists():
         return ""
 
-    # Find all YAML files (excluding prior_metadata.yaml)
-    yaml_files = [f for f in study_dir.glob("*.yaml")
-                  if f.name != "prior_metadata.yaml"]
+    # Find all YAML files matching {parameter_name}_*.yaml pattern (flat structure)
+    yaml_files = list(parameter_storage_dir.glob(f"{parameter_name}_*.yaml"))
 
     if not yaml_files:
         return ""
 
-    # Collect study information
-    existing_studies = []
+    # Collect source fields verbatim from all files
+    all_sources = []
 
     for yaml_file in sorted(yaml_files):
         try:
@@ -294,38 +290,41 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
             if not study_data:
                 continue
 
-            study_id = yaml_file.stem
-            study_info = f"### Study: {study_id}\n"
+            # Extract raw source fields (handle multiple schema variants)
+            if 'data_sources' in study_data and study_data['data_sources']:
+                all_sources.append(('data_sources', study_data['data_sources']))
 
-            # Extract study overview
-            if 'study_overview' in study_data:
-                overview = study_data['study_overview'].strip()
-                # Truncate if too long
-                if len(overview) > 500:
-                    overview = overview[:497] + "..."
-                study_info += f"**Overview:** {overview}\n\n"
+            if 'methodological_sources' in study_data and study_data['methodological_sources']:
+                all_sources.append(('methodological_sources', study_data['methodological_sources']))
 
-            # Extract sources
+            # Check for quick estimate 'source' field (singular)
+            if 'source' in study_data and study_data['source']:
+                all_sources.append(('source', study_data['source']))
+
+            # Check v1 schema: sources (fallback)
             if 'sources' in study_data and study_data['sources']:
-                study_info += "**Sources already extracted from:**\n"
-                for source_key, source_data in study_data['sources'].items():
-                    if isinstance(source_data, dict):
-                        citation = source_data.get('citation', source_key)
-                        study_info += f"- {citation}\n"
-                study_info += "\n"
-
-            existing_studies.append(study_info)
+                all_sources.append(('sources', study_data['sources']))
 
         except Exception as e:
             print(f"Warning: Could not process {yaml_file}: {e}")
             continue
 
-    if not existing_studies:
+    if not all_sources:
         return ""
 
-    # Format the complete section
-    header = "\n## Existing Studies for This Parameter\n\n"
-    header += "**IMPORTANT:** The following studies have already been extracted for this parameter. "
-    header += "DO NOT re-extract data from these sources. Instead, find NEW studies not listed below.\n\n"
+    # Format the complete section with verbatim YAML
+    header = "\n## Sources Already Used for This Parameter\n\n"
+    header += "**IMPORTANT:** The following sources have already been used in previous extractions for this parameter. "
+    header += "DO NOT re-use these sources. Instead, find NEW sources not listed below.\n\n"
 
-    return header + "\n".join(existing_studies)
+    # Dump sources as YAML
+    output = []
+    for source_type, source_data in all_sources:
+        output.append(f"### {source_type}")
+        output.append("```yaml")
+        import yaml as yaml_lib
+        output.append(yaml_lib.dump(source_data, default_flow_style=False, sort_keys=False, allow_unicode=True).strip())
+        output.append("```")
+        output.append("")
+
+    return header + "\n".join(output)

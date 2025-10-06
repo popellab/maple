@@ -14,7 +14,10 @@ Creates batch requests to have LLM analyze existing metadata and add missing fie
 import sys
 from pathlib import Path
 
-from batch_creator import PoolingMetadataBatchCreator
+# Add parent directory to path for lib imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lib.batch_creator import PoolingMetadataBatchCreator
 
 
 def main():

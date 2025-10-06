@@ -6,20 +6,27 @@ Create batch requests for quick parameter estimation using the new class-based b
 import sys
 from pathlib import Path
 
-from batch_creator import QuickEstimateBatchCreator
+# Add parent directory to path for lib imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lib.batch_creator import QuickEstimateBatchCreator
 
 
 def main():
     script_dir = Path(__file__).parent
     base_dir = script_dir.parent
 
-    # Only requires input.csv - parameter definitions loaded from storage
     if len(sys.argv) != 2:
         print("Usage: create_quick_estimate_batch.py input.csv")
-        print("       input.csv: CSV with cancer_type and parameter_name columns")
+        print("       input.csv: CSV with parameter metadata columns")
         print("")
-        print("Note: This requires parameter definitions to be created first using:")
-        print("      create_parameter_definition_batch.py input.csv params.csv reactions.csv")
+        print("Required CSV columns:")
+        print("  - cancer_type: Cancer type (e.g., PDAC, NSCLC)")
+        print("  - parameter_name: Parameter name")
+        print("  - parameter_units: Units for the parameter")
+        print("  - parameter_description: Full parameter definition/description")
+        print("  - model_context: JSON string with reactions_and_rules")
+        print("  - definition_hash: Hash of model context for tracking")
         sys.exit(1)
 
     input_csv = Path(sys.argv[1])

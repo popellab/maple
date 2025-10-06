@@ -28,9 +28,40 @@ class PromptAssembler:
         return self.config
         
     def load_template(self, template_path: Path) -> str:
-        """Load a template file."""
+        """
+        Load a template file, excluding header fields.
+
+        For parameter templates, excludes fields from parameter_name through context_hash
+        (these are added back during result unpacking). Only includes fields from
+        mathematical_role onward for the LLM prompt.
+        """
         with open(self.base_dir / template_path, 'r', encoding='utf-8') as f:
-            return f.read()
+            content = f.read()
+
+        # Check if this is a parameter metadata template (has parameter_name field)
+        if 'parameter_name:' in content:
+            # Filter header fields using text manipulation to preserve formatting
+            # Find the start of mathematical_role field (first field after header)
+            lines = content.split('\n')
+
+            # Find index where mathematical_role starts
+            math_role_idx = None
+            for i, line in enumerate(lines):
+                if line.startswith('mathematical_role:'):
+                    math_role_idx = i
+                    break
+
+            if math_role_idx is not None:
+                # Keep only from mathematical_role onward
+                filtered_lines = lines[math_role_idx:]
+                return '\n'.join(filtered_lines)
+            else:
+                # If we can't find mathematical_role, return original
+                print(f"Warning: Could not find mathematical_role field in template")
+                return content
+        else:
+            # For non-parameter templates, return as-is
+            return content
             
     def load_example(self, example_path: Path) -> str:
         """Load an example file."""

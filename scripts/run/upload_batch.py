@@ -38,12 +38,34 @@ def main():
     )
     
     print(f"Batch ID: {batch.id}")
-    
-    # Save batch info to batch_jobs directory
+
+    # Determine batch type from filename
     jsonl_path = Path(jsonl_file)
+    batch_type = jsonl_path.stem.replace('_requests', '')
+
+    # Try to find source CSV in batch_jobs/input_data/
+    source_csv = None
+    input_data_dir = jsonl_path.parent / "input_data"
+    if input_data_dir.exists():
+        # Look for CSV files - use most recent one as heuristic
+        csv_files = sorted(input_data_dir.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if csv_files:
+            source_csv = str(csv_files[0].resolve())
+
+    # Save batch metadata as JSON
     batch_id_file = jsonl_path.parent / f"{jsonl_path.stem}.batch_id"
+    metadata = {
+        "batch_id": batch.id,
+        "batch_type": batch_type,
+        "source_csv": source_csv,
+        "jsonl_file": str(jsonl_path.resolve())
+    }
     with open(batch_id_file, 'w') as f:
-        f.write(batch.id)
+        json.dump(metadata, f, indent=2)
+
+    # Print next command
+    print(f"\nNext: Monitor batch progress and download results when complete:")
+    print(f"  python scripts/batch_monitor.py {batch.id}")
 
 if __name__ == "__main__":
     main()

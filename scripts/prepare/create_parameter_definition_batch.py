@@ -7,7 +7,10 @@ import sys
 import argparse
 from pathlib import Path
 
-from batch_creator import ParameterDefinitionBatchCreator
+# Add parent directory to path for lib imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lib.batch_creator import ParameterDefinitionBatchCreator
 
 
 def main():

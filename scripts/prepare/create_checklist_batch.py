@@ -6,7 +6,10 @@ Create batch requests for parameter checklist auditing using the new class-based
 import sys
 from pathlib import Path
 
-from batch_creator import ParameterChecklistBatchCreator
+# Add parent directory to path for lib imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lib.batch_creator import ParameterChecklistBatchCreator
 
 
 def main():
@@ -20,8 +23,8 @@ def main():
         print("")
         print("This script creates checklist batch requests for auditing parameter extractions.")
         print("It requires:")
-        print("  - Parameter definitions in ../qsp-parameter-storage/parameter-definitions/")
-        print("  - Study YAMLs to audit in ../qsp-parameter-storage/to-review/")
+        print("  - Parameter definitions in ../qsp-metadata-storage/parameter_estimates/parameter-definitions/")
+        print("  - Study YAMLs to audit in ../qsp-metadata-storage/parameter_estimates/")
         sys.exit(1)
 
     input_csv = Path(sys.argv[1])

@@ -1,0 +1,242 @@
+# Schema version (auto-populated during post-processing)
+# ============================================================================
+schema_version: "v2"
+
+# PARAMETER DEFINITION (from model context)
+# ============================================================================
+parameter_name: "k_CD8_pro"
+parameter_units: "1/day"
+parameter_definition: |
+  T cell proliferation rate in tumor microenvironment in presence of growth signals.
+  Quantifies CD8+ T cell expansion rate in tumor tissue.
+
+cancer_type: "PDAC"  # Target cancer type or indication (e.g., NSCLC, PDAC, BRCA)
+
+tags: ["t-cell", "proliferation", "kinetic-rate", "tumor", "cd8"]
+
+# Derivation identity - identifies this specific derivation
+# ============================================================================
+derivation_id: "k_CD8_pro_MARCHINGO2014_a1b2c3d4_deriv001"
+derivation_timestamp: "2025-10-01T10:00:00Z"
+
+# Note: Filename should match derivation_id: {derivation_id}.yaml
+
+# Model context snapshot at time of derivation
+# ============================================================================
+model_context:
+  derived_from_context:
+    - name: k_CD8_pro
+      description: 'CD8 proliferation rate (Marchingo 2014, PMID: 25430770)'
+  reactions_and_rules:
+    - reaction: V_LN.aCD8 -> null
+      reaction_rate: k_CD8_pro/N_aT*V_LN.aCD8
+      rule: ''
+      rule_type: ''
+      other_parameters:
+        - name: N_aT
+          description: ''
+      other_species:
+        - name: V_LN.aCD8
+          description: Number of activated CD8 cells in the lymph node
+        - name: V_LN
+          description: 'Lymph node (LN) compartment volume'
+
+context_hash: "a1b2c3d4"  # Short hash for context matching
+
+mathematical_role: |
+  Describe the mathematical role of this parameter in the model equations.
+  Examples:
+  - "Rate constant in mass action kinetics"
+  - "Michaelis constant in Hill function"
+  - "Scaling factor for unit conversion"
+  - "Exponent in power law relationship"
+
+parameter_range: "positive_reals"  # Options: "positive_reals", "[0,1]", "reals", or custom like "[0,100]"
+
+# Brief narrative summary of how this parameter was measured and derived
+# ============================================================================
+study_overview: |
+  This study measures [PARAMETER_NAME] by [BIOLOGICAL_MEASUREMENT_APPROACH].
+  Parameter was derived from [DATA_TYPE - e.g., time-course, dose-response, equilibrium]
+  data using [DERIVATION_METHOD] (SOURCE_TAG).
+
+# Essential experimental details needed to understand parameter derivation
+# ============================================================================
+technical_details: |
+  **Measurement:** [ASSAY_TYPE] using [DETECTION_METHOD] (SOURCE_TAG)
+  **Study design:** [SAMPLE_SIZE] samples, [REPLICATION_DESCRIPTION] (SOURCE_TAG)
+  **Data source:** [HOW_DATA_EXTRACTED - digitized/table/supplemental] (SOURCE_TAG)
+  **Key assumptions:** [CRITICAL_ASSUMPTIONS_FOR_PARAMETER_DERIVATION] (SOURCE_TAG)
+
+# Parameter estimates (calculated from MC samples)
+# ============================================================================
+parameter_estimates:
+  mean: NUMERIC_VALUE  # Mean of the parameter
+  variance: NUMERIC_VALUE  # Variance of the parameter
+  ci95: [NUMERIC_LOWER, NUMERIC_UPPER]  # 95% confidence interval
+  units: "UNITS_STRING"  # Units of the parameter (e.g., "1/day", "nM", "dimensionless")
+
+# Step-by-step explanation of the R derivation code
+# ============================================================================
+derivation_explanation: |
+  **Step 1:** [Describe the dataset setup - number of patients/samples, measurement method, timepoints]
+
+  **Step 2:** [Explain the bootstrap resampling and how measurement noise/uncertainty is added]
+
+  **Step 3:** [Detail the parameter calculation process for each bootstrap sample]
+
+  **Step 4:** [Describe the repetition process and number of bootstrap samples]
+
+  **Step 5:** [Explain how final statistics are calculated and what the numbers represent]
+
+# R code for uncertainty quantification of the parameter from literature sources
+# ============================================================================
+# REQUIREMENTS:
+#   - Create vector 'mc_draws' with >= 2000 samples using bootstrap/resampling
+#   - Calculate and populate the 4 required fields: mean, variance, ci95, units
+derivation_code_r: |
+  ```r
+  # Composite parameter example: Drug clearance from concentration and half-life data
+  # This demonstrates uncertainty propagation for parameters derived from multiple sources
+
+  # 1) Define raw measurements with uncertainty ---------------------------------
+  # Concentration measurements (mg/L) with measurement error
+  conc_data <- data.frame(
+    timepoint = c(0.5, 1, 2, 4, 8, 12),  # hours
+    concentration = c(45.2, 38.1, 31.5, 22.8, 12.4, 6.2),  # mg/L
+    cv_percent = c(8.5, 6.2, 7.1, 9.3, 12.1, 15.8)  # measurement CV%
+  )
+
+  # Volume of distribution from separate study (L/kg) with uncertainty
+  vd_mean <- 2.1  # L/kg
+  vd_se <- 0.3    # standard error from literature
+
+  # 2) Run manual bootstrap with uncertainty propagation --------------------
+  set.seed(123)
+  B <- 5000
+  mc_draws <- numeric(B)
+
+  for (i in 1:B) {
+    # Resample rows with replacement (bootstrap)
+    boot_indices <- sample(1:nrow(conc_data), replace = TRUE)
+    d <- conc_data[boot_indices, ]
+
+    # Add measurement error to each concentration (CV-based uncertainty)
+    conc_with_error <- sapply(1:nrow(d), function(j) {
+      cv <- d$cv_percent[j] / 100
+      sd_conc <- d$concentration[j] * cv
+      # Assumption: Measurement error is normally distributed
+      rnorm(1, d$concentration[j], sd_conc)
+    })
+
+    # Fit exponential decay to get elimination rate constant (ke)
+    # Model: C(t) = C0 * exp(-ke * t), so log(C) = log(C0) - ke * t
+    # Assumption: First-order elimination kinetics apply
+    log_conc <- log(pmax(conc_with_error, 0.01))  # Floor at 0.01 to avoid log(0)
+    lm_fit <- lm(log_conc ~ d$timepoint)
+    ke <- -coef(lm_fit)[2]  # elimination rate constant (1/hr)
+    # Note: Ignoring fitting uncertainty here for simplicity
+
+    # Sample volume of distribution with literature uncertainty
+    # Assumption: Vd follows normal distribution around literature mean
+    vd_sample <- rnorm(1, vd_mean, vd_se)
+
+    # Calculate clearance = ke * Vd (L/hr/kg)
+    # This propagates uncertainty from both ke estimation and Vd literature value
+    mc_draws[i] <- ke * vd_sample
+  }
+
+  # 3) Clean and summarize bootstrap samples --------------------------------
+  # Remove any extreme outliers (> 99.9th percentile) or invalid values
+  mc_draws <- mc_draws[!is.na(mc_draws) & mc_draws > 0]
+  q999 <- quantile(mc_draws, 0.999, na.rm = TRUE)
+  mc_draws <- mc_draws[mc_draws <= q999]
+
+  # Required summary statistics
+  mean_param <- mean(mc_draws)
+  variance_param <- var(mc_draws)
+
+  # 95% percentile CI
+  ci95_param <- quantile(mc_draws, probs = c(0.025, 0.975))  # [lower, upper]
+
+  # Result: mc_draws contains parameter samples with all uncertainty sources propagated
+  ```
+
+# Pooling weights - BIOLOGICAL RELEVANCE ONLY (intrinsic to this derivation)
+# ============================================================================
+# Note: Statistical independence weights are NOT included here - they are
+# calculated in aggregation files based on which other derivations are pooled together.
+
+pooling_weights:
+  species_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use species rubric: 1.00=Human, 0.85=NHP, 0.65=Mouse, 0.45=Rat, 0.25=Non-mammal, 0.10=Irrelevant
+    justification: "[Species and why it gets this specific rubric value]"
+
+  system_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use system rubric: 1.00=In vivo, 0.85=Ex vivo, 0.65=Organoid, 0.45=2D primary, 0.25=Cell line, 0.10=Biochemical
+    justification: "[System type and why it gets this specific rubric value]"
+
+  overall_confidence:
+    value: RUBRIC_VALUE_0_TO_1  # Use confidence rubric: 1.00=Rigorous, 0.85=Good, 0.65=Adequate, 0.45=Weak, 0.25=Major concerns, 0.10=Minimal
+    justification: "[Study quality and why it gets this specific rubric value]"
+
+  indication_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use indication rubric: 1.00=Exact match, 0.85=Close subtype, 0.65=Adjacent tumor, 0.45=Distant, 0.25=Non-tumor, 0.10=Irrelevant
+    justification: "[Indication relevance and why it gets this specific rubric value]"
+
+  regimen_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use regimen rubric: 1.00=Exact, 0.85=Minor diffs, 0.65=Same MoA, 0.45=Partial relevance, 0.25=MoA related, 0.10=Non-representative
+    justification: "[Treatment similarity and why it gets this specific rubric value]"
+
+  biomarker_population_match:
+    value: RUBRIC_VALUE_0_TO_1  # Use biomarker rubric: 1.00=Exact profile, 0.85=Close match, 0.65=Mixed population, 0.45=Mismatched, 0.25=Opposite, 0.10=No info
+    justification: "[Biomarker/population match and why it gets this specific rubric value]"
+
+  stage_burden_match:
+    value: RUBRIC_VALUE_0_TO_1_OR_NULL  # Use stage rubric: 1.00=Same stage, 0.85=Adjacent, 0.65=Earlier, 0.45=Very different, 0.25=Pre-malignant, 0.10=Not reported. Optional field.
+    justification: "[Stage/burden match and why it gets this specific rubric value, if relevant]"
+
+# Important limitations and their specific impact on parameter reliability
+# ============================================================================
+key_study_limitations: |
+  - **Sample size/power:** [statistical limitations, small N, underpowered comparisons → increases parameter uncertainty] (SOURCE_TAG)
+  - **Measurement issues:** [assay limitations, detection limits, calibration problems → affects measurement precision] (SOURCE_TAG)
+  - **Data extraction:** [digitization errors, missing data points, unit conversion uncertainties → introduces additional noise] (SOURCE_TAG)
+  - **Biological context:** [species differences, system limitations, population mismatch → affects biological relevance, captured in pooling weights] (SOURCE_TAG)
+  - **Methodological concerns:** [key assumptions, model simplifications, potential biases → may systematically bias parameter estimate] (SOURCE_TAG)
+
+# Source citations - SEPARATED INTO DATA vs METHODOLOGICAL
+# ============================================================================
+# Data sources: Studies that contributed ACTUAL MEASUREMENTS used in derivation
+data_sources:
+  PRIMARY_STUDY:
+    citation: "FULL_CITATION"
+    doi: "DOI_OR_NA"
+    data_extracted:
+      - description: "What specific data was extracted from this study"
+        value: NUMERIC_VALUE_OR_QUALITATIVE
+        units: "UNITS"
+        figure_or_table: "Fig./Table/Page"
+        text_snippet: "Exact text line(s) where values came from"
+        weight_in_synthesis: 0.5  # How much this contributed to final estimate (0-1)
+
+  SECONDARY_STUDY:
+    citation: "FULL_CITATION"
+    doi: "DOI_OR_NA"
+    data_extracted:
+      - description: "What specific data was extracted"
+        value: NUMERIC_VALUE
+        units: "UNITS"
+        figure_or_table: "Fig./Table/Page"
+        text_snippet: "Exact text line(s)"
+        weight_in_synthesis: 0.3
+
+# Methodological sources: Studies providing formulas, conversion factors, methods
+methodological_sources:
+  METHOD_REFERENCE:
+    citation: "FULL_CITATION"
+    doi: "DOI_OR_NA"
+    used_for: "Apoptotic index to death rate conversion formula"
+    formula_or_method: "k_apoptosis = AI / T_apoptosis"
+    figure_or_table: "Methods section"
+    text_snippet: "Relevant quote about the method"
