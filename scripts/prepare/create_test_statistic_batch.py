@@ -31,11 +31,10 @@ import argparse
 import sys
 from pathlib import Path
 
-# Add the project root to the path to import our modules
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# Add parent directory to path for lib imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scripts.batch_creator import TestStatisticBatchCreator
+from lib.batch_creator import TestStatisticBatchCreator
 
 
 def main():

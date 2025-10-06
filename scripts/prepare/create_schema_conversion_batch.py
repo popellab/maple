@@ -18,7 +18,10 @@ Everything is presented to the LLM in JSON format for consistency and reliabilit
 import sys
 from pathlib import Path
 
-from batch_creator import SchemaConversionBatchCreator
+# Add parent directory to path for lib imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lib.batch_creator import SchemaConversionBatchCreator
 
 
 def main():

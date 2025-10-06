@@ -20,29 +20,53 @@ The main workflow commands are documented in `scripts/batch_workflow_commands.sh
 
 ```bash
 # Create parameter extraction batch requests from CSV
-python scripts/create_parameter_batch.py input.csv params.csv reactions.csv
+python scripts/prepare/create_parameter_batch.py input.csv
 
 # Upload to OpenAI batch API
-python scripts/upload_batch.py batch_jobs/batch_requests.jsonl
+python scripts/run/upload_batch.py batch_jobs/batch_requests.jsonl
 
 # Monitor batch progress and download when complete
-python scripts/batch_monitor.py batch_<id>
+python scripts/run/batch_monitor.py batch_<id>
 
 # Unpack results to YAML files in central metadata storage
-python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
+python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
 ```
 
-### Individual Script Usage
+### Script Organization
 
-- `create_parameter_definition_batch.py`: Creates parameter definition batch requests. Requires input.csv, params.csv, and reactions.csv arguments
-- `create_parameter_batch.py`: Creates parameter extraction batch requests. Requires only input.csv (uses stored parameter definitions)
-- `create_pooling_metadata_batch.py`: Creates batch requests to add pooling metadata to existing study YAML files
-- `upload_batch.py`: Uploads to OpenAI batch API (slower, handles large volumes). Requires JSONL file path, expects OpenAI API key in `.env` file
-- `upload_immediate.py`: Processes requests immediately via Responses API (faster feedback, good for testing). Requires JSONL file path, expects OpenAI API key in `.env` file
-- `batch_monitor.py`: Requires batch ID, automatically downloads results when batch is complete
-- `unpack_results.py`: Extracts JSON from batch results, converts to YAML, and saves to `qsp-metadata-storage/parameter_estimates/` with flat structure. Format: `{param_name}_{author_year}_{definition_hash}.yaml`
-- `inspect_jsonl.py`: Debug utility for examining batch request/response files
-- `extract_prompt.py`: Extracts prompt text from batch requests and saves to `scratch/` directory for examination
+Scripts are organized by workflow stage:
+
+**Prepare** (`scripts/prepare/`): Create batch requests
+- `create_parameter_batch.py`: Parameter extraction batch requests
+- `create_parameter_definition_batch.py`: Parameter definition batch requests
+- `create_quick_estimate_batch.py`: Quick estimate batch requests
+- `create_test_statistic_batch.py`: Test statistic batch requests
+- `create_pooling_metadata_batch.py`: Pooling metadata batch requests
+- `create_checklist_batch.py`, `create_schema_conversion_batch.py`: Other batch types
+
+**Run** (`scripts/run/`): Execute batches
+- `upload_batch.py`: Upload to OpenAI batch API (slower, handles large volumes)
+- `upload_immediate.py`: Process via Responses API (faster feedback, testing)
+- `batch_monitor.py`: Monitor batch progress and download results
+
+**Process** (`scripts/process/`): Extract results
+- `unpack_results.py`: Extract JSON from batch results, convert to YAML
+- `unpack_single_json.py`: Process individual JSON responses
+
+**Lib** (`scripts/lib/`): Core libraries
+- `batch_creator.py`: Base classes for batch creation
+- `parameter_utils.py`: Parameter processing utilities
+- `prompt_assembly.py`: Modular prompt assembly engine
+
+**Debug** (`scripts/debug/`): Debug and inspection tools
+- `inspect_jsonl.py`: Examine batch request/response files
+- `extract_prompt.py`: Extract prompts from batch requests
+- `pretty_print_csv.py`: Format CSV output
+
+**MATLAB** (`scripts/matlab/`): MATLAB integration
+- `compute_test_statistic_from_yaml.m`: Test statistic computation
+- `generate_calibration_target_from_yaml.m`: Calibration target generation
+- `simple_test_harness.m`: Simple test harness
 
 ## Architecture
 
@@ -52,14 +76,18 @@ This repository uses a generalized prompt assembly system that builds prompts fr
 ```
 prompts/                         # Base prompt files with placeholders
 templates/
-├── configs/prompt_assembly.yaml # Configuration for prompt assembly  
+├── configs/prompt_assembly.yaml # Configuration for prompt assembly
 ├── parameter_metadata_template.yaml
 ├── prior_metadata_template.yaml
 └── examples/k_ECM_fib_sec_example.yaml
 scripts/
-├── prompt_assembly.py          # Prompt assembly engine
-├── batch_creator.py            # Base classes for batch creation
-└── parameter_utils.py          # Parameter processing utilities
+├── lib/
+│   ├── prompt_assembly.py      # Prompt assembly engine
+│   ├── batch_creator.py        # Base classes for batch creation
+│   └── parameter_utils.py      # Parameter processing utilities
+├── prepare/                     # Batch creation scripts
+├── run/                         # Batch execution scripts
+└── process/                     # Result processing scripts
 ```
 
 ### Data Flow
@@ -88,18 +116,18 @@ scripts/
 ### Class-based Batch Creation Architecture
 Batch creation uses a modular class-based system:
 
-- `scripts/batch_creator.py`: Base `BatchCreator` class with common functionality
+- `scripts/lib/batch_creator.py`: Base `BatchCreator` class with common functionality
 - `ParameterBatchCreator`: For parameter extraction requests (uses prompt assembly system)
 - `PoolingMetadataBatchCreator`: For adding statistical metadata to existing YAMLs
-- CLI scripts (`create_parameter_batch.py`, `create_pooling_metadata_batch.py`) provide simple interfaces
+- CLI scripts in `scripts/prepare/` provide simple interfaces to batch creators
 
 ### Script Dependencies
-- `scripts/parameter_utils.py`: Utilities for parameter processing (CSV loading, model context generation)
-- `scripts/prompt_assembly.py`: Modular prompt assembly from templates and examples  
-- `scripts/batch_creator.py`: Class-based batch creation with shared functionality
+- `scripts/lib/parameter_utils.py`: Utilities for parameter processing (CSV loading, model context generation)
+- `scripts/lib/prompt_assembly.py`: Modular prompt assembly from templates and examples
+- `scripts/lib/batch_creator.py`: Class-based batch creation with shared functionality
 - All API scripts expect `OPENAI_API_KEY` in `.env` file (current directory)
-- `unpack_results.py` writes directly to `../qsp-metadata-storage/parameter_estimates/` with flat structure
-- `create_pooling_metadata_batch.py` reads from `../qsp-metadata-storage/parameter_estimates/`
+- `scripts/process/unpack_results.py` writes directly to `../qsp-metadata-storage/` directories with flat structure
+- `scripts/prepare/create_pooling_metadata_batch.py` reads from `../qsp-metadata-storage/parameter_estimates/`
 
 ### Batch Processing Model
 - Uses OpenAI's batch API with GPT-5 model and high reasoning effort
@@ -126,13 +154,13 @@ This repository integrates with the central metadata storage system:
 
 ## Standard Usage
 
-- `unpack_results.py`: Extracts directly to `../qsp-metadata-storage/parameter_estimates` with flat structure
-- `create_pooling_metadata_batch.py`: Reads from `../qsp-metadata-storage/parameter_estimates/`
+- `scripts/process/unpack_results.py`: Extracts directly to `../qsp-metadata-storage/` directories with flat structure
+- `scripts/prepare/create_pooling_metadata_batch.py`: Reads from `../qsp-metadata-storage/parameter_estimates/`
 
 Example usage:
 ```bash
-python scripts/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
-python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
+python scripts/process/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
+python scripts/prepare/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
 ```
 
 # Important Instructions

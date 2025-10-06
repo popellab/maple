@@ -6,7 +6,10 @@ Create batch requests for parameter checklist auditing using the new class-based
 import sys
 from pathlib import Path
 
-from batch_creator import ParameterChecklistBatchCreator
+# Add parent directory to path for lib imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lib.batch_creator import ParameterChecklistBatchCreator
 
 
 def main():

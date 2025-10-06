@@ -10,7 +10,10 @@ by checking the raw LLM responses before unpacking to YAML.
 import sys
 from pathlib import Path
 
-from batch_creator import ParameterChecklistFromJsonBatchCreator
+# Add parent directory to path for lib imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lib.batch_creator import ParameterChecklistFromJsonBatchCreator
 
 
 def main():

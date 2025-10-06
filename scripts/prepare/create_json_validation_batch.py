@@ -9,7 +9,10 @@ and structural issues without deep content validation.
 import sys
 from pathlib import Path
 
-from batch_creator import JsonValidationBatchCreator
+# Add parent directory to path for lib imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lib.batch_creator import JsonValidationBatchCreator
 
 
 def main():

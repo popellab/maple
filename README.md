@@ -10,16 +10,34 @@ This toolkit automates the extraction of quantitative systems pharmacology (QSP)
 
 ```
 ├── scripts/           # Core automation scripts
-│   ├── create_parameter_batch.py   # Create parameter extraction batches
-│   ├── create_pooling_metadata_batch.py  # Create pooling metadata batches
-│   ├── batch_creator.py       # Base classes for batch creation
-│   ├── parameter_utils.py     # Parameter processing utilities
-│   ├── prompt_assembly.py     # Modular prompt assembly system
-│   ├── upload_batch.py        # Upload to OpenAI batch API
-│   ├── batch_monitor.py       # Monitor batch progress
-│   ├── unpack_results.py      # Extract results to YAML files
-│   ├── inspect_jsonl.py       # Debug utility for batch files
-│   └── batch_workflow_commands.sh  # Complete workflow
+│   ├── prepare/              # Batch creation scripts
+│   │   ├── create_parameter_batch.py
+│   │   ├── create_parameter_definition_batch.py
+│   │   ├── create_quick_estimate_batch.py
+│   │   ├── create_test_statistic_batch.py
+│   │   ├── create_checklist_batch.py
+│   │   ├── create_pooling_metadata_batch.py
+│   │   └── create_schema_conversion_batch.py
+│   ├── run/                  # Batch execution scripts
+│   │   ├── upload_batch.py
+│   │   ├── upload_immediate.py
+│   │   └── batch_monitor.py
+│   ├── process/              # Results processing scripts
+│   │   ├── unpack_results.py
+│   │   └── unpack_single_json.py
+│   ├── lib/                  # Core libraries
+│   │   ├── batch_creator.py
+│   │   ├── parameter_utils.py
+│   │   └── prompt_assembly.py
+│   ├── matlab/               # MATLAB integration scripts
+│   │   ├── compute_test_statistic_from_yaml.m
+│   │   ├── generate_calibration_target_from_yaml.m
+│   │   └── simple_test_harness.m
+│   ├── debug/                # Debug and inspection tools
+│   │   ├── inspect_jsonl.py
+│   │   ├── extract_prompt.py
+│   │   └── pretty_print_csv.py
+│   └── batch_workflow_commands.sh
 ├── prompts/          # Base prompt files with placeholders
 ├── templates/        # Modular prompt components
 │   ├── configs/              # Prompt assembly configuration
@@ -46,17 +64,17 @@ The toolkit uses a **modular prompt assembly system** that builds prompts from r
 ### Basic Usage
 ```bash
 # Create parameter extraction batch requests
-python scripts/create_parameter_batch.py input.csv params.csv reactions.csv
+python scripts/prepare/create_parameter_batch.py input.csv
 
 # Upload and process
-python scripts/upload_batch.py batch_jobs/parameter_requests.jsonl
-python scripts/batch_monitor.py batch_<id>
+python scripts/run/upload_batch.py batch_jobs/parameter_requests.jsonl
+python scripts/run/batch_monitor.py batch_<id>
 
 # Extract results to metadata storage
-python scripts/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
+python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
 
 # Optional: Add pooling metadata to existing studies
-python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
+python scripts/prepare/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
 ```
 
 The complete workflow is documented in `scripts/batch_workflow_commands.sh`.
@@ -77,7 +95,7 @@ The toolkit features a **generalized prompt assembly system** that:
 - **Base prompts** (`prompts/`): Core instructions with placeholder markers
 - **Templates** (`templates/`): YAML templates and configuration files
 - **Examples** (`templates/examples/`): Example filled templates
-- **Assembly engine** (`scripts/prompt_assembly.py`): Combines components into final prompts
+- **Assembly engine** (`scripts/lib/prompt_assembly.py`): Combines components into final prompts
 
 ## Architecture
 
@@ -90,8 +108,8 @@ The system uses a modular class-based architecture:
 - **CLI scripts**: Simple interfaces to the batch creator classes
 
 ### Parameter Processing
-- **`parameter_utils.py`**: Utilities for loading and processing parameter data
-- **`prompt_assembly.py`**: Modular system for building prompts from components
+- **`scripts/lib/parameter_utils.py`**: Utilities for loading and processing parameter data
+- **`scripts/lib/prompt_assembly.py`**: Modular system for building prompts from components
 - **Templates and examples**: Reusable prompt components in `templates/`
 
 ### Integration with Parameter Storage
@@ -99,10 +117,10 @@ The workflow tools target the central parameter storage repository:
 
 ```bash
 # Extract parameters to central storage
-python scripts/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
+python scripts/process/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
 
 # Process pooling metadata from central storage
-python scripts/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
+python scripts/prepare/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
 ```
 
 This supports the three-tier QSP architecture where individual projects reference parameters from the central storage rather than storing duplicate copies.

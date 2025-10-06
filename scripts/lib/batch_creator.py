@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
-from prompt_assembly import PromptAssembler
+from .prompt_assembly import PromptAssembler
 
 
 class BatchCreator(ABC):
