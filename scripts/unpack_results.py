@@ -67,7 +67,9 @@ def find_parameter_json(data):
         Parameter metadata dict if found, None otherwise
     """
     # Required fields that indicate this is parameter metadata
-    required_fields = {'sources', 'parameter_estimates'}
+    required_fields = {'parameter_estimates'}
+    # At least one source field required
+    source_fields = {'sources', 'data_sources'}
     # Common fields that suggest parameter metadata
     common_fields = {'mathematical_role', 'parameter_range', 'study_overview',
                      'technical_details', 'derivation_code_r', 'pooling_weights'}
@@ -76,8 +78,9 @@ def find_parameter_json(data):
         # Check if this object looks like parameter metadata
         keys = set(data.keys())
 
-        # Must have required fields and at least 3 common fields
-        if required_fields.issubset(keys) and len(keys & common_fields) >= 3:
+        # Must have required fields, at least one source field, and at least 3 common fields
+        has_sources = len(keys & source_fields) > 0
+        if required_fields.issubset(keys) and has_sources and len(keys & common_fields) >= 3:
             return data
 
         # Otherwise, recursively search in values
@@ -111,7 +114,11 @@ def extract_first_source_tag(content, is_json=True):
             data = json.loads(content)
         else:
             data = yaml.safe_load(content)
-        if 'sources' in data and isinstance(data['sources'], dict):
+        # Check data_sources first (new format), then sources (legacy)
+        if 'data_sources' in data and isinstance(data['data_sources'], dict):
+            # Get first source key
+            return list(data['data_sources'].keys())[0]
+        elif 'sources' in data and isinstance(data['sources'], dict):
             # Get first source key
             return list(data['sources'].keys())[0]
     except Exception:
@@ -161,6 +168,34 @@ def load_parameter_metadata(input_csv: Path) -> Dict[Tuple[str, str], Dict]:
                 'tags': [],  # Could be populated if available in CSV
                 'model_context': row.get('model_context', ''),
                 'context_hash': row.get('definition_hash', '')
+            }
+
+    return metadata
+
+def load_test_statistic_metadata(input_csv: Path) -> Dict[str, Dict]:
+    """
+    Load test statistic metadata from input CSV.
+
+    Returns dict keyed by test_statistic_id with metadata values.
+    """
+    metadata = {}
+
+    if not input_csv or not input_csv.exists():
+        return metadata
+
+    with open(input_csv, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            test_statistic_id = row['test_statistic_id']
+
+            metadata[test_statistic_id] = {
+                'test_statistic_id': test_statistic_id,
+                'cancer_type': row.get('cancer_type', ''),
+                'scenario_context': row.get('scenario_context', ''),
+                'required_species': row.get('required_species', ''),
+                'derived_species_description': row.get('derived_species_description', ''),
+                'tags': ['test-statistic'],
+                'context_hash': row.get('context_hash', '')
             }
 
     return metadata
@@ -366,7 +401,10 @@ def parse_header_fields_from_template(template_path: Path) -> list:
         'mathematical_role', 'parameter_range', 'study_overview',
         'technical_details', 'parameter_estimates', 'derivation_explanation',
         'derivation_code_r', 'pooling_weights', 'key_study_limitations',
-        'sources', 'data_sources', 'methodological_sources'
+        'sources', 'data_sources', 'methodological_sources',
+        # Test statistic fields
+        'test_statistic', 'test_statistic_definition', 'model_output',
+        'expected_distribution', 'validation_weights'
     }
 
     try:
@@ -470,8 +508,26 @@ def main():
 
     target_project_path = Path(target_project_dir).resolve()
 
-    # Load parameter metadata if input CSV provided
-    param_metadata = load_parameter_metadata(input_csv) if input_csv else {}
+    # Detect batch type and load appropriate metadata
+    param_metadata = {}
+    test_stat_metadata = {}
+    is_test_stat_batch = False
+
+    if input_csv:
+        # Check if this is a test statistic batch by examining results file
+        try:
+            with open(results_file, 'r') as f_check:
+                first_lines = [next(f_check) for _ in range(min(10, sum(1 for _ in open(results_file))))]
+                if any('test_stat_' in line for line in first_lines):
+                    is_test_stat_batch = True
+        except StopIteration:
+            pass
+
+        # Load appropriate metadata based on batch type
+        if is_test_stat_batch:
+            test_stat_metadata = load_test_statistic_metadata(input_csv)
+        else:
+            param_metadata = load_parameter_metadata(input_csv)
 
     # Parse header fields from schema template
     schema_header_fields = []
@@ -510,6 +566,7 @@ def main():
 
             # Handle different batch types based on custom_id prefix
             use_quick_estimate_format = False  # Initialize flag
+            use_test_statistic_format = False  # Initialize flag
 
             if parts[0] == "defn":
                 # Parameter definition: defn_CANCER_TYPE_PARAMETER_NAME_INDEX
@@ -554,6 +611,20 @@ def main():
                 filename_default = None  # Will be computed from metadata
                 use_flat_structure = True
                 additional_tags = ['ai-validated']
+            elif parts[0] == "test" and parts[1] == "stat":
+                # Test statistic: test_stat_TEST_STATISTIC_ID_INDEX
+                test_statistic_id = '_'.join(parts[2:-1])  # Everything between test_stat_ and index
+                # Save directly to test_statistics with flat structure
+                param_dir = target_project_path  # Flat structure at test_statistics level
+                param_dir.mkdir(parents=True, exist_ok=True)
+                filename_default = None  # Will be computed from metadata
+                use_flat_structure = True
+                use_test_statistic_format = True  # Special flag for test statistics
+                additional_tags = ['test-statistic']
+                # For unpacking, we'll reuse the parameter_name variable for test_statistic_id
+                # Extract cancer_type from metadata
+                cancer_type = test_stat_metadata.get(test_statistic_id, {}).get('cancer_type', 'unknown')
+                parameter_name = test_statistic_id  # Reuse parameter_name variable
             elif parts[0] == "schema" and parts[1] == "convert":
                 # Schema conversion: schema_convert_ORIGINAL_FILENAME
                 # Extract original filename (everything after schema_convert_)
@@ -717,7 +788,15 @@ def main():
                 header_data = {}
                 definition_hash = ''
 
-                if key in param_metadata:
+                # Check if this is a test statistic
+                if use_test_statistic_format and parameter_name in test_stat_metadata:
+                    # Use test statistic metadata
+                    header_data = test_stat_metadata[parameter_name].copy()
+                    definition_hash = test_stat_metadata[parameter_name].get('context_hash', '')
+                    # Extract author_year from JSON for filename
+                    author_year = extract_first_source_tag(json_content, is_json=True)
+                    json_content, author_year = prepend_header_fields(json_content, header_data, additional_tags, schema_header_fields)
+                elif key in param_metadata:
                     # For schemas with derivation_id, add the derivation tracking fields
                     header_data = param_metadata[key].copy()
                     definition_hash = param_metadata[key].get('context_hash', '')
@@ -754,8 +833,16 @@ def main():
 
                 # Determine filename based on structure type
                 if use_flat_structure:
+                    # Special handling for test statistics
+                    if use_test_statistic_format and definition_hash:
+                        # Test statistic format: {test_statistic_id}_{cancer_type}_{context_hash}.yaml
+                        if cancer_type:
+                            file_name = f"{parameter_name}_{cancer_type}_{definition_hash}.yaml"
+                        else:
+                            # Fallback if no cancer_type found
+                            file_name = f"{parameter_name}_unknown_{definition_hash}.yaml"
                     # Special handling for quick estimates (no author_year, use deriv number)
-                    if use_quick_estimate_format and definition_hash:
+                    elif use_quick_estimate_format and definition_hash:
                         # Quick estimate format: {param}_{cancer}_{hash}_deriv001.yaml
                         base_filename = f"{parameter_name}_{cancer_type}_{definition_hash}"
                         deriv_num = find_next_derivation_number(param_dir, base_filename)
@@ -814,6 +901,26 @@ def main():
                 f.write(summary)
 
         print(f"\nChecklist reviews saved to: {checklist_file}")
+
+    # Print next steps based on batch type
+    if is_test_stat_batch and input_csv:
+        print(f"\n{'='*70}")
+        print(f"Next: Aggregate test statistics to create validation CSV")
+        print(f"{'='*70}")
+        print(f"  python ../qspio-pdac/metadata/aggregate_test_statistics.py \\")
+        print(f"    {input_csv} \\")
+        print(f"    {target_project_path} \\")
+        print(f"    ../qsp-metadata-storage/scratch/")
+    elif input_csv and str(input_csv).endswith('extraction_input'):
+        # Check if this might be a quick estimate batch
+        if 'quick' in str(target_project_path):
+            print(f"\n{'='*70}")
+            print(f"Next: Aggregate quick estimates to create parameter CSV")
+            print(f"{'='*70}")
+            print(f"  python ../qspio-pdac/metadata/aggregate_quick_estimates.py \\")
+            print(f"    {input_csv} \\")
+            print(f"    {target_project_path} \\")
+            print(f"    parameters/")
 
 if __name__ == "__main__":
     main()

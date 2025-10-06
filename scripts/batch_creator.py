@@ -1560,112 +1560,41 @@ class TestStatisticBatchCreator(BatchCreator):
     """
 
     def get_batch_type(self) -> str:
-        return "test_statistic"
+        return "test_stat"
 
-    def _load_species_units_mapping(self) -> Dict[str, str]:
+    def _get_default_species_units(self) -> Dict[str, str]:
         """
-        Load species units mapping from simbio_parameters.csv and create species type mappings.
+        Get default species units mapping for common species types.
 
         Returns:
-            Dictionary mapping species names/patterns to units
+            Dictionary mapping species names to their default units
         """
-        import pandas as pd
-
-        # Load simbio parameters
-        simbio_path = self.base_dir / "data" / "simbio_parameters.csv"
-        if not simbio_path.exists():
-            print(f"Warning: simbio_parameters.csv not found at {simbio_path}")
-            return {}
-
-        try:
-            df = pd.read_csv(simbio_path)
-        except Exception as e:
-            print(f"Warning: Could not load simbio_parameters.csv: {e}")
-            return {}
-
-        # Create species units mapping based on biological patterns
-        species_units = {}
-
-        # Extract units from parameters and create biological mappings
-        for _, row in df.iterrows():
-            name = str(row.get("Name", "")).strip()
-            units = str(row.get("Units", "")).strip()
-            notes = str(row.get("Notes", "")).strip().lower()
-
-            if not name or not units:
-                continue
-
-            # Map based on biological patterns
-            if "t cell" in notes or name.startswith("T_") or "CD8" in notes or "CD4" in notes:
-                # T cell related species
-                if units == "cell":
-                    species_units["T_cell"] = "cells"
-                    species_units["CD8"] = "cells"
-                    species_units["CD4"] = "cells"
-                    species_units["Treg"] = "cells"
-                    species_units["Th"] = "cells"
-            elif "cancer cell" in notes or name.startswith("C_"):
-                # Cancer cell related
-                if units == "cell":
-                    species_units["C"] = "cells"
-                    species_units["cancer"] = "cells"
-            elif "apc" in notes.lower() or "dendritic" in notes.lower():
-                # APC/dendritic cells
-                if units == "cell":
-                    species_units["APC"] = "cells"
-                    species_units["mAPC"] = "cells"
-                    species_units["DC"] = "cells"
-            elif "macrophage" in notes.lower():
-                # Macrophages
-                if units == "cell":
-                    species_units["Mac"] = "cells"
-                    species_units["Mac_M1"] = "cells"
-                    species_units["Mac_M2"] = "cells"
-                    species_units["MDSC"] = "cells"
-            elif "volume" in notes.lower() or "tumor" in notes.lower():
-                # Volume related
-                if "micrometer^3" in units:
-                    species_units["TumorVolume"] = "cm³"
-                    species_units["volume"] = "cm³"
-            elif any(cytokine in notes.lower() for cytokine in ["interleukin", "il-", "ifn", "tnf", "tgf", "gmcsf", "ccl", "cxcl"]):
-                # Cytokines and chemokines
-                species_units["IL2"] = "pg/mL"
-                species_units["IL10"] = "pg/mL"
-                species_units["IL12"] = "pg/mL"
-                species_units["IFNg"] = "pg/mL"
-                species_units["TNFa"] = "pg/mL"
-                species_units["TGFb"] = "pg/mL"
-                species_units["GMCSF"] = "pg/mL"
-                species_units["CCL2"] = "pg/mL"
-                species_units["CXCL9"] = "pg/mL"
-                species_units["CXCL10"] = "pg/mL"
-            elif "arginas" in notes.lower():
-                # Metabolic enzymes
-                species_units["ArgI"] = "units/mg protein"
-            elif "nitric oxide" in notes.lower() or "NO" in name:
-                # Nitric oxide
-                species_units["NO"] = "μM"
-
-        # Add default units for common cell types if not found
-        default_cell_units = {
+        return {
             "CD8": "cells", "CD4": "cells", "Treg": "cells", "Th": "cells",
             "APC": "cells", "mAPC": "cells", "DC": "cells",
             "Mac_M1": "cells", "Mac_M2": "cells", "MDSC": "cells",
-            "C": "cells", "C_x": "cells", "GVAX_cells": "cells",
+            "C": "cells", "C_x": "cells", "C1": "cells", "GVAX_cells": "cells",
             "TumorVolume": "cm³", "K": "dimensionless",
             "IL2": "pg/mL", "IL10": "pg/mL", "IL12": "pg/mL",
             "IFNg": "pg/mL", "TNFa": "pg/mL", "TGFb": "pg/mL",
             "GMCSF": "pg/mL", "CCL2": "pg/mL", "NO": "μM",
             "ArgI": "units/mg protein", "ECM": "dimensionless",
-            "CAF": "cells", "Fib": "cells", "c_vas": "pg/mL"
+            "CAF": "cells", "Fib": "cells", "c_vas": "pg/mL",
+            "aPD1": "nanomolarity", "aPDL1": "nanomolarity", "aCTLA4": "nanomolarity",
+            "T_eff": "cells", "CD8_exh": "cells", "Th_exh": "cells"
         }
 
-        # Add defaults if not already mapped
-        for species, units in default_cell_units.items():
-            if species not in species_units:
-                species_units[species] = units
+    def _load_species_units_mapping(self) -> Dict[str, str]:
+        """
+        Get species units mapping for common species types.
 
-        return species_units
+        Since model_context.txt now contains all species with units,
+        this method returns default unit mappings as a helper for formatting.
+
+        Returns:
+            Dictionary mapping species names/patterns to units
+        """
+        return self._get_default_species_units()
 
     def _parse_species_with_units(self, required_species: str, species_units_mapping: Dict[str, str]) -> str:
         """
@@ -1681,10 +1610,12 @@ class TestStatisticBatchCreator(BatchCreator):
         if not required_species.strip():
             return ""
 
-        species_list = [s.strip() for s in required_species.split(";") if s.strip()]
+        species_list = [s.strip() for s in required_species.split(",") if s.strip()]
         formatted_species = []
 
         for species in species_list:
+            # Remove any square brackets that might be in the input
+            species = species.strip("[]").strip()
             # Extract the species name from compartment notation (e.g., V_T.CD8 -> CD8)
             if "." in species:
                 compartment, species_name = species.split(".", 1)
@@ -1752,6 +1683,15 @@ class TestStatisticBatchCreator(BatchCreator):
                 scenario_context = row.get('scenario_context', '')
                 required_species = row.get('required_species', '')
                 derived_species_description = row.get('derived_species_description', '')
+
+                # Extract or generate context hash
+                context_hash = row.get('context_hash', '')
+                if not context_hash:
+                    # Auto-generate hash from model_context + scenario_context
+                    # (excludes required_species so all test statistics for same model+scenario share hash)
+                    import hashlib
+                    context_str = f"{model_context}_{scenario_context}"
+                    context_hash = hashlib.md5(context_str.encode()).hexdigest()[:8]
 
                 if not model_context.strip():
                     print(f"Warning: Empty model context for {test_statistic_id}, skipping")
