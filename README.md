@@ -99,11 +99,11 @@ python scripts/run/batch_monitor.py batch_<id>
 
 # Extract results
 python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
-  ../qsp-metadata-storage/quick-estimates input.csv
+  ../qsp-metadata-storage/quick_estimates input.csv
 
 # Aggregate estimates (in qspio-pdac)
 python ../qspio-pdac/metadata/aggregate_quick_estimates.py input.csv \
-  ../qsp-metadata-storage/quick-estimates output/
+  ../qsp-metadata-storage/quick_estimates output/
 ```
 
 ### Test Statistics Workflow
@@ -131,7 +131,7 @@ The complete workflow is documented in `scripts/batch_workflow_commands.sh`.
 This repository is designed to work with the central `qsp-metadata-storage` repository. Different workflow types write to different directories:
 
 - **Parameter estimates**: `../qsp-metadata-storage/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{definition_hash}.yaml`
-- **Quick estimates**: `../qsp-metadata-storage/quick-estimates/{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
+- **Quick estimates**: `../qsp-metadata-storage/quick_estimates/{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
 - **Test statistics**: `../qsp-metadata-storage/test_statistics/{test_stat_id}_{cancer_type}_{context_hash}.yaml`
 
 Aggregation scripts in `qspio-pdac/metadata/` pool results from multiple sources for model initialization and validation.

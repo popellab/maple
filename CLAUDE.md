@@ -40,10 +40,10 @@ python scripts/prepare/create_quick_estimate_batch.py input.csv
 python scripts/run/upload_batch.py batch_jobs/quick_estimate_requests.jsonl
 python scripts/run/batch_monitor.py batch_<id>
 python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
-  ../qsp-metadata-storage/quick-estimates input.csv
+  ../qsp-metadata-storage/quick_estimates input.csv
 # Aggregate results
 python ../qspio-pdac/metadata/aggregate_quick_estimates.py input.csv \
-  ../qsp-metadata-storage/quick-estimates output/
+  ../qsp-metadata-storage/quick_estimates output/
 ```
 
 **Test Statistics:**
@@ -140,7 +140,7 @@ scripts/
 1. Input CSV with cancer_type and parameter_name columns
 2. Scripts generate quick estimate prompts for rapid parameter initialization
 3. LLM generates estimates with ranges based on literature knowledge
-4. Results are unpacked to `../qsp-metadata-storage/quick-estimates/` with format: `{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
+4. Results are unpacked to `../qsp-metadata-storage/quick_estimates/` with format: `{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
 5. Aggregation script pools estimates using lognormal statistics for positive-only parameters
 
 **Test Statistics Workflow:**
@@ -196,7 +196,7 @@ This repository integrates with the central metadata storage system:
 - Reads API key from `.env` file (current directory)
 - Writes extracted metadata to different directories based on workflow type:
   - **Parameter estimates**: `../qsp-metadata-storage/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
-  - **Quick estimates**: `../qsp-metadata-storage/quick-estimates/{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
+  - **Quick estimates**: `../qsp-metadata-storage/quick_estimates/{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
   - **Test statistics**: `../qsp-metadata-storage/test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
 - Assumes `qsp-metadata-storage` repository exists as sibling directory
 - Aggregation scripts in `qspio-pdac/metadata/` pool results from multiple sources

@@ -114,12 +114,12 @@ python ./scripts/run/batch_monitor.py batch_{batch_id}
 # Option 2: Immediate processing (faster feedback, good for testing)
 python ./scripts/run/upload_immediate.py ./batch_jobs/quick_estimate_requests.jsonl
 
-# Unpack quick estimate results to quick-estimates/ with flat structure and header fields
+# Unpack quick estimate results to quick_estimates/ with flat structure and header fields
 # Note: Pass input CSV for header fields, schema template for formatting
 # Use corresponding results file based on upload method chosen above:
-python ./scripts/process/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/quick-estimates ./batch_jobs/input_data/pdac_extraction_input_dc27ff3c.csv "" templates/quick_estimate_template.yaml
+python ./scripts/process/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/quick_estimates ./batch_jobs/input_data/pdac_extraction_input_dc27ff3c.csv "" templates/quick_estimate_template.yaml
 # OR (if using immediate processing):
-python ./scripts/process/unpack_results.py ./batch_jobs/quick_estimate_requests_immediate_results.jsonl ../qsp-metadata-storage/quick-estimates ./batch_jobs/input_data/pdac_extraction_input_dc27ff3c.csv "" templates/quick_estimate_template.yaml
+python ./scripts/process/unpack_results.py ./batch_jobs/quick_estimate_requests_immediate_results.jsonl ../qsp-metadata-storage/quick_estimates ./batch_jobs/input_data/pdac_extraction_input_dc27ff3c.csv "" templates/quick_estimate_template.yaml
 
 # ============================================================================
 # SCHEMA CONVERSION WORKFLOW
