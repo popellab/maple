@@ -27,7 +27,7 @@ def main():
 
     # Try to load batch metadata from .batch_id file
     script_dir = Path(__file__).parent
-    batch_jobs_dir = script_dir.parent / "batch_jobs"
+    batch_jobs_dir = script_dir.parent.parent / "batch_jobs"  # Project root / batch_jobs
 
     batch_metadata = None
     for batch_id_file in batch_jobs_dir.glob("*.batch_id"):
@@ -69,8 +69,6 @@ def main():
             with open(output_file, 'wb') as f:
                 f.write(content.content)
             print(f"Downloaded: {output_file}")
-            print(f"\nTo unpack results, run:")
-            print(f"python scripts/process/unpack_results.py {output_file} ../qsp-parameter-storage")
 
             # Generate unpacking command based on batch type
             if batch_metadata:
@@ -79,7 +77,7 @@ def main():
 
                 # Determine target directory based on batch type
                 if batch_type == "quick_estimate":
-                    target_dir = "../qsp-metadata-storage/quick-estimates"
+                    target_dir = "../qsp-metadata-storage/quick_estimates"
                     template = "templates/quick_estimate_template.yaml"
                 elif batch_type == "test_stat":
                     target_dir = "../qsp-metadata-storage/test_statistics"
