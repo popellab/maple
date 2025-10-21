@@ -50,24 +50,12 @@ When searching for sources, **prioritize finding diverse methodological approach
 
 Fill out the template for this parameter with a quick ballpark estimate.
 
-**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON):
-
-```json
-{
-  "ballpark_estimate": 0.123,
-  "plausible_range": {
-    "min": 0.05,
-    "max": 0.5
-  },
-  "units": "1/day",
-  "source_justification": "Based on Smith et al. 2020 (DOI: 10.1234/example)...",
-  "confidence_level": "Medium",
-  "key_assumptions": "Assumes first-order kinetics..."
-}
-```
+**IMPORTANT: Return your response as JSON** matching the template structure above.
 
 Requirements for JSON response:
 - Wrap your entire response in ```json code block tags
+- Return ONLY the data fields that match the template structure
+- Do NOT include header fields (parameter_name, parameter_units, etc.) - those will be added automatically
 - Use proper JSON syntax (all strings quoted, proper escaping)
 - Numeric values should be actual numbers, not strings
 - Use `\n` for line breaks in multi-line strings

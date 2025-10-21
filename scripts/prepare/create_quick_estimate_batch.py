@@ -14,7 +14,7 @@ from lib.batch_creator import QuickEstimateBatchCreator
 
 def main():
     script_dir = Path(__file__).parent
-    base_dir = script_dir.parent
+    base_dir = script_dir.parent.parent  # Project root, where templates/ is located
 
     if len(sys.argv) != 2:
         print("Usage: create_quick_estimate_batch.py input.csv")

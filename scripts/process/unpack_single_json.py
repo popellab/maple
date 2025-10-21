@@ -210,13 +210,13 @@ with filename format: {param_name}_{author_year}_{cancer_type}_{context_hash}.ya
 
 Examples:
   # Save to default location (../qsp-metadata-storage/parameter_estimates)
-  python scripts/unpack_single_json.py chat_response.json
+  python scripts/process/unpack_single_json.py chat_response.json
 
   # Save to custom directory
-  python scripts/unpack_single_json.py chat_response.json --output-dir /path/to/output
+  python scripts/process/unpack_single_json.py chat_response.json --output-dir /path/to/output
 
   # Load header fields from extraction CSV
-  python scripts/unpack_single_json.py chat_response.json --csv batch_jobs/input.csv --param-name k_fib_death
+  python scripts/process/unpack_single_json.py chat_response.json --csv batch_jobs/input.csv --param-name k_fib_death
         """
     )
 

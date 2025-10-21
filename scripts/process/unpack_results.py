@@ -12,8 +12,73 @@ import re
 import sys
 import yaml
 import csv
+import hashlib
 from pathlib import Path
 from typing import Dict, Tuple, Optional
+
+
+def file_content_changed(file_path: Path, new_content: str) -> bool:
+    """
+    Check if new content differs from existing file.
+
+    Args:
+        file_path: Path to the file to check
+        new_content: New content to compare
+
+    Returns:
+        True if file doesn't exist or content has changed, False if identical
+    """
+    if not file_path.exists():
+        return True
+
+    try:
+        existing_content = file_path.read_text(encoding='utf-8')
+        # Compare SHA256 hashes for efficiency
+        existing_hash = hashlib.sha256(existing_content.encode('utf-8')).hexdigest()
+        new_hash = hashlib.sha256(new_content.encode('utf-8')).hexdigest()
+        return existing_hash != new_hash
+    except Exception:
+        # If we can't read the file, assume content changed
+        return True
+
+
+def find_matching_derivation(directory: Path, base_filename: str, new_content: str) -> Optional[Path]:
+    """
+    Find existing derivation file with matching content.
+
+    For files with _deriv### suffixes, checks all derivation files to see if any
+    have matching content (for idempotency).
+
+    Args:
+        directory: Directory to search in
+        base_filename: Filename pattern (e.g., "k_C1_growth_PDAC_04e798b1_deriv001.yaml")
+        new_content: Content to compare against
+
+    Returns:
+        Path to matching file if found, None otherwise
+    """
+    # Strip _deriv### suffix if present to get base pattern
+    import re
+    match = re.match(r'(.+)_deriv\d+\.yaml$', base_filename)
+    if not match:
+        # Not a derivation file, check the exact filename
+        exact_path = directory / base_filename
+        if exact_path.exists() and not file_content_changed(exact_path, new_content):
+            return exact_path
+        return None
+
+    base_pattern = match.group(1)
+
+    # Find all derivation files matching this pattern
+    deriv_files = list(directory.glob(f"{base_pattern}_deriv*.yaml"))
+
+    # Check each for matching content
+    for deriv_file in deriv_files:
+        if not file_content_changed(deriv_file, new_content):
+            return deriv_file
+
+    return None
+
 
 def extract_json_from_content(content):
     """Extract JSON section from content."""
@@ -557,9 +622,20 @@ def main():
             
             if response["status_code"] != 200:
                 continue
-            
-            # GPT-5 response structure: body.output[1].content[0].text
-            content = response["body"]["output"][1]["content"][0]["text"]
+
+            # GPT-5 response structure: find message in output array (may have multiple reasoning blocks)
+            output_items = response["body"]["output"]
+            message_item = None
+            for item in output_items:
+                if item.get("type") == "message":
+                    message_item = item
+                    break
+
+            if not message_item or "content" not in message_item:
+                print(f"Warning: Could not find message content for {custom_id}")
+                continue
+
+            content = message_item["content"][0]["text"]
             
             # Parse custom_id and determine directory structure
             parts = custom_id.split('_')
@@ -583,7 +659,7 @@ def main():
                 cancer_type = parts[1]
                 parameter_name = '_'.join(parts[2:-1])  # Everything between cancer_type and index
                 # Save directly to target directory with flat structure
-                param_dir = target_project_path  # Flat structure at quick-estimates level
+                param_dir = target_project_path  # Flat structure at quick_estimates level
                 param_dir.mkdir(parents=True, exist_ok=True)
                 filename_default = None  # Will be computed from metadata
                 use_flat_structure = True
@@ -735,14 +811,19 @@ def main():
                                                width=1000)
 
                         # Save as YAML
-                        file_path = param_dir / filename_default
-                        # Don't use get_unique_filename for derivation_id files - they should be unique by design
-                        if not uses_derivation_id or 'derivation_id' not in (header_fields or {}):
-                            file_path = get_unique_filename(file_path)
+                        # Check if any existing derivation file has identical content (idempotent)
+                        matching_file = find_matching_derivation(param_dir, filename_default, yaml_str)
+                        if matching_file:
+                            print(f"Skipped (unchanged): {matching_file.name}")
+                        else:
+                            # Get unique filename if needed (for new extractions with different content)
+                            file_path = param_dir / filename_default
+                            if not uses_derivation_id or 'derivation_id' not in (header_fields or {}):
+                                file_path = get_unique_filename(file_path)
 
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            f.write(yaml_str)
-                        print(f"Saved: {file_path.name}")
+                            with open(file_path, 'w', encoding='utf-8') as f:
+                                f.write(yaml_str)
+                            print(f"Saved: {file_path.name}")
                     except Exception as e:
                         print(f"Error converting schema for {custom_id}: {e}")
                         import traceback
@@ -866,17 +947,25 @@ def main():
                         # Keep yaml extension for legacy batch types (defn, quick)
                         file_name = filename_default
 
-                # Get unique filename
-                file_path = get_unique_filename(param_dir / file_name)
-
-                # Save as YAML file (converted from JSON)
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(json_content)
-
-                if use_flat_structure:
-                    print(f"Saved: {file_path.name}")
+                # Check if any existing derivation file has identical content (idempotent)
+                matching_file = find_matching_derivation(param_dir, file_name, json_content)
+                if matching_file:
+                    if use_flat_structure:
+                        print(f"Skipped (unchanged): {matching_file.name}")
+                    else:
+                        print(f"Skipped (unchanged): {cancer_type}/{parameter_name}/{matching_file.name}")
                 else:
-                    print(f"Saved: {cancer_type}/{parameter_name}/{file_path.name}")
+                    # Get unique filename if needed (for new extractions with different content)
+                    file_path = get_unique_filename(param_dir / file_name)
+
+                    # Save as YAML file (converted from JSON)
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(json_content)
+
+                    if use_flat_structure:
+                        print(f"Saved: {file_path.name}")
+                    else:
+                        print(f"Saved: {cancer_type}/{parameter_name}/{file_path.name}")
             else:
                 print(f"No JSON found: {cancer_type}/{parameter_name}")
 

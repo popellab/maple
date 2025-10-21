@@ -26,7 +26,7 @@ from lib.batch_creator import SchemaConversionBatchCreator
 
 def main():
     script_dir = Path(__file__).parent
-    base_dir = script_dir.parent
+    base_dir = script_dir.parent.parent  # Project root, where templates/ is located
 
     # Check arguments
     if len(sys.argv) < 4:
@@ -38,7 +38,7 @@ def main():
         print("       pattern: (optional) Glob pattern for YAML files (default: *.yaml)")
         print("")
         print("Example:")
-        print("  python scripts/create_schema_conversion_batch.py \\")
+        print("  python scripts/prepare/create_schema_conversion_batch.py \\")
         print("    ../qsp-metadata-storage/parameter_estimates \\")
         print("    templates/parameter_metadata_template.yaml \\")
         print("    templates/parameter_metadata_template_v2.yaml \\")
@@ -87,16 +87,16 @@ def main():
         print("")
     print("Next steps:")
     print(f"  # Review a request:")
-    print(f"  python scripts/inspect_jsonl.py {output_path} 0")
+    print(f"  python scripts/debug/inspect_jsonl.py {output_path} 0")
     print("")
     print(f"  # Extract prompt to examine:")
-    print(f"  python scripts/extract_prompt.py {output_path} 0")
+    print(f"  python scripts/debug/extract_prompt.py {output_path} 0")
     print("")
     print(f"  # Process immediately for testing:")
-    print(f"  python scripts/upload_immediate.py {output_path}")
+    print(f"  python scripts/run/upload_immediate.py {output_path}")
     print("")
     print(f"  # Or submit as batch job:")
-    print(f"  python scripts/upload_batch.py {output_path}")
+    print(f"  python scripts/run/upload_batch.py {output_path}")
 
 
 if __name__ == "__main__":

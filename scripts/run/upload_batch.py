@@ -65,7 +65,7 @@ def main():
 
     # Print next command
     print(f"\nNext: Monitor batch progress and download results when complete:")
-    print(f"  python scripts/batch_monitor.py {batch.id}")
+    print(f"  python scripts/run/batch_monitor.py {batch.id}")
 
 if __name__ == "__main__":
     main()

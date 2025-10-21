@@ -22,7 +22,7 @@ from lib.batch_creator import ParameterBatchCreator
 
 def main():
     script_dir = Path(__file__).parent
-    base_dir = script_dir.parent
+    base_dir = script_dir.parent.parent  # Project root, where templates/ is located
 
     if len(sys.argv) != 2:
         print("Usage: create_parameter_batch.py input.csv")

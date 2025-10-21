@@ -252,7 +252,7 @@ def build_model_context(param_name: str, rxns: pd.DataFrame, param_info: Dict[st
 
 
 def collect_existing_studies(cancer_type: str, parameter_name: str,
-                           parameter_storage_dir: Path = None) -> str:
+                           parameter_storage_dir: Path = None, context_hash: str = None) -> str:
     """
     Collect information about existing studies for a given parameter.
 
@@ -260,6 +260,7 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
         cancer_type: Cancer type for the parameter
         parameter_name: Name of the parameter
         parameter_storage_dir: Path to parameter storage directory (defaults to ../qsp-metadata-storage/parameter_estimates)
+        context_hash: Optional context hash to filter by model context
 
     Returns:
         Formatted string describing existing studies, or empty string if none exist
@@ -279,16 +280,42 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
     if not yaml_files:
         return ""
 
-    # Collect source fields verbatim from all files
+    # Collect source fields verbatim from all files matching cancer_type and context_hash
     all_sources = []
 
     for yaml_file in sorted(yaml_files):
         try:
+            # Parse filename to check cancer type
+            # Formats:
+            # - Parameter estimates: {param_name}_{author_year}_{cancer_type}_{hash}.yaml
+            # - Quick estimates: {param_name}_{cancer_type}_{hash}_deriv{N}.yaml
+            filename_parts = yaml_file.stem.split('_')
+
+            # Check if cancer_type appears in filename
+            if cancer_type not in filename_parts:
+                continue
+
             with open(yaml_file, 'r', encoding='utf-8') as f:
                 study_data = yaml.safe_load(f)
 
             if not study_data:
                 continue
+
+            # If context_hash provided, filter by it
+            if context_hash:
+                file_context_hash = None
+
+                # Check in model_context.context_hash
+                if 'model_context' in study_data and isinstance(study_data['model_context'], dict):
+                    file_context_hash = study_data['model_context'].get('context_hash')
+
+                # Also check top-level context_hash (some schemas have it there)
+                if not file_context_hash and 'context_hash' in study_data:
+                    file_context_hash = study_data['context_hash']
+
+                # Skip if context hash doesn't match
+                if file_context_hash and file_context_hash != context_hash:
+                    continue
 
             # Extract raw source fields (handle multiple schema variants)
             if 'data_sources' in study_data and study_data['data_sources']:

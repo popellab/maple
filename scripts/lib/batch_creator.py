@@ -246,7 +246,7 @@ class ParameterBatchCreator(BatchCreator):
             List of batch request dictionaries
         """
         import csv
-        from parameter_utils import render_parameter_to_search, collect_existing_studies
+        from .parameter_utils import render_parameter_to_search, collect_existing_studies
 
         # Process CSV and create requests
         requests = []
@@ -268,9 +268,10 @@ class ParameterBatchCreator(BatchCreator):
                 parameter_block = render_parameter_to_search(parameter_name, units, definition, cancer_type)
 
                 # Collect existing studies to avoid re-extracting from same sources
+                # Use definition_hash from CSV (same as context_hash in model_context)
                 if parameter_storage_dir is None:
                     parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
-                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
+                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir, definition_hash)
 
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
@@ -554,7 +555,7 @@ class QuickEstimateBatchCreator(BatchCreator):
             List of batch request dictionaries
         """
         import csv
-        from parameter_utils import render_parameter_to_search, collect_existing_studies
+        from .parameter_utils import render_parameter_to_search, collect_existing_studies
 
         # Process CSV and create requests
         requests = []
@@ -576,9 +577,10 @@ class QuickEstimateBatchCreator(BatchCreator):
                 parameter_block = render_parameter_to_search(parameter_name, units, definition, cancer_type)
 
                 # Collect existing quick estimates to avoid re-using same sources
+                # Use definition_hash from CSV (same as context_hash in model_context)
                 if parameter_storage_dir is None:
-                    parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "quick-estimates"
-                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir)
+                    parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "quick_estimates"
+                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir, definition_hash)
 
                 # Prepare runtime data for prompt assembly (no canonical_scale)
                 runtime_data = {
@@ -625,7 +627,7 @@ class ParameterDefinitionBatchCreator(BatchCreator):
         """
         import csv
         import pandas as pd
-        from parameter_utils import render_parameter_to_search, build_model_context, index_param_info
+        from .parameter_utils import render_parameter_to_search, build_model_context, index_param_info
 
         # Load simbio parameters for name/units
         simbio_df = pd.read_csv(params_csv)
