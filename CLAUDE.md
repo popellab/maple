@@ -14,6 +14,23 @@ This repository contains LLM workflow automation tools for extracting and valida
 
 All extracted metadata is stored in the central `qsp-metadata-storage` repository with flat file structures for easy access.
 
+## Repository Organization
+
+**This repository (`qsp-llm-workflows`):**
+- General-purpose LLM workflow tools for parameter extraction
+- Reusable across any QSP model or disease area
+- Focus: Core extraction, validation, and storage workflows
+
+**Paper repository (`qsp-llm-workflows-paper`, to be created):**
+- Paper-specific code, validation analyses, and manuscript figures
+- Validation study comparing LLM extraction to legacy parameter database
+- Reproducible research for publication
+
+**Manuscript documentation (`docs-manuscript/`):**
+- Paper collaboration materials (gitignored, shared via email)
+- Includes onboarding guide, presentation, and paper outline
+- Not checked into repository to keep codebase focused on reusable tools
+
 ## Key Commands
 
 ### Python Environment Setup
@@ -64,7 +81,6 @@ Scripts are organized by workflow stage:
 
 **Prepare** (`scripts/prepare/`): Create batch requests
 - `create_parameter_batch.py`: Parameter extraction batch requests
-- `create_parameter_definition_batch.py`: Parameter definition batch requests
 - `create_quick_estimate_batch.py`: Quick estimate batch requests
 - `create_test_statistic_batch.py`: Test statistic batch requests
 - `create_pooling_metadata_batch.py`: Pooling metadata batch requests
@@ -93,6 +109,12 @@ Scripts are organized by workflow stage:
 - `compute_test_statistic_from_yaml.m`: Test statistic computation
 - `generate_calibration_target_from_yaml.m`: Calibration target generation
 - `simple_test_harness.m`: Simple test harness
+
+**Manuscript** (`docs-manuscript/`): Paper collaboration materials (gitignored)
+- `COLLABORATOR_ONBOARDING.md`: Comprehensive onboarding guide for paper collaborators
+- `presentation.tex`: Beamer presentation introducing the project
+- `paper_outline_standardization.md`: Complete paper outline
+- Note: These materials are shared via email, not checked into repository
 
 ## Architecture
 
@@ -124,17 +146,11 @@ scripts/
 
 ### Data Flow
 
-**Parameter Definition Workflow:**
-1. Input CSV with cancer_type and parameter_name columns
-2. Generate parameter definitions with canonical scales using `create_parameter_definition_batch.py`
-3. Store parameter definitions in `../qsp-metadata-storage/parameter_estimates/parameter-definitions/{cancer_type}/{parameter_name}/definition.yaml`
-
 **Parameter Extraction Workflow:**
-1. Same input CSV with cancer_type and parameter_name columns
-2. Scripts load complete parameter definitions (name, units, definition, canonical_scale, mathematical_role) from storage
-3. **Prompt assembly system** combines base prompts + templates + examples + parameter definition data
-4. Batch processing via OpenAI API creates structured YAML outputs
-5. Results are unpacked directly to `../qsp-metadata-storage/parameter_estimates/` with filename format: `{param_name}_{author_year}_{cancer_type}_{definition_hash}.yaml`
+1. Input CSV with cancer_type and parameter_name columns
+2. **Prompt assembly system** combines base prompts + templates + examples + parameter context data
+3. Batch processing via OpenAI API creates structured YAML outputs
+4. Results are unpacked directly to `../qsp-metadata-storage/parameter_estimates/` with filename format: `{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
 
 **Quick Estimate Workflow:**
 1. Input CSV with cancer_type and parameter_name columns
@@ -147,13 +163,12 @@ scripts/
 1. Input CSV with test_statistic_id, scenario_context, required_species, and derived_species_description
 2. Scripts generate prompts with model context and scenario information
 3. LLM creates test statistic definitions with uncertainty quantification (R bootstrap code)
-4. Results are unpacked to `../qsp-metadata-storage/test_statistics/` with format: `{test_stat_id}_{cancer_type}_{context_hash}.yaml`
+4. Results are unpacked to `../qsp-metadata-storage/test_statistics/` with format: `{test_stat_id}_{cancer_type}_{hash}.yaml`
 5. Aggregation script pools distributions using inverse-variance weighting
 
 ### Key Data Files
-- `data/simbio_parameters.csv`: Parameter definitions with Name, Units, Definition, References columns (used for parameter definition creation)
-- `data/model_context.csv`: Reaction context with Parameter, Reaction, ReactionRate, OtherParameters, OtherSpeciesWithNotes columns (used for parameter definition creation)
-- `../qsp-metadata-storage/parameter_estimates/parameter-definitions/`: Stored parameter definitions (used for parameter extraction)
+- `data/simbio_parameters.csv`: Parameter definitions with Name, Units, Definition, References columns
+- `data/model_context.csv`: Reaction context with Parameter, Reaction, ReactionRate, OtherParameters, OtherSpeciesWithNotes columns
 - `templates/configs/prompt_assembly.yaml`: Configuration controlling how prompts are assembled
 - `templates/parameter_metadata_template.yaml`: YAML template for parameter metadata
 - `templates/prior_metadata_template.yaml`: YAML template for prior metadata generation
@@ -196,8 +211,10 @@ This repository integrates with the central metadata storage system:
 - Reads API key from `.env` file (current directory)
 - Writes extracted metadata to different directories based on workflow type:
   - **Parameter estimates**: `../qsp-metadata-storage/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
+    - Hash computed from study context to enable multiple extractions per parameter
   - **Quick estimates**: `../qsp-metadata-storage/quick_estimates/{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
   - **Test statistics**: `../qsp-metadata-storage/test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
+    - Hash computed from scenario context
 - Assumes `qsp-metadata-storage` repository exists as sibling directory
 - Aggregation scripts in `qspio-pdac/metadata/` pool results from multiple sources
 

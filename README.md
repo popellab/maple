@@ -13,13 +13,29 @@ This toolkit automates the extraction and validation of quantitative systems pha
 
 All extracted metadata is stored in the central `qsp-metadata-storage` repository.
 
+## Repository Organization
+
+**This repository (`qsp-llm-workflows`):**
+- General-purpose LLM workflow tools for parameter extraction
+- Reusable across any QSP model or disease area
+- Focus: Core extraction, validation, and storage workflows
+
+**Paper repository (`qsp-llm-workflows-paper`, to be created):**
+- Paper-specific code, validation analyses, and manuscript figures
+- Validation study comparing LLM extraction to legacy parameter database
+- Reproducible research for publication
+
+**Manuscript documentation:**
+- Collaboration materials stored in `docs-manuscript/` (gitignored)
+- Shared via email, not checked into repository
+- Includes onboarding guide, presentation, and paper outline
+
 ## Directory Structure
 
 ```
 ├── scripts/           # Core automation scripts
 │   ├── prepare/              # Batch creation scripts
 │   │   ├── create_parameter_batch.py
-│   │   ├── create_parameter_definition_batch.py
 │   │   ├── create_quick_estimate_batch.py
 │   │   ├── create_test_statistic_batch.py
 │   │   ├── create_checklist_batch.py
@@ -59,7 +75,8 @@ All extracted metadata is stored in the central `qsp-metadata-storage` repositor
 │   └── examples/             # Example filled templates
 ├── data/            # Reference data and examples
 ├── examples/        # Example workflows and outputs
-└── batch_jobs/      # Batch processing files (gitignored)
+├── batch_jobs/      # Batch processing files (gitignored)
+└── docs-manuscript/ # Paper collaboration materials (gitignored)
 ```
 
 ## Workflow
@@ -130,9 +147,9 @@ The complete workflow is documented in `scripts/batch_workflow_commands.sh`.
 
 This repository is designed to work with the central `qsp-metadata-storage` repository. Different workflow types write to different directories:
 
-- **Parameter estimates**: `../qsp-metadata-storage/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{definition_hash}.yaml`
+- **Parameter estimates**: `../qsp-metadata-storage/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
 - **Quick estimates**: `../qsp-metadata-storage/quick_estimates/{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
-- **Test statistics**: `../qsp-metadata-storage/test_statistics/{test_stat_id}_{cancer_type}_{context_hash}.yaml`
+- **Test statistics**: `../qsp-metadata-storage/test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
 
 Aggregation scripts in `qspio-pdac/metadata/` pool results from multiple sources for model initialization and validation.
 
