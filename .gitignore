@@ -52,3 +52,6 @@ secrets.txt
 
 # Scratch folder for notes and planning
 scratch/
+
+# Manuscript documentation (distributed via email, not in repo)
+docs-manuscript/
