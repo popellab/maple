@@ -103,6 +103,6 @@ echo "   cd .. && git clone https://github.com/popellab/qsp-metadata-storage.git
 echo ""
 echo "4. Read the documentation:"
 echo "   - CLAUDE.md for comprehensive codebase reference"
-echo "   - docs-manuscript/COLLABORATOR_ONBOARDING.md for project overview"
+echo "   - README.md for project overview"
 echo ""
 echo "Happy coding!"
