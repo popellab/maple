@@ -107,72 +107,40 @@ Fill out the test statistic template for this biological expectation and experim
 
 ---
 
-**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON):
+**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON).
 
+Response structure (see template for field details):
 ```json
 {
-  "test_statistic_definition": "Mathematical definition...",
-  "study_overview": "Brief 1-2 sentence summary of WHAT and WHY...",
-  "study_design": "Brief 1-2 sentence summary of HOW...",
+  "test_statistic_definition": "...",
+  "study_overview": "...",
+  "study_design": "...",
   "test_statistic_estimates": {
-    "inputs": [
-      {
-        "name": "response_rate",
-        "value": 0.28,
-        "units": "dimensionless",
-        "description": "Objective response rate from clinical trial",
-        "source_ref": "TOPALIAN2012",
-        "value_table_or_section": "Table 2",
-        "value_snippet": "Among patients with melanoma, the objective response rate was 28%...",
-        "units_table_or_section": "Table 2",
-        "units_snippet": "Objective response rate was 28% (95% CI: 18-40%)..."
-      }
-    ],
-    "derivation_code": "import numpy as np\\n\\ndef derive_distribution(inputs):\\n    ...",
+    "inputs": [{"name": "...", "value": 0.28, "units": "...", ...}],
+    "derivation_code": "import numpy as np\\n...",
     "mean": 0.123,
     "variance": 0.001,
     "ci95": [0.1, 0.15],
     "units": "dimensionless",
-    "key_assumptions": {
-      "1": "Binomial sampling adequately models patient heterogeneity",
-      "2": "Imaging measurement error is normally distributed with CV=8%",
-      "3": "Single-arm response rate is comparable to control-adjusted response"
-    }
+    "key_assumptions": {"1": "...", "2": "...", "3": "..."}
   },
-  "derivation_explanation": "**Step 1:** Extract data. ASSUMPTION 1: Binomial sampling...\\n\\n**Step 2:** Calculate rate. ASSUMPTION 2: ...",
-  "key_study_limitations": "- **Sample size:** ...\\n- **Measurement issues:** ...",
-  "primary_data_sources": [
-    {
-      "source_tag": "TOPALIAN2012",
-      "title": "Full article title",
-      "first_author": "Topalian",
-      "year": 2012,
-      "doi": "10.xxxx/xxxxx"
-    }
-  ],
-  "secondary_data_sources": [],
-  "methodological_sources": [],
+  "derivation_explanation": "**Step 1:** ...\\n\\n**Step 2:** ...",
+  "key_study_limitations": "- **Issue:** ...\\n- **Issue:** ...",
+  "primary_data_sources": [{"source_tag": "...", "title": "...", ...}],
+  "secondary_data_sources": [...],
+  "methodological_sources": [...],
   "validation_weights": {
-    "species_match": {"value": 1.0, "justification": "Human study"},
-    "system_match": {"value": 1.0, "justification": "In vivo"},
-    "overall_confidence": {"value": 0.85, "justification": "Good design, minor caveats"},
-    "indication_match": {"value": 1.0, "justification": "Exact melanoma match"},
-    "regimen_match": {"value": 1.0, "justification": "Anti-PD-1 monotherapy"},
-    "biomarker_population_match": {"value": 0.85, "justification": "Close match"},
-    "stage_burden_match": {"value": 0.65, "justification": "Advanced disease"}
+    "species_match": {"value": 1.0, "justification": "..."},
+    ...
   }
 }
 ```
 
-Requirements for JSON response:
-- Wrap entire response in ```json code block tags
-- Use proper JSON syntax (all strings quoted, proper escaping)
-- Use `\n` for line breaks in multi-line strings
-- For `derivation_code`: provide ONLY the raw Python code without ```python wrapper tags
-- Use `\n\n` (double newline) to separate paragraphs or list items
-- Numeric values should be actual numbers, not strings
-- `inputs` is an ARRAY of objects with: name, value, units, description, source_ref, value_table_or_section, value_snippet, units_table_or_section, units_snippet
-- Ensure every input with a source_ref has a corresponding source in primary/secondary/methodological sources
-- Do NOT include "Exact quote:" prefix in snippets - just the text itself
-- Do NOT include page numbers in value_table_or_section or units_table_or_section - just "Table X" or "Section name"
-- **Do NOT generate model_output code** - that is provided separately by humans
+Key requirements:
+- Wrap in ```json code block tags
+- Use `\n` for line breaks, `\n\n` for paragraphs
+- `derivation_code`: raw Python (no ```python wrapper)
+- `inputs`: array with name, value, units, description, source_ref, value_table_or_section, value_snippet, units_table_or_section, units_snippet
+- Numbers as numbers, not strings
+- Every source_ref must have corresponding source entry
+- **Do NOT generate model_output code** - human-provided

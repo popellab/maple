@@ -82,112 +82,40 @@ For this parameter, you must:
 
 Fill out the metadata template for this parameter.
 
-**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON):
+**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON).
 
+Response structure (see template for field details):
 ```json
 {
-  "mathematical_role": "Describe the mathematical role...",
+  "mathematical_role": "...",
   "parameter_range": "positive_reals",
-  "study_overview": "Brief 1-2 sentence summary of WHAT and WHY...",
-  "study_design": "Brief 1-2 sentence summary of HOW...",
+  "study_overview": "...",
+  "study_design": "...",
   "parameter_estimates": {
-    "inputs": [
-      {
-        "name": "median_survival",
-        "value": 0.45,
-        "units": "years",
-        "description": "Median survival from trial endpoint",
-        "source_ref": "MARCHINGO2014",
-        "value_table_or_section": "Table 2",
-        "value_snippet": "Median survival was 0.45 years (95% CI: 0.3-0.6) in the treatment arm.",
-        "units_table_or_section": "Table 2",
-        "units_snippet": "Median survival was 0.45 years (95% CI: 0.3-0.6) in the treatment arm."
-      },
-      {
-        "name": "plasma_clearance_reference",
-        "value": 0.67,
-        "units": "L/h",
-        "description": "Reference plasma clearance rate for similar therapeutic class",
-        "source_ref": "GOODMAN2018",
-        "value_table_or_section": "Table 4.3",
-        "value_snippet": "Typical plasma clearance for checkpoint inhibitors ranges from 0.5-0.8 L/h, with population mean of 0.67 L/h.",
-        "units_table_or_section": "Table 4.3",
-        "units_snippet": "Clearance values are reported in liters per hour (L/h) for consistency with standard pharmacokinetic conventions."
-      },
-      {
-        "name": "conversion_factor",
-        "value": 365.25,
-        "units": "days/year",
-        "description": "Days per year for unit conversion",
-        "source_ref": null,
-        "value_table_or_section": null,
-        "value_snippet": null,
-        "units_table_or_section": null,
-        "units_snippet": null
-      }
-    ],
-    "derivation_code": "import numpy as np\\n\\ndef derive_parameter(inputs):\\n    median_survival = inputs['median_survival']['value']\\n    ...",
+    "inputs": [{"name": "...", "value": 0.45, "units": "...", ...}],
+    "derivation_code": "import numpy as np\\n...",
     "mean": 0.123,
     "variance": 0.001,
     "ci95": [0.1, 0.15],
     "units": "1/day",
-    "key_assumptions": {
-      "1": "Exponential survival model (constant hazard rate)",
-      "2": "Parameter uncertainty follows normal distribution (CLT with n=100)",
-      "3": "Two-compartment model adequately describes drug distribution"
-    }
+    "key_assumptions": {"1": "...", "2": "...", "3": "..."}
   },
-  "derivation_explanation": "**Step 1:** Extract data. ASSUMPTION: Exponential survival...\\n\\n**Step 2:** Calculate rate. ASSUMPTION: ...",
-  "key_study_limitations": "- **Sample size:** ...\\n- **Measurement issues:** ...",
-  "primary_data_sources": [
-    {
-      "source_tag": "MARCHINGO2014",
-      "title": "Full article title",
-      "first_author": "Marchingo",
-      "year": 2014,
-      "doi": "10.xxxx/xxxxx"
-    }
-  ],
-  "secondary_data_sources": [
-    {
-      "source_tag": "GOODMAN2018",
-      "title": "Goodman & Gilman's: The Pharmacological Basis of Therapeutics",
-      "first_author": "Brunton",
-      "year": 2018,
-      "doi": null
-    }
-  ],
-  "methodological_sources": [
-    {
-      "source_tag": "COMPARTMENTAL2008",
-      "title": "Pharmacokinetic compartmental analysis using exponential fitting",
-      "first_author": "Gibaldi",
-      "year": 2008,
-      "doi": "10.xxxx/xxxxx",
-      "used_for": "Two-compartment clearance formula",
-      "method_description": "Used Equation 3.14 for converting elimination rate"
-    }
-  ],
+  "derivation_explanation": "**Step 1:** ...\\n\\n**Step 2:** ...",
+  "key_study_limitations": "- **Issue:** ...\\n- **Issue:** ...",
+  "primary_data_sources": [{"source_tag": "...", "title": "...", ...}],
+  "secondary_data_sources": [...],
+  "methodological_sources": [...],
   "biological_relevance": {
-    "species_match": {"value": 1.0, "justification": "Human study"},
-    "system_match": {"value": 1.0, "justification": "In vivo"},
-    "overall_confidence": {"value": 0.85, "justification": "Good design, minor caveats"},
-    "indication_match": {"value": 1.0, "justification": "Exact PDAC match"},
-    "regimen_match": {"value": 1.0, "justification": "Baseline untreated"},
-    "biomarker_population_match": {"value": 0.85, "justification": "Close match"},
-    "stage_burden_match": {"value": 0.65, "justification": "Earlier stage"}
+    "species_match": {"value": 1.0, "justification": "..."},
+    ...
   }
 }
 ```
 
-Requirements for JSON response:
-- Wrap entire response in ```json code block tags
-- Use proper JSON syntax (all strings quoted, proper escaping)
-- Use `\n` for line breaks in multi-line strings
-- For `derivation_code`: provide ONLY the raw Python code without ```python wrapper tags
-- Use `\n\n` (double newline) to separate paragraphs or list items
-- Numeric values should be actual numbers, not strings
-- `inputs` is an ARRAY of objects with: name, value, units, description, source_ref, value_table_or_section, value_snippet, units_table_or_section, units_snippet
-- Ensure every input with a source_ref has a corresponding source in primary/secondary/methodological sources
-- Do NOT include "Exact quote:" prefix in snippets - just the text itself
-- Do NOT include page numbers in value_table_or_section or units_table_or_section - just "Table X" or "Section name"
+Key requirements:
+- Wrap in ```json code block tags
+- Use `\n` for line breaks, `\n\n` for paragraphs
+- `derivation_code`: raw Python (no ```python wrapper)
+- `inputs`: array with name, value, units, description, source_ref, value_table_or_section, value_snippet, units_table_or_section, units_snippet
+- Numbers as numbers, not strings
+- Every source_ref must have corresponding source entry
