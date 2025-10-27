@@ -58,42 +58,71 @@ parameter_range: "positive_reals"  # Options: "positive_reals", "[0,1]", "reals"
 study_overview: |
   Brief narrative explaining WHAT parameter is being measured, WHY it's biologically relevant,
   and the overall approach. Example: "Measures CD8+ T cell proliferation rate to quantify
-  tumor-infiltrating lymphocyte expansion using CFSE dilution tracking (PRIMARY_STUDY)."
+  tumor-infiltrating lymphocyte expansion using CFSE dilution tracking (MARCHINGO2014)."
 
 # HOW: Concrete experimental details (1-2 sentences)
 # ============================================================================
 study_design: |
   Concrete implementation: assay type, sample size, key methods. Example: "Flow cytometry
   on 50 patient tumor samples with technical triplicates. CFSE intensity at 6 timepoints
-  over 72h, digitized from Figure 3B (PRIMARY_STUDY)."
+  over 72h from Table 3 (MARCHINGO2014)."
 
 # Parameter estimates with structured inputs and derivation code
 # ============================================================================
 parameter_estimates:
   # Structured inputs: All quantities used in derivation
   # Each input references a source for full traceability
-  # VALUES appear ONLY here, not duplicated in sources section
+  # VALUES and LOCATIONS appear ONLY here, not duplicated in sources section
   inputs:
     - name: "median_survival"
       value: 0.45
       units: "years"
       description: "Median survival from trial endpoint"
-      source_ref: "PRIMARY_STUDY"  # Points to entry in primary_data_sources
-      assumption: null  # Use this field if value is assumed rather than measured
+      source_ref: "MARCHINGO2014"  # References source_tag in primary_data_sources
+      value_table_or_section: "Table 2"
+      value_snippet: "Median survival was 0.45 years (95% CI: 0.3-0.6) in the treatment arm."
+      units_table_or_section: "Table 2"
+      units_snippet: "Median survival was 0.45 years (95% CI: 0.3-0.6) in the treatment arm."
 
     - name: "sample_size"
       value: 100
       units: "dimensionless"  # Use "dimensionless" for counts, ratios, fractions
       description: "Number of patients in treatment arm"
-      source_ref: "PRIMARY_STUDY"
-      assumption: null
+      source_ref: "MARCHINGO2014"  # References source_tag in primary_data_sources
+      value_table_or_section: "Results"
+      value_snippet: "The treatment cohort comprised 100 evaluable subjects with confirmed disease progression."
+      units_table_or_section: "Methods"
+      units_snippet: "Patient enrollment was performed at 12 sites between 2012-2013 with n=100 subjects per arm."
+
+    - name: "plasma_clearance_reference"
+      value: 0.67
+      units: "L/h"
+      description: "Reference plasma clearance rate for similar therapeutic class"
+      source_ref: "GOODMAN2018"  # References source_tag in secondary_data_sources
+      value_table_or_section: "Table 4.3"
+      value_snippet: "Typical plasma clearance for checkpoint inhibitors ranges from 0.5-0.8 L/h, with population mean of 0.67 L/h."
+      units_table_or_section: "Table 4.3"
+      units_snippet: "Clearance values are reported in liters per hour (L/h) for consistency with standard pharmacokinetic conventions."
 
     - name: "conversion_factor"
       value: 365.25
       units: "days/year"
       description: "Days per year for unit conversion"
       source_ref: null  # No source needed for standard conversion
-      assumption: "Standard calendar conversion"
+      value_table_or_section: null
+      value_snippet: null
+      units_table_or_section: null
+      units_snippet: null
+
+    - name: "random_seed"
+      value: 123
+      units: "dimensionless"
+      description: "Random seed for reproducible bootstrap sampling"
+      source_ref: null  # Arbitrary choice for reproducibility
+      value_table_or_section: null
+      value_snippet: null
+      units_table_or_section: null
+      units_snippet: null
 
   # Python derivation code as a FUNCTION that takes inputs and returns outputs
   # This enables automated verification: inputs → code → outputs
@@ -109,10 +138,12 @@ parameter_estimates:
         # Extract named inputs
         median_survival = inputs['median_survival']['value']
         sample_size = inputs['sample_size']['value']
+        plasma_clearance_reference = inputs['plasma_clearance_reference']['value']
         conversion_factor = inputs['conversion_factor']['value']
+        random_seed = inputs['random_seed']['value']
 
         # Run bootstrap with uncertainty propagation
-        np.random.seed(123)
+        np.random.seed(int(random_seed))
         B = 5000
         mc_draws = np.zeros(B)
 
@@ -124,8 +155,13 @@ parameter_estimates:
             # Sample parameter with uncertainty
             lambda_boot = np.random.normal(lambda_estimate, lambda_se)
 
+            # Apply two-compartment clearance transformation
+            # Using Equation 3.14 from COMPARTMENTAL2008 with reference clearance from GOODMAN2018
+            clearance_ratio = plasma_clearance_reference / 1.0  # Normalize to reference clearance
+            adjusted_lambda = lambda_boot * clearance_ratio
+
             # Transform to desired parameter
-            mc_draws[i] = lambda_boot * conversion_factor
+            mc_draws[i] = adjusted_lambda * conversion_factor
 
         # Return required summary statistics
         return {
@@ -146,81 +182,75 @@ parameter_estimates:
   key_assumptions:
     1: "Exponential survival model (constant hazard rate)"
     2: "Parameter uncertainty follows normal distribution (CLT with n=100)"
-    3: "Digitization error approximately ±0.3 mg/L"
+    3: "Two-compartment model adequately describes drug distribution between plasma and tumor"
 
 # Step-by-step explanation of the derivation code
 # ============================================================================
 # Include detailed justification for each numbered assumption from key_assumptions
 derivation_explanation: |
-  **Step 1:** Extract median survival (0.45 years) from trial data (PRIMARY_STUDY, Table 2).
+  **Step 1:** Extract median survival (0.45 years) and sample size (n=100) from clinical trial data (MARCHINGO2014, Table 2 and Results).
   ASSUMPTION 1: Survival follows exponential distribution with constant hazard rate, which is
   typical for stage III disease based on Kaplan-Meier analysis showing memoryless property.
 
-  **Step 2:** Calculate rate parameter as λ = 1/median_survival = 2.22 per year. Convert to
-  daily rate by multiplying by 365.25 days/year.
-
-  **Step 3:** Estimate uncertainty using standard error SE = λ/sqrt(n) where n=100 patients.
-
-  **Step 4:** Generate 5000 bootstrap samples from normal distribution with mean=λ and std=SE.
+  **Step 2:** Calculate hazard rate parameter as λ = 1/median_survival = 2.22 per year.
+  Estimate uncertainty using standard error SE = λ/sqrt(n) where n=100 patients.
   ASSUMPTION 2: Parameter uncertainty is normally distributed, justified by Central Limit
   Theorem with sample size n=100 providing adequate convergence.
 
-  **Step 5:** Extract digitized concentration values from Figure 3B using WebPlotDigitizer.
-  ASSUMPTION 3: Digitization error is approximately ±0.3 mg/L based on pixel resolution and
-  axis scaling analysis. This uncertainty is incorporated into bootstrap resampling.
+  **Step 3:** Generate 5000 bootstrap samples from normal distribution with mean=λ and std=SE to
+  propagate uncertainty through subsequent transformations.
+
+  **Step 4:** Apply two-compartment clearance transformation using Equation 3.14 from COMPARTMENTAL2008,
+  scaled by reference plasma clearance (0.67 L/h from GOODMAN2018) to convert systemic hazard rate to
+  tumor-specific clearance rate.
+  ASSUMPTION 3: Two-compartment model adequately describes drug distribution between plasma and tumor
+  compartments for this therapeutic context.
+
+  **Step 5:** Convert to daily rate by multiplying by 365.25 days/year. Compute final parameter
+  statistics (mean, variance, 95% CI) from bootstrap distribution.
 
 # Important limitations and their specific impact on parameter reliability
 # ============================================================================
 key_study_limitations: |
-  - **Sample size/power:** [statistical limitations, small N, underpowered comparisons → increases parameter uncertainty] (SOURCE_TAG)
-  - **Measurement issues:** [assay limitations, detection limits, calibration problems → affects measurement precision] (SOURCE_TAG)
-  - **Data extraction:** [digitization errors, missing data points, unit conversion uncertainties → introduces additional noise] (SOURCE_TAG)
-  - **Biological context:** [species differences, system limitations, population mismatch → affects biological relevance] (SOURCE_TAG)
-  - **Methodological concerns:** [key assumptions, model simplifications, potential biases → may systematically bias parameter estimate] (SOURCE_TAG)
+  - **Sample size/power:** Moderate sample size (n=100) limits precision of uncertainty estimates and subgroup analyses (MARCHINGO2014)
+  - **Survival model assumption:** Exponential survival model assumes constant hazard rate, which may not hold for patients with disease progression or treatment changes (MARCHINGO2014)
+  - **Compartmental model simplification:** Two-compartment model is a simplified representation of complex tumor pharmacokinetics and may not capture heterogeneous drug distribution (COMPARTMENTAL2008)
+  - **External validity:** Single-center trial may limit generalizability to broader patient populations with different disease characteristics (MARCHINGO2014)
 
 # Source citations - SEPARATED INTO PRIMARY/SECONDARY DATA vs METHODOLOGICAL
 # ============================================================================
-# NOTE: Values, units, and detailed extraction info are in parameter_estimates.inputs
-# Sources provide ONLY: citation, location, and text evidence
+# NOTE: Values, locations, and text snippets are in parameter_estimates.inputs
+# Sources provide structured citation fields
+# V3 SCHEMA: Text and table-based extraction only (no digitization from figures)
 
 # PRIMARY DATA SOURCES: Original measurements from unique studies
 # These should NOT be reused across different derivations (flags for correlation)
 primary_data_sources:
-  PRIMARY_STUDY:
-    citation: "FULL_CITATION"
-    doi: "DOI_OR_NA"
-    is_primary: true  # Marks this as original data (should not be reused)
-    figure_or_table: "Fig./Table/Page where data appears"
-    text_snippet: "Exact quote showing the measurement/value"
-
-    # Optional: Digitization metadata (for extracted graphical data)
-    digitized:
-      tool: "WebPlotDigitizer v4.6"  # Tool and version used
-      points: [[0.5, 45.2], [1.0, 38.1], [2.0, 31.5]]  # [x, y] pairs as extracted
-      x_label: "Time (hours)"
-      y_label: "Concentration (mg/L)"
-      uncertainty: 0.3  # Estimated digitization error in y-units (e.g., mg/L)
+  - source_tag: "MARCHINGO2014"
+    title: "Full article title"
+    first_author: "Marchingo"
+    year: 2014
+    doi: "10.xxxx/xxxxx"
 
 # SECONDARY DATA SOURCES: Reference values, textbook data, established constants
 # Reuse is acceptable and expected for these sources
 secondary_data_sources:
-  REFERENCE_VALUE:
-    citation: "FULL_CITATION (e.g., textbook, review, reference database)"
-    doi: "DOI_OR_NA"
-    is_primary: false  # Marks as reference material (reuse OK)
-    figure_or_table: "Location in reference"
-    text_snippet: "Relevant quote"
+  - source_tag: "GOODMAN2018"
+    title: "Goodman & Gilman's: The Pharmacological Basis of Therapeutics"
+    first_author: "Brunton"
+    year: 2018
+    doi: null
 
 # METHODOLOGICAL SOURCES: Formulas, conversion factors, analysis methods
 # Reuse is expected and does not create correlation between derivations
 methodological_sources:
-  METHOD_REFERENCE:
-    citation: "FULL_CITATION"
-    doi: "DOI_OR_NA"
-    used_for: "What this method/formula was used for"
-    formula_or_method: "Equation or method description"
-    figure_or_table: "Methods section / equation number"
-    text_snippet: "Relevant quote about the method"
+  - source_tag: "COMPARTMENTAL2008"
+    title: "Pharmacokinetic compartmental analysis using exponential fitting"
+    first_author: "Gibaldi"
+    year: 2008
+    doi: "10.xxxx/xxxxx"
+    used_for: "Two-compartment clearance formula"
+    method_description: "Used Equation 3.14 for converting elimination rate from two-compartment model to effective clearance"
 
 # BIOLOGICAL RELEVANCE WEIGHTS (intrinsic to this derivation)
 # ============================================================================

@@ -13,7 +13,7 @@ For this parameter, you must:
 
 1. **Structured inputs:** Define all input values in the `inputs` list with source references
 2. **Function-based code:** Provide Python code as a `derive_parameter(inputs)` function
-3. **Bootstrap preferred:** Use bootstrap resampling when raw/digitizable data available
+3. **Bootstrap preferred:** Use bootstrap resampling when raw data available
 4. **Uncertainty propagation:** Incorporate ALL sources of uncertainty:
    - **Multiple measurements:** Use bootstrap resampling when combining multiple data points
    - **Composite parameters:** When parameter depends on multiple quantities, propagate uncertainty from each component
@@ -32,7 +32,7 @@ For this parameter, you must:
 6. **Study overview (1-2 sentences):** WHAT parameter is being measured, WHY it's biologically relevant, and the overall approach
 7. **Study design (1-2 sentences):** HOW the measurement was performed (assay type, sample size, key methods)
 8. **Key assumptions (enumerated dict):** 3-5 critical assumptions only (e.g., distributional assumptions, model choices, data quality). Use format: `1: "Assumption text"`, `2: "Assumption text"`. Do NOT include trivial assumptions like "bootstrap samples are independent" or "conversion factors are standard".
-9. **Derivation explanation:** Step-by-step plain-language explanation of the Python code (5 steps recommended). Reference and justify assumptions using "ASSUMPTION N: ..." format where N matches the key from key_assumptions.
+9. **Derivation explanation:** Step-by-step plain-language explanation of the Python code (3-6 steps recommended). Reference and justify assumptions using "ASSUMPTION N: ..." format where N matches the key from key_assumptions.
 10. **Key study limitations:** List critical limitations and their specific impact on reliability
 
 ---
@@ -41,35 +41,54 @@ For this parameter, you must:
 
 **CRITICAL:** Separate sources into THREE categories:
 
+**V3 SCHEMA REQUIREMENT: Text and table-based extraction ONLY.**
+- Do NOT extract data from figures or graphs via digitization
+- Use only numerical values explicitly stated in text or tables
+- If critical data only appears in figures, note this in key_study_limitations
+
 ### Primary Data Sources
 Original measurements from unique studies. These should NOT be reused across derivations.
-- Citation, DOI
-- `is_primary: true`
-- Figure/table location
-- Exact text snippet showing the measurement
+
+Each source is a list entry with:
+- `source_tag`: Short tag for referencing (e.g., "MARCHINGO2014", "SMITH2020")
+- `title`: Full article title
+- `first_author`: First author last name
+- `year`: Publication year
+- `doi`: DOI (or null if not available)
+
+Location and text snippets are in `inputs` (not here).
 
 ### Secondary Data Sources
 Reference values, textbook data, established constants. Reuse is acceptable.
-- Citation, DOI
-- `is_primary: false`
-- Location in reference
-- Relevant quote
+
+Each source is a list entry with:
+- `source_tag`: Short tag for referencing (e.g., "ALBERTS2015")
+- `title`: Reference title
+- `first_author`: First author last name
+- `year`: Publication year
+- `doi`: DOI (or null for textbooks)
+
+Location and text snippets are in `inputs` (not here).
 
 ### Methodological Sources
 Formulas, conversion factors, analysis methods. Reuse is expected.
-- Citation, DOI
-- What it was used for
-- Formula or method description
-- Location and quote
+
+Each source is a list entry with:
+- `source_tag`: Short tag for referencing (e.g., "EFRON1993")
+- `title`: Article/reference title
+- `first_author`: First author last name
+- `year`: Publication year
+- `doi`: DOI (or null if not available)
+- `used_for`: What this method/formula was used for
+- `method_description`: Brief description of the method or formula
 
 **Important:**
-- All actual VALUES and UNITS appear only in `parameter_estimates.inputs`
-- Sources provide only citations, locations, and text evidence
+- All VALUES, UNITS, LOCATIONS, and TEXT SNIPPETS appear in `parameter_estimates.inputs`
+- Each input must have `value_snippet` (text showing the value) and `units_snippet` (text showing the units)
+- Use `table_or_section` format like "Table 2" or "Methods" (no page numbers)
+- Sources (primary/secondary) provide ONLY structured citations (title, first_author, year, doi)
 - No duplication between inputs and sources sections
-
-**Digitization metadata (when applicable):**
-- If data was extracted from figures/graphs, include `digitized` section
-- Provide tool name/version, raw data points, axis labels, and uncertainty estimate
+- **TEXT/TABLE ONLY**: No figure digitization in v3 schema
 
 ---
 
@@ -153,11 +172,10 @@ Use the following rubrics (tables). Do not invent new scales.
 ## Data Quality & Validation
 
 10. **Citation verification:** Verify all citations come from real, accessible publications
-11. **Data location verification:** Cross-check figure/table references contain the claimed data
-12. **Digitized data quality:** For digitized data, re-extract values independently and flag discrepancies
-13. **Biological plausibility:** Sanity-check parameter values against known biological ranges
-14. **Input-source matching:** Every input must have a source_ref (or assumption if not measured)
-15. **Code verification:** Ensure derivation_code uses exactly the inputs defined in inputs list
+11. **Data location verification:** Cross-check table/text references contain the claimed data
+12. **Biological plausibility:** Sanity-check parameter values against known biological ranges
+13. **Input-source matching:** Every input must have a source_ref (or null if standard conversion/seed)
+14. **Code verification:** Ensure derivation_code uses exactly the inputs defined in inputs list
 
 ---
 
@@ -165,14 +183,14 @@ Use the following rubrics (tables). Do not invent new scales.
 
 16. `study_overview` (1-2 sentences): WHAT and WHY - high-level biological context
 17. `study_design` (1-2 sentences): HOW - concrete experimental details
-18. `key_assumptions` (list): 3-5 concise bullet points of key assumptions
-19. `derivation_explanation` must provide clear step-by-step explanation with "ASSUMPTION: ..." justifications embedded
+18. `key_assumptions` (enumerated dict): 3-5 critical assumptions only
+19. `derivation_explanation` must provide clear step-by-step explanation with "ASSUMPTION N: ..." justifications embedded
 20. `derivation_code` must be a function taking inputs dict, returning dict with mean_param/variance_param/ci95_param
 21. Biological relevance weights must follow rubric tables exactly (0–1) with concise justifications
 22. All sections must be complete with consistent source attribution
 23. **Sources separated:** primary (original data) vs secondary (reference) vs methodological (methods/formulas)
 24. **No duplication:** Values/units only in inputs, not in sources
-25. **Digitization metadata:** Include when data extracted from figures/graphs
+25. **TEXT/TABLE ONLY:** Extract from text and tables only, no figure digitization
 
 ---
 
@@ -216,12 +234,37 @@ Fill out the metadata template for this parameter.
         "name": "median_survival",
         "value": 0.45,
         "units": "years",
-        "description": "Median survival from trial",
-        "source_ref": "PRIMARY_STUDY",
-        "assumption": null
+        "description": "Median survival from trial endpoint",
+        "source_ref": "MARCHINGO2014",
+        "value_table_or_section": "Table 2",
+        "value_snippet": "Median survival was 0.45 years (95% CI: 0.3-0.6) in the treatment arm.",
+        "units_table_or_section": "Table 2",
+        "units_snippet": "Median survival was 0.45 years (95% CI: 0.3-0.6) in the treatment arm."
+      },
+      {
+        "name": "plasma_clearance_reference",
+        "value": 0.67,
+        "units": "L/h",
+        "description": "Reference plasma clearance rate for similar therapeutic class",
+        "source_ref": "GOODMAN2018",
+        "value_table_or_section": "Table 4.3",
+        "value_snippet": "Typical plasma clearance for checkpoint inhibitors ranges from 0.5-0.8 L/h, with population mean of 0.67 L/h.",
+        "units_table_or_section": "Table 4.3",
+        "units_snippet": "Clearance values are reported in liters per hour (L/h) for consistency with standard pharmacokinetic conventions."
+      },
+      {
+        "name": "conversion_factor",
+        "value": 365.25,
+        "units": "days/year",
+        "description": "Days per year for unit conversion",
+        "source_ref": null,
+        "value_table_or_section": null,
+        "value_snippet": null,
+        "units_table_or_section": null,
+        "units_snippet": null
       }
     ],
-    "derivation_code": "import numpy as np\\n\\ndef derive_parameter(inputs):\\n    ...",
+    "derivation_code": "import numpy as np\\n\\ndef derive_parameter(inputs):\\n    median_survival = inputs['median_survival']['value']\\n    ...",
     "mean": 0.123,
     "variance": 0.001,
     "ci95": [0.1, 0.15],
@@ -229,29 +272,40 @@ Fill out the metadata template for this parameter.
     "key_assumptions": {
       "1": "Exponential survival model (constant hazard rate)",
       "2": "Parameter uncertainty follows normal distribution (CLT with n=100)",
-      "3": "Digitization error approximately ±0.3 mg/L"
+      "3": "Two-compartment model adequately describes drug distribution"
     }
   },
   "derivation_explanation": "**Step 1:** Extract data. ASSUMPTION: Exponential survival...\\n\\n**Step 2:** Calculate rate. ASSUMPTION: ...",
   "key_study_limitations": "- **Sample size:** ...\\n- **Measurement issues:** ...",
-  "primary_data_sources": {
-    "PRIMARY_STUDY": {
-      "citation": "Author et al. Journal. Year;Vol:Pages.",
-      "doi": "10.xxxx/xxxxx",
-      "is_primary": true,
-      "figure_or_table": "Figure 3B",
-      "text_snippet": "Exact quote showing measurement",
-      "digitized": {
-        "tool": "WebPlotDigitizer v4.6",
-        "points": [[0.5, 45.2], [1.0, 38.1], [2.0, 31.5]],
-        "x_label": "Time (hours)",
-        "y_label": "Concentration (mg/L)",
-        "uncertainty": 0.3
-      }
+  "primary_data_sources": [
+    {
+      "source_tag": "MARCHINGO2014",
+      "title": "Full article title",
+      "first_author": "Marchingo",
+      "year": 2014,
+      "doi": "10.xxxx/xxxxx"
     }
-  },
-  "secondary_data_sources": {},
-  "methodological_sources": {},
+  ],
+  "secondary_data_sources": [
+    {
+      "source_tag": "GOODMAN2018",
+      "title": "Goodman & Gilman's: The Pharmacological Basis of Therapeutics",
+      "first_author": "Brunton",
+      "year": 2018,
+      "doi": null
+    }
+  ],
+  "methodological_sources": [
+    {
+      "source_tag": "COMPARTMENTAL2008",
+      "title": "Pharmacokinetic compartmental analysis using exponential fitting",
+      "first_author": "Gibaldi",
+      "year": 2008,
+      "doi": "10.xxxx/xxxxx",
+      "used_for": "Two-compartment clearance formula",
+      "method_description": "Used Equation 3.14 for converting elimination rate"
+    }
+  ],
   "biological_relevance": {
     "species_match": {"value": 1.0, "justification": "Human study"},
     "system_match": {"value": 1.0, "justification": "In vivo"},
@@ -271,5 +325,7 @@ Requirements for JSON response:
 - For `derivation_code`: provide ONLY the raw Python code without ```python wrapper tags
 - Use `\n\n` (double newline) to separate paragraphs or list items
 - Numeric values should be actual numbers, not strings
-- `inputs` is an ARRAY of objects, each with name/value/units/description/source_ref/assumption
-- Ensure every input has a corresponding source in primary/secondary/methodological sources
+- `inputs` is an ARRAY of objects with: name, value, units, description, source_ref, value_table_or_section, value_snippet, units_table_or_section, units_snippet
+- Ensure every input with a source_ref has a corresponding source in primary/secondary/methodological sources
+- Do NOT include "Exact quote:" prefix in snippets - just the text itself
+- Do NOT include page numbers in value_table_or_section or units_table_or_section - just "Table X" or "Section name"
