@@ -277,7 +277,9 @@ class ParameterBatchCreator(BatchCreator):
                 runtime_data = {
                     "EXISTING_STUDIES": existing_studies,
                     "PARAMETER_INFO": parameter_block,
-                    "MODEL_CONTEXT": model_context_block
+                    "MODEL_CONTEXT": model_context_block,
+                    "parameter_name": parameter_name,
+                    "context_hash": definition_hash
                 }
 
                 # Assemble the prompt
@@ -1738,7 +1740,9 @@ class TestStatisticBatchCreator(BatchCreator):
                     "MODEL_CONTEXT": model_context_block,
                     "SCENARIO_CONTEXT": scenario_context_block,
                     "REQUIRED_SPECIES_WITH_UNITS": required_species_with_units,
-                    "DERIVED_SPECIES_DESCRIPTION": derived_species_description
+                    "DERIVED_SPECIES_DESCRIPTION": derived_species_description,
+                    "test_statistic_id": test_statistic_id,
+                    "context_hash": context_hash
                 }
 
                 # Assemble the prompt

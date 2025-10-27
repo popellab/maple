@@ -5,6 +5,12 @@ Your task is to create **comprehensive, reproducible metadata** for a model para
 
 {{EXISTING_STUDIES}}
 
+**IMPORTANT:** The following primary studies have already been used for this parameter (same name and context). Do NOT reuse these studies - find independent sources instead:
+
+{{USED_PRIMARY_STUDIES}}
+
+If no studies are listed above, this is the first derivation for this parameter.
+
 For this parameter, you must:
 
 ---

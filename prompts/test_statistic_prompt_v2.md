@@ -5,6 +5,12 @@ Your task is to create **comprehensive, reproducible test statistic definitions*
 
 {{EXISTING_TEST_STATISTICS}}
 
+**IMPORTANT:** The following primary studies have already been used for this test statistic (same test_statistic_id and context). Do NOT reuse these studies - find independent sources instead:
+
+{{USED_PRIMARY_STUDIES}}
+
+If no studies are listed above, this is the first derivation for this test statistic.
+
 For this test statistic, you must:
 
 ---
