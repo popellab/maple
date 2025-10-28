@@ -1,125 +1,173 @@
 # Validation Scripts
 
-Core automated validation tools for LLM-extracted parameter metadata.
+Core automated validation tools for LLM-extracted metadata (parameters, test statistics, quick estimates).
 
 ## Quick Start
 
-Run all core validations:
+Run all 6 core validations:
 
 ```bash
 python scripts/validate/run_all_validations.py \
   ../qsp-metadata-storage/parameter_estimates \
-  templates/parameter_metadata_template_v2.yaml \
+  templates/parameter_metadata_template.yaml \
   output/validation_results/
 ```
 
-## Individual Validation Scripts
+## Core Validation Suite (6 Checks)
 
-### 1. Legacy Parameter Comparison
+### 1. Template Compliance
 
-Compare LLM extractions to legacy database (both in v2 format).
-
-**Metrics:**
-- Absolute % difference
-- Agreement within confidence intervals
-- Pearson and Spearman correlation
-
-**Usage:**
-```bash
-python scripts/validate/compare_to_legacy.py \
-  ../qsp-metadata-storage/parameter_estimates \
-  output/legacy_comparison.json
-```
-
-**Note:** Legacy files are identified by `_legacy` suffix in filename.
-
-### 2. Template Compliance Validation
-
-Validate YAML files conform to template schema.
+Validates YAML files conform to template schema.
 
 **Checks:**
 - All required fields present
 - Correct field types
 - Numeric values valid
-- Pooling weights in [0, 1]
+- Validation weights in [0, 1]
+
+**Works for:** Parameters, test statistics, quick estimates
 
 **Usage:**
 ```bash
 python scripts/validate/check_schema_compliance.py \
   ../qsp-metadata-storage/parameter_estimates \
-  templates/parameter_metadata_template_v2.yaml \
+  templates/parameter_metadata_template.yaml \
   output/schema_compliance.json
 ```
 
-### 3. R Code Execution Testing
+### 2. Code Execution
 
-Test that R bootstrap code executes without errors.
-
-**Validates:**
-- Code executes successfully
-- Required variables created (mc_draws, mean, variance, ci95)
-- No runtime errors
-
-**Usage:**
-```bash
-python scripts/validate/test_r_code_execution.py \
-  ../qsp-metadata-storage/parameter_estimates \
-  output/r_execution.json
-```
-
-**Requirements:** R must be installed and `Rscript` available in PATH.
-
-### 4. R Code Reproducibility Testing
-
-Test that R bootstrap code produces consistent results across runs with different random seeds.
+Tests that Python derivation code executes correctly.
 
 **Validates:**
-- Code produces consistent distributions with different seeds
-- Coefficient of variation (CV) of mean estimates is low (<5%)
-- Bootstrap sampling is working correctly
+- Code executes without errors
+- Function returns required fields (mean, variance, ci95)
+- Computed values match declared values in YAML (within 5% threshold)
+
+**Works for:** Parameters (v3), test statistics (v2)
 
 **Usage:**
 ```bash
-python scripts/validate/test_r_code_reproducibility.py \
+python scripts/validate/test_code_execution.py \
   ../qsp-metadata-storage/parameter_estimates \
-  output/r_reproducibility.json \
-  --n-runs 5 \
-  --cv-threshold 5.0
+  output/code_execution.json \
+  --threshold 5.0
 ```
 
-**Note:** Removes `set.seed()` calls from R code and runs with different seeds to test true reproducibility.
+**Note:** R code support has been deprecated. All new extractions use Python.
 
-**Requirements:** R must be installed and `Rscript` available in PATH.
+### 3. Text Snippet Validation
 
-### 5. De Novo Consistency Analysis
+Validates that text snippets contain their declared values.
 
-Analyze consistency across multiple independent extractions of the same parameter.
+**Checks:**
+- value_snippet contains the declared value
+- units_snippet contains the declared value
+- Handles multiple formats (scientific notation, percentages, decimals)
 
-**Metrics:**
-- Coefficient of variation (CV%)
-- Mean absolute deviation
-- Confidence interval overlap rate
+**Works for:** Parameters, test statistics
 
 **Usage:**
 ```bash
-python scripts/validate/check_denovo_consistency.py \
+python scripts/validate/check_text_snippets.py \
   ../qsp-metadata-storage/parameter_estimates \
-  output/consistency.json \
-  --cv-threshold 50
+  output/text_snippets.json
 ```
 
-**Note:** Only analyzes parameters with multiple extractions (non-legacy files).
+### 4. Source Reference Validation
+
+Validates source reference integrity.
+
+**Checks:**
+- Every non-null source_ref has a matching source definition
+- All sources have required fields (title, first_author, year, doi)
+- No orphaned references
+
+**Works for:** Parameters, test statistics
+
+**Usage:**
+```bash
+python scripts/validate/check_source_references.py \
+  ../qsp-metadata-storage/parameter_estimates \
+  output/source_references.json
+```
+
+### 5. DOI Resolution
+
+Validates DOIs resolve and metadata matches.
+
+**Checks:**
+- DOIs resolve via CrossRef API
+- Returned metadata matches YAML (title, author, year)
+- Uses rate limiting (1 request/second)
+
+**Works for:** Parameters, test statistics
+
+**Usage:**
+```bash
+python scripts/validate/check_doi_validity.py \
+  ../qsp-metadata-storage/parameter_estimates \
+  output/doi_validity.json \
+  --rate-limit 1.0
+```
+
+### 6. Value Consistency
+
+Compares new extractions against existing data.
+
+**Compares against:**
+- Legacy database values (from `{type}_legacy/` directory)
+- Other derivations with same context_hash
+
+**Reports warnings for:**
+- Values >20% different from legacy
+- Values outside range of same-context derivations
+- Values >50% different from same-context mean
+
+**Works for:** Parameters, test statistics
+
+**Usage:**
+```bash
+python scripts/validate/check_value_consistency.py \
+  ../qsp-metadata-storage/parameter_estimates \
+  output/value_consistency.json
+```
+
+**Note:** This validator automatically discovers the corresponding legacy directory:
+- `parameter_estimates/` → `parameter_estimates_legacy/`
+- `test_statistics/` → `test_statistics_legacy/`
+- `quick_estimates/` → `quick_estimates_legacy/`
+
+## Legacy Directory Structure
+
+Legacy parameters are stored in separate directories to keep them distinct from new extractions:
+
+```
+qsp-metadata-storage/
+├── parameter_estimates/          # New parameter extractions
+├── parameter_estimates_legacy/   # Legacy parameter database
+├── test_statistics/              # New test statistic extractions
+├── test_statistics_legacy/       # Legacy test statistics (if any)
+├── quick_estimates/              # Quick parameter estimates
+└── quick_estimates_legacy/       # Legacy quick estimates (if any)
+```
+
+**Validation behavior:**
+- Legacy files are **not validated** (they serve as reference data)
+- Legacy files are used for **comparison** in value consistency checks
+- Validators automatically detect and skip legacy directories
 
 ## Output Files
 
-Each validation script produces two JSON files:
-
-1. **Detailed results** (e.g., `legacy_comparison.json`): Complete data for all comparisons
-2. **Summary report** (e.g., `legacy_comparison_summary.json`): Pass/fail summary with statistics
+Each validation script produces a JSON file with:
+- **summary**: Total/passed/failed counts, pass rate
+- **passed**: List of items that passed (with details)
+- **failed**: List of items that failed (with error messages)
+- **warnings**: List of items with warnings (for consistency check)
 
 ### Master Summary
 
-`run_all_validations.py` produces `master_validation_summary.json` with aggregated results from all validators.
+`run_all_validations.py` produces `master_validation_summary.json` with aggregated results from all 6 validators.
 
 ## Validation Reports
 
@@ -129,22 +177,23 @@ Reports include:
 - **Failed**: Number failing validation
 - **Pass rate**: Percentage passing
 
-Failed items include detailed error messages.
+Failed items include detailed error messages for debugging.
 
 ## Dependencies
 
 **Python packages:**
-- `pyyaml`
-- `numpy`
-- `scipy`
-- `pandas` (optional, for biological plausibility checker)
+- `pyyaml` - YAML parsing
+- `numpy` - Numerical computations
+- `requests` - DOI resolution
 
-**External tools:**
-- R (for code execution validator)
-
-Install Python dependencies:
+Install dependencies:
 ```bash
-pip install pyyaml numpy scipy pandas
+pip install pyyaml numpy requests
+```
+
+Or use the project's virtual environment:
+```bash
+source venv/bin/activate  # Assuming venv is set up
 ```
 
 ## Utilities Module
@@ -152,31 +201,33 @@ pip install pyyaml numpy scipy pandas
 `validation_utils.py` provides shared functionality:
 - `load_yaml_file()`: Load single YAML file
 - `load_yaml_directory()`: Load all YAMLs from directory
-- `extract_parameter_name_from_filename()`: Parse parameter name
 - `parse_numeric_value()`: Robust numeric parsing
-- `ValidationReport`: Container for validation results
+- `ValidationReport`: Container for validation results with summary statistics
 
-## Skipping Validations
+## Integration with Automated Workflow
 
-**Skip R execution** (if R not installed):
-```bash
-python scripts/validate/run_all_validations.py \
-  ../qsp-metadata-storage/parameter_estimates \
-  templates/parameter_metadata_template_v2.yaml \
-  output/ \
-  --skip-r-execution
-```
+These validators are automatically run as part of the extraction workflow:
 
-**Skip legacy files:** All validators automatically skip files with `_legacy` in filename.
+1. **After unpacking**: Results are unpacked to `to-review/` subdirectories
+2. **Before git commit**: All 6 validators run on unpacked files
+3. **In commit message**: Validation summary included for visibility
+
+See `scripts/lib/validation_runner.py` for integration details.
 
 ## Exit Codes
 
 - `0`: All validations passed
 - `1`: One or more validations failed
 
-## Future Enhancements
+**Note:** Value consistency check (validator #6) always passes - it only reports warnings, never fails.
 
-**Not yet implemented:**
-- Biological plausibility checker (range validation)
-- Source verification (DOI validity, PDF extraction)
-- Metadata completeness scoring
+## Design Philosophy
+
+These validators enforce **data quality at ingestion time**:
+
+1. **Correctness**: Code executes, values are accurate
+2. **Traceability**: Sources are valid, snippets contain declared values
+3. **Completeness**: All required fields present
+4. **Consistency**: Values align with existing data
+
+They do **not** include paper-specific validations (those belong in paper repositories).

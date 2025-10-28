@@ -40,18 +40,45 @@ class ValueConsistencyChecker:
     """
 
     def __init__(self, data_dir: str):
-        self.data_dir = data_dir
+        self.data_dir = Path(data_dir)
+        self.legacy_dir = self._get_legacy_dir()
         self.all_files = []
         self.legacy_values = defaultdict(list)  # param_name -> list of values
         self.context_groups = defaultdict(list)  # (param_name, context_hash) -> list of values
 
+    def _get_legacy_dir(self) -> Path:
+        """
+        Determine legacy directory path based on data directory.
+
+        Convention:
+        - parameter_estimates -> parameter_estimates_legacy
+        - test_statistics -> test_statistics_legacy
+        - quick_estimates -> quick_estimates_legacy
+        """
+        dir_name = self.data_dir.name
+        parent = self.data_dir.parent
+
+        legacy_name = f"{dir_name}_legacy"
+        legacy_path = parent / legacy_name
+
+        return legacy_path if legacy_path.exists() else None
+
     def load_all_files(self):
         """Load all YAML files and organize by parameter/context."""
         print(f"Loading files from {self.data_dir}...")
-        self.all_files = load_yaml_directory(self.data_dir)
+        self.all_files = load_yaml_directory(str(self.data_dir))
 
-        for file_info in self.all_files:
+        # Also load legacy files if legacy directory exists
+        legacy_files = []
+        if self.legacy_dir:
+            print(f"Loading legacy files from {self.legacy_dir}...")
+            legacy_files = load_yaml_directory(str(self.legacy_dir))
+
+        all_files_combined = self.all_files + legacy_files
+
+        for file_info in all_files_combined:
             filename = file_info['filename']
+            filepath = file_info['filepath']
             data = file_info['data']
 
             # Extract parameter/test_statistic identifier
@@ -67,8 +94,11 @@ class ValueConsistencyChecker:
             # Extract context_hash
             context_hash = data.get('context_hash', 'unknown')
 
+            # Determine if this is a legacy file (either by directory or _legacy suffix)
+            is_legacy = (self.legacy_dir and str(self.legacy_dir) in filepath) or '_legacy' in filename
+
             # Store in appropriate collection
-            if '_legacy' in filename:
+            if is_legacy:
                 self.legacy_values[identifier].append({
                     'value': mean_value,
                     'filename': filename,
@@ -80,7 +110,9 @@ class ValueConsistencyChecker:
                     'filename': filename
                 })
 
-        print(f"  Found {len(self.all_files)} total files")
+        print(f"  Found {len(self.all_files)} regular files")
+        if legacy_files:
+            print(f"  Found {len(legacy_files)} legacy files")
         print(f"  {len(self.legacy_values)} identifiers with legacy values")
         print(f"  {len(self.context_groups)} unique (identifier, context_hash) groups")
 
@@ -210,9 +242,11 @@ class ValueConsistencyChecker:
         """
         data = file_info['data']
         filename = file_info['filename']
+        filepath = file_info['filepath']
 
-        # Skip legacy files (they are the reference)
-        if '_legacy' in filename:
+        # Skip legacy files (they are the reference, not being validated)
+        is_legacy = (self.legacy_dir and str(self.legacy_dir) in filepath) or '_legacy' in filename
+        if is_legacy:
             return (True, [])
 
         # Get identifier and value
