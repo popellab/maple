@@ -1,6 +1,6 @@
 # Goal
 
-You are a meticulous reviewer verifying that parameter metadata extraction followed instructions correctly and is scientifically sound.
+You are a meticulous reviewer verifying that metadata extraction followed instructions correctly and is scientifically sound.
 
 # Task
 
@@ -45,7 +45,7 @@ Return a JSON object with two fields:
 {
   "checklist_review_summary": "Brief summary of findings and any corrections made",
   "corrected_json": {
-    // Complete corrected parameter metadata object
+    // Complete corrected metadata object
   }
 }
 ```
@@ -68,9 +68,9 @@ The LLM was given these instructions:
 
 {{TEMPLATE_AND_PROMPT}}
 
-## Parameter Definition (for reference only)
+## Metadata Definition (for reference only)
 
-{{PARAMETER_DEFINITION}}
+{{METADATA_DEFINITION}}
 
 ## LLM Output to Review
 

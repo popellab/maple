@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Create batch requests for parameter checklist auditing from raw JSON batch results.
+Create batch requests for metadata checklist auditing from raw JSON batch results.
 
 This script reads the raw batch results JSONL file (from batch_monitor) and creates
 checklist requests for each JSON response. This allows catching packing errors early
 by checking the raw LLM responses before unpacking to YAML.
+
+Works for all metadata types: parameters, test statistics, quick estimates.
 """
 
 import sys
@@ -13,7 +15,7 @@ from pathlib import Path
 # Add parent directory to path for lib imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib.batch_creator import ParameterChecklistFromJsonBatchCreator
+from lib.batch_creator import MetadataChecklistFromJsonBatchCreator
 
 
 def main():
@@ -26,7 +28,7 @@ def main():
         print("       batch_results.jsonl: JSONL file from batch_monitor with raw JSON responses")
         print("       input.csv: Original input CSV with parameter metadata (for header fields)")
         print("")
-        print("This script creates checklist batch requests for auditing parameter extractions")
+        print("This script creates checklist batch requests for auditing metadata extractions")
         print("from raw JSON responses (before unpacking to YAML).")
         print("")
         print("This allows catching packing errors early by validating the raw LLM responses.")
@@ -45,7 +47,7 @@ def main():
         sys.exit(1)
 
     # Create batch creator and process
-    creator = ParameterChecklistFromJsonBatchCreator(base_dir)
+    creator = MetadataChecklistFromJsonBatchCreator(base_dir)
     output_path = creator.run(None, batch_results, input_csv)  # Pass None for output_path, then both arguments
 
     print(f"Checklist batch file created: {output_path}")

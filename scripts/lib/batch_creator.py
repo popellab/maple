@@ -809,12 +809,12 @@ class ParameterChecklistBatchCreator(BatchCreator):
 
     def load_checklist_prompt_template(self) -> str:
         """
-        Load the parameter checklist prompt template.
+        Load the metadata checklist prompt template.
 
         Returns:
             Checklist prompt template with placeholders
         """
-        checklist_path = self.base_dir / "prompts" / "parameter_checklist.md"
+        checklist_path = self.base_dir / "prompts" / "metadata_checklist.md"
         with open(checklist_path, 'r', encoding='utf-8') as f:
             return f.read()
 
@@ -922,17 +922,19 @@ class ParameterChecklistBatchCreator(BatchCreator):
         return requests
 
 
-class ParameterChecklistFromJsonBatchCreator(BatchCreator):
+class MetadataChecklistFromJsonBatchCreator(BatchCreator):
     """
-    Creates batch requests for parameter checklist auditing from raw JSON batch results.
+    Creates batch requests for metadata checklist auditing from raw JSON batch results.
 
     Instead of reading unpacked YAML files, this reads the raw JSON responses from
     batch_monitor output (before unpacking). This allows catching packing errors early
     by checking the raw LLM responses.
+
+    Works for all metadata types (parameters, test statistics, quick estimates).
     """
 
     def get_batch_type(self) -> str:
-        return "checklist_from_json"
+        return "metadata_checklist"
 
     def format_header_fields(self, header_data: dict) -> str:
         """
@@ -1001,12 +1003,12 @@ class ParameterChecklistFromJsonBatchCreator(BatchCreator):
 
     def load_checklist_prompt_template(self) -> str:
         """
-        Load the parameter checklist prompt template.
+        Load the metadata checklist prompt template.
 
         Returns:
             Checklist prompt template with placeholders
         """
-        checklist_path = self.base_dir / "prompts" / "parameter_checklist.md"
+        checklist_path = self.base_dir / "prompts" / "metadata_checklist.md"
         with open(checklist_path, 'r', encoding='utf-8') as f:
             return f.read()
 
@@ -1043,13 +1045,13 @@ class ParameterChecklistFromJsonBatchCreator(BatchCreator):
             print(f"Warning: Error extracting JSON from batch result: {e}")
             return None
 
-    def create_checklist_prompt(self, parameter_definition: str, json_response: str) -> str:
+    def create_checklist_prompt(self, metadata_definition: str, json_response: str) -> str:
         """
         Create checklist prompt by filling placeholders.
 
         Args:
-            parameter_definition: Parameter definition YAML as string
-            json_response: JSON response from parameter extraction
+            metadata_definition: Metadata definition YAML as string
+            json_response: JSON response from metadata extraction
 
         Returns:
             Complete checklist prompt
@@ -1057,7 +1059,7 @@ class ParameterChecklistFromJsonBatchCreator(BatchCreator):
         template = self.load_checklist_prompt_template()
 
         # Fill placeholders
-        prompt = template.replace("{{PARAMETER_DEFINITION}}", parameter_definition)
+        prompt = template.replace("{{METADATA_DEFINITION}}", metadata_definition)
         prompt = prompt.replace("{{JSON_RESPONSE}}", json_response)
 
         return prompt
@@ -1139,7 +1141,7 @@ class ParameterChecklistFromJsonBatchCreator(BatchCreator):
                 header_data = param_metadata[key]
 
                 # Format header fields as YAML
-                param_definition = self.format_header_fields(header_data)
+                metadata_definition = self.format_header_fields(header_data)
 
                 # Extract JSON from batch result
                 json_response = self.extract_json_from_batch_result(result)
@@ -1148,7 +1150,7 @@ class ParameterChecklistFromJsonBatchCreator(BatchCreator):
                     continue
 
                 # Create checklist prompt
-                prompt = self.create_checklist_prompt(param_definition, json_response)
+                prompt = self.create_checklist_prompt(metadata_definition, json_response)
 
                 # Create batch request
                 checklist_custom_id = f"checklist_json_{custom_id}"
