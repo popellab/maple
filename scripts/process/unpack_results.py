@@ -118,6 +118,24 @@ def extract_yaml_from_content(content):
     # If no code block found, assume entire content is YAML
     return content.strip()
 
+def get_schema_version_from_template(template_path: Path) -> str:
+    """
+    Read schema_version from template YAML file.
+
+    Args:
+        template_path: Path to template YAML file
+
+    Returns:
+        Schema version string (e.g., "v3") or "unknown" if not found
+    """
+    try:
+        with open(template_path, 'r', encoding='utf-8') as f:
+            template_data = yaml.safe_load(f)
+            return template_data.get('schema_version', 'unknown')
+    except Exception as e:
+        print(f"Warning: Could not read schema_version from template {template_path}: {e}")
+        return 'unknown'
+
 def find_parameter_json(data):
     """
     Recursively search for parameter metadata JSON object.
@@ -779,7 +797,7 @@ def main():
                                         # Add derivation tracking fields
                                         header_fields['derivation_id'] = derivation_id
                                         header_fields['derivation_timestamp'] = datetime.now().isoformat()
-                                        header_fields['schema_version'] = schema_template.stem if schema_template else 'v2'
+                                        header_fields['schema_version'] = get_schema_version_from_template(schema_template) if schema_template else 'v2'
 
                                         # Use derivation_id for filename
                                         filename_default = f"{derivation_id}.yaml"
@@ -905,7 +923,7 @@ def main():
                             from datetime import datetime
                             header_data['derivation_id'] = derivation_id
                             header_data['derivation_timestamp'] = datetime.now().isoformat()
-                            header_data['schema_version'] = schema_template.stem if schema_template else 'v2'
+                            header_data['schema_version'] = get_schema_version_from_template(schema_template) if schema_template else 'v2'
 
                     json_content, author_year = prepend_header_fields(json_content, header_data, additional_tags, schema_header_fields)
                 else:
