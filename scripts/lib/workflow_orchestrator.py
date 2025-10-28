@@ -472,9 +472,17 @@ class WorkflowOrchestrator:
                 capture_output=True
             )
 
-            # Add unpacked files
+            # Determine subdirectory based on workflow type
+            subdirectory_map = {
+                "parameter": "parameter_estimates",
+                "test_statistic": "test_statistics",
+                "quick_estimate": "quick_estimates"
+            }
+            subdir_name = subdirectory_map.get(workflow_type, workflow_type)
+
+            # Add only files from this workflow's subdirectory
             subprocess.run(
-                ["git", "add", "to-review/"],
+                ["git", "add", f"to-review/{subdir_name}/"],
                 cwd=self.storage_dir,
                 check=True,
                 capture_output=True
