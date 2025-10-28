@@ -8,6 +8,7 @@ Runs:
 3. Text snippet validation
 4. Source reference validation
 5. DOI resolution validation
+6. Value consistency checking (vs legacy and same-context derivations)
 
 Usage:
     python scripts/validate/run_all_validations.py \\
@@ -161,6 +162,15 @@ def main():
         'check_doi_validity.py',
         [args.data_dir, str(output_dir / 'doi_validity.json')],
         "DOI Resolution Validation"
+    )
+    all_results.append(result)
+    print(result['stdout'])
+
+    # 6. Value consistency
+    result = run_validation(
+        'check_value_consistency.py',
+        [args.data_dir, str(output_dir / 'value_consistency.json')],
+        "Value Consistency Checking"
     )
     all_results.append(result)
     print(result['stdout'])
