@@ -59,7 +59,7 @@ class ValidationRunner:
                                       output_dir: Path,
                                       timeout: int = 600) -> Dict[str, Any]:
         """
-        Run test statistic-specific validation suite.
+        Run test statistic validation suite (uses same validators as parameters).
 
         Args:
             data_dir: Directory with test statistic YAML files (to-review/)
@@ -70,7 +70,8 @@ class ValidationRunner:
         Returns:
             Dictionary with validation results
         """
-        script_path = self.validate_dir / "run_test_statistic_validations.py"
+        # Use same validation suite as parameters (validators are now schema-agnostic)
+        script_path = self.validate_dir / "run_all_validations.py"
 
         result = subprocess.run(
             ["python3", str(script_path), str(data_dir), str(template), str(output_dir)],

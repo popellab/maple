@@ -3,16 +3,16 @@
 Master validation runner - executes all core validation checks.
 
 Runs:
-1. Legacy parameter comparison
-2. Template compliance validation
-3. R code execution testing
-4. R code reproducibility testing
-5. De novo consistency analysis
+1. Template compliance validation
+2. Code execution testing
+3. Text snippet validation
+4. Source reference validation
+5. DOI resolution validation
 
 Usage:
     python scripts/validate/run_all_validations.py \\
         ../qsp-metadata-storage/parameter_estimates \\
-        templates/parameter_metadata_template_v2.yaml \\
+        templates/parameter_metadata_template.yaml \\
         output/validation_results/
 """
 import argparse
@@ -120,16 +120,7 @@ def main():
 
     all_results = []
 
-    # 1. Legacy parameter comparison
-    result = run_validation(
-        'compare_to_legacy.py',
-        [args.data_dir, str(output_dir / 'legacy_comparison.json')],
-        "Legacy Parameter Comparison"
-    )
-    all_results.append(result)
-    print(result['stdout'])
-
-    # 2. Template compliance
+    # 1. Template compliance
     result = run_validation(
         'check_schema_compliance.py',
         [args.data_dir, args.template, str(output_dir / 'schema_compliance.json')],
@@ -138,29 +129,38 @@ def main():
     all_results.append(result)
     print(result['stdout'])
 
-    # 3. R code execution
+    # 2. Code execution
     result = run_validation(
-        'test_r_code_execution.py',
-        [args.data_dir, str(output_dir / 'r_execution.json')],
-        "R Code Execution Testing"
+        'test_code_execution.py',
+        [args.data_dir, str(output_dir / 'code_execution.json')],
+        "Code Execution Testing"
     )
     all_results.append(result)
     print(result['stdout'])
 
-    # 4. R code reproducibility
+    # 3. Text snippet validation
     result = run_validation(
-        'test_r_code_reproducibility.py',
-        [args.data_dir, str(output_dir / 'r_reproducibility.json')],
-        "R Code Reproducibility Testing"
+        'check_text_snippets.py',
+        [args.data_dir, str(output_dir / 'text_snippets.json')],
+        "Text Snippet Validation"
     )
     all_results.append(result)
     print(result['stdout'])
 
-    # 5. De novo consistency
+    # 4. Source reference validation
     result = run_validation(
-        'check_denovo_consistency.py',
-        [args.data_dir, str(output_dir / 'consistency.json')],
-        "De Novo Consistency Analysis"
+        'check_source_references.py',
+        [args.data_dir, str(output_dir / 'source_references.json')],
+        "Source Reference Validation"
+    )
+    all_results.append(result)
+    print(result['stdout'])
+
+    # 5. DOI resolution
+    result = run_validation(
+        'check_doi_validity.py',
+        [args.data_dir, str(output_dir / 'doi_validity.json')],
+        "DOI Resolution Validation"
     )
     all_results.append(result)
     print(result['stdout'])

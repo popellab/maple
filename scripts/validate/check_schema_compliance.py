@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Validate YAML files against expected schema (v2 format).
+Validate YAML files against expected schema.
 
 Checks:
 - Valid YAML parsing
@@ -8,10 +8,12 @@ Checks:
 - Field types match expectations
 - Numeric values in valid ranges
 
+Works for both parameter estimates and test statistics.
+
 Usage:
     python scripts/validate/check_schema_compliance.py \\
         ../qsp-metadata-storage/parameter_estimates \\
-        templates/parameter_metadata_template_v2.yaml \\
+        templates/parameter_metadata_template.yaml \\
         output/schema_validation.json
 """
 import argparse
@@ -124,31 +126,49 @@ class SchemaValidator:
                     continue  # Optional field
                 errors.append(f"Missing required field: {field_path}")
 
-        # Additional specific validations
-        # Validate ci95 is a 2-element list
-        if self._check_field_exists(data, 'parameter_estimates.ci95'):
-            ci95 = data['parameter_estimates']['ci95']
-            if not isinstance(ci95, list) or len(ci95) != 2:
-                errors.append("parameter_estimates.ci95 must be a 2-element list [lower, upper]")
-            elif None in ci95:
-                errors.append("parameter_estimates.ci95 contains null values")
+        # Additional specific validations (schema-agnostic)
+        # Validate ci95 is a 2-element list (works for both params and test stats)
+        ci95_paths = ['parameter_estimates.ci95', 'test_statistic_estimates.ci95']
+        for ci95_path in ci95_paths:
+            if self._check_field_exists(data, ci95_path):
+                ci95 = self._get_field_value(data, ci95_path)
+                if not isinstance(ci95, list) or len(ci95) != 2:
+                    errors.append(f"{ci95_path} must be a 2-element list [lower, upper]")
+                elif None in ci95:
+                    errors.append(f"{ci95_path} contains null values")
 
-        # Validate numeric fields are actually numeric
-        numeric_fields = ['parameter_estimates.mean', 'parameter_estimates.variance']
-        for field_path in numeric_fields:
+        # Validate numeric fields are actually numeric (works for both params and test stats)
+        numeric_field_paths = [
+            'parameter_estimates.mean',
+            'parameter_estimates.variance',
+            'test_statistic_estimates.mean',
+            'test_statistic_estimates.variance'
+        ]
+        for field_path in numeric_field_paths:
             if self._check_field_exists(data, field_path):
                 val = self._get_field_value(data, field_path)
                 if parse_numeric_value(val) is None:
                     errors.append(f"{field_path} is not a valid number")
 
-        # Validate pooling weights are in [0, 1]
+        # Validate pooling weights are in [0, 1] (parameter-specific, optional)
         if 'pooling_weights' in data:
             weights = data['pooling_weights']
-            for weight_name, weight_obj in weights.items():
-                if isinstance(weight_obj, dict) and 'value' in weight_obj:
-                    val = parse_numeric_value(weight_obj['value'])
-                    if val is not None and (val < 0 or val > 1):
-                        errors.append(f"pooling_weights.{weight_name}.value must be in [0, 1], got {val}")
+            if isinstance(weights, dict):
+                for weight_name, weight_obj in weights.items():
+                    if isinstance(weight_obj, dict) and 'value' in weight_obj:
+                        val = parse_numeric_value(weight_obj['value'])
+                        if val is not None and (val < 0 or val > 1):
+                            errors.append(f"pooling_weights.{weight_name}.value must be in [0, 1], got {val}")
+
+        # Validate validation weights are in [0, 1] (both params and test stats)
+        if 'validation_weights' in data:
+            weights = data['validation_weights']
+            if isinstance(weights, dict):
+                for weight_name, weight_obj in weights.items():
+                    if isinstance(weight_obj, dict) and 'value' in weight_obj:
+                        val = parse_numeric_value(weight_obj['value'])
+                        if val is not None and (val < 0 or val > 1):
+                            errors.append(f"validation_weights.{weight_name}.value must be in [0, 1], got {val}")
 
         is_valid = len(errors) == 0
         return (is_valid, errors)
