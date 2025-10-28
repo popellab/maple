@@ -23,7 +23,7 @@ def load_api_key():
     """Load API key from .env file."""
     env_file = Path(".env")
     if env_file.exists():
-        load_dotenv(env_file)
+        load_dotenv(env_file, override=True)
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
