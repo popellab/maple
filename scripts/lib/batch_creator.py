@@ -1487,15 +1487,14 @@ class SchemaConversionBatchCreator(BatchCreator):
             print(f"Warning: Could not strip header fields and convert to JSON: {e}")
             return yaml_content
 
-    def process(self, yaml_dir: Path, old_schema_path: Path, new_schema_path: Path,
+    def process(self, yaml_dir: Path, schema_path: Path,
                 migration_notes: str = "", pattern: str = "*.yaml") -> List[Dict[str, Any]]:
         """
         Process YAML files and generate schema conversion batch requests.
 
         Args:
             yaml_dir: Directory containing YAML files to convert
-            old_schema_path: Path to old schema template (kept for API compatibility, not used)
-            new_schema_path: Path to new schema template file
+            schema_path: Path to target schema template file
             migration_notes: Optional migration instructions/notes
             pattern: Glob pattern for matching YAML files (default: "*.yaml")
 
@@ -1503,13 +1502,13 @@ class SchemaConversionBatchCreator(BatchCreator):
             List of batch request dictionaries
 
         Note:
-            old_schema_path is kept for backward compatibility but not used.
             The LLM infers the old schema structure from the data itself.
+            Only the target schema template is provided.
         """
         import yaml
 
-        # Load only the new schema template (LLM infers old structure from data)
-        new_schema = self.load_schema_template(new_schema_path)
+        # Load the target schema template (LLM infers old structure from data)
+        new_schema = self.load_schema_template(schema_path)
 
         if not migration_notes:
             migration_notes = "No specific migration notes provided. Preserve all data and adapt structure to match new schema."

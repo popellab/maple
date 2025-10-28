@@ -549,11 +549,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
                     shutil.copy(file_path, temp_path / file_path.name)
 
                 # Create batch requests
-                # Note: We only provide the new template - LLM infers old structure from the data
+                # Note: We only provide the target template - LLM infers old structure from the data
                 requests = batch_creator.process(
                     yaml_dir=temp_path,
-                    old_schema_path=new_template,  # Use new template as reference
-                    new_schema_path=new_template,
+                    schema_path=new_template,
                     migration_notes=f"Update metadata from schema {from_version} to {to_version}. Preserve all existing data and adapt to new schema structure.",
                     pattern="*.yaml"
                 )
