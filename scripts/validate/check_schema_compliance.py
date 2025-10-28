@@ -198,10 +198,8 @@ class SchemaValidator:
         for file_info in files:
             filename = file_info['filename']
 
-            # Skip legacy files (they may have incomplete schema)
-            if '_legacy' in filename:
-                report.add_warning(filename, "Skipped legacy file")
-                continue
+            # Note: Legacy files should be in separate legacy directories and
+            # won't be in the data_dir being validated, so no need to skip them here
 
             is_valid, errors = self.validate_file(file_info)
 

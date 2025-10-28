@@ -94,8 +94,8 @@ class ValueConsistencyChecker:
             # Extract context_hash
             context_hash = data.get('context_hash', 'unknown')
 
-            # Determine if this is a legacy file (either by directory or _legacy suffix)
-            is_legacy = (self.legacy_dir and str(self.legacy_dir) in filepath) or '_legacy' in filename
+            # Determine if this is a legacy file (by directory only)
+            is_legacy = self.legacy_dir and str(self.legacy_dir) in filepath
 
             # Store in appropriate collection
             if is_legacy:
@@ -245,7 +245,7 @@ class ValueConsistencyChecker:
         filepath = file_info['filepath']
 
         # Skip legacy files (they are the reference, not being validated)
-        is_legacy = (self.legacy_dir and str(self.legacy_dir) in filepath) or '_legacy' in filename
+        is_legacy = self.legacy_dir and str(self.legacy_dir) in filepath
         if is_legacy:
             return (True, [])
 
