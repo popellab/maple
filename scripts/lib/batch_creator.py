@@ -1438,13 +1438,12 @@ class SchemaConversionBatchCreator(BatchCreator):
         with open(conversion_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-    def create_conversion_prompt(self, old_schema: str, new_schema: str,
+    def create_conversion_prompt(self, new_schema: str,
                                  migration_notes: str, json_content: str) -> str:
         """Create conversion prompt by filling placeholders."""
         template = self.load_conversion_prompt_template()
 
-        prompt = template.replace("{{OLD_SCHEMA}}", old_schema)
-        prompt = prompt.replace("{{NEW_SCHEMA}}", new_schema)
+        prompt = template.replace("{{NEW_SCHEMA}}", new_schema)
         prompt = prompt.replace("{{MIGRATION_NOTES}}", migration_notes)
         prompt = prompt.replace("{{JSON_CONTENT}}", json_content)
 
@@ -1495,18 +1494,21 @@ class SchemaConversionBatchCreator(BatchCreator):
 
         Args:
             yaml_dir: Directory containing YAML files to convert
-            old_schema_path: Path to old schema template file
+            old_schema_path: Path to old schema template (kept for API compatibility, not used)
             new_schema_path: Path to new schema template file
             migration_notes: Optional migration instructions/notes
             pattern: Glob pattern for matching YAML files (default: "*.yaml")
 
         Returns:
             List of batch request dictionaries
+
+        Note:
+            old_schema_path is kept for backward compatibility but not used.
+            The LLM infers the old schema structure from the data itself.
         """
         import yaml
 
-        # Load schema templates
-        old_schema = self.load_schema_template(old_schema_path)
+        # Load only the new schema template (LLM infers old structure from data)
         new_schema = self.load_schema_template(new_schema_path)
 
         if not migration_notes:
@@ -1530,9 +1532,9 @@ class SchemaConversionBatchCreator(BatchCreator):
                 # Strip header fields and convert to JSON
                 json_content = self.strip_header_fields_and_convert_to_json(yaml_content)
 
-                # Create conversion prompt (with JSON content)
+                # Create conversion prompt (with only new schema and data)
                 prompt = self.create_conversion_prompt(
-                    old_schema, new_schema, migration_notes, json_content
+                    new_schema, migration_notes, json_content
                 )
 
                 # Create custom ID from filename (preserves full path info for unpacking)
