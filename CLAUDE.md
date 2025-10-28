@@ -75,6 +75,37 @@ python scripts/run_extraction_workflow.py input.csv --type parameter --no-push
 
 See `docs/automated_workflow.md` for complete documentation.
 
+### Schema Conversion Workflow
+
+**Automated schema conversion** - Scans for outdated schemas and converts them automatically:
+
+```bash
+# Scan for outdated files (dry run)
+python scripts/run_schema_conversion.py --dry-run
+
+# Convert all outdated files
+python scripts/run_schema_conversion.py
+
+# Convert only parameters
+python scripts/run_schema_conversion.py --only parameter
+
+# Convert only test statistics
+python scripts/run_schema_conversion.py --only test_statistic
+```
+
+**Latest schema versions:**
+- Parameters: v3 (templates/parameter_metadata_template_v3.yaml)
+- Test Statistics: v2 (templates/test_statistic_template_v2.yaml)
+- Quick Estimates: v1 (templates/quick_estimate_template.yaml)
+
+The workflow automatically:
+1. Scans metadata directories for files with outdated schema_version fields
+2. Groups files by schema version transition (e.g., v1 → v3)
+3. Creates batch requests for schema conversion
+4. Monitors conversion progress
+5. Unpacks converted files to to-review/ for verification
+6. Creates review branch with converted files
+
 ### Manual Workflow (Legacy)
 
 For fine-grained control, you can run individual steps:
@@ -128,8 +159,9 @@ Scripts are organized by workflow stage:
 - `upload_immediate.py`: Process via Responses API (faster feedback, testing)
 - `batch_monitor.py`: Monitor batch progress and download results
 
-**Automated Workflow**:
-- `run_extraction_workflow.py`: Complete automated pipeline (create → upload → monitor → validate → unpack → git commit/push)
+**Automated Workflows**:
+- `run_extraction_workflow.py`: Complete automated extraction pipeline (create → upload → monitor → validate → unpack → git commit/push)
+- `run_schema_conversion.py`: Automated schema conversion for outdated metadata files
 
 **Process** (`scripts/process/`): Extract results
 - `unpack_results.py`: Extract JSON from batch results, convert to YAML
@@ -140,6 +172,7 @@ Scripts are organized by workflow stage:
 - `parameter_utils.py`: Parameter processing utilities
 - `workflow_orchestrator.py`: Automated workflow orchestration
 - `prompt_assembly.py`: Modular prompt assembly engine
+- `schema_version_detector.py`: Schema version detection and file scanning
 
 **Debug** (`scripts/debug/`): Debug and inspection tools
 - `inspect_jsonl.py`: Examine batch request/response files

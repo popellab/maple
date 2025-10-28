@@ -19,6 +19,12 @@ from typing import Dict, List, Any, Optional, Callable
 from datetime import datetime
 from openai import OpenAI
 
+# Import batch creators
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
+from batch_creator import SchemaConversionBatchCreator
+
 
 class WorkflowOrchestrator:
     """Orchestrates complete extraction workflow with validation and git operations."""
@@ -468,6 +474,211 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
                 branch_prefix=branch_prefix, push=push,
                 progress_callback=progress_callback
             )
+            results["branch_name"] = branch_name
+            results["pushed"] = push
+
+            # Success!
+            results["status"] = "success"
+            results["completed_at"] = datetime.now().isoformat()
+            results["duration_seconds"] = time.time() - start_time
+
+            return results
+
+        except Exception as e:
+            results["status"] = "failed"
+            results["error"] = str(e)
+            results["completed_at"] = datetime.now().isoformat()
+            results["duration_seconds"] = time.time() - start_time
+            raise
+
+    def run_schema_conversion_workflow(self,
+                                       files_to_convert: List[Path],
+                                       metadata_type: str,
+                                       from_version: str,
+                                       to_version: str,
+                                       timeout: int = 3600,
+                                       skip_validation: bool = False,
+                                       push: bool = True,
+                                       branch_prefix: str = "schema-conversion",
+                                       progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+        """
+        Run schema conversion workflow for outdated files.
+
+        Args:
+            files_to_convert: List of YAML files to convert
+            metadata_type: Type of metadata (parameter/test_statistic/quick_estimate)
+            from_version: Current schema version
+            to_version: Target schema version
+            timeout: Maximum seconds to wait for batch completion
+            skip_validation: Skip checklist validation step
+            push: Whether to push to remote
+            branch_prefix: Prefix for review branch name
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            Dictionary with workflow results and metadata
+        """
+        start_time = time.time()
+        results = {
+            "workflow_type": "schema_conversion",
+            "metadata_type": metadata_type,
+            "from_version": from_version,
+            "to_version": to_version,
+            "file_count": len(files_to_convert),
+            "started_at": datetime.now().isoformat()
+        }
+
+        try:
+            # Step 1: Create schema conversion batch
+            if progress_callback:
+                progress_callback(f"Creating schema conversion batch for {len(files_to_convert)} files...")
+
+            # Get template paths
+            from schema_version_detector import SchemaVersionDetector
+            detector = SchemaVersionDetector(self.base_dir, self.storage_dir)
+            old_template, new_template = detector.get_template_paths(metadata_type, from_version, to_version)
+
+            # Create batch creator
+            batch_creator = SchemaConversionBatchCreator(self.base_dir, None)
+
+            # Create temporary directory for organizing files
+            import tempfile
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+
+                # Copy files to temp directory
+                for file_path in files_to_convert:
+                    import shutil
+                    shutil.copy(file_path, temp_path / file_path.name)
+
+                # Create batch requests
+                requests = batch_creator.process(
+                    yaml_dir=temp_path,
+                    old_schema_path=old_template,
+                    new_schema_path=new_template,
+                    migration_notes=f"Converting from {from_version} to {to_version}",
+                    pattern="*.yaml"
+                )
+
+                # Write batch file
+                batch_file = self.batch_jobs_dir / "schema_conversion_requests.jsonl"
+                batch_creator.write_batch_file(requests, batch_file)
+
+            results["batch_file"] = str(batch_file)
+
+            if progress_callback:
+                progress_callback(f"✓ Created {len(requests)} conversion requests")
+
+            # Step 2: Upload batch
+            batch_id = self.upload_batch(batch_file, progress_callback)
+            results["batch_id"] = batch_id
+
+            # Step 3: Monitor batch
+            results_file = self.monitor_batch(batch_id, timeout, progress_callback=progress_callback)
+            results["results_file"] = str(results_file)
+
+            # Step 4: Validate (optional)
+            # Note: Schema conversion validation is different from extraction validation
+            # For now, skip validation for schema conversion
+            validated_results = results_file
+
+            # Step 5: Unpack to review
+            if progress_callback:
+                progress_callback("Unpacking converted files to to-review/...")
+
+            # Unpack using new schema template
+            script_path = self.base_dir / "scripts" / "process" / "unpack_results.py"
+
+            # For schema conversion, we need to pass source directory to extract headers
+            source_dir = files_to_convert[0].parent if files_to_convert else self.storage_dir
+
+            result = subprocess.run(
+                ["python3", str(script_path),
+                 str(validated_results),
+                 str(self.to_review_dir),
+                 "",  # No input CSV for schema conversion
+                 str(source_dir),  # Source directory for header extraction
+                 str(new_template)],  # New schema template
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                raise RuntimeError(f"Unpacking failed: {result.stderr}")
+
+            # Find unpacked files
+            unpacked_files = list(self.to_review_dir.glob("*.yaml"))
+
+            if progress_callback:
+                progress_callback(f"✓ Unpacked {len(unpacked_files)} converted files to to-review/")
+
+            results["unpacked_files"] = [str(f) for f in unpacked_files]
+
+            # Step 6: Commit and push
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            batch_hash = hashlib.md5(batch_id.encode()).hexdigest()[:6]
+            branch_name = f"{branch_prefix}/{metadata_type}-{from_version}-to-{to_version}-{date_str}-{batch_hash}"
+
+            if progress_callback:
+                progress_callback("Creating review branch and committing files...")
+
+            # Git operations in storage directory
+            try:
+                # Create new branch
+                subprocess.run(
+                    ["git", "checkout", "-b", branch_name],
+                    cwd=self.storage_dir,
+                    check=True,
+                    capture_output=True
+                )
+
+                # Add unpacked files
+                subprocess.run(
+                    ["git", "add", "to-review/"],
+                    cwd=self.storage_dir,
+                    check=True,
+                    capture_output=True
+                )
+
+                # Create commit message
+                commit_msg = f"""Schema conversion: {metadata_type} {from_version} → {to_version}
+
+Batch ID: {batch_id}
+Files: {len(unpacked_files)} converted files
+Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+Automated schema conversion. Review converted files before replacing originals.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>"""
+
+                # Commit
+                subprocess.run(
+                    ["git", "commit", "-m", commit_msg],
+                    cwd=self.storage_dir,
+                    check=True,
+                    capture_output=True
+                )
+
+                # Push if requested
+                if push:
+                    subprocess.run(
+                        ["git", "push", "-u", "origin", branch_name],
+                        cwd=self.storage_dir,
+                        check=True,
+                        capture_output=True
+                    )
+                    if progress_callback:
+                        progress_callback(f"✓ Pushed to origin/{branch_name}")
+                else:
+                    if progress_callback:
+                        progress_callback(f"✓ Created local branch: {branch_name}")
+
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(f"Git operation failed: {e.stderr.decode() if e.stderr else str(e)}")
+
             results["branch_name"] = branch_name
             results["pushed"] = push
 
