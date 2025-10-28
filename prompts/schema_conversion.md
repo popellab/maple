@@ -19,6 +19,7 @@ Convert the provided JSON data to match the target schema following these guidel
 2. **Map fields accurately**: Infer the old schema structure from the data and map to new schema fields
 3. **Restructure as needed**: Adapt nested structures, field names, and organization to match the target schema
 4. **Maintain data types**: Keep numeric values as numbers, strings as strings, etc.
+5. **Preserve text snippets verbatim**: Text snippets from sources (values_and_units_snippet, evidence_snippet, etc.) must remain EXACTLY as written in the original data - do not paraphrase, summarize, or rewrite them
 
 ## Schema Adaptation Rules
 1. **Follow target schema exactly**: The output must conform precisely to the target schema structure

@@ -67,7 +67,7 @@ For this parameter, you must:
 
 **Validation:**
 - Citations are real, accessible publications
-- Text snippets match sources
+- Text snippets (values_and_units_snippet, evidence_snippet) must be VERBATIM quotes from the source - copy exact wording, do not paraphrase or summarize
 - Weights follow rubric tables exactly
 - Code uses exactly the defined inputs
 
