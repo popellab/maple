@@ -1440,14 +1440,45 @@ class SchemaConversionBatchCreator(BatchCreator):
         with open(conversion_path, 'r', encoding='utf-8') as f:
             return f.read()
 
+    def load_original_extraction_prompt(self, schema_path: Path) -> str:
+        """
+        Load the original extraction prompt based on schema type.
+
+        Args:
+            schema_path: Path to schema template (used to determine type)
+
+        Returns:
+            Original extraction prompt text
+        """
+        # Determine prompt type from schema filename
+        schema_name = schema_path.stem.lower()
+
+        if "parameter" in schema_name:
+            prompt_path = self.base_dir / "prompts" / "qsp_parameter_extraction_prompt.md"
+        elif "test_statistic" in schema_name:
+            prompt_path = self.base_dir / "prompts" / "test_statistic_prompt.md"
+        elif "quick_estimate" in schema_name:
+            prompt_path = self.base_dir / "prompts" / "quick_parameter_estimation_prompt.md"
+        else:
+            # Unknown type, return empty
+            return "(Original extraction prompt not available)"
+
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            return f"(Could not load original prompt: {e})"
+
     def create_conversion_prompt(self, new_schema: str,
-                                 migration_notes: str, json_content: str) -> str:
+                                 migration_notes: str, json_content: str,
+                                 original_prompt: str = "") -> str:
         """Create conversion prompt by filling placeholders."""
         template = self.load_conversion_prompt_template()
 
         prompt = template.replace("{{NEW_SCHEMA}}", new_schema)
         prompt = prompt.replace("{{MIGRATION_NOTES}}", migration_notes)
         prompt = prompt.replace("{{JSON_CONTENT}}", json_content)
+        prompt = prompt.replace("{{ORIGINAL_PROMPT}}", original_prompt)
 
         return prompt
 
@@ -1512,6 +1543,9 @@ class SchemaConversionBatchCreator(BatchCreator):
         # Load the target schema template (LLM infers old structure from data)
         new_schema = self.load_schema_template(schema_path)
 
+        # Load the original extraction prompt for context
+        original_prompt = self.load_original_extraction_prompt(schema_path)
+
         if not migration_notes:
             migration_notes = "No specific migration notes provided. Preserve all data and adapt structure to match new schema."
 
@@ -1533,9 +1567,9 @@ class SchemaConversionBatchCreator(BatchCreator):
                 # Strip header fields and convert to JSON
                 json_content = self.strip_header_fields_and_convert_to_json(yaml_content)
 
-                # Create conversion prompt (with only new schema and data)
+                # Create conversion prompt (with new schema, original prompt, and data)
                 prompt = self.create_conversion_prompt(
-                    new_schema, migration_notes, json_content
+                    new_schema, migration_notes, json_content, original_prompt
                 )
 
                 # Create custom ID from filename (preserves full path info for unpacking)

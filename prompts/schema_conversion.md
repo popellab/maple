@@ -43,6 +43,12 @@ Focus on transforming the content fields to match this structure:
 {{NEW_SCHEMA}}
 ```
 
+# Original Extraction Prompt (for context)
+
+The data was originally extracted using this prompt. This provides context about what each field represents and how the data was structured:
+
+{{ORIGINAL_PROMPT}}
+
 # Migration Instructions
 
 {{MIGRATION_NOTES}}
