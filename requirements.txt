@@ -7,6 +7,9 @@ openai>=1.0.0
 pandas>=2.0.0
 pyyaml>=6.0
 
+# Environment variables
+python-dotenv>=1.0.0
+
 # Standard library enhancements (typically included but listed for completeness)
 # argparse - built-in
 # csv - built-in

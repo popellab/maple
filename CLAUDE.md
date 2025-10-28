@@ -40,7 +40,44 @@ All extracted metadata is stored in the central `qsp-metadata-storage` repositor
 source venv/bin/activate
 ```
 
-### Workflow Examples
+### Automated Workflow (Recommended)
+
+**Single-command automated extraction** - Handles batch creation, upload, monitoring, validation, unpacking, and git operations:
+
+```bash
+# Parameter extraction (complete pipeline)
+python scripts/run_extraction_workflow.py input.csv --type parameter
+
+# Test statistics
+python scripts/run_extraction_workflow.py test_stats.csv --type test_statistic
+
+# Quick estimates
+python scripts/run_extraction_workflow.py quick.csv --type quick_estimate
+
+# With custom timeout (default: 3600s)
+python scripts/run_extraction_workflow.py input.csv --type parameter --timeout 7200
+
+# Skip validation step
+python scripts/run_extraction_workflow.py input.csv --type parameter --skip-validation
+
+# Create branch locally without pushing
+python scripts/run_extraction_workflow.py input.csv --type parameter --no-push
+```
+
+**What the automated workflow does:**
+1. Creates batch requests
+2. Uploads to OpenAI API
+3. Polls until completion (shows progress)
+4. Runs automatic validation (checklist)
+5. Unpacks validated results to `../qsp-metadata-storage/to-review/`
+6. Creates review branch and pushes to remote
+7. Prints summary with next steps
+
+See `docs/automated_workflow.md` for complete documentation.
+
+### Manual Workflow (Legacy)
+
+For fine-grained control, you can run individual steps:
 
 **Parameter Extraction:**
 ```bash
@@ -48,7 +85,7 @@ python scripts/prepare/create_parameter_batch.py input.csv
 python scripts/run/upload_batch.py batch_jobs/parameter_requests.jsonl
 python scripts/run/batch_monitor.py batch_<id>
 python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
-  ../qsp-metadata-storage/parameter_estimates input.csv "" templates/parameter_metadata_template.yaml
+  ../qsp-metadata-storage/parameter_estimates input.csv "" templates/parameter_metadata_template_v3.yaml
 ```
 
 **Quick Estimates:**
@@ -69,7 +106,7 @@ python scripts/prepare/create_test_statistic_batch.py input.csv
 python scripts/run/upload_batch.py batch_jobs/test_statistic_requests.jsonl
 python scripts/run/batch_monitor.py batch_<id>
 python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
-  ../qsp-metadata-storage/test_statistics input.csv "" templates/test_statistic_template.yaml
+  ../qsp-metadata-storage/test_statistics input.csv "" templates/test_statistic_template_v2.yaml
 # Aggregate distributions
 python ../qspio-pdac/metadata/aggregate_test_statistics.py input.csv \
   ../qsp-metadata-storage/test_statistics ../qsp-metadata-storage/scratch/
@@ -91,6 +128,9 @@ Scripts are organized by workflow stage:
 - `upload_immediate.py`: Process via Responses API (faster feedback, testing)
 - `batch_monitor.py`: Monitor batch progress and download results
 
+**Automated Workflow**:
+- `run_extraction_workflow.py`: Complete automated pipeline (create → upload → monitor → validate → unpack → git commit/push)
+
 **Process** (`scripts/process/`): Extract results
 - `unpack_results.py`: Extract JSON from batch results, convert to YAML
 - `unpack_single_json.py`: Process individual JSON responses
@@ -98,6 +138,7 @@ Scripts are organized by workflow stage:
 **Lib** (`scripts/lib/`): Core libraries
 - `batch_creator.py`: Base classes for batch creation
 - `parameter_utils.py`: Parameter processing utilities
+- `workflow_orchestrator.py`: Automated workflow orchestration
 - `prompt_assembly.py`: Modular prompt assembly engine
 
 **Debug** (`scripts/debug/`): Debug and inspection tools
