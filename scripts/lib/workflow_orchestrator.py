@@ -19,12 +19,6 @@ from typing import Dict, List, Any, Optional, Callable
 from datetime import datetime
 from openai import OpenAI
 
-# Import batch creators
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
-from batch_creator import SchemaConversionBatchCreator
-
 
 class WorkflowOrchestrator:
     """Orchestrates complete extraction workflow with validation and git operations."""
@@ -538,7 +532,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
             detector = SchemaVersionDetector(self.base_dir, self.storage_dir)
             old_template, new_template = detector.get_template_paths(metadata_type, from_version, to_version)
 
-            # Create batch creator
+            # Create batch creator (import here to avoid circular imports)
+            import sys
+            sys.path.insert(0, str(self.base_dir / "scripts"))
+            from lib.batch_creator import SchemaConversionBatchCreator
             batch_creator = SchemaConversionBatchCreator(self.base_dir, None)
 
             # Create temporary directory for organizing files

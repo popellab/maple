@@ -1,3 +1,7 @@
+# Schema version
+# ============================================================================
+schema_version: "v2"
+
 # Test statistic identifier
 test_statistic_id: TEST_STATISTIC_ID
 
@@ -22,6 +26,42 @@ tags: []
 context_hash: CONTEXT_HASH
 
 # ============================================================================
+# HUMAN-GENERATED MODEL OUTPUT CODE (provided prior to batch submission)
+# ============================================================================
+
+# Model output computation specification (Python)
+# This code is written by humans BEFORE LLM batch submission
+model_output:
+  code: |
+    ```python
+    import numpy as np
+
+    def compute_test_statistic(time, species_dict):
+        """
+        Compute test statistic from pre-extracted model simulation vectors.
+
+        Args:
+            time: numpy array of time points (days)
+            species_dict: dict mapping species names to numpy arrays
+                         Keys are from REQUIRED_SPECIES (e.g., 'V_T.TumorVolume')
+
+        Returns:
+            test_statistic: float, the computed test statistic value
+        """
+        # Example: Percent change in tumor volume from baseline to day 56
+        tumor_volume = species_dict['V_T.TumorVolume']
+
+        # Interpolate to get values at specific timepoints
+        baseline_volume = np.interp(0, time, tumor_volume)
+        day56_volume = np.interp(56, time, tumor_volume)
+
+        # Compute percent change
+        test_statistic = ((day56_volume - baseline_volume) / baseline_volume) * 100
+
+        return test_statistic
+    ```
+
+# ============================================================================
 # LLM-GENERATED CONTENT BELOW
 # ============================================================================
 
@@ -30,187 +70,224 @@ test_statistic_definition: |
   Mathematical definition of the test statistic:
   [MATHEMATICAL_FORMULA_OR_DESCRIPTION]
 
-# Model output computation specification
-model_output:
-  code: |
-    % Compute test statistic from pre-extracted model simulation vectors.
-    % The test harness extracts all required species from simData prior to calling this function.
-    % Function inputs are named after the species in REQUIRED_SPECIES with dots converted to underscores.
-    %
-    % Inputs:
-    %   time            - time vector (days)
-    %   [SPECIES_ARGS]  - species vectors named after REQUIRED_SPECIES (e.g., V_T_TumorVolume, V_T_T_eff, V_T_T_reg)
-    %   [OTHER_ARGS]    - additional parameters as needed
-    %
-    % Output:
-    %   test_statistic  - computed test statistic value (appropriate units)
-    function test_statistic = compute_test_statistic(time, [SPECIES_ARGS], [OTHER_ARGS])
-      % Implement your specific test statistic computation here
-      % IMPORTANT: Use the exact variable names from REQUIRED_SPECIES (dots → underscores)
-      % Example: if REQUIRED_SPECIES = "V_T.TumorVolume", use variable V_T_TumorVolume
-      assessment_day = [DEFAULT_DAY];
-      baseline_value = interp1(time, [SPECIES_NAME], 0, 'linear', 'extrap');
-      assessment_value = interp1(time, [SPECIES_NAME], assessment_day, 'linear', 'extrap');
-
-      test_statistic = [COMPUTATION_LOGIC]; % Replace with actual computation
-    end
-
-# Brief narrative summary of the biological expectation and experimental basis
+# WHAT and WHY: High-level biological context (1-2 sentences)
+# ============================================================================
 study_overview: |
-  This constraint quantifies the expected distribution of [TEST_STATISTIC_NAME] under [DOSING_SCENARIO] based on [MEASUREMENT_APPROACH]. The test statistic captures [BIOLOGICAL_INTERPRETATION] and was derived from [DATA_TYPE - e.g., time-course, endpoint, AUC] data using [DERIVATION_METHOD] (SOURCE_TAG).
+  Brief narrative explaining WHAT test statistic is being measured, WHY it's biologically relevant
+  for model validation, and the overall approach. Example: "Quantifies objective response rate (ORR)
+  at 12 weeks to validate tumor volume dynamics under anti-PD-1 monotherapy (TOPALIAN2012)."
 
-# Essential experimental details needed to understand the test statistic derivation
-technical_details: |
-  **Measurement:** [ASSAY_TYPE] using [DETECTION_METHOD] (SOURCE_TAG)
-  **Study design:** [SAMPLE_SIZE] samples, [REPLICATION_DESCRIPTION] (SOURCE_TAG)
-  **Data source:** [HOW_DATA_EXTRACTED - digitized/table/supplemental] (SOURCE_TAG)
-  **Test statistic definition:** [MATHEMATICAL_DEFINITION_OF_STATISTIC] (SOURCE_TAG)
-  **Key assumptions:** [CRITICAL_ASSUMPTIONS_FOR_STATISTIC_DERIVATION] (SOURCE_TAG)
+# HOW: Concrete experimental details (1-2 sentences)
+# ============================================================================
+study_design: |
+  Concrete implementation: measurement method, sample size, key design features. Example: "RECIST v1.1
+  imaging assessments on 125 patients at 12-week timepoint. Response classifications extracted from
+  Table 2 with investigator-assessed best overall response (TOPALIAN2012)."
 
-# Expected distribution parameters from literature (calculated from MC samples)
-expected_distribution:
-  mean: NUMERIC_VALUE  # Mean of the test statistic
-  variance: NUMERIC_VALUE  # Variance of the test statistic
-  ci95: [NUMERIC_LOWER, NUMERIC_UPPER]  # 95% confidence interval
-  units: "UNITS_STRING"  # Units of the test statistic (e.g., "cells", "pg/mL", "dimensionless", "cm³")
+# Test statistic estimates with structured inputs and derivation code
+# ============================================================================
+test_statistic_estimates:
+  # Structured inputs: All quantities used in derivation
+  # Each input references a source for full traceability
+  inputs:
+    - name: "response_rate"
+      value: 0.28
+      units: "dimensionless"
+      description: "Objective response rate from clinical trial"
+      source_ref: "TOPALIAN2012"
+      value_table_or_section: "Table 2"
+      value_snippet: "Among patients with melanoma, the objective response rate was 28% (95% CI: 18-40%) with anti-PD-1 antibody."
+      units_table_or_section: "Table 2"
+      units_snippet: "Objective response rate was 28% (95% CI: 18-40%) across dose cohorts."
 
-# Step-by-step explanation of the R derivation code
+    - name: "sample_size"
+      value: 94
+      units: "dimensionless"
+      description: "Number of patients in melanoma cohort"
+      source_ref: "TOPALIAN2012"
+      value_table_or_section: "Methods"
+      value_snippet: "A total of 94 patients with advanced melanoma were enrolled and received anti-PD-1 antibody."
+      units_table_or_section: "Methods"
+      units_snippet: "Ninety-four patients with melanoma were treated across multiple dose levels."
+
+    - name: "response_threshold"
+      value: 0.30
+      units: "dimensionless"
+      description: "RECIST v1.1 threshold for partial response (30% reduction)"
+      source_ref: "EISENHAUER2009"
+      value_table_or_section: "Table 2"
+      value_snippet: "Partial Response (PR): At least a 30% decrease in the sum of diameters of target lesions."
+      units_table_or_section: "Table 2"
+      units_snippet: "PR is defined as at least a 30% decrease, taking as reference the baseline sum diameters."
+
+    - name: "random_seed"
+      value: 456
+      units: "dimensionless"
+      description: "Random seed for reproducible bootstrap sampling"
+      source_ref: null
+      value_table_or_section: null
+      value_snippet: null
+      units_table_or_section: null
+      units_snippet: null
+
+  # Python derivation code as a FUNCTION that takes inputs and returns outputs
+  derivation_code: |
+    ```python
+    import numpy as np
+
+    def derive_distribution(inputs):
+        """
+        Bootstrap expected distribution for test statistic from literature data.
+
+        Args:
+            inputs: dict of input values with keys matching input names above
+
+        Returns:
+            dict with keys: mean_stat, variance_stat, ci95_stat
+        """
+        # Extract inputs
+        response_rate = inputs['response_rate']['value']
+        sample_size = int(inputs['sample_size']['value'])
+        response_threshold = inputs['response_threshold']['value']
+        random_seed = int(inputs['random_seed']['value'])
+
+        # Bootstrap resampling
+        np.random.seed(random_seed)
+        B = 5000
+        mc_draws = np.zeros(B)
+
+        for i in range(B):
+            # Resample response outcomes (responder vs non-responder)
+            n_responders = np.random.binomial(sample_size, response_rate)
+            resampled_rate = n_responders / sample_size
+
+            # Convert diameter-based response to volume-based response
+            # Using spherical approximation from THERASSE2000 (Equation 2)
+            # Response is calculated as volume change, accounting for 30% threshold
+            diameter_reduction = response_threshold  # 0.30 for PR
+            volume_reduction = 1 - (1 - diameter_reduction)**3  # Cubic relationship
+
+            # Adjust response rate for volume-based calculation
+            adjusted_rate = resampled_rate * (1 - volume_reduction)
+
+            # Add measurement uncertainty (imaging assessment variability)
+            measurement_cv = 0.08  # 8% CV for imaging
+            noisy_rate = np.random.normal(adjusted_rate, adjusted_rate * measurement_cv)
+
+            mc_draws[i] = np.clip(noisy_rate, 0, 1)  # Keep in [0,1]
+
+        # Return required statistics
+        return {
+            'mean_stat': float(np.mean(mc_draws)),
+            'variance_stat': float(np.var(mc_draws, ddof=1)),
+            'ci95_stat': [float(np.percentile(mc_draws, 2.5)),
+                          float(np.percentile(mc_draws, 97.5))]
+        }
+    ```
+
+  # Computed outputs (must match what derivation_code produces)
+  mean: NUMERIC_VALUE
+  variance: NUMERIC_VALUE
+  ci95: [NUMERIC_LOWER, NUMERIC_UPPER]
+  units: "UNITS_STRING"
+
+  # Key assumptions (enumerated dict)
+  key_assumptions:
+    1: "Binomial sampling adequately models patient heterogeneity"
+    2: "Imaging measurement error is normally distributed with CV=8%"
+    3: "Single-arm response rate is comparable to hypothetical control-adjusted response"
+
+# Step-by-step explanation of the derivation code
+# ============================================================================
 derivation_explanation: |
-  **Step 1:** [Describe the dataset setup - number of patients, measurement method, timepoints]
+  **Step 1:** Extract response rate (28%) and sample size (n=94) from clinical trial (TOPALIAN2012, Table 2).
+  ASSUMPTION 1: Binomial sampling adequately models patient heterogeneity in treatment response,
+  which is reasonable for binary outcomes with independent patients.
 
-  **Step 2:** [Explain the bootstrap resampling and how measurement noise is added]
+  **Step 2:** For each bootstrap iteration, resample responder count using binomial distribution
+  to capture sampling uncertainty in the observed response rate.
 
-  **Step 3:** [Detail the test statistic calculation process for each bootstrap sample]
+  **Step 3:** Convert diameter-based response threshold (30% from EISENHAUER2009) to volume-based
+  response using spherical approximation from THERASSE2000. This accounts for the cubic relationship
+  between diameter and volume: 30% diameter reduction equals 65.7% volume reduction.
 
-  **Step 4:** [Describe the repetition process and number of bootstrap samples]
+  **Step 4:** Add imaging measurement uncertainty (8% CV) to each resampled response rate.
+  ASSUMPTION 2: Imaging measurement error is normally distributed with CV=8%, based on typical
+  RECIST assessment variability reported in imaging validation studies.
 
-  **Step 5:** [Explain how final statistics are calculated and what the numbers represent]
+  **Step 5:** Clip values to [0, 1] range to maintain valid probability bounds.
+  ASSUMPTION 3: Single-arm response rate is comparable to hypothetical control-adjusted response,
+  which may overestimate treatment effect without concurrent control but is appropriate for
+  model validation when treatment effect is the target quantity.
 
-# R code for uncertainty quantification of the test statistic from literature sources
-# REQUIREMENTS:
-#   - Create vector 'mc_draws' with >= 2000 samples using bootstrap/resampling
-#   - Calculate and populate the 3 required distribution fields: mean, variance, ci95
-derivation_code_r: |
-  ```r
-  library(boot)
+  **Step 6:** Generate 5000 bootstrap samples and compute mean, variance, and 95% CI from the
+  resulting distribution.
 
-  # Example: Peak concentration test statistic from PK time-course data
-
-  # 1) Define raw measurements with uncertainty ---------------------------------
-  # Time-course concentration data (representative example)
-  conc_data <- data.frame(
-    time_hours = c(0.5, 1, 2, 4, 8, 12, 24),  # post-dose timepoints
-    concentration = c(45.2, 52.1, 48.3, 42.8, 32.4, 22.6, 8.2),  # ng/mL
-    cv_percent = c(8.5, 6.2, 7.1, 9.3, 12.1, 15.8, 25.0)  # measurement CV%
-  )
-
-  # 2) Define test statistic estimator with uncertainty propagation ------------
-  peak_conc_estimator <- function(data, indices) {
-    # Resample time-course data
-    d <- data[indices, , drop = FALSE]
-
-    # Add measurement error to each concentration (CV-based uncertainty)
-    conc_with_error <- sapply(1:nrow(d), function(i) {
-      cv <- d$cv_percent[i] / 100
-      sd_conc <- d$concentration[i] * cv
-      # Assumption: Measurement error is log-normally distributed
-      rlnorm(1, log(d$concentration[i]), cv)
-    })
-
-    # Calculate test statistic: peak concentration (Cmax)
-    # Alternative statistics: AUC (trapz), time-to-peak, fold-change, etc.
-    peak_conc <- max(conc_with_error, na.rm = TRUE)
-
-    return(peak_conc)
-  }
-
-  # 3) Run bootstrap with uncertainty propagation ---------------------------
-  set.seed(123)
-  B <- 5000
-  boot_out <- boot(data = conc_data, statistic = peak_conc_estimator, R = B)
-
-  # Extract replicates
-  mc_draws <- boot_out$t[,1]
-
-  # Remove any extreme outliers or invalid values
-  mc_draws <- mc_draws[!is.na(mc_draws) & mc_draws > 0]
-  q999 <- quantile(mc_draws, 0.999, na.rm = TRUE)
-  mc_draws <- mc_draws[mc_draws <= q999]
-
-  # Required summary statistics
-  mean_stat <- mean(mc_draws)
-  variance_stat <- var(mc_draws)
-
-  # BCa 95% CI
-  bca_ci <- boot.ci(boot_out, type = "bca", conf = 0.95)
-  ci95_stat <- c(bca_ci$bca[4], bca_ci$bca[5])  # [lower, upper]
-
-  # Result: mc_draws contains test statistic samples with all uncertainty propagated
-  ```
-
-# Validation context and quality assessment
-validation_weights:
-  # Assign fixed weights using rubric tables. Provide 1-2 sentence justification for each.
-  species_match:
-    value: RUBRIC_VALUE_0_TO_1  # Use species rubric: 1.00=Human, 0.85=NHP, 0.65=Mouse, 0.45=Rat, 0.25=Non-mammal, 0.10=Irrelevant
-    justification: "[Species and why it gets this specific rubric value]"
-  system_match:
-    value: RUBRIC_VALUE_0_TO_1  # Use system rubric: 1.00=In vivo, 0.85=Ex vivo, 0.65=Organoid, 0.45=2D primary, 0.25=Cell line, 0.10=Biochemical
-    justification: "[System type and why it gets this specific rubric value]"
-  overall_confidence:
-    value: RUBRIC_VALUE_0_TO_1  # Use confidence rubric: 1.00=Rigorous, 0.85=Good, 0.65=Adequate, 0.45=Weak, 0.25=Major concerns, 0.10=Minimal
-    justification: "[Study quality and why it gets this specific rubric value]"
-  indication_match:
-    value: RUBRIC_VALUE_0_TO_1  # Use indication rubric: 1.00=Exact match, 0.85=Close subtype, 0.65=Adjacent tumor, 0.45=Distant, 0.25=Non-tumor, 0.10=Irrelevant
-    justification: "[Indication relevance and why it gets this specific rubric value]"
-  regimen_match:
-    value: RUBRIC_VALUE_0_TO_1  # Use regimen rubric: 1.00=Exact, 0.85=Minor diffs, 0.65=Same MoA, 0.45=Partial relevance, 0.25=MoA related, 0.10=Non-representative
-    justification: "[Treatment similarity and why it gets this specific rubric value]"
-  biomarker_population_match:
-    value: RUBRIC_VALUE_0_TO_1  # Use biomarker rubric: 1.00=Exact profile, 0.85=Close match, 0.65=Mixed population, 0.45=Mismatched, 0.25=Opposite, 0.10=No info
-    justification: "[Biomarker/population match and why it gets this specific rubric value]"
-  stage_burden_match:
-    value: RUBRIC_VALUE_0_TO_1_OR_NULL  # Use stage rubric: 1.00=Same stage, 0.85=Adjacent, 0.65=Earlier, 0.45=Very different, 0.25=Pre-malignant, 0.10=Not reported. Optional field.
-    justification: "[Stage/burden match and why it gets this specific rubric value, if relevant]"
-
-# Important limitations and their specific impact on test statistic reliability and validation weight
+# Important limitations
+# ============================================================================
 key_study_limitations: |
-  - **Sample size/power:** [statistical limitations, small N, underpowered comparisons → increases test statistic uncertainty, may warrant lower validation weight] (SOURCE_TAG)
-  - **Measurement issues:** [assay limitations, detection limits, calibration problems → affects test statistic precision, consider downweighting if severe] (SOURCE_TAG)
-  - **Data extraction:** [digitization errors, missing data points, unit conversion uncertainties → introduces additional noise, impacts confidence in estimate] (SOURCE_TAG)
-  - **Biological context:** [species differences, system limitations, population mismatch → affects biological relevance, captured in species/system/population weights] (SOURCE_TAG)
-  - **Methodological concerns:** [key assumptions, model simplifications, potential biases → may systematically bias test statistic, consider exclusion if severe] (SOURCE_TAG)
+  - **Sample size:** Moderate sample size (n=94) limits precision of tail probabilities (TOPALIAN2012)
+  - **Dose heterogeneity:** Multiple dose levels combined may introduce variability in response rates (TOPALIAN2012)
+  - **Imaging variability:** RECIST assessments have known inter-reader variability that may exceed assumed 8% CV (TOPALIAN2012)
+  - **Early trial phase:** Phase 1 trial may not fully represent treatment-experienced patient populations (TOPALIAN2012)
 
-# Data sources: Primary studies from which test statistic distribution was derived
-data_sources:
-  PRIMARY_STUDY:
-    citation: "FULL_CITATION"
-    doi: "DOI_OR_NA"
-    data_extracted:
-      - description: "What specific data was extracted from this study (e.g., ORR at 8 weeks, median PFS, peak CD8/Treg ratio)"
-        value: NUMERIC_VALUE_OR_QUALITATIVE
-        units: "UNITS"
-        figure_or_table: "Fig./Table/Page"
-        text_snippet: "Exact text line(s) where values came from"
-        weight_in_synthesis: 0.5  # How much this data point contributed to final distribution (0-1)
+# Source citations
+# ============================================================================
+# V2 SCHEMA: Text and table-based extraction only (no digitization from figures)
 
-  SECONDARY_STUDY:
-    citation: "FULL_CITATION"
-    doi: "DOI_OR_NA"
-    data_extracted:
-      - description: "What specific data was extracted"
-        value: NUMERIC_VALUE
-        units: "UNITS"
-        figure_or_table: "Fig./Table/Page"
-        text_snippet: "Exact text line(s)"
-        weight_in_synthesis: 0.3
+# PRIMARY DATA SOURCES
+primary_data_sources:
+  - source_tag: "TOPALIAN2012"
+    title: "Safety, activity, and immune correlates of anti-PD-1 antibody in cancer"
+    first_author: "Topalian"
+    year: 2012
+    doi: "10.1056/NEJMoa1200690"
 
-# Methodological sources: Studies providing formulas, conversion factors, methods
+# SECONDARY DATA SOURCES (reference values, established constants)
+secondary_data_sources:
+  - source_tag: "EISENHAUER2009"
+    title: "New response evaluation criteria in solid tumours: Revised RECIST guideline (version 1.1)"
+    first_author: "Eisenhauer"
+    year: 2009
+    doi: "10.1016/j.ejca.2008.10.026"
+
+# METHODOLOGICAL SOURCES (formulas, analysis methods)
 methodological_sources:
-  METHOD_REFERENCE:
-    citation: "FULL_CITATION"
-    doi: "DOI_OR_NA"
-    used_for: "Brief description (e.g., ORR to tumor volume conversion, assay calibration, biological context)"
-    formula_or_method: "Formula or method description if applicable"
-    figure_or_table: "Methods section or equation number"
-    text_snippet: "Relevant quote about the method"
+  - source_tag: "THERASSE2000"
+    title: "New guidelines to evaluate the response to treatment in solid tumors"
+    first_author: "Therasse"
+    year: 2000
+    doi: "10.1093/jnci/92.3.205"
+    used_for: "Conversion formula from tumor diameter to volume"
+    method_description: "Used Equation 2 for spherical approximation: V = (4/3)π(d/2)³ to convert diameter measurements to volume"
+
+# Validation weights
+# ============================================================================
+validation_weights:
+  species_match:
+    value: RUBRIC_VALUE_0_TO_1
+    justification: "[Species and rubric justification]"
+
+  system_match:
+    value: RUBRIC_VALUE_0_TO_1
+    justification: "[System type and rubric justification]"
+
+  overall_confidence:
+    value: RUBRIC_VALUE_0_TO_1
+    justification: "[Study quality and rubric justification]"
+
+  indication_match:
+    value: RUBRIC_VALUE_0_TO_1
+    justification: "[Indication relevance and rubric justification]"
+
+  regimen_match:
+    value: RUBRIC_VALUE_0_TO_1
+    justification: "[Treatment similarity and rubric justification]"
+
+  biomarker_population_match:
+    value: RUBRIC_VALUE_0_TO_1
+    justification: "[Biomarker/population match and rubric justification]"
+
+  stage_burden_match:
+    value: RUBRIC_VALUE_0_TO_1_OR_NULL
+    justification: "[Stage/burden match and rubric justification, if relevant]"

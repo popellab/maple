@@ -94,9 +94,11 @@ python scripts/run_schema_conversion.py --only test_statistic
 ```
 
 **Latest schema versions:**
-- Parameters: v3 (templates/parameter_metadata_template_v3.yaml)
-- Test Statistics: v2 (templates/test_statistic_template_v2.yaml)
+- Parameters: v3 (templates/parameter_metadata_template.yaml)
+- Test Statistics: v2 (templates/test_statistic_template.yaml)
 - Quick Estimates: v1 (templates/quick_estimate_template.yaml)
+
+**Note:** Only the latest templates are tracked in git. Old templates are retrieved from git history when needed for schema conversion.
 
 The workflow automatically:
 1. Scans metadata directories for files with outdated schema_version fields

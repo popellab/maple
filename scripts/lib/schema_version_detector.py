@@ -22,15 +22,14 @@ class SchemaVersionDetector:
     }
 
     # Template paths for each schema version
+    # Note: Only the latest template is kept in the repo
+    # Older versions must be retrieved from git history if needed for conversion
     SCHEMA_TEMPLATES = {
         "parameter": {
-            "v1": "templates/parameter_metadata_template.yaml",
-            "v2": "templates/parameter_metadata_template_v2.yaml",
-            "v3": "templates/parameter_metadata_template_v3.yaml"
+            "v3": "templates/parameter_metadata_template.yaml"
         },
         "test_statistic": {
-            "v1": "templates/test_statistic_template.yaml",
-            "v2": "templates/test_statistic_template_v2.yaml"
+            "v2": "templates/test_statistic_template.yaml"
         },
         "quick_estimate": {
             "v1": "templates/quick_estimate_template.yaml"
@@ -198,25 +197,69 @@ class SchemaVersionDetector:
         Returns:
             Tuple of (old_template_path, new_template_path)
         """
+        import tempfile
+        import subprocess
+
         templates = self.SCHEMA_TEMPLATES.get(metadata_type, {})
 
-        old_template = templates.get(from_version)
+        # New template should exist in current repo
         new_template = templates.get(to_version)
-
-        if old_template is None:
-            raise ValueError(f"No template found for {metadata_type} {from_version}")
         if new_template is None:
             raise ValueError(f"No template found for {metadata_type} {to_version}")
 
-        old_path = self.base_dir / old_template
         new_path = self.base_dir / new_template
-
-        if not old_path.exists():
-            raise FileNotFoundError(f"Old template not found: {old_path}")
         if not new_path.exists():
             raise FileNotFoundError(f"New template not found: {new_path}")
 
-        return (old_path, new_path)
+        # For old template, check if it exists in current repo first
+        old_template = templates.get(from_version)
+        if old_template:
+            old_path = self.base_dir / old_template
+            if old_path.exists():
+                return (old_path, new_path)
+
+        # Old template doesn't exist in current repo - need to get from git history
+        # Determine the old template filename based on version
+        if metadata_type == "parameter":
+            if from_version == "v1":
+                old_filename = "templates/parameter_metadata_template.yaml"
+                git_ref = "b18a37e"  # Commit before we removed old templates
+            elif from_version == "v2":
+                old_filename = "templates/parameter_metadata_template_v2.yaml"
+                git_ref = "b18a37e"
+            else:
+                raise ValueError(f"Cannot convert from unknown version: {from_version}")
+        elif metadata_type == "test_statistic":
+            if from_version == "v1":
+                old_filename = "templates/test_statistic_template.yaml"
+                git_ref = "b18a37e"
+            else:
+                raise ValueError(f"Cannot convert from unknown version: {from_version}")
+        else:
+            raise ValueError(f"Cannot convert {metadata_type} from {from_version}")
+
+        # Extract old template from git history
+        try:
+            result = subprocess.run(
+                ["git", "show", f"{git_ref}:{old_filename}"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            # Save to temporary file
+            temp_dir = self.base_dir / "batch_jobs" / "temp_templates"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+
+            old_path = temp_dir / f"{metadata_type}_{from_version}_template.yaml"
+            with open(old_path, 'w', encoding='utf-8') as f:
+                f.write(result.stdout)
+
+            return (old_path, new_path)
+
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Could not retrieve old template from git: {e.stderr}")
 
     def print_summary(self, scan_results: Dict[str, List[Tuple[Path, str, str]]]):
         """

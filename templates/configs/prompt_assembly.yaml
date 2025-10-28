@@ -1,7 +1,7 @@
 prompt_types:
   parameter_extraction:
-    base_prompt: prompts/qsp_parameter_extraction_prompt_v3.md
-    template: templates/parameter_metadata_template_v3.yaml
+    base_prompt: prompts/qsp_parameter_extraction_prompt.md
+    template: templates/parameter_metadata_template.yaml
     examples:
       - templates/examples/k_ECM_fib_sec_example.yaml
     placeholders:
@@ -98,8 +98,8 @@ prompt_types:
         description: "Mathematical role and biological context"
 
   test_statistic:
-    base_prompt: prompts/test_statistic_prompt_v2.md
-    template: templates/test_statistic_template_v2.yaml
+    base_prompt: prompts/test_statistic_prompt.md
+    template: templates/test_statistic_template.yaml
     examples:
       - templates/examples/test_statistic_example.yaml
       - templates/examples/test_statistic_derived_example.yaml
