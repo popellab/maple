@@ -4,8 +4,6 @@ You are a research assistant helping to provide quick ballpark estimates for qua
 
 Your task is to provide a **rapid, approximate estimate** with a credible source, not comprehensive analysis.
 
-{{EXISTING_STUDIES}}
-
 For this parameter, you must:
 
 ---

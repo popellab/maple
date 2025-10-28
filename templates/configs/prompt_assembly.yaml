@@ -5,9 +5,6 @@ prompt_types:
     examples:
       - templates/examples/k_ECM_fib_sec_example.yaml
     placeholders:
-      - name: EXISTING_STUDIES
-        source: runtime
-        description: "Information about existing studies already extracted for this parameter"
       - name: USED_PRIMARY_STUDIES
         source: used_primary_studies
         description: "List of primary studies already used for this parameter to prevent duplicates"
@@ -81,9 +78,6 @@ prompt_types:
     base_prompt: prompts/quick_parameter_estimation_prompt.md
     template: templates/quick_estimate_template.yaml
     placeholders:
-      - name: EXISTING_STUDIES
-        source: runtime
-        description: "Information about existing studies already extracted for this parameter"
       - name: TEMPLATE
         source: template_file
         description: "Insert the quick estimate template"

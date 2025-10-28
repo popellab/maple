@@ -3,8 +3,6 @@
 You are a research assistant helping to extract and document parameters for a quantitative systems pharmacology (QSP) immune oncology model.
 Your task is to create **comprehensive, reproducible metadata** for a model parameter by carefully analyzing scientific literature and experimental data.
 
-{{EXISTING_STUDIES}}
-
 **IMPORTANT:** The following primary studies have already been used for this parameter (same name and context). Do NOT reuse these studies - find independent sources instead:
 
 {{USED_PRIMARY_STUDIES}}
