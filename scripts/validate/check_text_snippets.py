@@ -177,7 +177,7 @@ class TextSnippetValidator:
             value = inp.get('value')
             units = inp.get('units')
 
-            # Check value_snippet
+            # Check value_snippet contains the value
             value_snippet = inp.get('value_snippet')
             if value_snippet:
                 found, pattern = self.check_snippet_contains_value(value_snippet, value, units)
@@ -187,13 +187,15 @@ class TextSnippetValidator:
                         f"(tried formats: decimal, scientific, percentage)"
                     )
 
-            # Check units_snippet
+            # Check units_snippet contains the units (not the value)
             units_snippet = inp.get('units_snippet')
-            if units_snippet:
-                found, pattern = self.check_snippet_contains_value(units_snippet, value, units)
-                if not found:
+            if units_snippet and units:
+                # For units, just check if the units string appears in the snippet
+                units_normalized = units.lower().strip()
+                snippet_normalized = re.sub(r'\s+', ' ', units_snippet.lower())
+                if units_normalized not in snippet_normalized:
                     errors.append(
-                        f"Input '{name}': units_snippet does not contain declared value {value}"
+                        f"Input '{name}': units_snippet does not contain declared units '{units}'"
                     )
 
         is_valid = len(errors) == 0
