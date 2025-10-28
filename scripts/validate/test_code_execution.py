@@ -222,23 +222,35 @@ class CodeExecutionValidator:
                 'comparison': comparison_results
             }
 
-            # Build message
+            # Build message with calculated vs reported values
             if comparison_results:
-                mean_diff = comparison_results.get('mean_diff_pct', 0)
-                var_diff = comparison_results.get('variance_diff_pct', 0)
-                ci95_diff = comparison_results.get('ci95_diff_pct', 0)
+                issues = []
 
-                if overall_success:
-                    msg = f"Values match YAML (mean: {mean_diff:.2f}%, var: {var_diff:.2f}%, CI95: {ci95_diff:.2f}%)"
-                else:
-                    issues = []
-                    if not comparison_results.get('mean_match', True):
-                        issues.append(f"mean: {mean_diff:.2f}%")
-                    if not comparison_results.get('variance_match', True):
-                        issues.append(f"variance: {var_diff:.2f}%")
-                    if not comparison_results.get('ci95_match', True):
-                        issues.append(f"CI95: {ci95_diff:.2f}%")
-                    msg = f"Values differ from YAML ({', '.join(issues)})"
+                # Report mean
+                if expected_mean is not None:
+                    computed_mean = computed_values['mean']
+                    if comparison_results.get('mean_match', True):
+                        issues.append(f"mean: calc={computed_mean:.3e} vs report={expected_mean:.3e} ✓")
+                    else:
+                        issues.append(f"mean: calc={computed_mean:.3e} vs report={expected_mean:.3e} ✗")
+
+                # Report variance
+                if expected_variance is not None:
+                    computed_var = computed_values['variance']
+                    if comparison_results.get('variance_match', True):
+                        issues.append(f"var: calc={computed_var:.3e} vs report={expected_variance:.3e} ✓")
+                    else:
+                        issues.append(f"var: calc={computed_var:.3e} vs report={expected_variance:.3e} ✗")
+
+                # Report CI95
+                if expected_ci95 is not None:
+                    computed_ci95 = [computed_values['ci95_lower'], computed_values['ci95_upper']]
+                    if comparison_results.get('ci95_match', True):
+                        issues.append(f"CI95: calc=[{computed_ci95[0]:.3e}, {computed_ci95[1]:.3e}] vs report=[{expected_ci95[0]:.3e}, {expected_ci95[1]:.3e}] ✓")
+                    else:
+                        issues.append(f"CI95: calc=[{computed_ci95[0]:.3e}, {computed_ci95[1]:.3e}] vs report=[{expected_ci95[0]:.3e}, {expected_ci95[1]:.3e}] ✗")
+
+                msg = "; ".join(issues)
             else:
                 msg = "Python code executed (no expected values to compare)"
 
