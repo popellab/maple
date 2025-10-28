@@ -42,29 +42,42 @@ class WorkflowOrchestrator:
         self.to_review_dir = self.storage_dir / "to-review"
         self.to_review_dir.mkdir(exist_ok=True)
 
-    def extract_and_display_prompt(self, batch_file: Path, index: int = 0) -> str:
+    def extract_prompt_to_file(self, batch_file: Path, index: int = 0) -> Path:
         """
-        Extract and display a sample prompt from batch file.
+        Extract a sample prompt from batch file to scratch directory.
+
+        Uses scripts/debug/extract_prompt.py to extract prompt and save to file.
 
         Args:
             batch_file: Path to batch JSONL file
             index: Index of request to extract (default: 0 for first request)
 
         Returns:
-            Extracted prompt text
+            Path to extracted prompt file
         """
-        try:
-            with open(batch_file, 'r', encoding='utf-8') as f:
-                for i, line in enumerate(f):
-                    if i == index:
-                        request = json.loads(line)
-                        prompt = request.get("body", {}).get("input", "")
-                        return prompt
+        # Create scratch directory
+        scratch_dir = self.base_dir / "scratch"
+        scratch_dir.mkdir(exist_ok=True)
 
-            return f"Error: No request found at index {index}"
+        # Generate output filename
+        output_file = scratch_dir / f"prompt_preview_{batch_file.stem}.txt"
 
-        except Exception as e:
-            return f"Error extracting prompt: {e}"
+        # Run extract_prompt.py script
+        extract_script = self.base_dir / "scripts" / "debug" / "extract_prompt.py"
+
+        result = subprocess.run(
+            ["python3", str(extract_script), str(batch_file), str(index)],
+            cwd=self.base_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        # Write output to file
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(result.stdout)
+
+        return output_file
 
     def create_batch(self,
                     input_csv: Path,
@@ -460,16 +473,19 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
             batch_file = self.create_batch(input_csv, workflow_type, progress_callback)
             results["batch_file"] = str(batch_file)
 
-            # Step 1.5: Display sample prompt and ask for confirmation
+            # Step 1.5: Extract sample prompt and ask for confirmation
             if progress_callback:
                 progress_callback("\n" + "="*70)
                 progress_callback("SAMPLE PROMPT VERIFICATION")
                 progress_callback("="*70)
-                progress_callback("\nDisplaying first prompt for review...\n")
+                progress_callback("\nExtracting first prompt for review...")
 
-            sample_prompt = self.extract_and_display_prompt(batch_file, index=0)
-            print(sample_prompt)
-            print("\n" + "="*70)
+            prompt_file = self.extract_prompt_to_file(batch_file, index=0)
+
+            if progress_callback:
+                progress_callback(f"✓ Sample prompt saved to: {prompt_file}")
+                progress_callback("\nPlease review the prompt before proceeding.")
+                progress_callback("="*70)
 
             response = input("\nProceed with batch submission? [y/N]: ")
             if response.lower() != 'y':
@@ -610,16 +626,19 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
             if progress_callback:
                 progress_callback(f"✓ Created {len(requests)} conversion requests")
 
-            # Step 1.5: Display sample prompt and ask for confirmation
+            # Step 1.5: Extract sample prompt and ask for confirmation
             if progress_callback:
                 progress_callback("\n" + "="*70)
                 progress_callback("SAMPLE PROMPT VERIFICATION")
                 progress_callback("="*70)
-                progress_callback("\nDisplaying first prompt for review...\n")
+                progress_callback("\nExtracting first prompt for review...")
 
-            sample_prompt = self.extract_and_display_prompt(batch_file, index=0)
-            print(sample_prompt)
-            print("\n" + "="*70)
+            prompt_file = self.extract_prompt_to_file(batch_file, index=0)
+
+            if progress_callback:
+                progress_callback(f"✓ Sample prompt saved to: {prompt_file}")
+                progress_callback("\nPlease review the prompt before proceeding.")
+                progress_callback("="*70)
 
             response = input("\nProceed with batch submission? [y/N]: ")
             if response.lower() != 'y':
