@@ -230,25 +230,25 @@ class CodeExecutionValidator:
                 if expected_mean is not None:
                     computed_mean = computed_values['mean']
                     if comparison_results.get('mean_match', True):
-                        issues.append(f"  mean:     {computed_mean:12.3e} vs {expected_mean:12.3e} ✓")
+                        issues.append(f"  mean:     calculated={computed_mean:12.3e}, reported={expected_mean:12.3e} ✓")
                     else:
-                        issues.append(f"  mean:     {computed_mean:12.3e} vs {expected_mean:12.3e} ✗")
+                        issues.append(f"  mean:     calculated={computed_mean:12.3e}, reported={expected_mean:12.3e} ✗")
 
                 # Report variance
                 if expected_variance is not None:
                     computed_var = computed_values['variance']
                     if comparison_results.get('variance_match', True):
-                        issues.append(f"  variance: {computed_var:12.3e} vs {expected_variance:12.3e} ✓")
+                        issues.append(f"  variance: calculated={computed_var:12.3e}, reported={expected_variance:12.3e} ✓")
                     else:
-                        issues.append(f"  variance: {computed_var:12.3e} vs {expected_variance:12.3e} ✗")
+                        issues.append(f"  variance: calculated={computed_var:12.3e}, reported={expected_variance:12.3e} ✗")
 
                 # Report CI95
                 if expected_ci95 is not None:
                     computed_ci95 = [computed_values['ci95_lower'], computed_values['ci95_upper']]
                     if comparison_results.get('ci95_match', True):
-                        issues.append(f"  CI95:     [{computed_ci95[0]:12.3e}, {computed_ci95[1]:12.3e}] vs [{expected_ci95[0]:12.3e}, {expected_ci95[1]:12.3e}] ✓")
+                        issues.append(f"  CI95:     calculated=[{computed_ci95[0]:12.3e}, {computed_ci95[1]:12.3e}], reported=[{expected_ci95[0]:12.3e}, {expected_ci95[1]:12.3e}] ✓")
                     else:
-                        issues.append(f"  CI95:     [{computed_ci95[0]:12.3e}, {computed_ci95[1]:12.3e}] vs [{expected_ci95[0]:12.3e}, {expected_ci95[1]:12.3e}] ✗")
+                        issues.append(f"  CI95:     calculated=[{computed_ci95[0]:12.3e}, {computed_ci95[1]:12.3e}], reported=[{expected_ci95[0]:12.3e}, {expected_ci95[1]:12.3e}] ✗")
 
                 msg = "\n" + "\n".join(issues)
             else:
