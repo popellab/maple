@@ -42,6 +42,30 @@ class WorkflowOrchestrator:
         self.to_review_dir = self.storage_dir / "to-review"
         self.to_review_dir.mkdir(exist_ok=True)
 
+    def extract_and_display_prompt(self, batch_file: Path, index: int = 0) -> str:
+        """
+        Extract and display a sample prompt from batch file.
+
+        Args:
+            batch_file: Path to batch JSONL file
+            index: Index of request to extract (default: 0 for first request)
+
+        Returns:
+            Extracted prompt text
+        """
+        try:
+            with open(batch_file, 'r', encoding='utf-8') as f:
+                for i, line in enumerate(f):
+                    if i == index:
+                        request = json.loads(line)
+                        prompt = request.get("body", {}).get("input", "")
+                        return prompt
+
+            return f"Error: No request found at index {index}"
+
+        except Exception as e:
+            return f"Error extracting prompt: {e}"
+
     def create_batch(self,
                     input_csv: Path,
                     workflow_type: str,
@@ -436,6 +460,26 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
             batch_file = self.create_batch(input_csv, workflow_type, progress_callback)
             results["batch_file"] = str(batch_file)
 
+            # Step 1.5: Display sample prompt and ask for confirmation
+            if progress_callback:
+                progress_callback("\n" + "="*70)
+                progress_callback("SAMPLE PROMPT VERIFICATION")
+                progress_callback("="*70)
+                progress_callback("\nDisplaying first prompt for review...\n")
+
+            sample_prompt = self.extract_and_display_prompt(batch_file, index=0)
+            print(sample_prompt)
+            print("\n" + "="*70)
+
+            response = input("\nProceed with batch submission? [y/N]: ")
+            if response.lower() != 'y':
+                if progress_callback:
+                    progress_callback("Aborted by user.")
+                results["status"] = "aborted"
+                results["error"] = "User aborted after prompt verification"
+                results["duration_seconds"] = time.time() - start_time
+                return results
+
             # Step 2: Upload batch
             batch_id = self.upload_batch(batch_file, progress_callback)
             results["batch_id"] = batch_id
@@ -565,6 +609,26 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
 
             if progress_callback:
                 progress_callback(f"✓ Created {len(requests)} conversion requests")
+
+            # Step 1.5: Display sample prompt and ask for confirmation
+            if progress_callback:
+                progress_callback("\n" + "="*70)
+                progress_callback("SAMPLE PROMPT VERIFICATION")
+                progress_callback("="*70)
+                progress_callback("\nDisplaying first prompt for review...\n")
+
+            sample_prompt = self.extract_and_display_prompt(batch_file, index=0)
+            print(sample_prompt)
+            print("\n" + "="*70)
+
+            response = input("\nProceed with batch submission? [y/N]: ")
+            if response.lower() != 'y':
+                if progress_callback:
+                    progress_callback("Aborted by user.")
+                results["status"] = "aborted"
+                results["error"] = "User aborted after prompt verification"
+                results["duration_seconds"] = time.time() - start_time
+                return results
 
             # Step 2: Upload batch
             batch_id = self.upload_batch(batch_file, progress_callback)
