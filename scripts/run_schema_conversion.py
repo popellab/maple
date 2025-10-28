@@ -167,21 +167,6 @@ Examples:
         print("\nDry run complete. Use 'run_schema_conversion.py' without --dry-run to convert.")
         sys.exit(0)
 
-    # Confirm conversion
-    print("\nProceed with conversion? This will:")
-    print("  1. Create batch requests for all outdated files")
-    print("  2. Upload to OpenAI API for conversion")
-    print("  3. Monitor until completion")
-    if not args.skip_validation:
-        print("  4. Run validation on converted files")
-    print(f"  {5 if not args.skip_validation else 4}. Unpack to to-review/ folder")
-    print(f"  {6 if not args.skip_validation else 5}. Create review branch and push")
-
-    response = input("\nContinue? [y/N]: ")
-    if response.lower() != 'y':
-        print("Aborted.")
-        sys.exit(0)
-
     # Load API key
     try:
         api_key = load_api_key()
