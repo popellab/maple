@@ -527,10 +527,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
             if progress_callback:
                 progress_callback(f"Creating schema conversion batch for {len(files_to_convert)} files...")
 
-            # Get template paths
+            # Get new template path
             from schema_version_detector import SchemaVersionDetector
             detector = SchemaVersionDetector(self.base_dir, self.storage_dir)
-            old_template, new_template = detector.get_template_paths(metadata_type, from_version, to_version)
+            new_template = detector.get_template_path(metadata_type, to_version)
 
             # Create batch creator (import here to avoid circular imports)
             import sys
@@ -549,11 +549,12 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
                     shutil.copy(file_path, temp_path / file_path.name)
 
                 # Create batch requests
+                # Note: We only provide the new template - LLM infers old structure from the data
                 requests = batch_creator.process(
                     yaml_dir=temp_path,
-                    old_schema_path=old_template,
+                    old_schema_path=new_template,  # Use new template as reference
                     new_schema_path=new_template,
-                    migration_notes=f"Converting from {from_version} to {to_version}",
+                    migration_notes=f"Update metadata from schema {from_version} to {to_version}. Preserve all existing data and adapt to new schema structure.",
                     pattern="*.yaml"
                 )
 
