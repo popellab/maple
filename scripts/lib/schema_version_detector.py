@@ -47,6 +47,29 @@ class SchemaVersionDetector:
         self.base_dir = Path(base_dir)
         self.storage_dir = Path(storage_dir)
 
+    def is_legacy_parameter(self, yaml_file: Path) -> bool:
+        """
+        Check if a YAML file is tagged as legacy.
+
+        Args:
+            yaml_file: Path to YAML file
+
+        Returns:
+            True if file has 'legacy' tag, False otherwise
+        """
+        try:
+            with open(yaml_file, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+
+            tags = data.get('tags', [])
+            if isinstance(tags, list):
+                return 'legacy' in tags
+            return False
+
+        except Exception as e:
+            print(f"Warning: Could not check legacy status for {yaml_file.name}: {e}")
+            return False
+
     def detect_schema_version(self, yaml_file: Path) -> Optional[str]:
         """
         Detect schema version from YAML file.
@@ -132,9 +155,15 @@ class SchemaVersionDetector:
             List of tuples: (file_path, current_version, target_version)
         """
         files_to_convert = []
+        skipped_legacy = []
         yaml_files = list(directory.glob("*.yaml"))
 
         for yaml_file in yaml_files:
+            # Skip legacy parameters
+            if self.is_legacy_parameter(yaml_file):
+                skipped_legacy.append(yaml_file)
+                continue
+
             current_version = self.detect_schema_version(yaml_file)
             if current_version is None:
                 continue
@@ -145,6 +174,9 @@ class SchemaVersionDetector:
 
             if current_version != latest_version:
                 files_to_convert.append((yaml_file, current_version, latest_version))
+
+        if skipped_legacy:
+            print(f"Skipped {len(skipped_legacy)} legacy parameter(s)")
 
         return files_to_convert
 
