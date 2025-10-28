@@ -351,10 +351,71 @@ class WorkflowOrchestrator:
 
         return unpacked_files
 
+    def run_full_validation(self,
+                           unpacked_files: List[Path],
+                           workflow_type: str,
+                           progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+        """
+        Run full validation suite on unpacked YAML files.
+
+        Args:
+            unpacked_files: List of unpacked YAML files
+            workflow_type: Type of workflow (parameter/test_statistic/quick_estimate)
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            Dictionary with validation results
+        """
+        if progress_callback:
+            progress_callback("Running full validation suite...")
+
+        # Import validation runner
+        from validation_runner import ValidationRunner
+
+        # Determine template path
+        template_map = {
+            "parameter": "templates/parameter_metadata_template.yaml",
+            "test_statistic": "templates/test_statistic_template.yaml",
+            "quick_estimate": "templates/quick_estimate_template.yaml"
+        }
+
+        template_path = self.base_dir / template_map.get(workflow_type, "")
+
+        # Create validation output directory
+        validation_output = self.batch_jobs_dir / "validation"
+        validation_output.mkdir(exist_ok=True)
+
+        # Run validation
+        runner = ValidationRunner(self.base_dir)
+        validation_results = runner.run_validation(
+            workflow_type=workflow_type,
+            data_dir=self.to_review_dir,
+            template=template_path,
+            output_dir=validation_output,
+            timeout=600
+        )
+
+        # Report results
+        if progress_callback:
+            if validation_results.get("status") == "completed":
+                total = validation_results.get("total_validations", 0)
+                passed = validation_results.get("passed", 0)
+                failed = validation_results.get("failed", 0)
+                progress_callback(f"✓ Validation complete: {passed}/{total} checks passed")
+                if failed > 0:
+                    progress_callback(f"  ⚠ {failed} validation(s) failed - review recommended")
+            elif validation_results.get("status") == "skipped":
+                progress_callback(f"⚠ Validation skipped: {validation_results.get('message', 'N/A')}")
+            else:
+                progress_callback(f"⚠ Validation error: {validation_results.get('message', 'Unknown error')}")
+
+        return validation_results
+
     def commit_and_push(self,
                        unpacked_files: List[Path],
                        batch_id: str,
                        workflow_type: str,
+                       validation_summary: Optional[Dict[str, Any]] = None,
                        branch_prefix: str = "review/batch",
                        push: bool = True,
                        progress_callback: Optional[Callable[[str], None]] = None) -> str:
@@ -365,6 +426,7 @@ class WorkflowOrchestrator:
             unpacked_files: List of unpacked YAML files
             batch_id: Batch ID for naming
             workflow_type: Type of workflow
+            validation_summary: Optional validation results to include in commit
             branch_prefix: Prefix for branch name
             push: Whether to push to remote (default: True)
             progress_callback: Optional callback for progress updates
@@ -398,12 +460,19 @@ class WorkflowOrchestrator:
                 capture_output=True
             )
 
+            # Format validation summary for commit message
+            from validation_runner import ValidationRunner
+            runner = ValidationRunner(self.base_dir)
+            validation_text = runner.format_summary_for_commit(validation_summary)
+
             # Create commit message
             commit_msg = f"""Add {workflow_type} extractions for review
 
 Batch ID: {batch_id}
 Files: {len(unpacked_files)} validated extractions
 Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+{validation_text}
 
 Automated extraction with validation. Ready for manual review.
 
@@ -522,9 +591,16 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
             results["unpacked_files"] = [str(f) for f in unpacked_files]
             results["file_count"] = len(unpacked_files)
 
+            # Step 5.5: Run full validation suite on unpacked YAML files
+            validation_summary = self.run_full_validation(
+                unpacked_files, workflow_type, progress_callback
+            )
+            results["validation_summary"] = validation_summary
+
             # Step 6: Commit and push
             branch_name = self.commit_and_push(
                 unpacked_files, batch_id, workflow_type,
+                validation_summary=validation_summary,
                 branch_prefix=branch_prefix, push=push,
                 progress_callback=progress_callback
             )
