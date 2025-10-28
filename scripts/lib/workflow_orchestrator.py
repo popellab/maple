@@ -313,13 +313,24 @@ class WorkflowOrchestrator:
         Returns:
             List of unpacked YAML files
         """
+        # Create subdirectory based on workflow type
+        subdirectory_map = {
+            "parameter": "parameter_estimates",
+            "test_statistic": "test_statistics",
+            "quick_estimate": "quick_estimates"
+        }
+
+        subdir_name = subdirectory_map.get(workflow_type, workflow_type)
+        output_dir = self.to_review_dir / subdir_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
         if progress_callback:
-            progress_callback("Unpacking validated results to to-review/...")
+            progress_callback(f"Unpacking validated results to to-review/{subdir_name}/...")
 
         # Determine template based on workflow type
         template_map = {
-            "parameter": "templates/parameter_metadata_template_v3.yaml",
-            "test_statistic": "templates/test_statistic_template_v2.yaml",
+            "parameter": "templates/parameter_metadata_template.yaml",
+            "test_statistic": "templates/test_statistic_template.yaml",
             "quick_estimate": "templates/quick_estimate_template.yaml"
         }
 
@@ -331,7 +342,7 @@ class WorkflowOrchestrator:
         result = subprocess.run(
             ["python3", str(script_path),
              str(validated_results),
-             str(self.to_review_dir),
+             str(output_dir),
              str(input_csv),
              "",  # No source directory for header extraction
              str(self.base_dir / template_path) if template_path else ""],
@@ -344,10 +355,10 @@ class WorkflowOrchestrator:
             raise RuntimeError(f"Unpacking failed: {result.stderr}")
 
         # Find unpacked files
-        unpacked_files = list(self.to_review_dir.glob("*.yaml"))
+        unpacked_files = list(output_dir.glob("*.yaml"))
 
         if progress_callback:
-            progress_callback(f"✓ Unpacked {len(unpacked_files)} files to to-review/")
+            progress_callback(f"✓ Unpacked {len(unpacked_files)} files to to-review/{subdir_name}/")
 
         return unpacked_files
 
@@ -385,11 +396,20 @@ class WorkflowOrchestrator:
         validation_output = self.batch_jobs_dir / "validation"
         validation_output.mkdir(exist_ok=True)
 
+        # Determine subdirectory based on workflow type
+        subdirectory_map = {
+            "parameter": "parameter_estimates",
+            "test_statistic": "test_statistics",
+            "quick_estimate": "quick_estimates"
+        }
+        subdir_name = subdirectory_map.get(workflow_type, workflow_type)
+        data_dir = self.to_review_dir / subdir_name
+
         # Run validation
         runner = ValidationRunner(self.base_dir)
         validation_results = runner.run_validation(
             workflow_type=workflow_type,
-            data_dir=self.to_review_dir,
+            data_dir=data_dir,
             template=template_path,
             output_dir=validation_output,
             timeout=600
