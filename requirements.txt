@@ -10,6 +10,13 @@ pyyaml>=6.0
 # Environment variables
 python-dotenv>=1.0.0
 
+# HTTP requests (already indirect dependency, made explicit)
+requests>=2.31.0
+
+# Full-text validation dependencies
+pdfplumber>=0.10.0      # PDF text extraction
+diskcache>=5.6.0        # Disk-based caching for full-text
+
 # Standard library enhancements (typically included but listed for completeness)
 # argparse - built-in
 # csv - built-in
