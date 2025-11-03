@@ -19,7 +19,7 @@ lib_dir = Path(__file__).parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
 # Import after adding to path
-from validation_fix_batch_creator import ValidationFixBatchCreator
+from batch_creator import ValidationFixBatchCreator
 from workflow_orchestrator import WorkflowOrchestrator
 
 
