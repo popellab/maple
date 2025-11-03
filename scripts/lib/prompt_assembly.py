@@ -10,14 +10,17 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 import glob
 
+from header_utils import HeaderManager
+
 
 class PromptAssembler:
     """Assembles prompts from modular components based on configuration."""
-    
+
     def __init__(self, base_dir: Path):
         """Initialize the prompt assembler with base directory."""
         self.base_dir = Path(base_dir)
         self.config = None
+        self.header_manager = HeaderManager(base_dir)
         
     def load_config(self, config_path: Optional[Path] = None) -> Dict[str, Any]:
         """Load prompt assembly configuration."""
@@ -32,37 +35,11 @@ class PromptAssembler:
         """
         Load a template file, excluding header fields.
 
-        For parameter templates, excludes fields from parameter_name through context_hash
-        (these are added back during result unpacking). Only includes fields from
-        mathematical_role onward for the LLM prompt.
+        Uses HeaderManager to strip header fields from ALL template types.
+        Headers are added back during result unpacking.
         """
-        with open(self.base_dir / template_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        # Check if this is a parameter metadata template (has parameter_name field)
-        if 'parameter_name:' in content:
-            # Filter header fields using text manipulation to preserve formatting
-            # Find the start of mathematical_role field (first field after header)
-            lines = content.split('\n')
-
-            # Find index where mathematical_role starts
-            math_role_idx = None
-            for i, line in enumerate(lines):
-                if line.startswith('mathematical_role:'):
-                    math_role_idx = i
-                    break
-
-            if math_role_idx is not None:
-                # Keep only from mathematical_role onward
-                filtered_lines = lines[math_role_idx:]
-                return '\n'.join(filtered_lines)
-            else:
-                # If we can't find mathematical_role, return original
-                print(f"Warning: Could not find mathematical_role field in template")
-                return content
-        else:
-            # For non-parameter templates, return as-is
-            return content
+        full_path = self.base_dir / template_path
+        return self.header_manager.strip_headers_from_template(full_path)
             
     def load_example(self, example_path: Path) -> str:
         """Load an example file."""
@@ -246,8 +223,8 @@ class PromptAssembler:
             context_hash = runtime_data.get('context_hash', '')
 
             if not param_name or not context_hash:
-                # If we don't have the required info, return empty
-                return ""
+                # If we don't have the required info, return default message
+                return "None - this is the first derivation for this parameter"
 
             return self._get_used_primary_studies_for_parameter(
                 param_name, context_hash, storage_dir
@@ -259,16 +236,16 @@ class PromptAssembler:
             context_hash = runtime_data.get('context_hash', '')
 
             if not test_stat_id or not context_hash:
-                # If we don't have the required info, return empty
-                return ""
+                # If we don't have the required info, return default message
+                return "None - this is the first derivation for this test statistic"
 
             return self._get_used_primary_studies_for_test_statistic(
                 test_stat_id, context_hash, storage_dir
             )
 
         else:
-            # Unknown prompt type, return empty
-            return ""
+            # Unknown prompt type, return default message
+            return "None - this is the first derivation"
 
     def _get_used_primary_studies_for_parameter(self,
                                                 parameter_name: str,
@@ -327,7 +304,7 @@ class PromptAssembler:
                 continue
 
         if not used_studies:
-            return ""
+            return "None - this is the first derivation for this parameter"
 
         # Format as bulleted list
         formatted_list = "\n".join([f"- {study}" for study in used_studies])
@@ -390,7 +367,7 @@ class PromptAssembler:
                 continue
 
         if not used_studies:
-            return ""
+            return "None - this is the first derivation for this test statistic"
 
         # Format as bulleted list
         formatted_list = "\n".join([f"- {study}" for study in used_studies])

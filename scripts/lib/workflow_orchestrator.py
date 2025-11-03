@@ -11,6 +11,7 @@ Handles the complete extraction workflow from batch creation through git commit/
 """
 
 import json
+import sys
 import time
 import subprocess
 import hashlib
@@ -243,58 +244,137 @@ class WorkflowOrchestrator:
             # Wait before next check
             time.sleep(poll_interval)
 
-    def validate_results(self,
-                        results_file: Path,
-                        input_csv: Path,
-                        timeout: int = 3600,
-                        progress_callback: Optional[Callable[[str], None]] = None) -> Path:
+    def process_immediate(self,
+                         batch_file: Path,
+                         progress_callback: Optional[Callable[[str], None]] = None) -> Path:
         """
-        Run checklist validation on batch results.
+        Process batch requests immediately using Responses API.
 
         Args:
-            results_file: Path to batch results JSONL
-            input_csv: Path to original input CSV
-            timeout: Maximum seconds to wait for validation batch
+            batch_file: Path to batch requests JSONL file
             progress_callback: Optional callback for progress updates
 
         Returns:
-            Path to validation results file
+            Path to results file (same format as batch results)
+
+        Note:
+            This uses the Responses API for immediate processing, which is faster
+            than the Batch API but doesn't have the same throughput guarantees.
+            Good for testing and small batches.
         """
         if progress_callback:
-            progress_callback("Running checklist validation...")
+            progress_callback("Processing requests with Responses API...")
 
-        # Create validation batch
-        script_path = self.base_dir / "scripts" / "prepare" / "create_checklist_from_json_batch.py"
+        # Run upload_immediate.py script
+        script_path = self.base_dir / "scripts" / "run" / "upload_immediate.py"
 
         result = subprocess.run(
-            ["python3", str(script_path), str(results_file), str(input_csv)],
-            cwd=self.base_dir,
-            capture_output=True,
+            [sys.executable, str(script_path), str(batch_file)],
+            capture_output=False,  # Show progress in real-time
             text=True
         )
 
         if result.returncode != 0:
-            raise RuntimeError(f"Validation batch creation failed: {result.stderr}")
+            raise RuntimeError("Immediate processing failed")
 
-        validation_batch_file = self.batch_jobs_dir / "checklist_from_json_requests.jsonl"
+        # The script writes results with _immediate_results.jsonl suffix
+        results_file = batch_file.parent / f"{batch_file.stem}_immediate_results.jsonl"
+        if not results_file.exists():
+            raise RuntimeError(f"Results file not found: {results_file}")
 
-        if not validation_batch_file.exists():
-            raise RuntimeError(f"Validation batch file not created: {validation_batch_file}")
+        return results_file
 
-        # Upload validation batch
-        validation_batch_id = self.upload_batch(validation_batch_file, progress_callback)
+    def check_and_commit_existing_changes(self,
+                                         progress_callback: Optional[Callable[[str], None]] = None) -> bool:
+        """
+        Check for existing changes in storage repo and commit them on current branch.
 
-        # Monitor validation batch
-        validation_results = self.monitor_batch(
-            validation_batch_id,
-            timeout=timeout,
-            progress_callback=progress_callback
+        Args:
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            True if changes were committed, False if no changes found
+
+        Raises:
+            RuntimeError: If user declines to commit changes
+        """
+        # Check git status
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=self.storage_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        # If no changes, return early
+        if not result.stdout.strip():
+            return False
+
+        # Parse status to show what will be committed
+        status_lines = result.stdout.strip().split('\n')
+        tracked_changes = [line for line in status_lines if not line.startswith('??')]
+        untracked_files = [line for line in status_lines if line.startswith('??')]
+
+        if progress_callback:
+            progress_callback("\n⚠  Detected existing changes in qsp-metadata-storage:")
+            if tracked_changes:
+                progress_callback(f"  - {len(tracked_changes)} tracked change(s)")
+            if untracked_files:
+                progress_callback(f"  - {len(untracked_files)} untracked file(s)")
+
+        # Get current branch name
+        branch_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=self.storage_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        current_branch = branch_result.stdout.strip()
+
+        if progress_callback:
+            progress_callback(f"  - Current branch: {current_branch}")
+
+        # Prompt user to commit existing changes
+        response = input("\nCommit these changes on current branch before proceeding? [y/N]: ")
+        if response.lower() != 'y':
+            raise RuntimeError(
+                "Cannot proceed with uncommitted changes in qsp-metadata-storage. "
+                "Please commit or stash changes manually."
+            )
+
+        # Stage all changes (tracked and untracked)
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=self.storage_dir,
+            check=True,
+            capture_output=True
+        )
+
+        # Create commit message
+        commit_msg = f"""Save work in progress before automated workflow
+
+Branch: {current_branch}
+Tracked changes: {len(tracked_changes)}
+Untracked files: {len(untracked_files)}
+Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+This commit was created automatically to preserve existing work
+before unpacking new results from LLM workflow."""
+
+        # Commit
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=self.storage_dir,
+            check=True,
+            capture_output=True
         )
 
         if progress_callback:
-            progress_callback("✓ Validation complete")
+            progress_callback(f"✓ Committed existing changes on branch: {current_branch}\n")
 
-        return validation_results
+        return True
 
     def unpack_to_review(self,
                         validated_results: Path,
@@ -488,25 +568,21 @@ class WorkflowOrchestrator:
                 capture_output=True
             )
 
-            # Format validation summary for commit message
-            from validation_runner import ValidationRunner
-            runner = ValidationRunner(self.base_dir)
-            validation_text = runner.format_summary_for_commit(validation_summary)
+            # Format validation summary for commit message (if provided)
+            validation_text = ""
+            if validation_summary:
+                from validation_runner import ValidationRunner
+                runner = ValidationRunner(self.base_dir)
+                validation_text = runner.format_summary_for_commit(validation_summary)
 
             # Create commit message
             commit_msg = f"""Add {workflow_type} extractions for review
 
 Batch ID: {batch_id}
-Files: {len(unpacked_files)} validated extractions
+Files: {len(unpacked_files)} extractions
 Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-
 {validation_text}
-
-Automated extraction with validation. Ready for manual review.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-Co-Authored-By: Claude <noreply@anthropic.com>"""
+Automated extraction. Ready for validation and manual review."""
 
             # Commit
             subprocess.run(
@@ -539,20 +615,23 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
                              input_csv: Path,
                              workflow_type: str,
                              timeout: int = 3600,
-                             skip_validation: bool = False,
                              push: bool = True,
                              branch_prefix: str = "review/batch",
+                             immediate: bool = False,
                              progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
         """
         Run complete extraction workflow from start to finish.
+
+        Validation is NOT run during this workflow. After completion, run:
+        python scripts/validate/run_all_validations.py <workflow_type>
 
         Args:
             input_csv: Path to input CSV file
             workflow_type: Type of workflow (parameter/test_statistic/quick_estimate)
             timeout: Maximum seconds to wait for batch completion
-            skip_validation: Skip checklist validation step
             push: Whether to push to remote
             branch_prefix: Prefix for review branch name
+            immediate: Use Responses API for immediate processing (faster, good for testing)
             progress_callback: Optional callback for progress updates
 
         Returns:
@@ -593,42 +672,40 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
                 results["duration_seconds"] = time.time() - start_time
                 return results
 
-            # Step 2: Upload batch
-            batch_id = self.upload_batch(batch_file, progress_callback)
-            results["batch_id"] = batch_id
-
-            # Step 3: Monitor batch
-            results_file = self.monitor_batch(batch_id, timeout, progress_callback=progress_callback)
-            results["results_file"] = str(results_file)
-
-            # Step 4: Validate (optional)
-            if not skip_validation:
-                validated_results = self.validate_results(
-                    results_file, input_csv, timeout, progress_callback
-                )
-                results["validated_results"] = str(validated_results)
+            # Step 2: Upload and process (immediate or batch mode)
+            if immediate:
+                # Immediate mode: Process via Responses API
+                results_file = self.process_immediate(batch_file, progress_callback=progress_callback)
+                results["results_file"] = str(results_file)
+                results["immediate_mode"] = True
             else:
-                validated_results = results_file
-                if progress_callback:
-                    progress_callback("⚠ Skipping validation (--skip-validation)")
+                # Batch mode: Upload and monitor
+                batch_id = self.upload_batch(batch_file, progress_callback)
+                results["batch_id"] = batch_id
+
+                # Step 3: Monitor batch
+                results_file = self.monitor_batch(batch_id, timeout, progress_callback=progress_callback)
+                results["results_file"] = str(results_file)
+                results["immediate_mode"] = False
+
+            # Step 4: Check for existing changes and commit if needed
+            self.check_and_commit_existing_changes(progress_callback)
 
             # Step 5: Unpack to review
             unpacked_files = self.unpack_to_review(
-                validated_results, input_csv, workflow_type, progress_callback
+                results_file, input_csv, workflow_type, progress_callback
             )
             results["unpacked_files"] = [str(f) for f in unpacked_files]
             results["file_count"] = len(unpacked_files)
 
-            # Step 5.5: Run full validation suite on unpacked YAML files
-            validation_summary = self.run_full_validation(
-                unpacked_files, workflow_type, progress_callback
-            )
-            results["validation_summary"] = validation_summary
-
             # Step 6: Commit and push
+            # Generate batch_id for branch naming if in immediate mode
+            if immediate:
+                batch_id = f"immediate_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
             branch_name = self.commit_and_push(
                 unpacked_files, batch_id, workflow_type,
-                validation_summary=validation_summary,
+                validation_summary=None,  # Validation happens separately
                 branch_prefix=branch_prefix, push=push,
                 progress_callback=progress_callback
             )
@@ -639,6 +716,15 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
             results["status"] = "success"
             results["completed_at"] = datetime.now().isoformat()
             results["duration_seconds"] = time.time() - start_time
+
+            # Add next steps info
+            workflow_type_map = {
+                "parameter": "parameter_estimates",
+                "test_statistic": "test_statistics",
+                "quick_estimate": "quick_estimates"
+            }
+            validation_type = workflow_type_map.get(workflow_type, workflow_type)
+            results["next_step_validation_command"] = f"python scripts/validate/run_all_validations.py {validation_type}"
 
             return results
 
@@ -766,6 +852,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>"""
             # For now, skip validation for schema conversion
             validated_results = results_file
 
+            # Step 4.5: Check for existing changes and commit if needed
+            self.check_and_commit_existing_changes(progress_callback)
+
             # Step 5: Unpack to review
             if progress_callback:
                 progress_callback("Unpacking converted files to to-review/...")
@@ -832,11 +921,7 @@ Batch ID: {batch_id}
 Files: {len(unpacked_files)} converted files
 Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
-Automated schema conversion. Review converted files before replacing originals.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-Co-Authored-By: Claude <noreply@anthropic.com>"""
+Automated schema conversion. Review converted files before replacing originals."""
 
                 # Commit
                 subprocess.run(

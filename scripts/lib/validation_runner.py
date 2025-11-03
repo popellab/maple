@@ -94,35 +94,52 @@ class ValidationRunner:
 
         Args:
             workflow_type: Type of workflow (parameter/test_statistic/quick_estimate)
-            data_dir: Directory with YAML files
-            template: Path to template file
-            output_dir: Output directory for validation results
+            data_dir: Directory with YAML files (not used - determined by script)
+            template: Path to template file (not used - determined by script)
+            output_dir: Output directory for validation results (not used - goes to output/validation_results)
             timeout: Timeout in seconds
 
         Returns:
             Dictionary with validation results
         """
-        # Create output directory
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Map workflow type to validation type
+        workflow_type_map = {
+            "parameter": "parameter_estimates",
+            "test_statistic": "test_statistics",
+            "quick_estimate": "quick_estimates"
+        }
+        validation_type = workflow_type_map.get(workflow_type)
 
-        if workflow_type == "parameter":
-            return self.run_parameter_validations(data_dir, template, output_dir, timeout)
-        elif workflow_type == "test_statistic":
-            return self.run_test_statistic_validations(data_dir, template, output_dir, timeout)
-        elif workflow_type == "quick_estimate":
+        if not validation_type:
+            return {
+                "workflow_type": workflow_type,
+                "status": "error",
+                "message": f"Unknown workflow type: {workflow_type}"
+            }
+
+        if workflow_type == "quick_estimate":
             # Quick estimates don't have comprehensive validation yet
             return {
                 "workflow_type": workflow_type,
                 "status": "skipped",
                 "message": "Quick estimate validation not implemented"
             }
-        else:
-            return {
-                "workflow_type": workflow_type,
-                "status": "error",
-                "message": f"Unknown workflow type: {workflow_type}"
-            }
+
+        # Run validation script (it determines paths internally)
+        script_path = self.validate_dir / "run_all_validations.py"
+
+        result = subprocess.run(
+            ["python3", str(script_path), validation_type],
+            cwd=self.base_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+
+        # Validation outputs to output/validation_results
+        default_output_dir = self.base_dir / "output" / "validation_results"
+
+        return self._parse_validation_results(default_output_dir, result.returncode == 0)
 
     def _parse_validation_results(self, output_dir: Path, success: bool) -> Dict[str, Any]:
         """
