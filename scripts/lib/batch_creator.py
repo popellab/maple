@@ -7,6 +7,7 @@ with consistent patterns for request creation, file output, and error handling.
 """
 
 import json
+import yaml
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Any, Optional
