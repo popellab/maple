@@ -16,6 +16,10 @@ import hashlib
 from pathlib import Path
 from typing import Dict, Tuple, Optional
 
+# Add lib directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+from header_utils import HeaderManager
+
 
 def file_content_changed(file_path: Path, new_content: str) -> bool:
     """
@@ -135,60 +139,6 @@ def get_schema_version_from_template(template_path: Path) -> str:
     except Exception as e:
         print(f"Warning: Could not read schema_version from template {template_path}: {e}")
         return 'unknown'
-
-def find_parameter_json(data):
-    """
-    Recursively search for parameter metadata JSON object.
-
-    Looks for an object containing characteristic parameter metadata fields
-    like mathematical_role, parameter_estimates, sources, etc.
-
-    Args:
-        data: JSON data (dict, list, or primitive)
-
-    Returns:
-        Parameter metadata dict if found, None otherwise
-    """
-    # Required fields that indicate this is parameter metadata
-    required_fields = {'parameter_estimates'}
-    # At least one source field required
-    source_fields = {'sources', 'data_sources'}
-    # Common fields that suggest parameter metadata
-    common_fields = {'mathematical_role', 'parameter_range', 'study_overview',
-                     'technical_details', 'derivation_code_r', 'pooling_weights'}
-
-    if isinstance(data, dict):
-        # Check if this object looks like parameter metadata
-        keys = set(data.keys())
-
-        # Must have required fields, at least one source field, and at least 3 common fields
-        has_sources = len(keys & source_fields) > 0
-        if required_fields.issubset(keys) and has_sources and len(keys & common_fields) >= 3:
-            return data
-
-        # Otherwise, recursively search in values
-        for value in data.values():
-            result = find_parameter_json(value)
-            if result:
-                return result
-
-    elif isinstance(data, list):
-        # Search in list items
-        for item in data:
-            result = find_parameter_json(item)
-            if result:
-                return result
-
-    return None
-
-def extract_checklist_summary(content):
-    """Extract checklist review summary from content (everything before the JSON block)."""
-    # Find the JSON code block
-    json_match = re.search(r'```json\n.*?\n```', content, re.DOTALL)
-    if json_match:
-        # Return everything before the JSON block
-        return content[:json_match.start()].strip()
-    return None
 
 def extract_first_source_tag(content, is_json=True):
     """Extract the first source tag from JSON or YAML content."""
@@ -379,28 +329,25 @@ def prepend_header_fields(json_content: str, header_data: Dict, additional_tags:
 
     return header_comment + yaml_str, author_year
 
-def extract_header_fields_from_yaml(yaml_file: Path) -> Optional[Dict]:
+def extract_header_fields_from_yaml(yaml_file: Path, template_type: str = 'parameter_metadata') -> Optional[Dict]:
     """
-    Extract header fields from an existing YAML file.
+    Extract header fields from an existing YAML file using HeaderManager.
 
-    Returns dict with header fields, or None if file not found/invalid.
+    Args:
+        yaml_file: Path to YAML file
+        template_type: Type of template (parameter_metadata, test_statistic, quick_estimate)
+
+    Returns:
+        Dict with header fields, or None if file not found/invalid.
     """
     try:
-        with open(yaml_file, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
+        # Initialize HeaderManager
+        base_dir = Path(__file__).parent.parent.parent
+        header_manager = HeaderManager(base_dir)
 
-        header_fields = {}
-        field_names = [
-            'parameter_name', 'parameter_units', 'parameter_definition',
-            'cancer_type', 'tags', 'model_context', 'context_hash',
-            'schema_version', 'derivation_id', 'derivation_timestamp'
-        ]
+        # Use HeaderManager to extract headers
+        return header_manager.extract_headers_from_file(yaml_file, template_type)
 
-        for field in field_names:
-            if field in data:
-                header_fields[field] = data[field]
-
-        return header_fields if header_fields else None
     except Exception as e:
         print(f"Warning: Could not extract header fields from {yaml_file}: {e}")
         return None
@@ -525,32 +472,40 @@ def get_schema_header_fields(schema_template_path: Path) -> list:
     """
     return parse_header_fields_from_template(schema_template_path)
 
-def find_next_derivation_number(target_dir: Path, base_filename: str) -> int:
+def find_next_derivation_number(target_dir: Path, base_filename: str, additional_dirs: list = None) -> int:
     """
     Find the next available derivation number for a given base filename.
 
     Args:
-        target_dir: Directory to search for existing files
+        target_dir: Primary directory to search for existing files
         base_filename: Base filename (e.g., "k_CD8_pro_MARCHINGO2014_PDAC_a1b2c3d4")
+        additional_dirs: Optional list of additional directories to check (e.g., main storage dir)
 
     Returns:
         Next available derivation number (e.g., 1, 2, 3...)
     """
     import re
 
-    # Find all files matching pattern: base_filename_deriv*.yaml
+    # Collect all directories to search
+    dirs_to_check = [target_dir]
+    if additional_dirs:
+        dirs_to_check.extend(additional_dirs)
+
+    # Find all files matching pattern across all directories
     pattern = f"{base_filename}_deriv*.yaml"
-    existing_files = list(target_dir.glob(pattern))
-
-    if not existing_files:
-        return 1
-
-    # Extract derivation numbers
     deriv_numbers = []
-    for file in existing_files:
-        match = re.search(r'_deriv(\d+)\.yaml$', file.name)
-        if match:
-            deriv_numbers.append(int(match.group(1)))
+
+    for directory in dirs_to_check:
+        if not directory.exists():
+            continue
+
+        existing_files = list(directory.glob(pattern))
+
+        # Extract derivation numbers
+        for file in existing_files:
+            match = re.search(r'_deriv(\d+)\.yaml$', file.name)
+            if match:
+                deriv_numbers.append(int(match.group(1)))
 
     return max(deriv_numbers) + 1 if deriv_numbers else 1
 
@@ -661,18 +616,9 @@ def main():
             # Handle different batch types based on custom_id prefix
             use_quick_estimate_format = False  # Initialize flag
             use_test_statistic_format = False  # Initialize flag
+            overwrite_existing = False  # Only overwrite for validation fixes and schema conversion
 
-            if parts[0] == "defn":
-                # Parameter definition: defn_CANCER_TYPE_PARAMETER_NAME_INDEX
-                cancer_type = parts[1]
-                parameter_name = '_'.join(parts[2:-1])  # Everything between cancer_type and index
-                # Put in parameter-definitions directory
-                param_dir = target_project_path / "parameter-definitions" / cancer_type / parameter_name
-                param_dir.mkdir(parents=True, exist_ok=True)
-                filename_default = "definition.yaml"
-                use_flat_structure = False
-                additional_tags = None
-            elif parts[0] == "quick":
+            if parts[0] == "quick":
                 # Quick estimate: quick_CANCER_TYPE_PARAMETER_NAME_INDEX
                 cancer_type = parts[1]
                 parameter_name = '_'.join(parts[2:-1])  # Everything between cancer_type and index
@@ -683,28 +629,6 @@ def main():
                 use_flat_structure = True
                 use_quick_estimate_format = True  # Special flag for quick estimates
                 additional_tags = ['quick-estimate']
-            elif parts[0] == "checklist" and parts[1] == "json":
-                # Checklist review: checklist_json_ORIGINAL_CUSTOM_ID
-                # Parse original custom_id to get cancer_type and parameter_name
-                original_parts = parts[2:]  # Skip "checklist_json_" prefix
-                cancer_type = original_parts[0]
-                parameter_name = '_'.join(original_parts[1:-1])  # Everything except first and last
-                # Save directly to parameter_estimates with flat structure
-                param_dir = target_project_path  # Flat structure at parameter_estimates level
-                filename_default = None  # Will be computed from metadata
-                use_flat_structure = True
-                additional_tags = ['ai-reviewed']
-            elif parts[0] == "validate" and parts[1] == "json":
-                # JSON validation: validate_json_ORIGINAL_CUSTOM_ID
-                # Parse original custom_id to get cancer_type and parameter_name
-                original_parts = parts[2:]  # Skip "validate_json_" prefix
-                cancer_type = original_parts[0]
-                parameter_name = '_'.join(original_parts[1:-1])  # Everything except first and last
-                # Save directly to parameter_estimates with flat structure
-                param_dir = target_project_path  # Flat structure at parameter_estimates level
-                filename_default = None  # Will be computed from metadata
-                use_flat_structure = True
-                additional_tags = ['ai-validated']
             elif parts[0] == "test" and parts[1] == "stat":
                 # Test statistic: test_stat_TEST_STATISTIC_ID_INDEX
                 test_statistic_id = '_'.join(parts[2:-1])  # Everything between test_stat_ and index
@@ -723,12 +647,26 @@ def main():
                 # Schema conversion: schema_convert_ORIGINAL_FILENAME
                 # Extract original filename (everything after schema_convert_)
                 original_file_stem = '_'.join(parts[2:])
-                # Save to same directory (will overwrite or add _v2)
+                # Save to same directory (will overwrite)
                 param_dir = target_project_path
                 filename_default = f"{original_file_stem}.yaml"
                 use_flat_structure = False
                 additional_tags = None
+                overwrite_existing = True  # Overwrite the original file
                 # For schema conversion, we skip cancer_type/parameter_name parsing
+                cancer_type = None
+                parameter_name = None
+            elif parts[0] == "fix":
+                # Validation fix: fix_ORIGINAL_FILENAME
+                # Extract original filename (everything after fix_)
+                original_file_stem = '_'.join(parts[1:])
+                # Save to same directory with original filename (overwrite mode)
+                param_dir = target_project_path
+                filename_default = f"{original_file_stem}.yaml"
+                use_flat_structure = False
+                additional_tags = None
+                overwrite_existing = True  # Overwrite the original file
+                # For validation fix, we skip cancer_type/parameter_name parsing
                 cancer_type = None
                 parameter_name = None
             else:
@@ -741,9 +679,9 @@ def main():
                 use_flat_structure = True
                 additional_tags = None
 
-            # Extract content (JSON for all types, including schema conversion)
-            if parts[0] == "schema" and parts[1] == "convert":
-                # Schema conversion returns JSON that we convert to YAML
+            # Extract content (JSON for all types, including schema conversion and validation fixes)
+            if (parts[0] == "schema" and parts[1] == "convert") or parts[0] == "fix":
+                # Schema conversion or validation fix returns JSON that we convert to YAML
                 json_content = extract_json_from_content(content)
                 if json_content:
                     try:
@@ -753,7 +691,17 @@ def main():
                             # Reconstruct original filename from custom_id
                             original_file = source_yaml_dir / f"{original_file_stem}.yaml"
                             if original_file.exists():
-                                header_fields = extract_header_fields_from_yaml(original_file)
+                                # Detect template type from original file
+                                with open(original_file, 'r', encoding='utf-8') as f:
+                                    orig_data = yaml.safe_load(f)
+                                if 'test_statistic_id' in orig_data:
+                                    template_type = 'test_statistic'
+                                elif 'parameter_name' in orig_data:
+                                    template_type = 'parameter_metadata'
+                                else:
+                                    template_type = 'parameter_metadata'  # default
+
+                                header_fields = extract_header_fields_from_yaml(original_file, template_type)
                             else:
                                 print(f"Warning: Could not find original file {original_file}")
 
@@ -787,8 +735,15 @@ def main():
                                         # Generate base filename for v1
                                         base_filename = f"{param_name_orig}_{author_year_sources}_{cancer_type_orig}_{definition_hash}"
 
+                                        # Calculate additional directories to check
+                                        additional_dirs_to_check = []
+                                        if 'to-review' in str(param_dir):
+                                            main_storage_dir = Path(str(param_dir).replace('/to-review/', '/').replace('/to-review', ''))
+                                            if main_storage_dir != param_dir and main_storage_dir.exists():
+                                                additional_dirs_to_check.append(main_storage_dir)
+
                                         # Find next derivation number
-                                        deriv_num = find_next_derivation_number(param_dir, base_filename)
+                                        deriv_num = find_next_derivation_number(param_dir, base_filename, additional_dirs_to_check)
 
                                         # Generate derivation_id
                                         from datetime import datetime
@@ -837,7 +792,7 @@ def main():
                             # Get unique filename if needed (for new extractions with different content)
                             file_path = param_dir / filename_default
                             if not uses_derivation_id or 'derivation_id' not in (header_fields or {}):
-                                file_path = get_unique_filename(file_path)
+                                file_path = get_unique_filename(file_path, overwrite=overwrite_existing)
 
                             with open(file_path, 'w', encoding='utf-8') as f:
                                 f.write(yaml_str)
@@ -853,34 +808,6 @@ def main():
             # Extract JSON content
             json_content = extract_json_from_content(content)
             if json_content:
-                # For checklist batches, find the actual parameter JSON (might be wrapped)
-                if parts[0] == "checklist" and parts[1] == "json":
-                    try:
-                        # Parse the JSON response
-                        response_data = json.loads(json_content)
-
-                        # Find the parameter metadata JSON (handles any wrapper structure)
-                        param_data = find_parameter_json(response_data)
-
-                        if param_data:
-                            # Found parameter data, use it
-                            json_content = json.dumps(param_data)
-
-                            # Try to extract review summary from text before JSON or from wrapper
-                            summary = extract_checklist_summary(content)
-                            if summary:
-                                checklist_summaries.append(f"## {custom_id}\n\n{summary}\n\n---\n")
-                            else:
-                                # Look for summary field in response_data
-                                for key, value in response_data.items():
-                                    if isinstance(value, str) and ('summary' in key.lower() or 'review' in key.lower()):
-                                        checklist_summaries.append(f"## {custom_id}\n\n{value}\n\n---\n")
-                                        break
-                        else:
-                            print(f"Warning: Could not find parameter metadata in checklist response for {custom_id}")
-                    except json.JSONDecodeError as e:
-                        print(f"Warning: Could not parse checklist JSON for {custom_id}: {e}")
-
                 # Prepend header fields if metadata available
                 key = (cancer_type, parameter_name)
                 author_year = None
@@ -892,6 +819,8 @@ def main():
                     # Use test statistic metadata
                     header_data = test_stat_metadata[parameter_name].copy()
                     definition_hash = test_stat_metadata[parameter_name].get('context_hash', '')
+                    # Add schema_version from template
+                    header_data['schema_version'] = get_schema_version_from_template(schema_template) if schema_template else 'v2'
                     # Extract author_year from JSON for filename
                     author_year = extract_first_source_tag(json_content, is_json=True)
                     json_content, author_year = prepend_header_fields(json_content, header_data, additional_tags, schema_header_fields)
@@ -913,8 +842,15 @@ def main():
                             # Generate base filename for v1 (used as derivation_id base)
                             base_filename = f"{parameter_name}_{author_year_sources}_{cancer_type}_{definition_hash}"
 
+                            # Calculate additional directories to check
+                            additional_dirs_to_check = []
+                            if 'to-review' in str(param_dir):
+                                main_storage_dir = Path(str(param_dir).replace('/to-review/', '/').replace('/to-review', ''))
+                                if main_storage_dir != param_dir and main_storage_dir.exists():
+                                    additional_dirs_to_check.append(main_storage_dir)
+
                             # Find next derivation number
-                            deriv_num = find_next_derivation_number(param_dir, base_filename)
+                            deriv_num = find_next_derivation_number(param_dir, base_filename, additional_dirs_to_check)
 
                             # Generate derivation_id
                             derivation_id = generate_derivation_id(parameter_name, author_year_sources, cancer_type, definition_hash, deriv_num)
@@ -932,19 +868,30 @@ def main():
 
                 # Determine filename based on structure type
                 if use_flat_structure:
-                    # Special handling for test statistics
+                    # Calculate additional directories to check for derivation numbers
+                    # If unpacking to to-review/, also check the main storage directory
+                    additional_dirs_to_check = []
+                    if 'to-review' in str(param_dir):
+                        # Get main storage directory by removing to-review from path
+                        main_storage_dir = Path(str(param_dir).replace('/to-review/', '/').replace('/to-review', ''))
+                        if main_storage_dir != param_dir and main_storage_dir.exists():
+                            additional_dirs_to_check.append(main_storage_dir)
+
+                    # Special handling for test statistics (use deriv numbering)
                     if use_test_statistic_format and definition_hash:
-                        # Test statistic format: {test_statistic_id}_{cancer_type}_{context_hash}.yaml
+                        # Test statistic format: {test_statistic_id}_{cancer_type}_{context_hash}_deriv001.yaml
                         if cancer_type:
-                            file_name = f"{parameter_name}_{cancer_type}_{definition_hash}.yaml"
+                            base_filename = f"{parameter_name}_{cancer_type}_{definition_hash}"
                         else:
                             # Fallback if no cancer_type found
-                            file_name = f"{parameter_name}_unknown_{definition_hash}.yaml"
+                            base_filename = f"{parameter_name}_unknown_{definition_hash}"
+                        deriv_num = find_next_derivation_number(param_dir, base_filename, additional_dirs_to_check)
+                        file_name = f"{base_filename}_deriv{deriv_num:03d}.yaml"
                     # Special handling for quick estimates (no author_year, use deriv number)
                     elif use_quick_estimate_format and definition_hash:
                         # Quick estimate format: {param}_{cancer}_{hash}_deriv001.yaml
                         base_filename = f"{parameter_name}_{cancer_type}_{definition_hash}"
-                        deriv_num = find_next_derivation_number(param_dir, base_filename)
+                        deriv_num = find_next_derivation_number(param_dir, base_filename, additional_dirs_to_check)
                         file_name = f"{base_filename}_deriv{deriv_num:03d}.yaml"
                     # Check if using derivation_id-based filenames (v2 schema)
                     elif uses_derivation_id and 'derivation_id' in header_data:
@@ -973,8 +920,13 @@ def main():
                     else:
                         print(f"Skipped (unchanged): {cancer_type}/{parameter_name}/{matching_file.name}")
                 else:
-                    # Get unique filename if needed (for new extractions with different content)
-                    file_path = get_unique_filename(param_dir / file_name)
+                    # For test statistics and quick estimates, derivation numbers handle uniqueness
+                    # For validation fixes and schema conversions, use exact filename (may overwrite)
+                    # Only use get_unique_filename for other cases (though should be rare now)
+                    if use_test_statistic_format or use_quick_estimate_format or overwrite_existing:
+                        file_path = param_dir / file_name
+                    else:
+                        file_path = get_unique_filename(param_dir / file_name, overwrite=overwrite_existing)
 
                     # Save as YAML file (converted from JSON)
                     with open(file_path, 'w', encoding='utf-8') as f:

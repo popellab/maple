@@ -28,6 +28,7 @@ async def process_request(client, request, index, total):
         model=request['body']['model'],
         input=request['body']['input'],
         reasoning=request['body']['reasoning'],
+        tools=[{"type": "web_search"}],
         background=False  # This makes it synchronous
     )
     

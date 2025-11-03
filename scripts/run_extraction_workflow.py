@@ -54,11 +54,15 @@ def print_summary(results: dict):
             print(f"✓ Local branch created: {results['branch_name']}")
 
         print("\nNext steps:")
-        print("  1. cd ../qsp-metadata-storage")
-        print(f"  2. git checkout {results['branch_name']}")
-        print("  3. Review files in to-review/")
-        print("  4. Move approved files to appropriate directories")
-        print("  5. Merge to main when approved")
+        print("  1. Run validation suite:")
+        if 'next_step_validation_command' in results:
+            print(f"     {results['next_step_validation_command']}")
+        print("")
+        print("  2. cd ../qsp-metadata-storage")
+        print(f"  3. git checkout {results['branch_name']}")
+        print("  4. Review files in to-review/")
+        print("  5. Move approved files to appropriate directories")
+        print("  6. Merge to main when approved")
     else:
         print(f"✗ Status: FAILED")
         print(f"✗ Error: {results.get('error', 'Unknown error')}")
@@ -69,18 +73,21 @@ def print_summary(results: dict):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run complete extraction workflow with automated validation and git operations",
+        description="Run complete extraction workflow with automated unpacking and git operations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Parameter extraction
   python scripts/run_extraction_workflow.py input.csv --type parameter
 
+  # Test statistic extraction with immediate processing (faster feedback)
+  python scripts/run_extraction_workflow.py test_stats.csv --type test_statistic --immediate
+
   # Test statistic extraction with custom timeout
   python scripts/run_extraction_workflow.py test_stats.csv --type test_statistic --timeout 7200
 
-  # Quick estimates without validation
-  python scripts/run_extraction_workflow.py quick.csv --type quick_estimate --skip-validation
+  # Quick estimates
+  python scripts/run_extraction_workflow.py quick.csv --type quick_estimate
 
   # Create branch locally without pushing
   python scripts/run_extraction_workflow.py input.csv --type parameter --no-push
@@ -108,12 +115,6 @@ Examples:
     )
 
     parser.add_argument(
-        "--skip-validation",
-        action="store_true",
-        help="Skip checklist validation step"
-    )
-
-    parser.add_argument(
         "--no-push",
         action="store_true",
         help="Create branch locally but don't push to remote"
@@ -123,6 +124,12 @@ Examples:
         "--branch-prefix",
         default="review/batch",
         help="Prefix for review branch name (default: review/batch)"
+    )
+
+    parser.add_argument(
+        "--immediate",
+        action="store_true",
+        help="Use immediate processing via Responses API instead of Batch API (faster feedback for testing)"
     )
 
     args = parser.parse_args()
@@ -154,12 +161,12 @@ Examples:
 
     # Print header
     print("\n" + "=" * 70)
-    print(f"AUTOMATED EXTRACTION WORKFLOW")
+    print("AUTOMATED EXTRACTION WORKFLOW")
     print("=" * 70)
     print(f"Type: {args.type}")
     print(f"Input: {args.input_csv}")
+    print(f"Processing: {'Immediate (Responses API)' if args.immediate else 'Batch API'}")
     print(f"Timeout: {args.timeout}s")
-    print(f"Validation: {'Disabled' if args.skip_validation else 'Enabled'}")
     print(f"Push: {'Disabled' if args.no_push else 'Enabled'}")
     print("=" * 70 + "\n")
 
@@ -169,9 +176,9 @@ Examples:
             input_csv=args.input_csv,
             workflow_type=args.type,
             timeout=args.timeout,
-            skip_validation=args.skip_validation,
             push=not args.no_push,
             branch_prefix=args.branch_prefix,
+            immediate=args.immediate,
             progress_callback=print_progress
         )
 
