@@ -34,7 +34,7 @@ def extract_prompt(jsonl_file: Path, request_index: int = 0) -> str:
 def save_prompt_to_file(prompt: str, output_path: Path, custom_id: str = None) -> None:
     """
     Save prompt text to a markdown file.
-    
+
     Args:
         prompt: The prompt text to save
         output_path: Path where to save the file
@@ -42,15 +42,15 @@ def save_prompt_to_file(prompt: str, output_path: Path, custom_id: str = None) -
     """
     # Create scratch directory if it doesn't exist
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     with open(output_path, 'w', encoding='utf-8') as f:
         if custom_id:
             f.write(f"# Extracted Prompt - {custom_id}\n\n")
         else:
             f.write("# Extracted Prompt\n\n")
         f.write(prompt)
-    
-    print(f"Prompt saved to: {output_path}")
+
+    print(f"Prompt saved to: {output_path}", file=sys.stderr)
 
 
 def main():
@@ -97,10 +97,14 @@ def main():
         
         # Save the prompt
         save_prompt_to_file(prompt, output_path, custom_id)
-        
-        print(f"Extracted request #{request_index} from {jsonl_file}")
-        print(f"Custom ID: {custom_id}")
-        print(f"Prompt length: {len(prompt)} characters")
+
+        # Print metadata to stderr
+        print(f"Extracted request #{request_index} from {jsonl_file}", file=sys.stderr)
+        print(f"Custom ID: {custom_id}", file=sys.stderr)
+        print(f"Prompt length: {len(prompt)} characters", file=sys.stderr)
+
+        # Print actual prompt to stdout (for capture by caller)
+        print(prompt)
         
     except IndexError as e:
         print(f"Error: {e}")

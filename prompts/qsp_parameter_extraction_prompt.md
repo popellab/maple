@@ -3,144 +3,71 @@
 You are a research assistant helping to extract and document parameters for a quantitative systems pharmacology (QSP) immune oncology model.
 Your task is to create **comprehensive, reproducible metadata** for a model parameter by carefully analyzing scientific literature and experimental data.
 
-{{EXISTING_STUDIES}}
+**IMPORTANT:** The following primary studies have already been used for this parameter (same name and context). Do NOT reuse these studies - find independent sources instead:
+
+{{USED_PRIMARY_STUDIES}}
+
+If no studies are listed above, this is the first derivation for this parameter.
 
 For this parameter, you must:
 
 ---
 
 ## Monte Carlo Parameter Estimation
-1. **Generate MC samples:** Provide fully executable R code that generates a numeric vector called `mc_draws` with ≥2000 samples.
-2. **Bootstrap preferred:** Use bootstrap resampling when raw/digitizable data available.
 
-3. **Uncertainty propagation:** Incorporate ALL sources of uncertainty, especially for composite parameters:
+1. **Structured inputs:** Define all input values in the `inputs` list with source references
+2. **Function-based code:** Provide Python code as a `derive_parameter(inputs)` function
+3. **Bootstrap preferred:** Use bootstrap resampling when raw data available
+4. **Uncertainty propagation:** Incorporate ALL sources of uncertainty:
    - **Multiple measurements:** Use bootstrap resampling when combining multiple data points
    - **Composite parameters:** When parameter depends on multiple quantities, propagate uncertainty from each component
    - **Unit conversions:** Include uncertainty from conversion factors when applicable
    - **Model assumptions:** Account for parametric uncertainty when making distributional assumptions
-4. **Required summary statistics:** Calculate and populate these 4 required fields:
-   - `mean`: Mean of mc_draws
-   - `variance`: Variance of mc_draws
-   - `ci95`: 95% percentile confidence interval as [lower, upper]
-   - `units`: Units string for the parameter  
+5. **Standard units:** Use standard unit formats (e.g., "1/day", "nM", "mg/L", "dimensionless" for counts/ratios)
+6. **Required outputs:** Function must return dict with:
+   - `mean_param`: Mean of Monte Carlo draws
+   - `variance_param`: Variance of Monte Carlo draws
+   - `ci95_param`: 95% percentile confidence interval as [lower, upper]
 
 ---
 
 ## Experimental Documentation
-5. **Study overview:** Provide a concise narrative explaining the measurement approach, biological rationale, and how the parameter was derived.
-6. **Technical details:** Document essential assay and study design details (measurement method, instrumentation, sample size, replicates, controls, data source, processing, and key assumptions).
-7. **Derivation explanation:** Provide a step-by-step plain-language explanation of the R derivation code (5 steps recommended).
-8. **Streamlined format:** Focus only on details critical for parameter derivation and pooling decisions.  
+
+6. **Study overview (1-2 sentences):** WHAT parameter is being measured, WHY it's biologically relevant, and the overall approach
+7. **Study design (1-2 sentences):** HOW the measurement was performed (assay type, sample size, key methods)
+8. **Key assumptions (enumerated dict):** 3-5 critical assumptions only (e.g., distributional assumptions, model choices, data quality). Use format: `1: "Assumption text"`, `2: "Assumption text"`. Do NOT include trivial assumptions like "bootstrap samples are independent" or "conversion factors are standard".
+9. **Derivation explanation:** Step-by-step plain-language explanation of the Python code (3-6 steps recommended). Reference and justify assumptions using "ASSUMPTION N: ..." format where N matches the key from key_assumptions.
+10. **Key study limitations:** List critical limitations and their specific impact on reliability
 
 ---
 
-## Pooling Weights Assessment
-Assign a **fixed weight in [0,1]** for each dimension, and provide a 1–2 sentence justification.  
-Use the following rubrics (tables). Do not invent new scales.
-
-### Species Weight
-| Value | Definition |
-|-------|------------|
-| 1.00 | Human |
-| 0.85 | Non-human primate |
-| 0.65 | Mouse (syngeneic/GEMM) |
-| 0.45 | Rat or other small mammal |
-| 0.25 | Non-mammalian vertebrate surrogate |
-| 0.10 | Non-vertebrate/irrelevant |
-
-### System Weight
-| Value | Definition |
-|-------|------------|
-| 1.00 | In vivo (intact immune system) |
-| 0.85 | Ex vivo human tissue/primary cells |
-| 0.65 | Organoid / 3D co-culture |
-| 0.45 | 2D primary cell culture |
-| 0.25 | Stable cell line |
-| 0.10 | Biochemical/reductionist assay |
-
-### Overall Confidence
-| Value | Definition |
-|-------|------------|
-| 1.00 | Large N, rigorous controls, validated assay |
-| 0.85 | Good design, minor caveats |
-| 0.65 | Adequate, some limitations |
-| 0.45 | Weak design, limited validation |
-| 0.25 | Major concerns |
-| 0.10 | Minimal documentation |
-
-### Indication Match
-| Value | Definition |
-|-------|------------|
-| 1.00 | Exact disease/subtype match |
-| 0.85 | Closely related subtype |
-| 0.65 | Adjacent solid tumor |
-| 0.45 | Distant tumor, distinct biology |
-| 0.25 | Non-tumor immune/inflammatory |
-| 0.10 | Irrelevant context |
-
-### Regimen Match
-| Value | Definition |
-|-------|------------|
-| 1.00 | Exact drug, dose, schedule, route |
-| 0.85 | Same drug, minor dosing/schedule diffs |
-| 0.65 | Same MoA class, similar PK |
-| 0.45 | Different regimen, partial relevance |
-| 0.25 | MoA related, PK not comparable |
-| 0.10 | Non-representative exposure |
-
-### Biomarker / Population Match
-| Value | Definition |
-|-------|------------|
-| 1.00 | Exact biomarker profile |
-| 0.85 | Close match, 1 key biomarker differs |
-| 0.65 | Mixed population with subset match |
-| 0.45 | Mismatched biomarker context |
-| 0.25 | Opposite biomarker/immune status |
-| 0.10 | No relevant biomarker info |
-
-### Stage / Burden Match
-| Value | Definition |
-|-------|------------|
-| 1.00 | Same stage/burden |
-| 0.85 | Adjacent stage, similar biology |
-| 0.65 | Earlier stage with partial overlap |
-| 0.45 | Very different stage/progression |
-| 0.25 | Pre-malignant / non-cancer |
-| 0.10 | Stage not reported/irrelevant |
+{{SOURCE_AND_VALIDATION_RUBRICS}}
 
 ---
 
-## Data Quality & Validation
-9. **Citation verification:** Verify all citations and snippets come from real, accessible publications.
-10. **Data location verification:** Cross-check figure/table references contain the claimed data at specified locations.
-11. **Digitized data quality:** For digitized data, re-extract values independently and flag any discrepancies or resolution issues.
-12. **Biological plausibility:** Sanity-check parameter values against known biological ranges for the target system.
-13. **Data completeness:** Assess missing data, exclusions, and potential selection bias in reported results.
-14. **Limitation impact assessment:** Categorize how each limitation specifically affects parameter reliability and pooling weight.  
+## Requirements Summary
 
----
+**Code:**
+- Python function `derive_parameter(inputs)` returning mean_param, variance_param, ci95_param
+- Bootstrap preferred for uncertainty quantification
+- Set random seed via inputs for reproducibility
 
-## Source Attribution & Formatting
-15. **Consistent source tagging:** Reference all sources by tag throughout ALL sections - no unsupported claims.
-16. **DOI preference:** Provide `doi_or_url` (prefer DOI over URL when available).
-17. **Precise locations:** Give specific figure/table locations and exact text snippets where values originated.  
+**Documentation:**
+- `study_overview` (1-2 sentences): WHAT and WHY
+- `study_design` (1-2 sentences): HOW
+- `key_assumptions` (enumerated dict): 3-5 critical assumptions only
+- `derivation_explanation`: Step-by-step with "ASSUMPTION N: ..." references
 
----
+**Sources:**
+- Separate primary/secondary/methodological sources
+- All values/locations in inputs, not sources
+- Text/table extraction only (no digitization)
 
-## Structure & Completeness
-18. `study_overview` must provide a clear, non-redundant narrative without repeating technical_details.
-19. `derivation_explanation` must provide a clear step-by-step plain-language explanation of the R code.
-20. `derivation_code_r` must generate `mc_draws` with proper uncertainty propagation.
-21. Pooling weights must follow the rubric tables exactly (0–1) with concise justifications.
-22. All sections (`technical_details`, `derivation_explanation`, `sources`, `key_study_limitations`) must be complete with consistent source attribution.
-
----
-
-**Key Requirements**
-- The R code must define `mc_draws` (≥2000 samples).
-- **Bootstrap is the default** for uncertainty quantification. If bootstrapping is not possible, explain why and state the alternative.
-- Weights must follow the rubric tables exactly.
-- Metadata must be pooling-ready: everything needed for inverse-variance weighted pooling across studies.  
+**Validation:**
+- Citations are real, accessible publications
+- Text snippets (values_and_units_snippet, evidence_snippet) must be VERBATIM quotes from the source - copy exact wording, do not paraphrase or summarize
+- Weights follow rubric tables exactly
+- Code uses exactly the defined inputs
 
 ---
 
@@ -159,41 +86,40 @@ Use the following rubrics (tables). Do not invent new scales.
 
 Fill out the metadata template for this parameter.
 
-**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON):
+**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON).
+
+Response structure (see template for field details):
 ```json
 {
-  "mathematical_role": "Describe the mathematical role...",
+  "mathematical_role": "...",
   "parameter_range": "positive_reals",
-  "study_overview": "This study measures...",
-  "technical_details": "**Measurement:** ...\n**Study design:** ...",
+  "study_overview": "...",
+  "study_design": "...",
   "parameter_estimates": {
+    "inputs": [{"name": "...", "value": 0.45, "units": "...", ...}],
+    "derivation_code": "import numpy as np\\n...",
     "mean": 0.123,
     "variance": 0.001,
     "ci95": [0.1, 0.15],
-    "units": "1/day"
+    "units": "1/day",
+    "key_assumptions": {"1": "...", "2": "...", "3": "..."}
   },
-  "derivation_explanation": "**Step 1:** ...\n\n**Step 2:** ...",
-  "derivation_code_r": "set.seed(123)\nB <- 5000\nmc_draws <- rnorm(B, mean=0.5, sd=0.1)",
-  "pooling_weights": {
-    "species_match": {"value": 1.0, "justification": "Human study"},
-    "system_match": {"value": 1.0, "justification": "In vivo"}
-  },
-  "key_study_limitations": "- **Sample size:** ...\n- **Measurement issues:** ...",
-  "sources": {
-    "SOURCE_TAG": {
-      "citation": "Author et al. Journal. Year;vol:pages.",
-      "doi_or_url": "https://doi.org/...",
-      "figure_or_table": "Figure 1A",
-      "text_snippet": "Exact quote from paper"
-    }
+  "derivation_explanation": "**Step 1:** ...\\n\\n**Step 2:** ...",
+  "key_study_limitations": "- **Issue:** ...\\n- **Issue:** ...",
+  "primary_data_sources": [{"source_tag": "...", "title": "...", ...}],
+  "secondary_data_sources": [...],
+  "methodological_sources": [...],
+  "biological_relevance": {
+    "species_match": {"value": 1.0, "justification": "..."},
+    ...
   }
 }
 ```
 
-Requirements for JSON response:
-- Wrap your entire response in ```json code block tags
-- Use proper JSON syntax (all strings quoted, proper escaping)
-- Use `\n` for line breaks in multi-line strings (NOT Markdown `  \n` or other formatting)
-- For `derivation_code_r`: provide ONLY the raw R code without ```r wrapper tags
-- Use `\n\n` (double newline) to separate paragraphs or list items
-- Numeric values should be actual numbers, not strings (except placeholders)
+Key requirements:
+- Wrap in ```json code block tags
+- Use `\n` for line breaks, `\n\n` for paragraphs
+- `derivation_code`: raw Python (no ```python wrapper)
+- `inputs`: array with name, value, units, description, source_ref, value_table_or_section, value_snippet, units_table_or_section, units_snippet
+- Numbers as numbers, not strings
+- Every source_ref must have corresponding source entry

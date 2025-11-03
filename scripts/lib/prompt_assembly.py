@@ -8,15 +8,19 @@ import re
 import yaml
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+import glob
+
+from header_utils import HeaderManager
 
 
 class PromptAssembler:
     """Assembles prompts from modular components based on configuration."""
-    
+
     def __init__(self, base_dir: Path):
         """Initialize the prompt assembler with base directory."""
         self.base_dir = Path(base_dir)
         self.config = None
+        self.header_manager = HeaderManager(base_dir)
         
     def load_config(self, config_path: Optional[Path] = None) -> Dict[str, Any]:
         """Load prompt assembly configuration."""
@@ -31,37 +35,11 @@ class PromptAssembler:
         """
         Load a template file, excluding header fields.
 
-        For parameter templates, excludes fields from parameter_name through context_hash
-        (these are added back during result unpacking). Only includes fields from
-        mathematical_role onward for the LLM prompt.
+        Uses HeaderManager to strip header fields from ALL template types.
+        Headers are added back during result unpacking.
         """
-        with open(self.base_dir / template_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        # Check if this is a parameter metadata template (has parameter_name field)
-        if 'parameter_name:' in content:
-            # Filter header fields using text manipulation to preserve formatting
-            # Find the start of mathematical_role field (first field after header)
-            lines = content.split('\n')
-
-            # Find index where mathematical_role starts
-            math_role_idx = None
-            for i, line in enumerate(lines):
-                if line.startswith('mathematical_role:'):
-                    math_role_idx = i
-                    break
-
-            if math_role_idx is not None:
-                # Keep only from mathematical_role onward
-                filtered_lines = lines[math_role_idx:]
-                return '\n'.join(filtered_lines)
-            else:
-                # If we can't find mathematical_role, return original
-                print(f"Warning: Could not find mathematical_role field in template")
-                return content
-        else:
-            # For non-parameter templates, return as-is
-            return content
+        full_path = self.base_dir / template_path
+        return self.header_manager.strip_headers_from_template(full_path)
             
     def load_example(self, example_path: Path) -> str:
         """Load an example file."""
@@ -170,7 +148,30 @@ class PromptAssembler:
                     replacement_content = self.format_content(runtime_data[placeholder_name], source_config)
                 else:
                     replacement_content = f"[{placeholder_name} - TO BE PROVIDED]"
-                    
+
+            elif source == "shared_file":
+                # Load content from shared file
+                shared_path = placeholder_config.get("path", "")
+                if shared_path:
+                    shared_file_path = self.base_dir / shared_path
+                    if shared_file_path.exists():
+                        with open(shared_file_path, 'r', encoding='utf-8') as f:
+                            shared_content = f.read()
+                        source_config = self.config["placeholder_sources"]["shared_file"]
+                        replacement_content = self.format_content(shared_content, source_config)
+                    else:
+                        print(f"Warning: Shared file not found: {shared_file_path}")
+                        replacement_content = f"[{placeholder_name} - FILE NOT FOUND]"
+                else:
+                    replacement_content = f"[{placeholder_name} - NO PATH SPECIFIED]"
+
+            elif source == "used_primary_studies":
+                # Special handling for USED_PRIMARY_STUDIES placeholder
+                # This queries existing files to prevent duplicate source usage
+                replacement_content = self._get_used_primary_studies(
+                    prompt_type, runtime_data
+                )
+
             # Replace placeholder in prompt
             prompt_text = prompt_text.replace(placeholder_tag, replacement_content)
             
@@ -186,15 +187,188 @@ class PromptAssembler:
         """Validate that required runtime data is provided."""
         if self.config is None:
             self.load_config()
-            
+
         prompt_config = self.config["prompt_types"][prompt_type]
         required_runtime_placeholders = [
-            p["name"] for p in prompt_config["placeholders"] 
+            p["name"] for p in prompt_config["placeholders"]
             if p["source"] == "runtime"
         ]
-        
+
         missing = [key for key in required_runtime_placeholders if key not in runtime_data]
         if missing:
             raise ValueError(f"Missing required runtime data for {prompt_type}: {missing}")
-            
+
         return True
+
+    def _get_used_primary_studies(self,
+                                  prompt_type: str,
+                                  runtime_data: Dict[str, str]) -> str:
+        """
+        Get used primary studies based on prompt type.
+
+        Args:
+            prompt_type: Type of prompt (parameter or test_statistic)
+            runtime_data: Runtime data containing identifiers
+
+        Returns:
+            Formatted string listing used primary studies
+        """
+        # Determine storage directory based on prompt type
+        if prompt_type == "parameter_extraction":
+            storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
+            parameter_name = runtime_data.get('PARAMETER_INFO', '')
+            # Extract parameter name from PARAMETER_INFO if needed
+            # For now, assume it's passed directly in runtime_data
+            param_name = runtime_data.get('parameter_name', '')
+            context_hash = runtime_data.get('context_hash', '')
+
+            if not param_name or not context_hash:
+                # If we don't have the required info, return default message
+                return "None - this is the first derivation for this parameter"
+
+            return self._get_used_primary_studies_for_parameter(
+                param_name, context_hash, storage_dir
+            )
+
+        elif prompt_type == "test_statistic":
+            storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "test_statistics"
+            test_stat_id = runtime_data.get('test_statistic_id', '')
+            context_hash = runtime_data.get('context_hash', '')
+
+            if not test_stat_id or not context_hash:
+                # If we don't have the required info, return default message
+                return "None - this is the first derivation for this test statistic"
+
+            return self._get_used_primary_studies_for_test_statistic(
+                test_stat_id, context_hash, storage_dir
+            )
+
+        else:
+            # Unknown prompt type, return default message
+            return "None - this is the first derivation"
+
+    def _get_used_primary_studies_for_parameter(self,
+                                                parameter_name: str,
+                                                context_hash: str,
+                                                storage_dir: Path) -> str:
+        """
+        Query existing parameter files with matching name and context_hash
+        to extract primary studies that have already been used.
+
+        Args:
+            parameter_name: Name of the parameter
+            context_hash: Context hash identifying the parameter context
+            storage_dir: Path to parameter storage directory
+
+        Returns:
+            Formatted string listing used primary studies, or empty string if none found
+        """
+        # Find all YAML files matching the parameter name pattern
+        pattern = storage_dir / f"{parameter_name}_*.yaml"
+        matching_files = glob.glob(str(pattern))
+
+        used_studies = []
+
+        for filepath in matching_files:
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = yaml.safe_load(f)
+
+                # Check if context_hash matches
+                file_context_hash = data.get('context_hash', '')
+                if file_context_hash != context_hash:
+                    continue
+
+                # Extract primary_data_sources
+                primary_sources = data.get('primary_data_sources', [])
+                for source in primary_sources:
+                    title = source.get('title', '')
+                    first_author = source.get('first_author', '')
+                    year = source.get('year', '')
+                    doi = source.get('doi', '')
+
+                    if title and first_author and year:
+                        # Format: "Title (First Author et al. Year, DOI: xxx)"
+                        study_str = f"{title} ({first_author} et al. {year}"
+                        if doi and doi.lower() != 'null':
+                            study_str += f", DOI: {doi}"
+                        study_str += ")"
+
+                        # Avoid duplicates
+                        if study_str not in used_studies:
+                            used_studies.append(study_str)
+
+            except Exception as e:
+                # Skip files that can't be parsed
+                print(f"Warning: Could not parse {filepath}: {e}")
+                continue
+
+        if not used_studies:
+            return "None - this is the first derivation for this parameter"
+
+        # Format as bulleted list
+        formatted_list = "\n".join([f"- {study}" for study in used_studies])
+        return formatted_list
+
+    def _get_used_primary_studies_for_test_statistic(self,
+                                                     test_statistic_id: str,
+                                                     context_hash: str,
+                                                     storage_dir: Path) -> str:
+        """
+        Query existing test statistic files with matching ID and context_hash
+        to extract primary studies that have already been used.
+
+        Args:
+            test_statistic_id: ID of the test statistic
+            context_hash: Context hash identifying the test scenario
+            storage_dir: Path to test statistics storage directory
+
+        Returns:
+            Formatted string listing used primary studies, or empty string if none found
+        """
+        # Find all YAML files matching the test statistic ID pattern
+        pattern = storage_dir / f"{test_statistic_id}_*.yaml"
+        matching_files = glob.glob(str(pattern))
+
+        used_studies = []
+
+        for filepath in matching_files:
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = yaml.safe_load(f)
+
+                # Check if context_hash matches
+                file_context_hash = data.get('context_hash', '')
+                if file_context_hash != context_hash:
+                    continue
+
+                # Extract primary_data_sources
+                primary_sources = data.get('primary_data_sources', [])
+                for source in primary_sources:
+                    title = source.get('title', '')
+                    first_author = source.get('first_author', '')
+                    year = source.get('year', '')
+                    doi = source.get('doi', '')
+
+                    if title and first_author and year:
+                        # Format: "Title (First Author et al. Year, DOI: xxx)"
+                        study_str = f"{title} ({first_author} et al. {year}"
+                        if doi and doi.lower() != 'null':
+                            study_str += f", DOI: {doi}"
+                        study_str += ")"
+
+                        # Avoid duplicates
+                        if study_str not in used_studies:
+                            used_studies.append(study_str)
+
+            except Exception as e:
+                # Skip files that can't be parsed
+                print(f"Warning: Could not parse {filepath}: {e}")
+                continue
+
+        if not used_studies:
+            return "None - this is the first derivation for this test statistic"
+
+        # Format as bulleted list
+        formatted_list = "\n".join([f"- {study}" for study in used_studies])
+        return formatted_list

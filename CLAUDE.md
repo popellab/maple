@@ -40,7 +40,173 @@ All extracted metadata is stored in the central `qsp-metadata-storage` repositor
 source venv/bin/activate
 ```
 
-### Workflow Examples
+### Automated Workflow (Recommended)
+
+**Single-command automated extraction** - Handles batch creation, upload, monitoring, validation, unpacking, and git operations:
+
+```bash
+# Parameter extraction (complete pipeline)
+python scripts/run_extraction_workflow.py input.csv --type parameter
+
+# Test statistics
+python scripts/run_extraction_workflow.py test_stats.csv --type test_statistic
+
+# Quick estimates
+python scripts/run_extraction_workflow.py quick.csv --type quick_estimate
+
+# With custom timeout (default: 3600s)
+python scripts/run_extraction_workflow.py input.csv --type parameter --timeout 7200
+
+# Skip validation step
+python scripts/run_extraction_workflow.py input.csv --type parameter --skip-validation
+
+# Create branch locally without pushing
+python scripts/run_extraction_workflow.py input.csv --type parameter --no-push
+```
+
+**What the automated workflow does:**
+1. Creates batch requests
+2. Uploads to OpenAI API
+3. Polls until completion (shows progress)
+4. Runs automatic validation (checklist)
+5. Unpacks validated results to `../qsp-metadata-storage/to-review/`
+6. Creates review branch and pushes to remote
+7. Prints summary with next steps
+
+See `docs/automated_workflow.md` for complete documentation.
+
+### Schema Conversion Workflow
+
+**Automated schema conversion** - Scans for outdated schemas and converts them automatically:
+
+```bash
+# Scan for outdated files (dry run)
+python scripts/run_schema_conversion.py --dry-run
+
+# Convert all outdated files
+python scripts/run_schema_conversion.py
+
+# Convert only parameters
+python scripts/run_schema_conversion.py --only parameter
+
+# Convert only test statistics
+python scripts/run_schema_conversion.py --only test_statistic
+```
+
+**Latest schema versions:**
+- Parameters: v3 (templates/parameter_metadata_template.yaml)
+- Test Statistics: v2 (templates/test_statistic_template.yaml)
+- Quick Estimates: v1 (templates/quick_estimate_template.yaml)
+
+**Note:** Only the latest templates are tracked in git. Old templates are retrieved from git history when needed for schema conversion.
+
+The workflow automatically:
+1. Scans metadata directories for files with outdated schema_version fields
+2. Groups files by schema version transition (e.g., v1 → v3)
+3. Creates batch requests for schema conversion
+4. Monitors conversion progress
+5. Unpacks converted files to to-review/ for verification
+6. Creates review branch with converted files
+
+### Validation Fix Workflow
+
+**Automated validation fixing** - Sends failed YAMLs back to OpenAI for correction:
+
+```bash
+# Run validation first
+python scripts/validate/run_all_validations.py test_statistics
+
+# If failures detected, run fix workflow (automatic prompt, or run manually)
+python scripts/run_validation_fix.py test_statistics --immediate
+
+# For parameter estimates
+python scripts/validate/run_all_validations.py parameter_estimates
+python scripts/run_validation_fix.py parameter_estimates --immediate
+
+# With custom timeout for Batch API (default: 3600s)
+python scripts/run_validation_fix.py test_statistics --timeout 7200
+```
+
+**What the validation fix workflow does:**
+1. Loads validation JSON reports and aggregates errors by file
+2. Creates fix batch requests with YAMLs + error lists + template
+3. Uploads to OpenAI API
+4. Monitors until completion
+5. Unpacks fixed YAMLs (overwrites originals in to-review/)
+6. Prompts to re-run validation
+
+**Important notes:**
+- Original files are backed up in git history before overwriting
+- Single fix attempt per run (prevents wasting API calls on unfixable errors)
+- After fixes complete, re-run `run_all_validations.py` to verify
+- Manual review recommended for persistent failures
+- **Use `--immediate` flag for faster processing** (good for testing, batch API can take up to 24 hours)
+
+**Validation types that can be fixed:**
+- Schema compliance (missing fields, wrong types)
+- Source references (missing source_ref fields)
+- Code execution (debugging R/Python code)
+- Text snippets (verifying value_snippet contains values)
+- DOI resolution (fixing malformed DOIs)
+
+### Validation Suite
+
+The automated validation suite (`run_all_validations.py`) includes 7 validators:
+
+1. **Schema Compliance** - YAML structure matches template
+2. **Code Execution** - R/Python code runs without errors
+3. **Text Snippets** - Snippets contain declared values
+4. **Source References** - All source_refs point to defined sources
+5. **DOI Validity** - DOIs resolve and metadata matches
+6. **Value Consistency** - Values consistent across related extractions
+7. **Manual Snippet Source Verification** - Interactive verification of snippets in papers
+
+**Manual Snippet Source Verification**:
+- Generates report with DOI links and snippets grouped by source
+- Prints report to console during validation
+- Waits for user to manually verify snippets in papers (y/n prompt)
+- User clicks DOI links and uses Ctrl+F/Cmd+F to search for snippets
+- Writes validation results to `snippet_sources.json`
+- If verified, adds `manual_snippet_source_verification` tag to all YAML files
+
+**Validation Tagging**:
+After all validation checks complete, the suite automatically:
+- Tags all YAML files with passed validation checks
+- Appends `validation` section to end of each file (preserves formatting)
+- Includes list of passed checks and timestamp
+- Example tag: `template_compliance_validation`, `code_execution_testing`
+
+```yaml
+# Validation metadata (added to end of each file)
+validation:
+  tags:
+    - template_compliance_validation
+    - code_execution_testing
+    - manual_snippet_source_verification
+  validated_at: '2025-11-03T10:30:00'
+```
+
+**Optional: Automated Snippet Verification**:
+For automated verification (requires email and optionally institutional access):
+```bash
+# Run standalone automated verifier
+python scripts/validate/check_snippet_sources.py \
+  ../qsp-metadata-storage/parameter_estimates \
+  output/snippet_sources.json \
+  --email your.email@jhu.edu \
+  --debug
+
+# Configure in .env for institutional access
+VALIDATION_EMAIL=your.email@jhu.edu
+HOPKINS_PROXY_URL=https://proxy1.library.jhu.edu/login?url=
+HOPKINS_PROXY_COOKIES={"session": "xxx", "auth_token": "yyy"}
+```
+
+The automated verifier fetches full text via Unpaywall API, Europe PMC, or institutional proxy and uses fuzzy matching to verify snippets appear in papers. Coverage: ~50-60% of papers (higher with proxy).
+
+### Manual Workflow (Legacy)
+
+For fine-grained control, you can run individual steps:
 
 **Parameter Extraction:**
 ```bash
@@ -48,7 +214,7 @@ python scripts/prepare/create_parameter_batch.py input.csv
 python scripts/run/upload_batch.py batch_jobs/parameter_requests.jsonl
 python scripts/run/batch_monitor.py batch_<id>
 python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
-  ../qsp-metadata-storage/parameter_estimates input.csv "" templates/parameter_metadata_template.yaml
+  ../qsp-metadata-storage/parameter_estimates input.csv "" templates/parameter_metadata_template_v3.yaml
 ```
 
 **Quick Estimates:**
@@ -69,7 +235,7 @@ python scripts/prepare/create_test_statistic_batch.py input.csv
 python scripts/run/upload_batch.py batch_jobs/test_statistic_requests.jsonl
 python scripts/run/batch_monitor.py batch_<id>
 python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
-  ../qsp-metadata-storage/test_statistics input.csv "" templates/test_statistic_template.yaml
+  ../qsp-metadata-storage/test_statistics input.csv "" templates/test_statistic_template_v2.yaml
 # Aggregate distributions
 python ../qspio-pdac/metadata/aggregate_test_statistics.py input.csv \
   ../qsp-metadata-storage/test_statistics ../qsp-metadata-storage/scratch/
@@ -91,6 +257,10 @@ Scripts are organized by workflow stage:
 - `upload_immediate.py`: Process via Responses API (faster feedback, testing)
 - `batch_monitor.py`: Monitor batch progress and download results
 
+**Automated Workflows**:
+- `run_extraction_workflow.py`: Complete automated extraction pipeline (create → upload → monitor → validate → unpack → git commit/push)
+- `run_schema_conversion.py`: Automated schema conversion for outdated metadata files
+
 **Process** (`scripts/process/`): Extract results
 - `unpack_results.py`: Extract JSON from batch results, convert to YAML
 - `unpack_single_json.py`: Process individual JSON responses
@@ -98,17 +268,14 @@ Scripts are organized by workflow stage:
 **Lib** (`scripts/lib/`): Core libraries
 - `batch_creator.py`: Base classes for batch creation
 - `parameter_utils.py`: Parameter processing utilities
+- `workflow_orchestrator.py`: Automated workflow orchestration
 - `prompt_assembly.py`: Modular prompt assembly engine
+- `schema_version_detector.py`: Schema version detection and file scanning
 
 **Debug** (`scripts/debug/`): Debug and inspection tools
 - `inspect_jsonl.py`: Examine batch request/response files
 - `extract_prompt.py`: Extract prompts from batch requests
 - `pretty_print_csv.py`: Format CSV output
-
-**MATLAB** (`scripts/matlab/`): MATLAB integration
-- `compute_test_statistic_from_yaml.m`: Test statistic computation
-- `generate_calibration_target_from_yaml.m`: Calibration target generation
-- `simple_test_harness.m`: Simple test harness
 
 **Manuscript** (`docs-manuscript/`): Paper collaboration materials (gitignored)
 - `COLLABORATOR_ONBOARDING.md`: Comprehensive onboarding guide for paper collaborators

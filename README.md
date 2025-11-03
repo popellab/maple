@@ -52,10 +52,6 @@ All extracted metadata is stored in the central `qsp-metadata-storage` repositor
 │   │   ├── batch_creator.py
 │   │   ├── parameter_utils.py
 │   │   └── prompt_assembly.py
-│   ├── matlab/               # MATLAB integration scripts
-│   │   ├── compute_test_statistic_from_yaml.m
-│   │   ├── generate_calibration_target_from_yaml.m
-│   │   └── simple_test_harness.m
 │   ├── debug/                # Debug and inspection tools
 │   │   ├── inspect_jsonl.py
 │   │   ├── extract_prompt.py
@@ -194,3 +190,101 @@ python scripts/prepare/create_pooling_metadata_batch.py ../qsp-metadata-storage/
 ```
 
 This supports the three-tier QSP architecture where individual projects reference parameters from the central storage rather than storing duplicate copies.
+
+## Validation Suite
+
+The repository includes a comprehensive validation suite (`scripts/validate/run_all_validations.py`) that ensures metadata quality through 7 automated and interactive checks:
+
+### Validation Checks
+
+1. **Schema Compliance** - Verifies YAML structure matches template specification
+2. **Code Execution** - Tests that R/Python code runs without errors and produces expected outputs
+3. **Text Snippets** - Validates that value_snippet and units_snippet contain declared values
+4. **Source References** - Ensures all source_ref fields point to defined sources
+5. **DOI Validity** - Verifies DOIs resolve correctly and metadata matches
+6. **Value Consistency** - Checks values are consistent across related extractions
+7. **Manual Snippet Source Verification** - Interactive verification that snippets appear in papers
+
+### Running Validation
+
+```bash
+# Run complete validation suite
+python scripts/validate/run_all_validations.py test_statistics
+python scripts/validate/run_all_validations.py parameter_estimates
+
+# Results written to output/validation_results/
+# - Individual JSON reports for each validator
+# - master_validation_summary.json with aggregate results
+# - snippet_sources.json with verification status
+```
+
+### Manual Snippet Verification
+
+During validation, the suite generates a report listing all sources with:
+- DOI links (clickable in terminal)
+- Unique text snippets to verify
+- Input names where snippets are used
+
+**Workflow:**
+1. Report prints to console during validation
+2. User clicks DOI links to open papers
+3. User searches for snippets in papers using Ctrl+F/Cmd+F
+4. User confirms verification (y/n) when prompted
+5. Suite tags files if verification passes
+
+### Validation Tagging
+
+After all checks complete, the suite automatically tags YAML files with validation results:
+
+```yaml
+# Validation metadata (appended to end of each file)
+validation:
+  tags:
+    - template_compliance_validation
+    - code_execution_testing
+    - manual_snippet_source_verification
+  validated_at: '2025-11-03T10:30:00'
+```
+
+Features:
+- Preserves original file formatting and comments
+- Only tags files for passed validation checks
+- Enables tracking of validation status over time
+- Supports re-validation (replaces existing tags)
+
+### Validation Fix Workflow
+
+Failed validations can be automatically corrected by re-submitting to OpenAI:
+
+```bash
+# Integrated into validation suite (prompts after failures)
+python scripts/run_validation_fix.py test_statistics --immediate
+
+# Workflow:
+# 1. Loads validation errors from JSON reports
+# 2. Creates fix batch requests (YAML + errors + template)
+# 3. Submits to OpenAI API for correction
+# 4. Unpacks fixed YAMLs (overwrites originals)
+# 5. Prompts to re-run validation
+```
+
+### Optional: Automated Snippet Verification
+
+For fully automated snippet verification (instead of manual):
+
+```bash
+# Configure environment variables in .env
+VALIDATION_EMAIL=your.email@jhu.edu
+
+# Optional: Institutional proxy for paywalled papers
+HOPKINS_PROXY_URL=https://proxy1.library.jhu.edu/login?url=
+HOPKINS_PROXY_COOKIES={"session": "xxx", "auth_token": "yyy"}
+
+# Run standalone automated verifier
+python scripts/validate/check_snippet_sources.py \
+  ../qsp-metadata-storage/parameter_estimates \
+  output/snippet_sources.json \
+  --email your.email@jhu.edu
+```
+
+The automated verifier fetches full text from Unpaywall API, Europe PMC, or institutional proxy and uses fuzzy matching to verify snippets. Coverage: ~50-60% of papers.

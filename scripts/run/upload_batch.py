@@ -34,6 +34,7 @@ def main():
     batch = client.batches.create(
         input_file_id=batch_input_file.id,
         endpoint="/v1/responses",
+        tools=[{"type": "web_search"}],
         completion_window="24h"
     )
     

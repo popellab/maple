@@ -1,181 +1,197 @@
-# Goal
+# Task
 
-You are a research assistant helping to extract and formalize test statistics for quantitative systems pharmacology (QSP) model validation from scientific literature.
-Your task is to create **comprehensive, reproducible test statistic definitions** that quantify expected distributions of model-derived quantities based on experimental literature.
-
-{{EXISTING_TEST_STATISTICS}}
-
-For this test statistic, you must:
+Extract test statistics for QSP model validation from scientific literature. You'll find papers with experimental data, extract measurements, and create reproducible statistical distributions with uncertainty quantification.
 
 ---
 
-## Test Statistic Definition & Quantification
-1. **Mathematical formalization:** Create a precise mathematical definition of how the test statistic is computed from the specified model output formula.
-2. **Biological interpretation:** Explain what the test statistic measures biologically and why it's relevant for model validation.
-3. **Literature data extraction:** Identify and extract quantitative measurements from the literature that can be transformed into the expected distribution for the exact model species formula provided.
+# Finding Sources
+
+**Most test statistics are DERIVED from underlying measurements, not directly reported.**
+
+For this test statistic, find 1-2 real published papers that report:
+- Raw measurements you can use to compute the test statistic (e.g., tumor volumes, cell counts, time points)
+- Sample sizes and variability information for uncertainty quantification
+
+**Common derivation patterns:**
+- Tumor doubling time → Tumor volumes at multiple timepoints → Fit exponential growth
+- Cell population ratios → Individual cell counts for each population → Compute ratio with uncertainty
+- Response rates → Number of responders + total sample size → Binomial uncertainty
+- Fold changes → Baseline + endpoint values → Compute change with propagated uncertainty
+
+**Source requirements:**
+- Use REAL DOIs that resolve at https://doi.org/ (I will validate these)
+- Verify title, first author, and year match the DOI metadata
+- Extract verbatim text snippets showing the values you use
+- Find NEW sources - avoid studies already used for this test statistic:
+
+{{USED_PRIMARY_STUDIES}}
 
 ---
 
-## Model Integration
-4. **Model output computation:** Provide MATLAB code that transforms pre-extracted model species vectors into the test statistic. **CRITICAL: The test statistic must be computed from the exact model species provided, not from proxy measures.** The test harness handles SimBiology data extraction and provides named vectors.
-5. **Code structure requirements:** Write a `compute_test_statistic` function that takes `time` and relevant species vectors as inputs, and returns the test statistic value. Focus on the core transformation logic.
-6. **Scenario awareness:** Use the SCENARIO_CONTEXT provided below to understand the experimental context (drugs, dosing, patient parameters) that this test statistic applies to. This context is for your understanding only - do not generate a structured scenario object.
+# What You'll Generate
+
+1. **model_output** - Python function computing test statistic from model simulation
+2. **test_statistic_definition** - Mathematical definition
+3. **study_overview** - What's measured and why (1-2 sentences)
+4. **study_design** - How it was measured (1-2 sentences)
+5. **test_statistic_estimates**:
+   - `inputs` - Extracted values with source references and verbatim text snippets
+   - `derivation_code` - Python function deriving distribution with bootstrap/Monte Carlo
+   - `mean`, `variance`, `ci95`, `units` - Statistical outputs
+   - `key_assumptions` - 3-5 critical assumptions as enumerated dict
+6. **derivation_explanation** - Step-by-step explanation referencing assumptions
+7. **key_study_limitations** - Critical limitations affecting reliability
+8. **primary_data_sources** - Papers with data (real DOIs required)
+9. **secondary_data_sources** - Reference values (doi_or_url field)
+10. **methodological_sources** - Formulas/methods (doi_or_url field)
+11. **validation_weights** - Quality scores for 7 dimensions (see rubrics below)
 
 ---
 
-## Statistical Distribution Characterization
-7. **Uncertainty quantification:** Generate Monte Carlo samples (≥2000) using bootstrap/resampling methods that capture all sources of experimental uncertainty. **The derivation code must transform literature data (e.g., response rates, imaging measurements) into the expected distribution for the exact model species formula.**
-8. **Distribution parameters:** Calculate mean, variance, and 95% confidence interval from the resampled data for the model species, not proxy measures.
-9. **Robust estimation:** Handle measurement error, biological variability, and methodological uncertainties appropriately while maintaining focus on the target model output.
-10. **Code explanation:** Provide a step-by-step explanation of the R bootstrap methodology that is specific to your dataset and statistical approach.
+# Technical Specs
+
+## Model Output Code
+```python
+import numpy as np
+
+def compute_test_statistic(time, species_dict):
+    """Compute test statistic from model simulation."""
+    # Extract species, interpolate, compute metric
+    return test_statistic_value  # float
+```
+
+## Derivation Code
+```python
+import numpy as np
+
+def derive_distribution(inputs):
+    """Derive expected distribution from literature data."""
+    # Extract input values
+    # Bootstrap/Monte Carlo for uncertainty
+    # Propagate through computations
+    return {
+        'mean_stat': float,
+        'variance_stat': float,
+        'ci95_stat': [lower, upper]
+    }
+```
+
+## Inputs Structure
+Each input needs:
+- `name`, `value`, `units`, `description`
+- `source_ref` - References a source below
+- `value_table_or_section` - Where the value appears
+- `value_snippet` - VERBATIM quote showing the value
+- `units_table_or_section` - Where units are stated
+- `units_snippet` - VERBATIM quote showing units
+
+## Sources Structure
+
+**Primary (real DOIs required):**
+```json
+{
+  "source_tag": "SMITH2020",
+  "title": "Full paper title matching DOI metadata",
+  "first_author": "Smith",
+  "year": 2020,
+  "doi": "10.1234/journal.2020.12345"
+}
+```
+
+**Secondary/Methodological (doi_or_url field):**
+Same structure but use `doi_or_url` instead of `doi` (can be DOI, URL, or null)
 
 ---
 
-## Experimental Documentation
-10. **Study overview:** Provide a concise narrative explaining the measurement approach, biological rationale, and how the test statistic was derived.
-11. **Technical details:** Document essential experimental details (measurement method, study design, sample size, data processing, key assumptions).
-12. **Validation context:** Assess the relevance and quality of the literature data for model validation using the provided rubric.
+# Validation Rubrics
+
+Assign weights [0-1] with brief justification:
+
+{{SOURCE_AND_VALIDATION_RUBRICS}}
 
 ---
 
-## Literature Source Verification
-13. **Citation accuracy:** Verify all citations come from real, accessible publications with correct DOI/URL information.
-14. **Data location verification:** Confirm figure/table references contain the claimed data at specified locations.
-15. **Source attribution:** Reference all sources consistently throughout with specific text snippets and locations.
+# Context
 
----
+**Model:** {{MODEL_CONTEXT}}
 
-## Quality & Reproducibility
-16. **Statistical validity:** Ensure the uncertainty quantification approach is appropriate for the data type and experimental design.
-17. **Biological plausibility:** Verify that test statistic values and distributions align with known biological ranges.
-18. **Methodological transparency:** Document all assumptions, transformations, and analytical choices clearly.
+**Scenario:** {{SCENARIO_CONTEXT}}
 
----
-
-## Template Structure
-Use the provided test statistic template structure with these key sections:
-- `test_statistic_definition`: Mathematical definition of the test statistic computation
-- `model_output`: MATLAB code with `compute_test_statistic` function that transforms model species vectors into the test statistic value
-- `expected_distribution`: Statistical parameters derived from literature
-- `derivation_code_r`: Bootstrap/resampling code for uncertainty quantification
-- `validation_weights`: Quality assessment using standardized rubrics
-- `data_sources`: Detailed citation information with specific data extraction tracking
-- `methodological_sources`: Background sources for methods, formulas, or context
-
-**Note:** The scenario context (drugs, dosing, patient parameters) is provided in SCENARIO_CONTEXT below for your understanding, but you do not need to generate a structured scenario object.
-
----
-
-## Provided Context
-
-### Model Information
-{{MODEL_CONTEXT}}
-
-### Scenario Context
-{{SCENARIO_CONTEXT}}
-
-### Required Species with Units
-The test statistic should be computed using these model species with their corresponding units:
-
+**Available model species:**
 {{REQUIRED_SPECIES_WITH_UNITS}}
 
-**IMPORTANT:** These units must be used consistently in both your MATLAB `compute_test_statistic` function and your R derivation code. Ensure that your test statistic calculations, literature data transformations, and final results all use appropriate unit conversions to match these model species units.
-
-### Derived Species Description
+**Test statistic description:**
 {{DERIVED_SPECIES_DESCRIPTION}}
 
-### Template
-{{TEMPLATE}}
-
-### Examples
-{{EXAMPLES}}
-
-Fill out the YAML test statistic template for the specified biological expectation and experimental context.
+**Template:** {{TEMPLATE}}
 
 ---
 
-## CRITICAL REQUIREMENTS
+# Response Format
 
-**Species Formula Compliance:** The test statistic MUST be computed from the exact model species listed in `{{REQUIRED_SPECIES}}`. Do NOT use proxy measures or clinical endpoints as substitutes. If the literature data provides proxy measures (like ORR, progression-free survival, etc.), your derivation code must transform these into the expected distribution for the actual model output described in `{{DERIVED_SPECIES_DESCRIPTION}}`.
-
-**Example Transformation Approach:**
-- If required species is `V_T.TumorVolume` and literature provides ORR data, derive the expected tumor volume reduction distribution that would produce the observed response rates
-- If required species includes `V_T.T_eff,V_T.T_reg` and literature provides immune activation markers, derive the expected T cell ratio distribution
-- The final test statistic samples in `mc_draws` must represent the derived species, not the literature proxy measure
-
-**Code Implementation Requirements:**
-- Write a `compute_test_statistic` function that takes `time` vector and named species vectors as inputs
-- **CRITICAL**: Function inputs will be named exactly after the species in `{{REQUIRED_SPECIES}}` (e.g., if required_species is `V_T.TumorVolume,V_T.T_eff`, your function signature should be `compute_test_statistic(time, V_T_TumorVolume, V_T_T_eff)`)
-- **Variable naming**: Convert dots to underscores in species names for MATLAB variables (e.g., `V_T.TumorVolume` becomes `V_T_TumorVolume`)
-- Use interpolation methods (e.g., `interp1`) when evaluating at specific timepoints
-- Document function inputs, outputs, and transformation logic clearly
-- Focus on the core mathematical transformation from species vectors to test statistic value
-
----
-
-**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON):
+Return JSON with all 11 fields:
 
 ```json
 {
-  "test_statistic_definition": "Mathematical definition of the test statistic...",
   "model_output": {
-    "code": "function test_statistic = compute_test_statistic(time, V_T_C1)\n  % Your MATLAB code here\nend"
+    "code": "import numpy as np\\n\\ndef compute_test_statistic(time, species_dict):\\n    ..."
   },
-  "study_overview": "...",
-  "technical_details": "...",
-  "expected_distribution": {
-    "mean": 0.0,
-    "variance": 0.0,
-    "ci95": [0.0, 0.0],
-    "units": "..."
+  "test_statistic_definition": "Math definition...",
+  "study_overview": "What and why (1-2 sentences)",
+  "study_design": "How measured (1-2 sentences)",
+  "test_statistic_estimates": {
+    "inputs": [
+      {
+        "name": "baseline_volume",
+        "value": 100.0,
+        "units": "mm³",
+        "description": "Mean baseline tumor volume",
+        "source_ref": "JONES2021",
+        "value_table_or_section": "Table 1",
+        "value_snippet": "baseline tumor volumes (mean 100 mm³, SD 15 mm³)",
+        "units_table_or_section": "Table 1",
+        "units_snippet": "volumes measured in mm³"
+      }
+    ],
+    "derivation_code": "import numpy as np\\n\\ndef derive_distribution(inputs):\\n    ...",
+    "mean": 0.123,
+    "variance": 0.001,
+    "ci95": [0.1, 0.15],
+    "units": "days",
+    "key_assumptions": {
+      "1": "Exponential growth model applies during measured timeframe",
+      "2": "Bootstrap adequately captures patient variability"
+    }
   },
-  "derivation_explanation": "...",
-  "derivation_code_r": "...",
+  "derivation_explanation": "**Step 1:** Extract volumes... **Step 2:** Fit growth... ASSUMPTION 1: ...",
+  "key_study_limitations": "- **Small sample:** n=30 limits CI precision\\n- **Single institution:** ...",
+  "primary_data_sources": [
+    {
+      "source_tag": "JONES2021",
+      "title": "Full exact title from paper",
+      "first_author": "Jones",
+      "year": 2021,
+      "doi": "10.1234/journal.2021.56789"
+    }
+  ],
+  "secondary_data_sources": [],
+  "methodological_sources": [],
   "validation_weights": {
-    "species_match": {"value": 0.0, "justification": "..."},
-    "system_match": {"value": 0.0, "justification": "..."},
-    "overall_confidence": {"value": 0.0, "justification": "..."},
-    "indication_match": {"value": 0.0, "justification": "..."},
-    "regimen_match": {"value": 0.0, "justification": "..."},
-    "biomarker_population_match": {"value": 0.0, "justification": "..."},
-    "stage_burden_match": {"value": 0.0, "justification": "..."}
-  },
-  "key_study_limitations": "...",
-  "data_sources": {
-    "PRIMARY_STUDY": {
-      "citation": "Full citation",
-      "doi": "DOI or NA",
-      "data_extracted": [
-        {
-          "description": "What data was extracted (e.g., ORR at 8 weeks)",
-          "value": 0.35,
-          "units": "proportion",
-          "figure_or_table": "Figure 2A",
-          "text_snippet": "Exact quote from paper",
-          "weight_in_synthesis": 0.6
-        }
-      ]
-    }
-  },
-  "methodological_sources": {
-    "METHOD_REF": {
-      "citation": "Full citation",
-      "doi": "DOI or NA",
-      "used_for": "ORR to tumor volume conversion",
-      "formula_or_method": "V = V0 * (1 - ORR * 0.7)",
-      "figure_or_table": "Methods section",
-      "text_snippet": "Relevant quote"
-    }
+    "species_match": {"value": 1.0, "justification": "Human, rubric=1.0"},
+    "system_match": {"value": 1.0, "justification": "In vivo, rubric=1.0"},
+    "overall_confidence": {"value": 0.85, "justification": "Good design, rubric=0.85"},
+    "indication_match": {"value": 1.0, "justification": "Exact match, rubric=1.0"},
+    "regimen_match": {"value": 0.85, "justification": "Same drug minor diffs, rubric=0.85"},
+    "biomarker_population_match": {"value": 0.65, "justification": "Mixed population, rubric=0.65"},
+    "stage_burden_match": {"value": 1.0, "justification": "Same stage, rubric=1.0"}
   }
 }
 ```
 
-Requirements for JSON response:
-- Wrap your entire response in ```json code block tags
-- Use proper JSON syntax (all strings quoted, proper escaping)
-- Numeric values should be actual numbers, not strings
-- Use `\n` for line breaks in multi-line strings
-- Include ALL sections from the template: test_statistic_definition, model_output, study_overview, technical_details, expected_distribution, derivation_explanation, derivation_code_r, validation_weights, key_study_limitations, data_sources, methodological_sources
-- For model_output: Provide MATLAB code that computes the test statistic from the required species vectors (use SCENARIO_CONTEXT above for context on what scenario to consider)
-- For data_sources: Use detailed extraction tracking with description, value, units, figure_or_table, text_snippet, and weight_in_synthesis for each data point
-- For methodological_sources: Include used_for, formula_or_method (if applicable), figure_or_table, and text_snippet
+**Key points:**
+- Wrap in ```json block
+- Use `\n` for line breaks, `\n\n` for paragraphs
+- Raw Python (no ```python wrappers)
+- Numbers as numbers not strings
+- Text snippets must be verbatim quotes
+- Every DOI will be validated - use real DOIs only

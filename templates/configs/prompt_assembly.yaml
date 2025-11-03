@@ -5,9 +5,13 @@ prompt_types:
     examples:
       - templates/examples/k_ECM_fib_sec_example.yaml
     placeholders:
-      - name: EXISTING_STUDIES
-        source: runtime
-        description: "Information about existing studies already extracted for this parameter"
+      - name: USED_PRIMARY_STUDIES
+        source: used_primary_studies
+        description: "List of primary studies already used for this parameter to prevent duplicates"
+      - name: SOURCE_AND_VALIDATION_RUBRICS
+        source: shared_file
+        path: prompts/shared/source_and_validation_rubrics.md
+        description: "Insert shared rubrics and source rules"
       - name: TEMPLATE
         source: template_file
         description: "Insert the parameter metadata template"
@@ -74,9 +78,6 @@ prompt_types:
     base_prompt: prompts/quick_parameter_estimation_prompt.md
     template: templates/quick_estimate_template.yaml
     placeholders:
-      - name: EXISTING_STUDIES
-        source: runtime
-        description: "Information about existing studies already extracted for this parameter"
       - name: TEMPLATE
         source: template_file
         description: "Insert the quick estimate template"
@@ -93,19 +94,17 @@ prompt_types:
   test_statistic:
     base_prompt: prompts/test_statistic_prompt.md
     template: templates/test_statistic_template.yaml
-    examples:
-      - templates/examples/test_statistic_example.yaml
-      - templates/examples/test_statistic_derived_example.yaml
     placeholders:
-      - name: EXISTING_TEST_STATISTICS
-        source: runtime
-        description: "Information about existing test statistics for similar biological questions"
+      - name: USED_PRIMARY_STUDIES
+        source: used_primary_studies
+        description: "List of primary studies already used for this test statistic to prevent duplicates"
+      - name: SOURCE_AND_VALIDATION_RUBRICS
+        source: shared_file
+        path: prompts/shared/source_and_validation_rubrics.md
+        description: "Insert shared rubrics and source rules"
       - name: TEMPLATE
         source: template_file
         description: "Insert the test statistic template"
-      - name: EXAMPLES
-        source: example_files
-        description: "Insert example filled test statistic templates"
       - name: MODEL_CONTEXT
         source: runtime
         description: "Model structure and relevant variables for test statistic computation"
@@ -124,13 +123,21 @@ placeholder_sources:
   template_file:
     format: "yaml_code_block"  # Wrap in ```yaml ... ```
     prefix: "Below is the metadata template for your reference:\n\n"
-    
+
   example_files:
     format: "yaml_code_block"  # Wrap in ```yaml ... ```
     prefix: "A complete example of well-constructed metadata:\n\n"
-    
+
   runtime:
     format: "raw"  # Insert as-is
+    prefix: ""
+
+  shared_file:
+    format: "raw"  # Insert as-is
+    prefix: ""
+
+  used_primary_studies:
+    format: "raw"  # Insert as-is (already formatted as bulleted list)
     prefix: ""
 
 # Global settings
