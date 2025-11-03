@@ -11,10 +11,8 @@ Runs:
 6. Value consistency checking (vs legacy and same-context derivations)
 
 Usage:
-    python scripts/validate/run_all_validations.py \\
-        ../qsp-metadata-storage/parameter_estimates \\
-        templates/parameter_metadata_template.yaml \\
-        output/validation_results/
+    python scripts/validate/run_all_validations.py test_statistics
+    python scripts/validate/run_all_validations.py parameter_estimates
 """
 import argparse
 import sys
@@ -23,6 +21,10 @@ from pathlib import Path
 import subprocess
 import json
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 def run_validation(script_name: str, args: list, description: str) -> dict:
     """
@@ -91,32 +93,50 @@ def load_validation_summary(json_path: str) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run all core validation checks")
-    parser.add_argument(
-        "data_dir",
-        help="Directory with parameter YAML files (e.g., ../qsp-metadata-storage/parameter_estimates)"
+    parser = argparse.ArgumentParser(
+        description="Run all validation checks on metadata files",
+        epilog="""
+Examples:
+    python scripts/validate/run_all_validations.py test_statistics
+    python scripts/validate/run_all_validations.py parameter_estimates
+        """
     )
     parser.add_argument(
-        "template",
-        help="Path to template YAML (e.g., templates/parameter_metadata_template_v2.yaml)"
-    )
-    parser.add_argument(
-        "output_dir",
-        help="Output directory for validation results"
+        "workflow_type",
+        choices=["parameter_estimates", "test_statistics"],
+        help="Type of workflow to validate"
     )
 
     args = parser.parse_args()
 
+    # Determine paths based on workflow type
+    if args.workflow_type == "test_statistics":
+        data_dir = Path("../qsp-metadata-storage/to-review/test_statistics")
+        template = Path("templates/test_statistic_template.yaml")
+    else:  # parameter_estimates
+        data_dir = Path("../qsp-metadata-storage/to-review/parameter_estimates")
+        template = Path("templates/parameter_metadata_template.yaml")
+
+    output_dir = Path("output/validation_results")
+
     # Create output directory
-    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Validate paths exist
+    if not data_dir.exists():
+        print(f"Error: Data directory not found: {data_dir}")
+        sys.exit(1)
+
+    if not template.exists():
+        print(f"Error: Template not found: {template}")
+        sys.exit(1)
 
     print(f"\n{'#'*60}")
     print("# CORE AUTOMATED VALIDATION SUITE")
     print(f"# Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"# Data directory: {args.data_dir}")
-    print(f"# Template: {args.template}")
-    print(f"# Output directory: {args.output_dir}")
+    print(f"# Data directory: {data_dir}")
+    print(f"# Template: {template}")
+    print(f"# Output directory: {output_dir}")
     print(f"{'#'*60}")
 
     all_results = []
@@ -124,56 +144,111 @@ def main():
     # 1. Template compliance
     result = run_validation(
         'check_schema_compliance.py',
-        [args.data_dir, args.template, str(output_dir / 'schema_compliance.json')],
+        [str(data_dir), str(template), str(output_dir / 'schema_compliance.json')],
         "Template Compliance Validation"
     )
     all_results.append(result)
     print(result['stdout'])
+    if not result['success'] and result.get('stderr'):
+        print("ERRORS:", file=sys.stderr)
+        print(result['stderr'], file=sys.stderr)
 
     # 2. Code execution
     result = run_validation(
         'test_code_execution.py',
-        [args.data_dir, str(output_dir / 'code_execution.json')],
+        [str(data_dir), str(output_dir / 'code_execution.json')],
         "Code Execution Testing"
     )
     all_results.append(result)
     print(result['stdout'])
+    if not result['success'] and result.get('stderr'):
+        print("ERRORS:", file=sys.stderr)
+        print(result['stderr'], file=sys.stderr)
 
     # 3. Text snippet validation
     result = run_validation(
         'check_text_snippets.py',
-        [args.data_dir, str(output_dir / 'text_snippets.json')],
+        [str(data_dir), str(output_dir / 'text_snippets.json')],
         "Text Snippet Validation"
     )
     all_results.append(result)
     print(result['stdout'])
+    if not result['success'] and result.get('stderr'):
+        print("ERRORS:", file=sys.stderr)
+        print(result['stderr'], file=sys.stderr)
 
     # 4. Source reference validation
     result = run_validation(
         'check_source_references.py',
-        [args.data_dir, str(output_dir / 'source_references.json')],
+        [str(data_dir), str(output_dir / 'source_references.json')],
         "Source Reference Validation"
     )
     all_results.append(result)
     print(result['stdout'])
+    if not result['success'] and result.get('stderr'):
+        print("ERRORS:", file=sys.stderr)
+        print(result['stderr'], file=sys.stderr)
 
     # 5. DOI resolution
     result = run_validation(
         'check_doi_validity.py',
-        [args.data_dir, str(output_dir / 'doi_validity.json')],
+        [str(data_dir), str(output_dir / 'doi_validity.json')],
         "DOI Resolution Validation"
     )
     all_results.append(result)
     print(result['stdout'])
+    if not result['success'] and result.get('stderr'):
+        print("ERRORS:", file=sys.stderr)
+        print(result['stderr'], file=sys.stderr)
 
     # 6. Value consistency
     result = run_validation(
         'check_value_consistency.py',
-        [args.data_dir, str(output_dir / 'value_consistency.json')],
+        [str(data_dir), str(output_dir / 'value_consistency.json')],
         "Value Consistency Checking"
     )
     all_results.append(result)
     print(result['stdout'])
+    if not result['success'] and result.get('stderr'):
+        print("ERRORS:", file=sys.stderr)
+        print(result['stderr'], file=sys.stderr)
+
+    # 7. Manual snippet source verification (interactive - run directly)
+    print(f"\n{'='*60}")
+    print("Running: Manual Snippet Source Verification")
+    print(f"{'='*60}")
+
+    script_path = os.path.join(os.path.dirname(__file__), 'check_snippet_sources_manual_verify.py')
+    cmd = ['python', script_path, str(data_dir), str(output_dir / 'snippet_sources.json')]
+
+    try:
+        # Run without capturing output so user can interact
+        result = subprocess.run(cmd, timeout=600)  # 10 min timeout
+
+        success = result.returncode == 0
+        all_results.append({
+            'validation': 'Manual Snippet Source Verification',
+            'script': 'check_snippet_sources_manual_verify.py',
+            'success': success,
+            'returncode': result.returncode
+        })
+
+    except subprocess.TimeoutExpired:
+        print("ERROR: Manual verification timed out (>10 min)", file=sys.stderr)
+        all_results.append({
+            'validation': 'Manual Snippet Source Verification',
+            'script': 'check_snippet_sources_manual_verify.py',
+            'success': False,
+            'error': 'Timeout'
+        })
+    except Exception as e:
+        print(f"ERROR: {str(e)}", file=sys.stderr)
+        all_results.append({
+            'validation': 'Manual Snippet Source Verification',
+            'script': 'check_snippet_sources_manual_verify.py',
+            'success': False,
+            'error': str(e)
+        })
 
     # Generate master summary
     print(f"\n{'='*60}")
@@ -182,8 +257,8 @@ def main():
 
     master_summary = {
         'timestamp': datetime.now().isoformat(),
-        'data_dir': args.data_dir,
-        'template': args.template,
+        'data_dir': str(data_dir),
+        'template': str(template),
         'validations': []
     }
 
@@ -229,9 +304,90 @@ def main():
     print(f"Individual reports in: {output_dir}")
     print(f"{'='*60}\n")
 
-    # Exit with error code if any validations failed
-    if any(not r.get('success', False) for r in all_results):
-        sys.exit(1)
+    # Tag files with validation results
+    print(f"\n{'='*60}")
+    print("TAGGING FILES WITH VALIDATION RESULTS")
+    print(f"{'='*60}\n")
+
+    # Determine which validations passed
+    validation_tags = []
+    for result in all_results:
+        if result.get('success', False):
+            # Convert validation name to tag format
+            name = result['validation']
+            tag = name.lower().replace(' ', '_').replace('-', '_')
+            validation_tags.append(tag)
+
+    if validation_tags:
+        print(f"Validation tags to add: {', '.join(validation_tags)}")
+
+        # Tag all files in the data directory
+        tag_script = Path(__file__).parent / 'tag_validation_results.py'
+        try:
+            tag_result = subprocess.run(
+                ['python', str(tag_script), str(data_dir), *validation_tags],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+
+            if tag_result.returncode == 0:
+                print(tag_result.stdout)
+            else:
+                print(f"⚠ Warning: Could not tag files")
+                if tag_result.stderr:
+                    print(f"  Error: {tag_result.stderr}")
+        except Exception as e:
+            print(f"⚠ Warning: Could not tag files: {e}")
+    else:
+        print("No validations passed - skipping tagging")
+
+    print()
+
+    # Check if any validations failed
+    has_failures = any(not r.get('success', False) for r in all_results)
+
+    if has_failures:
+        # Prompt user to run validation fix workflow
+        print("\n" + "="*60)
+        print("VALIDATION FAILURES DETECTED")
+        print("="*60)
+        print("\nYou can automatically fix validation errors by submitting")
+        print("failed YAMLs back to OpenAI for correction.")
+        print("\nThis will:")
+        print("  1. Create fix batch requests from validation failures")
+        print("  2. Upload to OpenAI API")
+        print("  3. Monitor until completion")
+        print("  4. Unpack fixed YAMLs (overwrites originals)")
+        print("  5. Prompt you to re-run validation")
+        print("\nNote: Original files are backed up in git history.")
+
+        response = input("\nRun validation fix workflow? [y/N]: ")
+
+        if response.lower() == 'y':
+            print("\nLaunching validation fix workflow...")
+            print("="*60 + "\n")
+
+            # Run validation fix workflow
+            script_dir = Path(__file__).parent.parent
+            fix_script = script_dir / "run_validation_fix.py"
+
+            cmd = [
+                sys.executable,
+                str(fix_script),
+                args.workflow_type,
+                "--immediate"  # Use immediate by default for faster feedback
+            ]
+
+            result = subprocess.run(cmd)
+            sys.exit(result.returncode)
+        else:
+            print("\nTo manually run validation fix later:")
+            print(f"  python scripts/run_validation_fix.py {args.workflow_type} --immediate")
+            sys.exit(1)
+    else:
+        print("\n✓ All validations passed!")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
