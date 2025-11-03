@@ -239,7 +239,7 @@ secondary_data_sources:
     title: "Goodman & Gilman's: The Pharmacological Basis of Therapeutics"
     first_author: "Brunton"
     year: 2018
-    doi: null
+    doi_or_url: null
 
 # METHODOLOGICAL SOURCES: Formulas, conversion factors, analysis methods
 # Reuse is expected and does not create correlation between derivations
@@ -248,7 +248,7 @@ methodological_sources:
     title: "Pharmacokinetic compartmental analysis using exponential fitting"
     first_author: "Gibaldi"
     year: 2008
-    doi: "10.xxxx/xxxxx"
+    doi_or_url: "10.xxxx/xxxxx"
     used_for: "Two-compartment clearance formula"
     method_description: "Used Equation 3.14 for converting elimination rate from two-compartment model to effective clearance"
 

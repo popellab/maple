@@ -94,13 +94,7 @@ prompt_types:
   test_statistic:
     base_prompt: prompts/test_statistic_prompt.md
     template: templates/test_statistic_template.yaml
-    examples:
-      - templates/examples/test_statistic_example.yaml
-      - templates/examples/test_statistic_derived_example.yaml
     placeholders:
-      - name: EXISTING_TEST_STATISTICS
-        source: runtime
-        description: "Information about existing test statistics for similar biological questions"
       - name: USED_PRIMARY_STUDIES
         source: used_primary_studies
         description: "List of primary studies already used for this test statistic to prevent duplicates"
@@ -111,9 +105,6 @@ prompt_types:
       - name: TEMPLATE
         source: template_file
         description: "Insert the test statistic template"
-      - name: EXAMPLES
-        source: example_files
-        description: "Insert example filled test statistic templates"
       - name: MODEL_CONTEXT
         source: runtime
         description: "Model structure and relevant variables for test statistic computation"

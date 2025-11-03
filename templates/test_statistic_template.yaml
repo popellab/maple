@@ -26,11 +26,11 @@ tags: []
 context_hash: CONTEXT_HASH
 
 # ============================================================================
-# HUMAN-GENERATED MODEL OUTPUT CODE (provided prior to batch submission)
+# LLM-GENERATED CONTENT BELOW
 # ============================================================================
 
 # Model output computation specification (Python)
-# This code is written by humans BEFORE LLM batch submission
+# This code computes the test statistic from model simulation outputs
 model_output:
   code: |
     ```python
@@ -60,10 +60,6 @@ model_output:
 
         return test_statistic
     ```
-
-# ============================================================================
-# LLM-GENERATED CONTENT BELOW
-# ============================================================================
 
 # Mathematical definition of the test statistic
 test_statistic_definition: |
@@ -249,7 +245,7 @@ secondary_data_sources:
     title: "New response evaluation criteria in solid tumours: Revised RECIST guideline (version 1.1)"
     first_author: "Eisenhauer"
     year: 2009
-    doi: "10.1016/j.ejca.2008.10.026"
+    doi_or_url: "10.1016/j.ejca.2008.10.026"
 
 # METHODOLOGICAL SOURCES (formulas, analysis methods)
 methodological_sources:
@@ -257,7 +253,7 @@ methodological_sources:
     title: "New guidelines to evaluate the response to treatment in solid tumors"
     first_author: "Therasse"
     year: 2000
-    doi: "10.1093/jnci/92.3.205"
+    doi_or_url: "10.1093/jnci/92.3.205"
     used_for: "Conversion formula from tumor diameter to volume"
     method_description: "Used Equation 2 for spherical approximation: V = (4/3)π(d/2)³ to convert diameter measurements to volume"
 
