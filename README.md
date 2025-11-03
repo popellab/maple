@@ -52,10 +52,6 @@ All extracted metadata is stored in the central `qsp-metadata-storage` repositor
 │   │   ├── batch_creator.py
 │   │   ├── parameter_utils.py
 │   │   └── prompt_assembly.py
-│   ├── matlab/               # MATLAB integration scripts
-│   │   ├── compute_test_statistic_from_yaml.m
-│   │   ├── generate_calibration_target_from_yaml.m
-│   │   └── simple_test_harness.m
 │   ├── debug/                # Debug and inspection tools
 │   │   ├── inspect_jsonl.py
 │   │   ├── extract_prompt.py

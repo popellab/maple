@@ -108,6 +108,77 @@ The workflow automatically:
 5. Unpacks converted files to to-review/ for verification
 6. Creates review branch with converted files
 
+### Validation Fix Workflow
+
+**Automated validation fixing** - Sends failed YAMLs back to OpenAI for correction:
+
+```bash
+# Run validation first
+python scripts/validate/run_all_validations.py test_statistics
+
+# If failures detected, run fix workflow (automatic prompt, or run manually)
+python scripts/run_validation_fix.py test_statistics --immediate
+
+# For parameter estimates
+python scripts/validate/run_all_validations.py parameter_estimates
+python scripts/run_validation_fix.py parameter_estimates --immediate
+
+# With custom timeout for Batch API (default: 3600s)
+python scripts/run_validation_fix.py test_statistics --timeout 7200
+```
+
+**What the validation fix workflow does:**
+1. Loads validation JSON reports and aggregates errors by file
+2. Creates fix batch requests with YAMLs + error lists + template
+3. Uploads to OpenAI API
+4. Monitors until completion
+5. Unpacks fixed YAMLs (overwrites originals in to-review/)
+6. Prompts to re-run validation
+
+**Important notes:**
+- Original files are backed up in git history before overwriting
+- Single fix attempt per run (prevents wasting API calls on unfixable errors)
+- After fixes complete, re-run `run_all_validations.py` to verify
+- Manual review recommended for persistent failures
+- **Use `--immediate` flag for faster processing** (good for testing, batch API can take up to 24 hours)
+
+**Validation types that can be fixed:**
+- Schema compliance (missing fields, wrong types)
+- Source references (missing source_ref fields)
+- Code execution (debugging R/Python code)
+- Text snippets (verifying value_snippet contains values)
+- DOI resolution (fixing malformed DOIs)
+
+### Validation Suite
+
+The automated validation suite (`run_all_validations.py`) includes 7 validators:
+
+1. **Schema Compliance** - YAML structure matches template
+2. **Code Execution** - R/Python code runs without errors
+3. **Text Snippets** - Snippets contain declared values
+4. **Source References** - All source_refs point to defined sources
+5. **DOI Validity** - DOIs resolve and metadata matches
+6. **Value Consistency** - Values consistent across related extractions
+7. **Snippet Sources** (optional) - Snippets appear verbatim in full text
+
+**Snippet Source Validation** (new):
+- Fetches full text from papers via Unpaywall API, Europe PMC, or institutional proxy
+- Verifies text snippets actually appear in claimed sources
+- Requires `VALIDATION_EMAIL` environment variable
+- Optional Hopkins proxy configuration for paywalled papers
+- See `.env.example` for configuration
+
+```bash
+# Enable snippet source validation (add to .env)
+VALIDATION_EMAIL=your.email@jhu.edu
+
+# Optional: Hopkins institutional access
+HOPKINS_PROXY_URL=https://proxy1.library.jhu.edu/login?url=
+HOPKINS_PROXY_COOKIES={"session": "xxx", "auth_token": "yyy"}
+```
+
+Coverage: ~50-60% of papers (higher with institutional proxy)
+
 ### Manual Workflow (Legacy)
 
 For fine-grained control, you can run individual steps:
@@ -180,11 +251,6 @@ Scripts are organized by workflow stage:
 - `inspect_jsonl.py`: Examine batch request/response files
 - `extract_prompt.py`: Extract prompts from batch requests
 - `pretty_print_csv.py`: Format CSV output
-
-**MATLAB** (`scripts/matlab/`): MATLAB integration
-- `compute_test_statistic_from_yaml.m`: Test statistic computation
-- `generate_calibration_target_from_yaml.m`: Calibration target generation
-- `simple_test_harness.m`: Simple test harness
 
 **Manuscript** (`docs-manuscript/`): Paper collaboration materials (gitignored)
 - `COLLABORATOR_ONBOARDING.md`: Comprehensive onboarding guide for paper collaborators
