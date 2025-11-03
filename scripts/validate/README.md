@@ -4,16 +4,16 @@ Core automated validation tools for LLM-extracted metadata (parameters, test sta
 
 ## Quick Start
 
-Run all 6 core validations:
+Run all 7 validations with automatic tagging:
 
 ```bash
-python scripts/validate/run_all_validations.py \
-  ../qsp-metadata-storage/parameter_estimates \
-  templates/parameter_metadata_template.yaml \
-  output/validation_results/
+python scripts/validate/run_all_validations.py test_statistics
+python scripts/validate/run_all_validations.py parameter_estimates
 ```
 
-## Core Validation Suite (6 Checks)
+This runs all validators, prompts for manual snippet verification, and automatically tags files with passed validation checks.
+
+## Core Validation Suite (7 Checks)
 
 ### 1. Template Compliance
 
@@ -138,6 +138,74 @@ python scripts/validate/check_value_consistency.py \
 - `test_statistics/` → `test_statistics_legacy/`
 - `quick_estimates/` → `quick_estimates_legacy/`
 
+### 7. Manual Snippet Source Verification
+
+Interactive verification that text snippets appear in their claimed sources.
+
+**Process:**
+1. Generates report with DOI links and snippets grouped by source
+2. Prints report to console during validation run
+3. User manually opens papers and searches for snippets
+4. User confirms verification (y/n) when prompted
+5. Writes validation results to JSON
+
+**Works for:** Parameters, test statistics
+
+**Usage:**
+```bash
+# Integrated into run_all_validations.py
+# Can also run standalone:
+python scripts/validate/check_snippet_sources_manual_verify.py \
+  ../qsp-metadata-storage/parameter_estimates \
+  output/snippet_sources.json
+```
+
+**Optional: Automated verification** (requires email and institutional access):
+```bash
+# Configure in .env
+VALIDATION_EMAIL=your.email@jhu.edu
+HOPKINS_PROXY_URL=https://proxy1.library.jhu.edu/login?url=
+HOPKINS_PROXY_COOKIES={"session": "xxx", "auth_token": "yyy"}
+
+# Run automated verifier (standalone)
+python scripts/validate/check_snippet_sources.py \
+  ../qsp-metadata-storage/parameter_estimates \
+  output/snippet_sources.json \
+  --email your.email@jhu.edu
+```
+
+The automated verifier uses Unpaywall API, Europe PMC, and optional institutional proxy to fetch full text and verify snippets with fuzzy matching.
+
+## Validation Tagging
+
+After all validation checks complete, the suite automatically tags YAML files:
+
+**What gets tagged:**
+- All files in the validated directory
+- Only passed validation checks are included in tags
+- Timestamp of validation run
+
+**Tag format:**
+```yaml
+# Validation metadata (appended to end of file)
+validation:
+  tags:
+    - template_compliance_validation
+    - code_execution_testing
+    - text_snippet_validation
+    - source_reference_validation
+    - doi_resolution_validation
+    - value_consistency_checking
+    - manual_snippet_source_verification
+  validated_at: '2025-11-03T10:30:00'
+```
+
+**Features:**
+- Preserves original file formatting and comments
+- Replaces existing validation section if re-validating
+- Enables tracking validation status over time
+- Files can be filtered by validation tags
+
 ## Legacy Directory Structure
 
 Legacy parameters are stored in separate directories to keep them distinct from new extractions:
@@ -167,7 +235,7 @@ Each validation script produces a JSON file with:
 
 ### Master Summary
 
-`run_all_validations.py` produces `master_validation_summary.json` with aggregated results from all 6 validators.
+`run_all_validations.py` produces `master_validation_summary.json` with aggregated results from all 7 validators.
 
 ## Validation Reports
 
@@ -181,19 +249,29 @@ Failed items include detailed error messages for debugging.
 
 ## Dependencies
 
-**Python packages:**
+**Core Python packages:**
 - `pyyaml` - YAML parsing
 - `numpy` - Numerical computations
-- `requests` - DOI resolution
+- `requests` - DOI resolution and API calls
+- `python-dotenv` - Environment variable loading
+
+**Optional (for automated snippet verification):**
+- `pdfplumber` - PDF text extraction
+- `diskcache` - Disk-based caching for full-text
 
 Install dependencies:
 ```bash
-pip install pyyaml numpy requests
+pip install -r requirements.txt
 ```
 
-Or use the project's virtual environment:
+Or install core dependencies only:
 ```bash
-source venv/bin/activate  # Assuming venv is set up
+pip install pyyaml numpy requests python-dotenv
+```
+
+Use the project's virtual environment:
+```bash
+source venv/bin/activate
 ```
 
 ## Utilities Module
@@ -206,13 +284,23 @@ source venv/bin/activate  # Assuming venv is set up
 
 ## Integration with Automated Workflow
 
-These validators are automatically run as part of the extraction workflow:
+These validators integrate with the extraction and fix workflows:
 
-1. **After unpacking**: Results are unpacked to `to-review/` subdirectories
-2. **Before git commit**: All 6 validators run on unpacked files
-3. **In commit message**: Validation summary included for visibility
+1. **Extraction workflow**: Run automatically after unpacking results
+2. **Manual verification**: Interactive snippet verification during validation
+3. **Automatic tagging**: Files tagged with passed validation checks
+4. **Fix workflow**: Failed validations can be auto-corrected via OpenAI API
 
-See `scripts/lib/validation_runner.py` for integration details.
+```bash
+# Complete validation → fix → re-validation cycle
+python scripts/validate/run_all_validations.py test_statistics
+# (if failures) prompt offers to run fix workflow
+python scripts/run_validation_fix.py test_statistics --immediate
+# Re-run validation to verify fixes
+python scripts/validate/run_all_validations.py test_statistics
+```
+
+See `scripts/run_validation_fix.py` for automated fix workflow.
 
 ## Exit Codes
 
