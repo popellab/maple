@@ -43,26 +43,42 @@ def tag_file(file_path: Path, validation_tags: list) -> bool:
 
         # Check if validation section already exists
         if '\nvalidation:' in content or content.startswith('validation:'):
-            # Remove existing validation section
+            # Remove existing validation section (including preceding comment and blank lines)
             lines = content.split('\n')
-            new_lines = []
-            in_validation_section = False
 
-            for line in lines:
-                # Check if we're entering validation section
+            # Find where validation section starts
+            validation_start_idx = None
+            for i, line in enumerate(lines):
                 if line.strip().startswith('validation:'):
-                    in_validation_section = True
-                    continue
+                    validation_start_idx = i
+                    break
 
-                # Check if we're exiting validation section (new top-level key)
-                if in_validation_section and line and not line[0].isspace():
-                    in_validation_section = False
+            if validation_start_idx is not None:
+                # Look backwards to find where to start removing (skip blank lines and comments)
+                removal_start_idx = validation_start_idx
+                for i in range(validation_start_idx - 1, -1, -1):
+                    line = lines[i]
+                    # If blank or comment line immediately before, include it in removal
+                    if line.strip() == '' or line.strip().startswith('#'):
+                        removal_start_idx = i
+                    else:
+                        break
 
-                # Keep line if not in validation section
-                if not in_validation_section:
-                    new_lines.append(line)
+                # Find where validation section ends
+                validation_end_idx = len(lines)
+                in_validation = False
+                for i in range(validation_start_idx, len(lines)):
+                    line = lines[i]
+                    if line.strip().startswith('validation:'):
+                        in_validation = True
+                    elif in_validation and line and not line[0].isspace():
+                        # Found next top-level key
+                        validation_end_idx = i
+                        break
 
-            content = '\n'.join(new_lines).rstrip()
+                # Keep lines before and after validation section
+                new_lines = lines[:removal_start_idx] + lines[validation_end_idx:]
+                content = '\n'.join(new_lines).rstrip()
 
         # Append validation section to end
         validation_yaml = f"\n\n# Validation metadata\nvalidation:\n"
