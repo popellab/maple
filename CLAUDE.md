@@ -159,25 +159,50 @@ The automated validation suite (`run_all_validations.py`) includes 7 validators:
 4. **Source References** - All source_refs point to defined sources
 5. **DOI Validity** - DOIs resolve and metadata matches
 6. **Value Consistency** - Values consistent across related extractions
-7. **Snippet Sources** (optional) - Snippets appear verbatim in full text
+7. **Manual Snippet Source Verification** - Interactive verification of snippets in papers
 
-**Snippet Source Validation** (new):
-- Fetches full text from papers via Unpaywall API, Europe PMC, or institutional proxy
-- Verifies text snippets actually appear in claimed sources
-- Requires `VALIDATION_EMAIL` environment variable
-- Optional Hopkins proxy configuration for paywalled papers
-- See `.env.example` for configuration
+**Manual Snippet Source Verification**:
+- Generates report with DOI links and snippets grouped by source
+- Prints report to console during validation
+- Waits for user to manually verify snippets in papers (y/n prompt)
+- User clicks DOI links and uses Ctrl+F/Cmd+F to search for snippets
+- Writes validation results to `snippet_sources.json`
+- If verified, adds `manual_snippet_source_verification` tag to all YAML files
 
+**Validation Tagging**:
+After all validation checks complete, the suite automatically:
+- Tags all YAML files with passed validation checks
+- Appends `validation` section to end of each file (preserves formatting)
+- Includes list of passed checks and timestamp
+- Example tag: `template_compliance_validation`, `code_execution_testing`
+
+```yaml
+# Validation metadata (added to end of each file)
+validation:
+  tags:
+    - template_compliance_validation
+    - code_execution_testing
+    - manual_snippet_source_verification
+  validated_at: '2025-11-03T10:30:00'
+```
+
+**Optional: Automated Snippet Verification**:
+For automated verification (requires email and optionally institutional access):
 ```bash
-# Enable snippet source validation (add to .env)
-VALIDATION_EMAIL=your.email@jhu.edu
+# Run standalone automated verifier
+python scripts/validate/check_snippet_sources.py \
+  ../qsp-metadata-storage/parameter_estimates \
+  output/snippet_sources.json \
+  --email your.email@jhu.edu \
+  --debug
 
-# Optional: Hopkins institutional access
+# Configure in .env for institutional access
+VALIDATION_EMAIL=your.email@jhu.edu
 HOPKINS_PROXY_URL=https://proxy1.library.jhu.edu/login?url=
 HOPKINS_PROXY_COOKIES={"session": "xxx", "auth_token": "yyy"}
 ```
 
-Coverage: ~50-60% of papers (higher with institutional proxy)
+The automated verifier fetches full text via Unpaywall API, Europe PMC, or institutional proxy and uses fuzzy matching to verify snippets appear in papers. Coverage: ~50-60% of papers (higher with proxy).
 
 ### Manual Workflow (Legacy)
 
