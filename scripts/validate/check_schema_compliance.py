@@ -73,7 +73,7 @@ class SchemaValidator:
                 # (We consider all fields in template as required unless they have specific markers)
                 if isinstance(value, str):
                     # Skip if it's an optional field marker
-                    if "OR_NULL" in value or "optional" in key.lower():
+                    if "OR_NULL" in value or (isinstance(key, str) and "optional" in key.lower()):
                         continue
                     required.append(current_path)
                 elif isinstance(value, (int, float, bool)):
@@ -230,6 +230,10 @@ def main():
     # Save results
     report.save_to_json(args.output)
     print(f"\nValidation report saved to {args.output}")
+
+    # Exit with error code if any validations failed
+    if report.failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

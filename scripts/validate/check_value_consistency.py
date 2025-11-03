@@ -42,6 +42,7 @@ class ValueConsistencyChecker:
     def __init__(self, data_dir: str):
         self.data_dir = Path(data_dir)
         self.legacy_dir = self._get_legacy_dir()
+        self.main_storage_dir = self._get_main_storage_dir()
         self.all_files = []
         self.legacy_values = defaultdict(list)  # param_name -> list of values
         self.context_groups = defaultdict(list)  # (param_name, context_hash) -> list of values
@@ -63,10 +64,36 @@ class ValueConsistencyChecker:
 
         return legacy_path if legacy_path.exists() else None
 
+    def _get_main_storage_dir(self) -> Path:
+        """
+        Determine main storage directory if running on to-review directory.
+
+        If data_dir is qsp-metadata-storage/to-review/test_statistics/,
+        returns qsp-metadata-storage/test_statistics/
+        """
+        # Check if we're in a to-review directory
+        if 'to-review' not in str(self.data_dir):
+            return None
+
+        # Get main storage directory by removing to-review from path
+        main_dir = Path(str(self.data_dir).replace('/to-review/', '/').replace('/to-review', ''))
+
+        # Verify it's different and exists
+        if main_dir != self.data_dir and main_dir.exists():
+            return main_dir
+
+        return None
+
     def load_all_files(self):
         """Load all YAML files and organize by parameter/context."""
         print(f"Loading files from {self.data_dir}...")
         self.all_files = load_yaml_directory(str(self.data_dir))
+
+        # Also load main storage files if running on to-review directory
+        main_storage_files = []
+        if self.main_storage_dir:
+            print(f"Loading main storage files from {self.main_storage_dir}...")
+            main_storage_files = load_yaml_directory(str(self.main_storage_dir))
 
         # Also load legacy files if legacy directory exists
         legacy_files = []
@@ -74,7 +101,7 @@ class ValueConsistencyChecker:
             print(f"Loading legacy files from {self.legacy_dir}...")
             legacy_files = load_yaml_directory(str(self.legacy_dir))
 
-        all_files_combined = self.all_files + legacy_files
+        all_files_combined = self.all_files + main_storage_files + legacy_files
 
         for file_info in all_files_combined:
             filename = file_info['filename']
@@ -324,6 +351,10 @@ def main():
     # Save results
     report.save_to_json(args.output)
     print(f"\nValue consistency report saved to {args.output}")
+
+    # Exit with error code if any validations failed
+    if report.failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

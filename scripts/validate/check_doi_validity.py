@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Validate DOI resolution and metadata matching.
+Validate DOI and URL resolution.
 
 Checks:
-- DOIs resolve via doi.org
-- Returned metadata matches YAML (title, author, year)
+- DOIs resolve via doi.org and metadata matches YAML (title, author, year)
+- URLs are accessible (HTTP HEAD request)
 
 Uses CrossRef API with appropriate rate limiting (1 request/second).
 
@@ -35,7 +35,7 @@ from validation_utils import (
 
 class DOIValidator:
     """
-    Validate DOI resolution and metadata matching.
+    Validate DOI and URL resolution.
     Works for both parameters and test statistics.
     """
 
@@ -51,6 +51,76 @@ class DOIValidator:
         if elapsed < self.rate_limit:
             time.sleep(self.rate_limit - elapsed)
         self.last_request_time = time.time()
+
+    def is_url(self, value: str) -> bool:
+        """
+        Check if a value is a URL vs a DOI.
+
+        Args:
+            value: String to check
+
+        Returns:
+            True if URL, False if DOI
+        """
+        if not value:
+            return False
+
+        value_lower = value.lower().strip()
+
+        # URLs start with http:// or https:// or www.
+        if value_lower.startswith(('http://', 'https://', 'www.')):
+            return True
+
+        # DOIs typically start with "10." or contain "doi.org"
+        if value_lower.startswith('10.') or 'doi.org' in value_lower:
+            return False
+
+        # If it contains common URL patterns, treat as URL
+        if '://' in value or value.startswith('ftp://'):
+            return True
+
+        # Default: treat as DOI
+        return False
+
+    def validate_url(self, url: str) -> tuple:
+        """
+        Validate that a URL is accessible.
+
+        Args:
+            url: URL string
+
+        Returns:
+            (is_valid, error_msg) tuple
+        """
+        if not url:
+            return (False, "Empty URL")
+
+        # Enforce rate limiting
+        self.rate_limit_wait()
+
+        try:
+            # Add http:// if missing
+            if not url.startswith(('http://', 'https://', 'ftp://')):
+                url = 'https://' + url
+
+            # Try HEAD request first (faster)
+            response = requests.head(url, timeout=10, allow_redirects=True)
+
+            # If HEAD not allowed, try GET
+            if response.status_code == 405:
+                response = requests.get(url, timeout=10, allow_redirects=True, stream=True)
+
+            if response.status_code == 200:
+                return (True, None)
+            else:
+                return (False, f"HTTP {response.status_code}")
+
+        except requests.exceptions.Timeout:
+            return (False, "Timeout")
+        except requests.exceptions.ConnectionError:
+            return (False, "Connection failed")
+        except Exception as e:
+            return (False, f"Error: {str(e)[:50]}")
 
     def resolve_doi(self, doi: str) -> dict:
         """
@@ -136,102 +206,129 @@ class DOIValidator:
 
     def collect_sources(self, data: dict) -> list:
         """
-        Collect all sources with DOIs.
+        Collect all sources with DOIs or URLs.
+
+        Note: Primary sources use 'doi' field, secondary/methodological use 'doi_or_url'
 
         Returns:
             List of (source_tag, source_dict) tuples
         """
         sources = []
 
-        # Collect from primary_data_sources
+        # Collect from primary_data_sources (uses 'doi' field)
         if 'primary_data_sources' in data:
             pds = data['primary_data_sources']
             if isinstance(pds, list):
                 for source in pds:
-                    if isinstance(source, dict) and 'source_tag' in source and 'doi' in source:
-                        sources.append((source['source_tag'], source))
+                    if isinstance(source, dict) and 'source_tag' in source:
+                        if 'doi' in source:
+                            sources.append((source['source_tag'], source))
             elif isinstance(pds, dict):
                 for tag, source in pds.items():
-                    if isinstance(source, dict) and 'doi' in source:
-                        sources.append((tag, source))
+                    if isinstance(source, dict):
+                        if 'doi' in source:
+                            sources.append((tag, source))
 
-        # Collect from secondary_data_sources
+        # Collect from secondary_data_sources (uses 'doi_or_url' field)
         if 'secondary_data_sources' in data:
             sds = data['secondary_data_sources']
             if isinstance(sds, list):
                 for source in sds:
-                    if isinstance(source, dict) and 'source_tag' in source and 'doi' in source:
-                        sources.append((source['source_tag'], source))
+                    if isinstance(source, dict) and 'source_tag' in source:
+                        # Check doi_or_url (new) or doi (backward compatibility)
+                        if 'doi_or_url' in source or 'doi' in source:
+                            sources.append((source['source_tag'], source))
             elif isinstance(sds, dict):
                 for tag, source in sds.items():
-                    if isinstance(source, dict) and 'doi' in source:
-                        sources.append((tag, source))
+                    if isinstance(source, dict):
+                        if 'doi_or_url' in source or 'doi' in source:
+                            sources.append((tag, source))
 
-        # Collect from methodological_sources
+        # Collect from methodological_sources (uses 'doi_or_url' field)
         if 'methodological_sources' in data:
             ms = data['methodological_sources']
             if isinstance(ms, list):
                 for source in ms:
-                    if isinstance(source, dict) and 'source_tag' in source and 'doi' in source:
-                        sources.append((source['source_tag'], source))
+                    if isinstance(source, dict) and 'source_tag' in source:
+                        # Check doi_or_url (new) or doi (backward compatibility)
+                        if 'doi_or_url' in source or 'doi' in source:
+                            sources.append((source['source_tag'], source))
             elif isinstance(ms, dict):
                 for tag, source in ms.items():
-                    if isinstance(source, dict) and 'doi' in source:
-                        sources.append((tag, source))
+                    if isinstance(source, dict):
+                        if 'doi_or_url' in source or 'doi' in source:
+                            sources.append((tag, source))
 
         return sources
 
-    def validate_source_doi(self, source_tag: str, source_dict: dict) -> tuple:
+    def validate_source_doi_or_url(self, source_tag: str, source_dict: dict) -> tuple:
         """
-        Validate a single source's DOI.
+        Validate a single source's DOI or URL.
+
+        Note: Primary sources use 'doi', secondary/methodological use 'doi_or_url'
 
         Returns:
             (is_valid, error_msg) tuple
         """
-        doi = source_dict.get('doi')
-        if not doi:
-            return (False, f"Source '{source_tag}': missing DOI")
+        # Check for doi_or_url field first (secondary/methodological), then doi (primary or legacy)
+        value = source_dict.get('doi_or_url') or source_dict.get('doi')
 
-        # Resolve DOI
-        metadata = self.resolve_doi(doi)
+        if not value:
+            return (False, f"Source '{source_tag}': missing doi or doi_or_url field")
 
-        if metadata is None:
-            return (False, f"Source '{source_tag}': DOI '{doi}' failed to resolve")
+        # Skip validation if explicitly null
+        if value is None or str(value).lower() == 'null':
+            return (True, None)
 
-        # Compare metadata
-        errors = []
+        # Determine if this is a URL or DOI
+        if self.is_url(value):
+            # Validate URL
+            is_valid, error_msg = self.validate_url(value)
+            if not is_valid:
+                return (False, f"Source '{source_tag}': URL '{value}' - {error_msg}")
+            return (True, None)
+        else:
+            # Validate DOI
+            doi = value
+            metadata = self.resolve_doi(doi)
 
-        # Check title (fuzzy match)
-        yaml_title = source_dict.get('title', '')
-        if not self.fuzzy_match(yaml_title, metadata['title'], threshold=0.7):
-            errors.append(
-                f"Title mismatch: YAML='{yaml_title[:50]}...', "
-                f"CrossRef='{metadata['title'][:50]}...'"
-            )
+            if metadata is None:
+                return (False, f"Source '{source_tag}': DOI '{doi}' failed to resolve")
 
-        # Check first author (exact match on last name)
-        yaml_author = source_dict.get('first_author', '')
-        if metadata['first_author'] and yaml_author.lower() != metadata['first_author'].lower():
-            errors.append(
-                f"Author mismatch: YAML='{yaml_author}', CrossRef='{metadata['first_author']}'"
-            )
+            # Compare metadata
+            errors = []
 
-        # Check year (exact match)
-        yaml_year = source_dict.get('year')
-        if yaml_year and metadata['year'] and int(yaml_year) != int(metadata['year']):
-            errors.append(
-                f"Year mismatch: YAML={yaml_year}, CrossRef={metadata['year']}"
-            )
+            # Check title (fuzzy match)
+            yaml_title = source_dict.get('title', '')
+            if not self.fuzzy_match(yaml_title, metadata['title'], threshold=0.7):
+                errors.append(
+                    f"Title mismatch: YAML='{yaml_title[:50]}...', "
+                    f"CrossRef='{metadata['title'][:50]}...'"
+                )
 
-        if errors:
-            error_msg = f"Source '{source_tag}': " + "; ".join(errors)
-            return (False, error_msg)
+            # Check first author (exact match on last name)
+            yaml_author = source_dict.get('first_author', '')
+            if metadata['first_author'] and yaml_author.lower() != metadata['first_author'].lower():
+                errors.append(
+                    f"Author mismatch: YAML='{yaml_author}', CrossRef='{metadata['first_author']}'"
+                )
 
-        return (True, None)
+            # Check year (exact match)
+            yaml_year = source_dict.get('year')
+            if yaml_year and metadata['year'] and int(yaml_year) != int(metadata['year']):
+                errors.append(
+                    f"Year mismatch: YAML={yaml_year}, CrossRef={metadata['year']}"
+                )
+
+            if errors:
+                error_msg = f"Source '{source_tag}': " + "; ".join(errors)
+                return (False, error_msg)
+
+            return (True, None)
 
     def validate_file(self, file_info: dict) -> tuple:
         """
-        Validate DOIs in a single YAML file.
+        Validate DOIs and URLs in a single YAML file.
 
         Returns:
             (is_valid, errors) tuple
@@ -240,16 +337,16 @@ class DOIValidator:
         data = file_info['data']
         filename = file_info['filename']
 
-        # Collect all sources with DOIs
+        # Collect all sources with DOIs or URLs
         sources = self.collect_sources(data)
 
         if not sources:
-            # No sources with DOIs to validate
+            # No sources with DOIs/URLs to validate
             return (True, [])
 
-        # Validate each source DOI
+        # Validate each source DOI or URL
         for source_tag, source_dict in sources:
-            is_valid, error_msg = self.validate_source_doi(source_tag, source_dict)
+            is_valid, error_msg = self.validate_source_doi_or_url(source_tag, source_dict)
             if not is_valid:
                 errors.append(error_msg)
 
@@ -257,30 +354,41 @@ class DOIValidator:
         return (is_valid, errors)
 
     def validate_directory(self) -> ValidationReport:
-        """Validate DOIs in all YAML files."""
-        report = ValidationReport("DOI Validation")
+        """Validate DOIs and URLs in all YAML files."""
+        report = ValidationReport("DOI/URL Validation")
 
-        print(f"Validating DOIs in {self.data_dir}...")
+        print(f"Validating DOIs and URLs in {self.data_dir}...")
         print(f"Rate limit: {self.rate_limit}s between requests")
         files = load_yaml_directory(self.data_dir)
 
         for file_info in files:
             filename = file_info['filename']
+            data = file_info['data']
 
-            is_valid, errors = self.validate_file(file_info)
+            # Collect all sources with DOIs or URLs
+            sources = self.collect_sources(data)
 
-            if is_valid:
-                report.add_pass(filename)
-            else:
-                error_msg = "; ".join(errors)
-                report.add_fail(filename, error_msg)
+            if not sources:
+                # No sources to validate - mark file as passed
+                report.add_pass(filename, "No sources with DOI/URL fields")
+                continue
+
+            # Validate each source individually and report at source level
+            for source_tag, source_dict in sources:
+                is_valid, error_msg = self.validate_source_doi_or_url(source_tag, source_dict)
+                item_name = f"{filename} → {source_tag}"
+
+                if is_valid:
+                    report.add_pass(item_name, "Valid")
+                else:
+                    report.add_fail(item_name, error_msg)
 
         return report
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Validate DOI resolution and metadata matching"
+        description="Validate DOI resolution and URL accessibility"
     )
     parser.add_argument("data_dir", help="Directory with YAML files to validate")
     parser.add_argument("output", help="Output JSON file for validation report")
@@ -288,7 +396,7 @@ def main():
         "--rate-limit",
         type=float,
         default=1.0,
-        help="Seconds between DOI resolution requests (default: 1.0)"
+        help="Seconds between DOI/URL validation requests (default: 1.0)"
     )
 
     args = parser.parse_args()
@@ -302,7 +410,11 @@ def main():
 
     # Save results
     report.save_to_json(args.output)
-    print(f"\nDOI validation report saved to {args.output}")
+    print(f"\nDOI/URL validation report saved to {args.output}")
+
+    # Exit with error code if any validations failed
+    if report.failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

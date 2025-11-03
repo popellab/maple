@@ -353,6 +353,10 @@ def main():
     report.save_to_json(args.output)
     print(f"\nCode execution report saved to {args.output}")
 
+    # Exit with error code if any validations failed
+    if report.failed:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

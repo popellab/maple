@@ -150,13 +150,23 @@ class SourceReferenceValidator:
         """
         errors = []
         definition = source_info['definition']
+        source_type = source_info['type']
 
         # Required fields for all sources
-        required_fields = ['title', 'first_author', 'year', 'doi']
+        common_fields = ['title', 'first_author', 'year']
 
-        for field in required_fields:
+        for field in common_fields:
             if field not in definition or not definition[field]:
                 errors.append(f"Source '{source_tag}': missing required field '{field}'")
+
+        # Check DOI field based on source type
+        # Primary sources use 'doi', secondary/methodological use 'doi_or_url'
+        if source_type == 'primary':
+            if 'doi' not in definition or not definition['doi']:
+                errors.append(f"Source '{source_tag}': missing required field 'doi'")
+        else:  # secondary or methodological
+            if 'doi_or_url' not in definition or not definition['doi_or_url']:
+                errors.append(f"Source '{source_tag}': missing required field 'doi_or_url'")
 
         return errors
 
@@ -237,6 +247,10 @@ def main():
     # Save results
     report.save_to_json(args.output)
     print(f"\nSource reference validation report saved to {args.output}")
+
+    # Exit with error code if any validations failed
+    if report.failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

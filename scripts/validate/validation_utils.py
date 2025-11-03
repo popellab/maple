@@ -141,17 +141,47 @@ class ValidationReport:
         print(f"Failed:   {summary['failed']}")
         print(f"Warnings: {summary['warnings']}")
 
+        if self.passed:
+            print(f"\nPassed Items:")
+            for item in self.passed[:20]:  # Show first 20
+                details = item.get('details', '')
+                if details:
+                    print(f"  ✓ {item['item']}: {details}")
+                else:
+                    print(f"  ✓ {item['item']}")
+            if len(self.passed) > 20:
+                print(f"  ... and {len(self.passed) - 20} more")
+
         if self.failed:
             print(f"\nFailed Items:")
             for item in self.failed[:10]:  # Show first 10
-                print(f"  - {item['item']}: {item['reason']}")
+                reason = item['reason']
+                # If reason contains multiple errors (semicolon-separated), format as sub-bullets
+                if '; ' in reason and not reason.startswith('\n'):
+                    errors = reason.split('; ')
+                    print(f"  - {item['item']}:")
+                    for error in errors:
+                        print(f"      {error}")
+                else:
+                    # Single error or already formatted with newlines
+                    print(f"  - {item['item']}: {reason}")
+                print()  # Blank line between items
             if len(self.failed) > 10:
                 print(f"  ... and {len(self.failed) - 10} more")
 
         if self.warnings:
             print(f"\nWarnings:")
             for item in self.warnings[:10]:  # Show first 10
-                print(f"  - {item['item']}: {item['message']}")
+                message = item['message']
+                # If message contains multiple warnings (semicolon-separated), format as sub-bullets
+                if '; ' in message and not message.startswith('\n'):
+                    messages = message.split('; ')
+                    print(f"  - {item['item']}:")
+                    for msg in messages:
+                        print(f"      {msg}")
+                else:
+                    print(f"  - {item['item']}: {message}")
+                print()  # Blank line between items
             if len(self.warnings) > 10:
                 print(f"  ... and {len(self.warnings) - 10} more")
 
