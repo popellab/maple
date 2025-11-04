@@ -37,7 +37,7 @@ For this test statistic, find 1-2 real published papers that report:
 5. **test_statistic_estimates**:
    - `inputs` - Extracted values with source references and verbatim text snippets
    - `derivation_code` - Python function deriving distribution with bootstrap/Monte Carlo
-   - `mean`, `variance`, `ci95`, `units` - Statistical outputs
+   - `median`, `iqr`, `ci95`, `units` - Statistical outputs (using outlier-robust statistics)
    - `key_assumptions` - 3-5 critical assumptions as enumerated dict
 6. **derivation_explanation** - Step-by-step explanation referencing assumptions
 7. **key_study_limitations** - Critical limitations affecting reliability
@@ -69,9 +69,10 @@ def derive_distribution(inputs):
     # Extract input values
     # Bootstrap/Monte Carlo for uncertainty
     # Propagate through computations
+    # Use outlier-robust statistics (median/IQR instead of mean/variance)
     return {
-        'mean_stat': float,
-        'variance_stat': float,
+        'median_stat': float,
+        'iqr_stat': float,
         'ci95_stat': [lower, upper]
     }
 ```
@@ -154,8 +155,8 @@ Return JSON with all 11 fields:
       }
     ],
     "derivation_code": "import numpy as np\\n\\ndef derive_distribution(inputs):\\n    ...",
-    "mean": 0.123,
-    "variance": 0.001,
+    "median": 0.123,
+    "iqr": 0.045,
     "ci95": [0.1, 0.15],
     "units": "days",
     "key_assumptions": {

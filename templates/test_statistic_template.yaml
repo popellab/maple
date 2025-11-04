@@ -172,18 +172,19 @@ test_statistic_estimates:
 
             mc_draws[i] = np.clip(noisy_rate, 0, 1)  # Keep in [0,1]
 
-        # Return required statistics
+        # Return required statistics (outlier-robust)
         return {
-            'mean_stat': float(np.mean(mc_draws)),
-            'variance_stat': float(np.var(mc_draws, ddof=1)),
+            'median_stat': float(np.median(mc_draws)),
+            'iqr_stat': float(np.percentile(mc_draws, 75) - np.percentile(mc_draws, 25)),
             'ci95_stat': [float(np.percentile(mc_draws, 2.5)),
                           float(np.percentile(mc_draws, 97.5))]
         }
     ```
 
   # Computed outputs (must match what derivation_code produces)
-  mean: NUMERIC_VALUE
-  variance: NUMERIC_VALUE
+  # Using outlier-robust statistics: median and IQR instead of mean and variance
+  median: NUMERIC_VALUE
+  iqr: NUMERIC_VALUE
   ci95: [NUMERIC_LOWER, NUMERIC_UPPER]
   units: "UNITS_STRING"
 
@@ -216,8 +217,9 @@ derivation_explanation: |
   which may overestimate treatment effect without concurrent control but is appropriate for
   model validation when treatment effect is the target quantity.
 
-  **Step 6:** Generate 5000 bootstrap samples and compute mean, variance, and 95% CI from the
-  resulting distribution.
+  **Step 6:** Generate 5000 bootstrap samples and compute median, IQR, and 95% CI from the
+  resulting distribution. We use outlier-robust statistics (median/IQR) instead of mean/variance
+  to reduce sensitivity to extreme values in the bootstrap distribution.
 
 # Important limitations
 # ============================================================================
