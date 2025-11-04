@@ -143,14 +143,12 @@ class ValidationReport:
 
         if self.passed:
             print(f"\nPassed Items:")
-            for item in self.passed[:20]:  # Show first 20
+            for item in self.passed:  # Show all passed items
                 details = item.get('details', '')
                 if details:
                     print(f"  ✓ {item['item']}: {details}")
                 else:
                     print(f"  ✓ {item['item']}")
-            if len(self.passed) > 20:
-                print(f"  ... and {len(self.passed) - 20} more")
 
         if self.failed:
             print(f"\nFailed Items:")
