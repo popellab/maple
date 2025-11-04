@@ -141,8 +141,11 @@ class SchemaValidator:
         numeric_field_paths = [
             'parameter_estimates.mean',
             'parameter_estimates.variance',
+            # Test statistics can have old (mean/variance) or new (median/iqr) fields
             'test_statistic_estimates.mean',
-            'test_statistic_estimates.variance'
+            'test_statistic_estimates.variance',
+            'test_statistic_estimates.median',
+            'test_statistic_estimates.iqr'
         ]
         for field_path in numeric_field_paths:
             if self._check_field_exists(data, field_path):
