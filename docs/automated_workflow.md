@@ -506,18 +506,26 @@ WORKFLOW SUMMARY
 Next steps:
   1. cd ../qsp-metadata-storage
   2. git checkout review/batch-parameter-2025-10-27-abc123
-  3. Run validation: python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_estimates
-  4. Review validation reports in output/validation/
-  5. Review files in to-review/
-  6. Move approved files to appropriate directories
-  7. Commit changes and open a pull request on GitHub
-  8. Merge PR after team review
+  3. Manual high-level review: Open a few YAMLs, check derivation_explanation and assumptions
+  4. Run validation: python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_estimates
+  5. Manual snippet verification: Click DOI links, verify snippets with Ctrl+F
+  6. Review detailed validation reports in output/validation/
+  7. Move approved files to appropriate directories (reject bad ones)
+  8. Commit changes and open a pull request on GitHub
+  9. Merge PR after team review
 ======================================================================
 ```
 
 ## Review Process
 
-After the workflow completes, validate and review the extracted files:
+After the workflow completes, review and validate the extracted files. **Recommended order:**
+
+1. Manual high-level review (quick quality check)
+2. Automated validation suite
+3. Manual snippet source verification (if needed)
+4. Detailed review of validation reports
+5. Approve/reject files
+6. Commit and open PR
 
 ### 1. Checkout Review Branch
 
@@ -526,9 +534,38 @@ cd ../qsp-metadata-storage
 git checkout review/batch-parameter-2025-10-27-abc123
 ```
 
-### 2. Run Validation Suite
+### 2. Manual High-Level Review (Do This First!)
 
-**Important:** Validation is NOT automatic. You must run it manually after the workflow completes.
+**Before running automated validation**, do a quick manual review to catch obvious issues:
+
+Open a few YAML files in `to-review/` and check:
+
+**For parameters:**
+- [ ] Does `derivation_explanation` clearly describe how the value was obtained?
+- [ ] Are mathematical transformations explained and justified?
+- [ ] Are key assumptions explicitly stated and reasonable?
+- [ ] Are unit conversions transparent and traceable?
+- [ ] Is the value in a reasonable biological range?
+
+**For test statistics:**
+- [ ] Does `derivation_explanation` describe the statistical methodology?
+- [ ] Is the bootstrap/uncertainty approach appropriate?
+- [ ] Are data transformations explained?
+- [ ] Are key assumptions documented?
+
+**Red flags to watch for:**
+- Vague explanations like "extracted from paper" or "calculated from data"
+- Missing justification for unit conversions
+- No assumptions listed (very few extractions have zero assumptions)
+- Values that seem biologically implausible
+
+See `scripts/validate/MANUAL_REVIEW_CHECKLIST.md` for the complete checklist.
+
+**If you find major issues at this stage,** you may want to run the validation fix workflow instead of continuing with validation.
+
+### 3. Run Automated Validation Suite
+
+After the manual review, run the automated validators:
 
 ```bash
 # For parameter estimates
@@ -543,7 +580,40 @@ python ../qsp-llm-workflows/scripts/validate/run_all_validations.py quick_estima
 
 The validation suite will run all 6 validators and generate detailed reports in `output/validation/`.
 
-### 3. Review Files
+**The automated validation includes:**
+1. Schema compliance (YAML structure)
+2. Source references (all source_refs are valid)
+3. Text snippets (snippets contain the reported values)
+4. DOI validity (DOIs resolve to real papers)
+5. Code execution (R/Python derivation code runs)
+6. Value consistency (cross-checks against other extractions)
+
+### 4. Manual Snippet Source Verification
+
+**Important:** The final validator prompts you to **manually verify snippets in papers**.
+
+When you run `run_all_validations.py`, the last step will:
+1. Print a report with DOI links and text snippets grouped by source
+2. **Wait for you** to click DOI links and verify snippets appear in papers
+3. Ask you to confirm (y/n) that snippets are accurate
+
+**How to verify:**
+- Click the DOI link to open the paper in your browser
+- Use Ctrl+F (or Cmd+F) to search for the snippet text
+- Verify the snippet actually appears in the paper
+- Check that the context matches the claimed value
+
+If verified, the validator will tag all files with `manual_snippet_source_verification`.
+
+**Optional: Automated snippet verification** (requires institutional access or email):
+```bash
+# Configure in .env for automated verification
+VALIDATION_EMAIL=your.email@jhu.edu
+```
+
+See CLAUDE.md for details on automated snippet verification setup.
+
+### 5. Review Detailed Validation Reports
 
 Check files in `to-review/`:
 - Verify citations are real and accessible
@@ -558,7 +628,9 @@ Check files in `to-review/`:
   - `code_execution.json` - Code execution test results
   - `value_consistency.json` - Value consistency checks
 
-### 4. Approve/Reject Files
+### 6. Approve/Reject Files
+
+After reviewing both manual and automated validation results, approve or reject each file.
 
 **Approve files** by moving to final location:
 
@@ -583,7 +655,7 @@ echo "k_C_growth_Smith2020: Invalid source citation" >> review_notes.md
 rm to-review/k_C_growth_Smith2020_PDAC_abc123.yaml
 ```
 
-### 5. Commit and Open Pull Request
+### 7. Commit and Open Pull Request
 
 ```bash
 # Commit your review changes
