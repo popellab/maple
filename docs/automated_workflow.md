@@ -540,18 +540,11 @@ git checkout review/batch-parameter-2025-10-27-abc123
 
 Open a few YAML files in `to-review/` and check:
 
-**For parameters:**
 - [ ] Does `derivation_explanation` clearly describe how the value was obtained?
-- [ ] Are mathematical transformations explained and justified?
+- [ ] Are mathematical transformations and statistical methods explained and justified?
 - [ ] Are key assumptions explicitly stated and reasonable?
-- [ ] Are unit conversions transparent and traceable?
+- [ ] Are unit conversions and data transformations transparent and traceable?
 - [ ] Is the value in a reasonable biological range?
-
-**For test statistics:**
-- [ ] Does `derivation_explanation` describe the statistical methodology?
-- [ ] Is the bootstrap/uncertainty approach appropriate?
-- [ ] Are data transformations explained?
-- [ ] Are key assumptions documented?
 
 **Red flags to watch for:**
 - Vague explanations like "extracted from paper" or "calculated from data"
