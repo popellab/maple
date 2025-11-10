@@ -1,0 +1,5 @@
+cancer_type,parameter_name,notes
+PDAC,k_C_growth,Cancer cell growth rate
+PDAC,k_C_death,Cancer cell death rate
+PDAC,k_CD8_act,CD8 T cell activation rate
+PDAC,k_APC_mat,Maximum rate of APC maturation

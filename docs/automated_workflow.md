@@ -207,11 +207,20 @@ cd ~/Projects/qsp-llm-workflows
 # 2. Activate virtual environment (do this every time you open a new terminal)
 source venv/bin/activate
 
-# 3. Run the workflow
-python scripts/run_extraction_workflow.py input.csv --type parameter
+# 3. Run the workflow with an example file
+python scripts/run_extraction_workflow.py \
+  docs/example_parameter_input.csv \
+  --type parameter
 ```
 
 The script will handle everything automatically and show you progress updates.
+
+**Try the examples:** We've included example CSV files in the `docs/` directory:
+- `docs/example_parameter_input.csv` - Parameter extraction example (4 parameters)
+- `docs/example_test_statistic_input.csv` - Test statistics example (3 metrics)
+- `docs/example_quick_estimate_input.csv` - Quick estimates example (4 parameters)
+
+These are ready to run and will help you understand the workflow before creating your own input files.
 
 ---
 
@@ -229,7 +238,7 @@ For parameter extraction (`--type parameter`), your CSV needs these columns:
 | `parameter_name` | Name of parameter to extract | `k_C_growth`, `K_CD8_TEFF` |
 | `notes` (optional) | Additional context for extraction | Parameter description |
 
-**Example:** `parameter_input.csv`
+**Example file to try:** `docs/example_parameter_input.csv` (included in this repository)
 
 ```csv
 cancer_type,parameter_name,notes
@@ -239,15 +248,14 @@ PDAC,k_CD8_act,CD8 activation rate
 PDAC,k_APC_mat,Maximum rate of APC maturation
 ```
 
-**Real example from our PDAC project** (see `scratch/pdac_parameters_modules_v2.csv`):
-
-```csv
-cancer_type,parameter_name,notes
-PDAC,k_C_CD8,"Rate of cancer cell death by T cells (Robertson-Tessi 2012, PMID: 22051568)"
-PDAC,k_CD8_pro,"CD8 proliferation rate (Marchingo 2014, PMID: 25430770)"
-PDAC,k_APC_mat,"Maximum rate of APC maturation (Chen 2014, PMID: 25184733)"
-PDAC,DAMPs,"Concentration of cytokines released per dying cancer cell (Milo 2013, PMID: 24114984)"
+**To try this example:**
+```bash
+python scripts/run_extraction_workflow.py \
+  docs/example_parameter_input.csv \
+  --type parameter
 ```
+
+**For a larger real-world example** with 77 parameters, see `scratch/pdac_parameters_modules_v2.csv`
 
 **Creating the file:**
 
@@ -275,20 +283,29 @@ For test statistics (`--type test_statistic`), your CSV needs these columns:
 | `derived_species_description` | What the statistic represents | `Tumor volume in mm³ at 14 days` |
 | `model_context` (optional) | Model structure details | See full example below |
 
-**Simplified example:** `test_stat_input.csv`
+**Example file to try:** `docs/example_test_statistic_input.csv` (included in this repository)
 
 ```csv
 test_statistic_id,cancer_type,scenario_context,required_species,derived_species_description
-tumor_volume_day14,PDAC,Untreated PDAC tumor growth in KPC mice,V_T.C,Tumor volume in mm³ at 14 days
-cd8_infiltration,PDAC,Baseline immune infiltration in treatment-naive PDAC,V_T.CD8,CD8+ T cell count per mm³ tumor
-cdc1_cdc2_ratio,PDAC,Dendritic cell composition in untreated PDAC tumors,"V_T.cDC1,V_T.cDC2",Ratio of type 1 to type 2 dendritic cells
+tumor_volume_day14,PDAC,Untreated PDAC tumor growth in KPC mice,V_T.C,Tumor volume in mm³ at 14 days post-implantation
+cd8_infiltration,PDAC,Baseline immune infiltration in treatment-naive PDAC tumors,V_T.CD8,CD8+ T cell count per mm³ tumor tissue
+cdc1_cdc2_ratio,PDAC,Dendritic cell composition in untreated PDAC tumors,"V_T.cDC1,V_T.cDC2",Ratio of type 1 to type 2 conventional dendritic cells
 ```
 
-**Note:** For test statistics, the workflow can automatically generate the `model_context` field from your model specification files. If you need custom model context, you can include it as an additional column (see `scratch/test_statistic_input_baseline_no_treatment_24664d08.csv` for a full example with model context).
+**To try this example:**
+```bash
+python scripts/run_extraction_workflow.py \
+  docs/example_test_statistic_input.csv \
+  --type test_statistic
+```
+
+**Note:** The workflow can automatically generate the `model_context` field from your model specification files. For advanced usage with custom model context, see `scratch/test_statistic_input_baseline_no_treatment_24664d08.csv`.
 
 ### Quick Estimates Input File
 
-For quick estimates (`--type quick_estimate`), use the same format as parameter extraction (without notes column):
+For quick estimates (`--type quick_estimate`), use the same format as parameter extraction (without notes column).
+
+**Example file to try:** `docs/example_quick_estimate_input.csv` (included in this repository)
 
 ```csv
 cancer_type,parameter_name
@@ -296,6 +313,13 @@ PDAC,k_C_growth
 PDAC,k_C_death
 PDAC,k_CD8_act
 PDAC,k_APC_mat
+```
+
+**To try this example:**
+```bash
+python scripts/run_extraction_workflow.py \
+  docs/example_quick_estimate_input.csv \
+  --type quick_estimate
 ```
 
 Quick estimates are useful for getting rapid ballpark parameter values for model initialization before doing full literature extraction.
@@ -366,12 +390,12 @@ python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [op
 ### Parameter Extraction
 
 ```bash
-# Standard parameter extraction
+# Simple example with 4 parameters (good for testing)
 python scripts/run_extraction_workflow.py \
-  scratch/pdac_parameters_modules_v2.csv \
+  docs/example_parameter_input.csv \
   --type parameter
 
-# With longer timeout for large batches (77 parameters in this example)
+# Large real-world example with 77 parameters
 python scripts/run_extraction_workflow.py \
   scratch/pdac_parameters_modules_v2.csv \
   --type parameter \
@@ -381,23 +405,28 @@ python scripts/run_extraction_workflow.py \
 ### Test Statistics
 
 ```bash
-# Test statistic extraction with full model context
+# Simple example with 3 test statistics (good for testing)
 python scripts/run_extraction_workflow.py \
-  scratch/test_statistic_input_baseline_no_treatment_24664d08.csv \
+  docs/example_test_statistic_input.csv \
   --type test_statistic
 
-# Or use the copy in batch_jobs/
+# Full example with complete model context
 python scripts/run_extraction_workflow.py \
-  batch_jobs/input_data/test_statistic_input_baseline_no_treatment_30185312.csv \
+  scratch/test_statistic_input_baseline_no_treatment_24664d08.csv \
   --type test_statistic
 ```
 
 ### Quick Estimates
 
 ```bash
-# Quick estimates for rapid prototyping
+# Simple example with 4 parameters (good for testing)
 python scripts/run_extraction_workflow.py \
-  my_quick_estimates.csv \
+  docs/example_quick_estimate_input.csv \
+  --type quick_estimate
+
+# Skip validation for faster turnaround
+python scripts/run_extraction_workflow.py \
+  docs/example_quick_estimate_input.csv \
   --type quick_estimate \
   --skip-validation
 ```
