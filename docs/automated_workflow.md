@@ -2,14 +2,15 @@
 
 ## Overview
 
-This workflow automates LLM-based parameter extraction from scientific papers. Instead of running 8+ manual commands, you run **one command** and the system:
+This workflow automates LLM-based parameter extraction from scientific papers. Instead of running 7+ manual commands, you run **one command** and the system:
 
 1. Creates batch requests
 2. Uploads to OpenAI API
 3. Monitors progress automatically
-4. Validates the results
-5. Unpacks files to a staging area
-6. Creates a git branch and pushes for review
+4. Unpacks files to a staging area
+5. Creates a git branch and pushes for review
+
+**After the workflow completes,** you manually run validation to check the extracted data.
 
 **Time savings:** From 20-30 minutes of manual work → 1 minute to launch, then walk away.
 
@@ -33,15 +34,21 @@ This workflow automates LLM-based parameter extraction from scientific papers. I
 │  1. Creates batch requests and uploads to OpenAI           │
 │  2. Monitors progress (shows you updates)                   │
 │  3. Downloads results when complete                         │
-│  4. Validates the extracted data                            │
-│  5. Unpacks files to to-review/ directory                   │
-│  6. Creates git branch and pushes for review                │
+│  4. Unpacks files to to-review/ directory                   │
+│  5. Creates git branch and pushes for review                │
 └─────────────────────────────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  You review the extracted files and approve/reject them     │
+│  You run validation manually:                               │
 │  cd ../qsp-metadata-storage                                 │
 │  git checkout review/batch-parameter-2025-10-27-abc123      │
+│  python ../qsp-llm-workflows/scripts/validate/\             │
+│    run_all_validations.py parameter_estimates               │
+└─────────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Review validation reports and approve/reject files         │
+│  Check output/validation/ for detailed reports              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -381,9 +388,10 @@ python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [op
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--timeout SECONDS` | Max wait time for batch completion | 3600 (1 hour) |
-| `--skip-validation` | Skip automatic validation suite | False |
 | `--no-push` | Create branch locally without pushing | False |
 | `--branch-prefix PREFIX` | Custom prefix for review branches | `review/batch` |
+
+**Note:** The `--skip-validation` option has been removed. Validation is now always a separate manual step after the workflow completes.
 
 ## Examples
 
@@ -423,13 +431,9 @@ python scripts/run_extraction_workflow.py \
 python scripts/run_extraction_workflow.py \
   docs/example_quick_estimate_input.csv \
   --type quick_estimate
-
-# Skip validation for faster turnaround
-python scripts/run_extraction_workflow.py \
-  docs/example_quick_estimate_input.csv \
-  --type quick_estimate \
-  --skip-validation
 ```
+
+**Note:** Validation is always a separate manual step. Run it after the workflow completes if needed.
 
 ### Local-Only Review
 
@@ -469,14 +473,6 @@ Monitoring batch batch_ABC123...
 ✓ Results downloaded: batch_ABC123_results.jsonl
 Unpacking results to to-review/...
 ✓ Unpacked 15 files to to-review/
-Running validation suite...
-  Schema compliance: 15/15 passed
-  Source references: 15/15 passed
-  Text snippets: 14/15 passed (1 warning)
-  DOI resolution: 15/15 passed
-  Code execution: 13/15 passed (2 errors)
-  Value consistency: 15/15 passed
-✓ Validation reports written to output/validation/
 Creating review branch and committing files...
 ✓ Pushed to origin/review/batch-parameter-2025-10-27-abc123
 
@@ -493,15 +489,17 @@ WORKFLOW SUMMARY
 Next steps:
   1. cd ../qsp-metadata-storage
   2. git checkout review/batch-parameter-2025-10-27-abc123
-  3. Review files in to-review/
-  4. Move approved files to appropriate directories
-  5. Merge to main when approved
+  3. Run validation: python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_estimates
+  4. Review validation reports in output/validation/
+  5. Review files in to-review/
+  6. Move approved files to appropriate directories
+  7. Merge to main when approved
 ======================================================================
 ```
 
 ## Review Process
 
-After the workflow completes, review the extracted files:
+After the workflow completes, validate and review the extracted files:
 
 ### 1. Checkout Review Branch
 
@@ -510,7 +508,24 @@ cd ../qsp-metadata-storage
 git checkout review/batch-parameter-2025-10-27-abc123
 ```
 
-### 2. Review Files
+### 2. Run Validation Suite
+
+**Important:** Validation is NOT automatic. You must run it manually after the workflow completes.
+
+```bash
+# For parameter estimates
+python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_estimates
+
+# For test statistics
+python ../qsp-llm-workflows/scripts/validate/run_all_validations.py test_statistics
+
+# For quick estimates
+python ../qsp-llm-workflows/scripts/validate/run_all_validations.py quick_estimates
+```
+
+The validation suite will run all 6 validators and generate detailed reports in `output/validation/`.
+
+### 3. Review Files
 
 Check files in `to-review/`:
 - Verify citations are real and accessible
@@ -525,7 +540,7 @@ Check files in `to-review/`:
   - `code_execution.json` - Code execution test results
   - `value_consistency.json` - Value consistency checks
 
-### 3. Approve/Reject Files
+### 4. Approve/Reject Files
 
 **Approve files** by moving to final location:
 
@@ -550,7 +565,7 @@ echo "k_C_growth_Smith2020: Invalid source citation" >> review_notes.md
 rm to-review/k_C_growth_Smith2020_PDAC_abc123.yaml
 ```
 
-### 4. Commit and Merge
+### 5. Commit and Merge
 
 ```bash
 git add .
@@ -566,7 +581,9 @@ git push origin --delete review/batch-parameter-2025-10-27-abc123
 
 ## Validation
 
-The workflow automatically runs a comprehensive 6-layer validation suite (`run_all_validations.py`) to catch common errors:
+**Important:** Validation is NOT run automatically during the workflow. After the workflow completes, you must manually run the validation suite.
+
+The validation suite (`run_all_validations.py`) includes 6 validators to catch common errors:
 
 1. **Schema Compliance** - YAML structure matches template, all required fields present
 2. **Source References** - Every `source_ref` points to a defined source in `data_sources`
@@ -604,8 +621,8 @@ WORKFLOW SUMMARY
 Common errors:
 - **Timeout**: Batch didn't complete in time → increase `--timeout`
 - **No results**: Input CSV has issues → verify CSV format
-- **Validation fails**: LLM extraction had errors → review validation summary
 - **Git errors**: Branch already exists or can't push → check git status
+- **Unpacking errors**: Template mismatch → ensure you're using the correct workflow type
 
 ## Batch Jobs Directory
 
@@ -815,19 +832,18 @@ python scripts/run_extraction_workflow.py input.csv \
 
 Note: OpenAI's batch API can take up to 24 hours for large batches, but typically completes in 1-2 hours.
 
-#### Validation Failures
+#### Validation Errors
 
-**Problem:** The workflow reports validation errors and you want to review the raw extractions first.
+**Problem:** You ran validation and found errors in the extracted files.
 
 **Solution:**
-```bash
-# Skip automatic validation
-python scripts/run_extraction_workflow.py input.csv \
-  --type parameter \
-  --skip-validation
-```
+1. Review the validation reports in `output/validation/` to understand what failed
+2. For files with errors, you can either:
+   - Fix them manually
+   - Use the validation fix workflow: `python scripts/run_validation_fix.py <workflow_type>`
+   - Delete and re-extract problematic files
 
-Then manually review files in `../qsp-metadata-storage/to-review/` before moving them to final locations.
+See CLAUDE.md for details on the validation fix workflow.
 
 ### Getting Help
 
