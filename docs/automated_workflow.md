@@ -229,6 +229,16 @@ The script will handle everything automatically and show you progress updates.
 
 These are ready to run and will help you understand the workflow before creating your own input files.
 
+**For faster testing:** Add the `--immediate` flag to process via the Responses API instead of waiting for batch completion:
+```bash
+python scripts/run_extraction_workflow.py \
+  docs/example_parameter_input.csv \
+  --type parameter \
+  --immediate
+```
+
+This completes in minutes instead of hours, perfect for testing. The batch API is cheaper for large production runs.
+
 ---
 
 ## Preparing Your Input File
@@ -388,6 +398,7 @@ python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [op
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--timeout SECONDS` | Max wait time for batch completion | 3600 (1 hour) |
+| `--immediate` | Use Responses API for immediate processing (faster, more expensive) | False |
 | `--no-push` | Create branch locally without pushing | False |
 | `--branch-prefix PREFIX` | Custom prefix for review branches | `review/batch` |
 
@@ -402,6 +413,12 @@ python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [op
 python scripts/run_extraction_workflow.py \
   docs/example_parameter_input.csv \
   --type parameter
+
+# Use immediate mode for faster processing (good for testing)
+python scripts/run_extraction_workflow.py \
+  docs/example_parameter_input.csv \
+  --type parameter \
+  --immediate
 
 # Large real-world example with 77 parameters
 python scripts/run_extraction_workflow.py \
@@ -758,7 +775,17 @@ ls -la  # Should see: scripts/, templates/, batch_jobs/, etc.
 
 **Problem:** Large batches don't complete within the default 1-hour timeout.
 
-**Solution:**
+**Solution 1 - Use immediate mode for faster processing:**
+```bash
+# Process via Responses API (faster, but more expensive)
+python scripts/run_extraction_workflow.py input.csv \
+  --type parameter \
+  --immediate
+```
+
+The `--immediate` flag bypasses the batch API and processes requests immediately via the Responses API. This is much faster (minutes instead of hours) but costs more. **Good for testing or small batches.**
+
+**Solution 2 - Increase timeout for batch API:**
 ```bash
 # Increase timeout to 2 hours (7200 seconds)
 python scripts/run_extraction_workflow.py input.csv \
@@ -771,7 +798,7 @@ python scripts/run_extraction_workflow.py input.csv \
   --timeout 14400
 ```
 
-Note: OpenAI's batch API can take up to 24 hours for large batches, but typically completes in 1-2 hours.
+**Note:** OpenAI's batch API can take up to 24 hours for large batches, but typically completes in 1-2 hours. The batch API is 50% cheaper than the Responses API, so use it for large production batches.
 
 #### Validation Errors
 
