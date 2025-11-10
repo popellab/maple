@@ -272,8 +272,6 @@ python scripts/run_extraction_workflow.py \
   --type parameter
 ```
 
-**For a larger real-world example** with 77 parameters, see `scratch/pdac_parameters_modules_v2.csv`
-
 **Creating the file:**
 
 Option 1 - Using a text editor:
@@ -316,7 +314,7 @@ python scripts/run_extraction_workflow.py \
   --type test_statistic
 ```
 
-**Note:** The workflow can automatically generate the `model_context` field from your model specification files. For advanced usage with custom model context, see `scratch/test_statistic_input_baseline_no_treatment_24664d08.csv`.
+**Note:** The workflow can automatically generate the `model_context` field from your model specification files.
 
 ### Quick Estimates Input File
 
@@ -632,11 +630,9 @@ mv to-review/tumor_volume_*.yaml test_statistics/
 mv to-review/k_death_*.yaml quick_estimates/
 ```
 
-**Reject files** by documenting issues and deleting:
+**Reject files** by deleting:
 
 ```bash
-# Document why rejected
-echo "k_C_growth_Smith2020: Invalid source citation" >> review_notes.md
 
 # Delete rejected file
 rm to-review/k_C_growth_Smith2020_PDAC_abc123.yaml
@@ -676,28 +672,7 @@ git pull
 # The review branch will be automatically deleted after merge
 ```
 
-## Validation
-
-**Important:** Validation is NOT run automatically during the workflow. After the workflow completes, you must manually run the validation suite.
-
-The validation suite (`run_all_validations.py`) includes 6 validators to catch common errors:
-
-1. **Schema Compliance** - YAML structure matches template, all required fields present
-2. **Source References** - Every `source_ref` points to a defined source in `data_sources`
-3. **Text Snippets** - `value_snippet` fields contain the reported values
-4. **DOI Validity** - DOIs resolve to real publications, metadata matches
-5. **Code Execution** - Derivation code (R/Python) runs without errors
-6. **Value Consistency** - Values consistent across related extractions
-
-**Validation outputs:**
-- Individual JSON reports for each validator in `output/validation/`
-- Pass/fail counts shown in workflow output
-- Files with errors are still unpacked but flagged for manual review
-- Validation tags added to YAML files that pass all checks
-
-**After validation completes:**
-- Files are automatically tagged with passed validation checks
-- Failed files can be sent back to OpenAI for fixing via `run_validation_fix.py`
+---
 
 ## Error Handling
 
