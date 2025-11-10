@@ -554,7 +554,9 @@ Open a few YAML files in `to-review/` and check:
 
 See `scripts/validate/MANUAL_REVIEW_CHECKLIST.md` for the complete checklist.
 
-**If you find major issues at this stage,** you may want to run the validation fix workflow instead of continuing with validation.
+**If you find major issues at this stage:**
+- Consider discarding the results and re-running the extraction with improved prompts
+- Or use the validation fix workflow: `python scripts/run_validation_fix.py <workflow_type>`
 
 ### 3. Run Automated Validation Suite
 
