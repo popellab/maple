@@ -160,19 +160,29 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Step 5: Get OpenAI API Key
+### Step 5: Provision Your OpenAI API Key
 
-You need an OpenAI API key to run the workflows.
+Each user provisions and manages their own OpenAI API key.
 
-1. Ask your PI or lab manager for the lab's OpenAI API key
-2. Create a `.env` file in the `qsp-llm-workflows` directory:
+**For JHU users:**
+Follow the [JHU Guide to Managing API Keys and Usage Limits](https://support.cmts.jhu.edu/hc/en-us/articles/38383798293133-Guide-to-Managing-API-Keys-and-Usage-Limits-on-platform-openai-com)
+
+**For other institutions:**
+Check with your institution's IT support for guidance on provisioning OpenAI API keys through institutional accounts.
+
+**Once you have your API key:**
 
 ```bash
 # From the qsp-llm-workflows directory:
 echo "OPENAI_API_KEY=sk-your-key-here" > .env
 ```
 
-**Important:** Never commit the `.env` file to git (it's already in `.gitignore`).
+Replace `sk-your-key-here` with your actual API key.
+
+**Important:**
+- Never commit the `.env` file to git (it's already in `.gitignore`)
+- Never share your API key with others
+- Each user should have their own key for usage tracking
 
 **Verify everything works:**
 
@@ -659,7 +669,9 @@ echo "OPENAI_API_KEY=sk-your-actual-key-here" > .env
 cat .env
 ```
 
-Ask your PI or lab manager for the OpenAI API key if you don't have it.
+**If you don't have an API key yet:**
+- **JHU users:** Follow the [JHU API Key Provisioning Guide](https://support.cmts.jhu.edu/hc/en-us/articles/38383798293133-Guide-to-Managing-API-Keys-and-Usage-Limits-on-platform-openai-com)
+- **Other institutions:** Check with your institution's IT support for OpenAI API key provisioning
 
 #### "qsp-metadata-storage not found"
 
@@ -753,7 +765,8 @@ If you're still stuck:
 1. **Check this documentation** - Most common issues are covered above
 2. **Ask a labmate** - Someone else may have encountered the same issue
 3. **Check the error message carefully** - Often it tells you exactly what's wrong
-4. **Ask your PI or lab manager** - Especially for API keys or repository access
+4. **For API key issues** - Follow your institution's API key provisioning guide (see Step 5 above)
+5. **For repository access** - Ask your PI or lab manager for GitHub access
 
 ### Common Command Reference
 
