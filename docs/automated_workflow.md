@@ -227,14 +227,26 @@ For parameter extraction (`--type parameter`), your CSV needs these columns:
 |--------|-------------|---------|
 | `cancer_type` | Cancer type being studied | `PDAC`, `Melanoma`, `NSCLC` |
 | `parameter_name` | Name of parameter to extract | `k_C_growth`, `K_CD8_TEFF` |
+| `notes` (optional) | Additional context for extraction | Parameter description |
 
 **Example:** `parameter_input.csv`
 
 ```csv
-cancer_type,parameter_name
-PDAC,k_C_growth
-PDAC,k_C_death
-Melanoma,K_CD8_TEFF
+cancer_type,parameter_name,notes
+PDAC,k_C_growth,Cancer cell growth rate
+PDAC,k_C_death,Cancer cell death rate
+PDAC,k_CD8_act,CD8 activation rate
+PDAC,k_APC_mat,Maximum rate of APC maturation
+```
+
+**Real example from our PDAC project** (see `scratch/pdac_parameters_modules_v2.csv`):
+
+```csv
+cancer_type,parameter_name,notes
+PDAC,k_C_CD8,"Rate of cancer cell death by T cells (Robertson-Tessi 2012, PMID: 22051568)"
+PDAC,k_CD8_pro,"CD8 proliferation rate (Marchingo 2014, PMID: 25430770)"
+PDAC,k_APC_mat,"Maximum rate of APC maturation (Chen 2014, PMID: 25184733)"
+PDAC,DAMPs,"Concentration of cytokines released per dying cancer cell (Milo 2013, PMID: 24114984)"
 ```
 
 **Creating the file:**
@@ -257,28 +269,36 @@ For test statistics (`--type test_statistic`), your CSV needs these columns:
 | Column | Description | Example |
 |--------|-------------|---------|
 | `test_statistic_id` | Unique ID for this test stat | `tumor_volume_day14` |
-| `scenario_context` | Description of experimental scenario | `Untreated PDAC tumor growth` |
-| `required_species` | Species needed from model | `C(t=14)` (tumor cells at day 14) |
-| `derived_species_description` | What the statistic represents | `Tumor volume in mm³ at 14 days` |
 | `cancer_type` | Cancer type | `PDAC` |
+| `scenario_context` | Description of experimental scenario | `Untreated PDAC tumor growth` |
+| `required_species` | Species needed from model | `V_T.C(t=14)` |
+| `derived_species_description` | What the statistic represents | `Tumor volume in mm³ at 14 days` |
+| `model_context` (optional) | Model structure details | See full example below |
 
-**Example:** `test_stat_input.csv`
+**Simplified example:** `test_stat_input.csv`
 
 ```csv
-test_statistic_id,scenario_context,required_species,derived_species_description,cancer_type
-tumor_volume_day14,Untreated PDAC tumor growth in KPC mice,C(t=14),Tumor volume in mm³ at day 14,PDAC
-cdc1_ratio,Baseline immune infiltration in treatment-naive PDAC,cDC1 cDC2,Ratio of type 1 to type 2 dendritic cells,PDAC
+test_statistic_id,cancer_type,scenario_context,required_species,derived_species_description
+tumor_volume_day14,PDAC,Untreated PDAC tumor growth in KPC mice,V_T.C,Tumor volume in mm³ at 14 days
+cd8_infiltration,PDAC,Baseline immune infiltration in treatment-naive PDAC,V_T.CD8,CD8+ T cell count per mm³ tumor
+cdc1_cdc2_ratio,PDAC,Dendritic cell composition in untreated PDAC tumors,"V_T.cDC1,V_T.cDC2",Ratio of type 1 to type 2 dendritic cells
 ```
+
+**Note:** For test statistics, the workflow can automatically generate the `model_context` field from your model specification files. If you need custom model context, you can include it as an additional column (see `scratch/test_statistic_input_baseline_no_treatment_24664d08.csv` for a full example with model context).
 
 ### Quick Estimates Input File
 
-For quick estimates (`--type quick_estimate`), use the same format as parameter extraction:
+For quick estimates (`--type quick_estimate`), use the same format as parameter extraction (without notes column):
 
 ```csv
 cancer_type,parameter_name
 PDAC,k_C_growth
 PDAC,k_C_death
+PDAC,k_CD8_act
+PDAC,k_APC_mat
 ```
+
+Quick estimates are useful for getting rapid ballpark parameter values for model initialization before doing full literature extraction.
 
 ### Common Issues
 
@@ -348,12 +368,12 @@ python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [op
 ```bash
 # Standard parameter extraction
 python scripts/run_extraction_workflow.py \
-  batch_jobs/input_data/core_extraction_input.csv \
+  scratch/pdac_parameters_modules_v2.csv \
   --type parameter
 
-# With longer timeout for large batches
+# With longer timeout for large batches (77 parameters in this example)
 python scripts/run_extraction_workflow.py \
-  batch_jobs/input_data/large_batch.csv \
+  scratch/pdac_parameters_modules_v2.csv \
   --type parameter \
   --timeout 7200
 ```
@@ -361,18 +381,23 @@ python scripts/run_extraction_workflow.py \
 ### Test Statistics
 
 ```bash
-# Test statistic extraction
+# Test statistic extraction with full model context
 python scripts/run_extraction_workflow.py \
-  batch_jobs/pdac_pretreatment_metrics.csv \
+  scratch/test_statistic_input_baseline_no_treatment_24664d08.csv \
+  --type test_statistic
+
+# Or use the copy in batch_jobs/
+python scripts/run_extraction_workflow.py \
+  batch_jobs/input_data/test_statistic_input_baseline_no_treatment_30185312.csv \
   --type test_statistic
 ```
 
 ### Quick Estimates
 
 ```bash
-# Quick estimates without validation
+# Quick estimates for rapid prototyping
 python scripts/run_extraction_workflow.py \
-  batch_jobs/input_data/quick_params.csv \
+  my_quick_estimates.csv \
   --type quick_estimate \
   --skip-validation
 ```
