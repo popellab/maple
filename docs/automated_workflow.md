@@ -2,28 +2,311 @@
 
 ## Overview
 
-The automated extraction workflow reduces the manual friction of running parameter/test statistic extractions by handling the complete pipeline in a single command:
+This workflow automates LLM-based parameter extraction from scientific papers. Instead of running 8+ manual commands, you run **one command** and the system:
 
-1. **Create batch** → 2. **Upload** → 3. **Monitor** → 4. **Validate** → 5. **Unpack** → 6. **Commit & Push**
+1. Creates batch requests
+2. Uploads to OpenAI API
+3. Monitors progress automatically
+4. Validates the results
+5. Unpacks files to a staging area
+6. Creates a git branch and pushes for review
 
-Instead of running 6+ manual steps, you run one command and get a git branch ready for review.
+**Time savings:** From 20-30 minutes of manual work → 1 minute to launch, then walk away.
 
-## Quick Start
+### What Happens When You Run a Workflow?
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  You create a CSV file with parameters to extract           │
+│  cancer_type,parameter_name                                 │
+│  PDAC,k_C_growth                                            │
+└─────────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────────┐
+│  You run ONE command:                                       │
+│  python scripts/run_extraction_workflow.py \                │
+│    input.csv --type parameter                               │
+└─────────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────────┐
+│  The system automatically:                                  │
+│  1. Creates batch requests and uploads to OpenAI           │
+│  2. Monitors progress (shows you updates)                   │
+│  3. Downloads results when complete                         │
+│  4. Validates the extracted data                            │
+│  5. Unpacks files to to-review/ directory                   │
+│  6. Creates git branch and pushes for review                │
+└─────────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────────┐
+│  You review the extracted files and approve/reject them     │
+│  cd ../qsp-metadata-storage                                 │
+│  git checkout review/batch-parameter-2025-10-27-abc123      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## First-Time Setup
+
+If this is your first time using the workflow, follow these setup steps carefully. You only need to do this once.
+
+### Step 1: Install Python (if not already installed)
+
+Check if Python 3 is installed:
 
 ```bash
+python3 --version
+```
+
+If you see something like `Python 3.9.x` or higher, you're good. If not, install Python:
+- **Mac:** Install via [Homebrew](https://brew.sh/): `brew install python3`
+- **Linux:** `sudo apt install python3 python3-pip`
+- **Windows:** Download from [python.org](https://www.python.org/downloads/)
+
+### Step 2: Set Up GitHub SSH Keys
+
+SSH keys let you clone and push to GitHub without entering your password every time.
+
+**Check if you already have SSH keys:**
+
+```bash
+ls -al ~/.ssh
+```
+
+If you see files like `id_rsa` and `id_rsa.pub` (or `id_ed25519` and `id_ed25519.pub`), you already have keys. Skip to "Add SSH key to GitHub" below.
+
+**Generate new SSH keys (if needed):**
+
+```bash
+# Generate SSH key (replace with your GitHub email)
+ssh-keygen -t ed25519 -C "your.email@example.com"
+
+# Press Enter to accept default file location
+# Press Enter twice to skip passphrase (or set one if you prefer)
+```
+
+**Add SSH key to GitHub:**
+
+```bash
+# Copy your public key to clipboard
+# Mac:
+cat ~/.ssh/id_ed25519.pub | pbcopy
+
+# Linux (with xclip):
+cat ~/.ssh/id_ed25519.pub | xclip -selection clipboard
+
+# Or just display it and copy manually:
+cat ~/.ssh/id_ed25519.pub
+```
+
+Then:
+1. Go to [GitHub Settings → SSH and GPG keys](https://github.com/settings/keys)
+2. Click "New SSH key"
+3. Paste your public key
+4. Click "Add SSH key"
+
+**Test your connection:**
+
+```bash
+ssh -T git@github.com
+```
+
+You should see: `Hi username! You've successfully authenticated...`
+
+### Step 3: Clone the Repositories
+
+You need **two** repositories as sibling directories:
+
+```bash
+# Navigate to where you want your projects (e.g., Documents or Projects)
+cd ~/Projects  # or wherever you keep code
+
+# Clone the workflows repository
+git clone git@github.com:popellab/qsp-llm-workflows.git
+
+# Clone the metadata storage repository
+git clone git@github.com:popellab/qsp-metadata-storage.git
+
+# Your directory structure should now be:
+# Projects/
+# ├── qsp-llm-workflows/
+# └── qsp-metadata-storage/
+```
+
+**Important:** These repos must be **siblings** (in the same parent directory) for the workflow to work.
+
+### Step 4: Set Up Python Virtual Environment
+
+A virtual environment keeps Python packages for this project separate from your system.
+
+```bash
+# Navigate to the workflows repository
+cd qsp-llm-workflows
+
+# Create virtual environment
+python3 -m venv venv
+
 # Activate virtual environment
 source venv/bin/activate
 
-# Run parameter extraction workflow
-python scripts/run_extraction_workflow.py input.csv --type parameter
-
-# The script will:
-# - Create and upload batch requests
-# - Poll until completion (shows progress)
-# - Run automatic validation
-# - Unpack validated results to ../qsp-metadata-storage/to-review/
-# - Create review branch and push to remote
+# Your prompt should now show (venv) at the beginning
 ```
+
+**Install required packages:**
+
+```bash
+# Make sure venv is activated (you should see (venv) in your prompt)
+pip install -r requirements.txt
+```
+
+### Step 5: Get OpenAI API Key
+
+You need an OpenAI API key to run the workflows.
+
+1. Ask your PI or lab manager for the lab's OpenAI API key
+2. Create a `.env` file in the `qsp-llm-workflows` directory:
+
+```bash
+# From the qsp-llm-workflows directory:
+echo "OPENAI_API_KEY=sk-your-key-here" > .env
+```
+
+**Important:** Never commit the `.env` file to git (it's already in `.gitignore`).
+
+**Verify everything works:**
+
+```bash
+# Make sure you're in qsp-llm-workflows directory
+# Make sure virtual environment is activated (venv)
+python scripts/run_extraction_workflow.py --help
+```
+
+You should see help text without errors. If so, you're ready to run extractions!
+
+---
+
+## Quick Start (For Regular Use)
+
+Once you've completed first-time setup, starting a workflow is simple:
+
+```bash
+# 1. Navigate to the repository
+cd ~/Projects/qsp-llm-workflows
+
+# 2. Activate virtual environment (do this every time you open a new terminal)
+source venv/bin/activate
+
+# 3. Run the workflow
+python scripts/run_extraction_workflow.py input.csv --type parameter
+```
+
+The script will handle everything automatically and show you progress updates.
+
+---
+
+## Preparing Your Input File
+
+The workflow needs a CSV file telling it what to extract. The format depends on which workflow type you're using.
+
+### Parameter Extraction Input File
+
+For parameter extraction (`--type parameter`), your CSV needs these columns:
+
+| Column | Description | Example |
+|--------|-------------|---------|
+| `cancer_type` | Cancer type being studied | `PDAC`, `Melanoma`, `NSCLC` |
+| `parameter_name` | Name of parameter to extract | `k_C_growth`, `K_CD8_TEFF` |
+
+**Example:** `parameter_input.csv`
+
+```csv
+cancer_type,parameter_name
+PDAC,k_C_growth
+PDAC,k_C_death
+Melanoma,K_CD8_TEFF
+```
+
+**Creating the file:**
+
+Option 1 - Using a text editor:
+1. Open your favorite text editor (TextEdit, VS Code, nano, etc.)
+2. Type or paste the CSV content exactly as shown above
+3. Save as `parameter_input.csv` in the `qsp-llm-workflows` directory
+
+Option 2 - Using Excel/Google Sheets:
+1. Create a spreadsheet with column headers in first row: `cancer_type`, `parameter_name`
+2. Fill in your data
+3. Save/Export as CSV format
+4. Move the file to `qsp-llm-workflows` directory
+
+### Test Statistics Input File
+
+For test statistics (`--type test_statistic`), your CSV needs these columns:
+
+| Column | Description | Example |
+|--------|-------------|---------|
+| `test_statistic_id` | Unique ID for this test stat | `tumor_volume_day14` |
+| `scenario_context` | Description of experimental scenario | `Untreated PDAC tumor growth` |
+| `required_species` | Species needed from model | `C(t=14)` (tumor cells at day 14) |
+| `derived_species_description` | What the statistic represents | `Tumor volume in mm³ at 14 days` |
+| `cancer_type` | Cancer type | `PDAC` |
+
+**Example:** `test_stat_input.csv`
+
+```csv
+test_statistic_id,scenario_context,required_species,derived_species_description,cancer_type
+tumor_volume_day14,Untreated PDAC tumor growth in KPC mice,C(t=14),Tumor volume in mm³ at day 14,PDAC
+cdc1_ratio,Baseline immune infiltration in treatment-naive PDAC,cDC1 cDC2,Ratio of type 1 to type 2 dendritic cells,PDAC
+```
+
+### Quick Estimates Input File
+
+For quick estimates (`--type quick_estimate`), use the same format as parameter extraction:
+
+```csv
+cancer_type,parameter_name
+PDAC,k_C_growth
+PDAC,k_C_death
+```
+
+### Common Issues
+
+**Problem:** Script says "No such file"
+- **Solution:** Make sure you're running the command from the `qsp-llm-workflows` directory
+- **Solution:** Check the file path - try `ls parameter_input.csv` to verify it exists
+
+**Problem:** CSV parsing errors
+- **Solution:** Make sure column headers are **exactly** as shown (case-sensitive, no spaces)
+- **Solution:** Check for hidden characters - save as plain text CSV, not Excel format
+- **Solution:** No empty rows at the beginning or end of file
+
+**Problem:** "Required column missing"
+- **Solution:** Double-check you have all required columns for your workflow type
+- **Solution:** Column names must match exactly (e.g., `cancer_type` not `Cancer Type`)
+
+### Where to Put Your Input Files
+
+You can put input files anywhere, but we recommend:
+
+```bash
+qsp-llm-workflows/
+├── batch_jobs/
+│   └── input_data/          # Put your CSV files here
+│       ├── parameter_input.csv
+│       ├── test_stat_input.csv
+│       └── quick_estimate_input.csv
+```
+
+Then reference them in commands:
+
+```bash
+python scripts/run_extraction_workflow.py \
+  batch_jobs/input_data/parameter_input.csv \
+  --type parameter
+```
+
+---
 
 ## Usage
 
@@ -324,45 +607,186 @@ HPC integration wraps the same `WorkflowOrchestrator` class used locally.
 
 ## Troubleshooting
 
-### "OPENAI_API_KEY not found"
+### Common Issues for Beginners
 
-Ensure `.env` file exists with your API key:
+#### "python: command not found" or "python3: command not found"
 
+**Problem:** Python is not installed or not in your PATH.
+
+**Solution:**
 ```bash
-echo "OPENAI_API_KEY=sk-..." > .env
+# Check if Python 3 is installed
+which python3
+
+# If not found, install Python (Mac with Homebrew)
+brew install python3
+
+# Try using python3 explicitly in all commands
+python3 scripts/run_extraction_workflow.py input.csv --type parameter
 ```
 
-### "qsp-metadata-storage not found"
+#### "No module named 'openai'" or similar import errors
 
-The script expects the metadata storage repo as a sibling directory:
+**Problem:** You haven't activated the virtual environment or haven't installed dependencies.
 
-```
-Projects/
-├── qsp-llm-workflows/     # This repo
-└── qsp-metadata-storage/  # Metadata storage (must exist)
-```
-
-### Timeout Issues
-
-Large batches may need longer timeouts:
-
+**Solution:**
 ```bash
+# Make sure you're in the right directory
+cd ~/Projects/qsp-llm-workflows
+
+# Activate virtual environment (you should see (venv) in your prompt)
+source venv/bin/activate
+
+# If you still get errors, reinstall dependencies
+pip install -r requirements.txt
+```
+
+**Important:** You must activate the virtual environment (`source venv/bin/activate`) **every time** you open a new terminal window.
+
+#### "OPENAI_API_KEY not found"
+
+**Problem:** The `.env` file doesn't exist or is in the wrong location.
+
+**Solution:**
+```bash
+# Make sure you're in qsp-llm-workflows directory
+pwd  # Should show: /Users/yourname/Projects/qsp-llm-workflows
+
+# Create .env file with your API key
+echo "OPENAI_API_KEY=sk-your-actual-key-here" > .env
+
+# Verify the file was created
+cat .env
+```
+
+Ask your PI or lab manager for the OpenAI API key if you don't have it.
+
+#### "qsp-metadata-storage not found"
+
+**Problem:** The metadata storage repository doesn't exist or is in the wrong location.
+
+**Solution:**
+```bash
+# Check your directory structure
+cd ~/Projects  # Or wherever you cloned repos
+ls -la
+
+# You should see both:
+# qsp-llm-workflows/
+# qsp-metadata-storage/
+
+# If qsp-metadata-storage is missing, clone it:
+git clone git@github.com:popellab/qsp-metadata-storage.git
+```
+
+Both repos **must** be siblings (in the same parent directory).
+
+#### "Permission denied (publickey)" when pushing to GitHub
+
+**Problem:** SSH keys aren't set up correctly.
+
+**Solution:**
+```bash
+# Test SSH connection
+ssh -T git@github.com
+
+# If it fails, check if you have SSH keys
+ls -al ~/.ssh
+
+# If no keys exist, generate them (see "Step 2: Set Up GitHub SSH Keys" above)
+ssh-keygen -t ed25519 -C "your.email@example.com"
+
+# Add public key to GitHub at: https://github.com/settings/keys
+cat ~/.ssh/id_ed25519.pub
+```
+
+#### "fatal: not a git repository"
+
+**Problem:** You're running commands from the wrong directory.
+
+**Solution:**
+```bash
+# Always run workflow commands from qsp-llm-workflows directory
+cd ~/Projects/qsp-llm-workflows
+
+# Verify you're in the right place
+ls -la  # Should see: scripts/, templates/, batch_jobs/, etc.
+```
+
+#### Timeout Issues
+
+**Problem:** Large batches don't complete within the default 1-hour timeout.
+
+**Solution:**
+```bash
+# Increase timeout to 2 hours (7200 seconds)
 python scripts/run_extraction_workflow.py input.csv \
   --type parameter \
-  --timeout 7200  # 2 hours
+  --timeout 7200
+
+# For very large batches, try 4 hours
+python scripts/run_extraction_workflow.py input.csv \
+  --type parameter \
+  --timeout 14400
 ```
 
-### Validation Failures
+Note: OpenAI's batch API can take up to 24 hours for large batches, but typically completes in 1-2 hours.
 
-Skip validation if you want to review raw extractions:
+#### Validation Failures
 
+**Problem:** The workflow reports validation errors and you want to review the raw extractions first.
+
+**Solution:**
 ```bash
+# Skip automatic validation
 python scripts/run_extraction_workflow.py input.csv \
   --type parameter \
   --skip-validation
 ```
 
-Then review and manually validate files before moving to final locations.
+Then manually review files in `../qsp-metadata-storage/to-review/` before moving them to final locations.
+
+### Getting Help
+
+If you're still stuck:
+
+1. **Check this documentation** - Most common issues are covered above
+2. **Ask a labmate** - Someone else may have encountered the same issue
+3. **Check the error message carefully** - Often it tells you exactly what's wrong
+4. **Ask your PI or lab manager** - Especially for API keys or repository access
+
+### Common Command Reference
+
+Here's a quick reference of commands you'll use frequently:
+
+```bash
+# Navigate to workflows directory
+cd ~/Projects/qsp-llm-workflows
+
+# Activate virtual environment (do this every time!)
+source venv/bin/activate
+
+# Check if a file exists
+ls parameter_input.csv
+
+# Run parameter extraction
+python scripts/run_extraction_workflow.py \
+  batch_jobs/input_data/parameter_input.csv \
+  --type parameter
+
+# Check git status
+git status
+
+# Switch to metadata storage and checkout review branch
+cd ../qsp-metadata-storage
+git checkout review/batch-parameter-2025-10-27-abc123
+
+# List files in to-review/
+ls to-review/
+
+# Go back to workflows directory
+cd ../qsp-llm-workflows
+```
 
 ## Advanced Usage
 
