@@ -167,8 +167,12 @@ def print_verification_report(source_data: dict):
         doi = info['doi']
         snippets = sorted(info['snippets'])
 
+        # Get unique filenames
+        filenames = sorted(set(inp['filename'] for inp in info['inputs']))
+
         print(f"Source: {source_tag}")
         print(f"DOI: https://doi.org/{doi}")
+        print(f"YAML file(s): {', '.join(filenames)}")
         print(f"\nSnippets to verify ({len(snippets)} unique):")
         for i, snippet in enumerate(snippets, 1):
             # Truncate long snippets for display

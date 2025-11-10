@@ -24,9 +24,9 @@ For this parameter, you must:
    - **Unit conversions:** Include uncertainty from conversion factors when applicable
    - **Model assumptions:** Account for parametric uncertainty when making distributional assumptions
 5. **Standard units:** Use standard unit formats (e.g., "1/day", "nM", "mg/L", "dimensionless" for counts/ratios)
-6. **Required outputs:** Function must return dict with:
-   - `mean_param`: Mean of Monte Carlo draws
-   - `variance_param`: Variance of Monte Carlo draws
+6. **Required outputs:** Function must return dict with outlier-robust statistics:
+   - `median_param`: Median of Monte Carlo draws
+   - `iqr_param`: Interquartile range (Q3 - Q1) of Monte Carlo draws
    - `ci95_param`: 95% percentile confidence interval as [lower, upper]
 
 ---
@@ -48,8 +48,9 @@ For this parameter, you must:
 ## Requirements Summary
 
 **Code:**
-- Python function `derive_parameter(inputs)` returning mean_param, variance_param, ci95_param
+- Python function `derive_parameter(inputs)` returning median_param, iqr_param, ci95_param
 - Bootstrap preferred for uncertainty quantification
+- Use outlier-robust statistics (median/IQR instead of mean/variance)
 - Set random seed via inputs for reproducibility
 
 **Documentation:**
@@ -98,8 +99,8 @@ Response structure (see template for field details):
   "parameter_estimates": {
     "inputs": [{"name": "...", "value": 0.45, "units": "...", ...}],
     "derivation_code": "import numpy as np\\n...",
-    "mean": 0.123,
-    "variance": 0.001,
+    "median": 0.123,
+    "iqr": 0.045,
     "ci95": [0.1, 0.15],
     "units": "1/day",
     "key_assumptions": {"1": "...", "2": "...", "3": "..."}

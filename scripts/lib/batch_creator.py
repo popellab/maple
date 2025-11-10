@@ -874,6 +874,32 @@ class ValidationFixBatchCreator(BatchCreator):
     def get_batch_type(self) -> str:
         return "validation_fix"
 
+    def _extract_filename_from_item(self, item: str) -> str:
+        """
+        Extract filename from validation item string.
+
+        Handles multiple formats:
+        - Simple: "filename.yaml"
+        - Reference-level: "filename.yaml → REFERENCE"
+        - Input-level: "filename.yaml / input 'name' (value=X)"
+
+        Args:
+            item: Item string from validation report
+
+        Returns:
+            Extracted filename
+        """
+        # Check for reference-level format (arrow)
+        if ' → ' in item:
+            return item.split(' → ')[0].strip()
+
+        # Check for input-level format (slash)
+        if ' / input ' in item:
+            return item.split(' / input ')[0].strip()
+
+        # Simple format - just return as-is
+        return item.strip()
+
     def load_validation_results(self, validation_dir: Path) -> Dict[str, List[str]]:
         """
         Load all validation JSON reports and aggregate errors by filename.
@@ -907,8 +933,11 @@ class ValidationFixBatchCreator(BatchCreator):
                 # Process failed items
                 failed_items = report.get('failed', [])
                 for item in failed_items:
-                    filename = item['item']
+                    item_str = item['item']
                     reason = item['reason']
+
+                    # Extract filename from item (handles reference/input-level formats)
+                    filename = self._extract_filename_from_item(item_str)
 
                     # Format error with validation type
                     error_msg = f"{validation_type}:\n    {reason}"

@@ -250,9 +250,14 @@ class TextSnippetValidator:
         # Percentage format (if value is between 0 and 1)
         if 0 <= numeric_val <= 1:
             pct = numeric_val * 100
+            # Add both with and without % sign
+            # (snippets often have "30.62 ± 16.80%" where % is separated)
             patterns.append(f"{pct:.0f}%")
             patterns.append(f"{pct:.1f}%")
             patterns.append(f"{pct:.2f}%")
+            patterns.append(f"{pct:.0f}")  # Without %
+            patterns.append(f"{pct:.1f}")  # Without %
+            patterns.append(f"{pct:.2f}")  # Without %
 
         # Text-encoded numbers (e.g., "one hundred" for 100)
         text_pattern = self.number_to_text(numeric_val)
@@ -291,9 +296,15 @@ class TextSnippetValidator:
         patterns = self.value_to_search_patterns(value, units)
 
         # Search for each pattern (case-insensitive, handle whitespace variations)
+        # Remove commas for numeric matching (e.g., "4,623" becomes "4623")
         snippet_normalized = re.sub(r'\s+', ' ', snippet.lower())
+        snippet_normalized = snippet_normalized.replace(',', '')
 
-        for pattern in patterns:
+        # Sort patterns by length (longest first) to match most specific patterns first
+        # This ensures "16.07" is tried before "16"
+        patterns_sorted = sorted(patterns, key=len, reverse=True)
+
+        for pattern in patterns_sorted:
             pattern_normalized = pattern.lower().strip()
             if pattern_normalized in snippet_normalized:
                 return (True, pattern)

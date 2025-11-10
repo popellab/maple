@@ -163,18 +163,19 @@ parameter_estimates:
             # Transform to desired parameter
             mc_draws[i] = adjusted_lambda * conversion_factor
 
-        # Return required summary statistics
+        # Return required summary statistics (outlier-robust)
         return {
-            'mean_param': float(np.mean(mc_draws)),
-            'variance_param': float(np.var(mc_draws, ddof=1)),
+            'median_param': float(np.median(mc_draws)),
+            'iqr_param': float(np.percentile(mc_draws, 75) - np.percentile(mc_draws, 25)),
             'ci95_param': [float(np.percentile(mc_draws, 2.5)),
                           float(np.percentile(mc_draws, 97.5))]
         }
     ```
 
   # Computed outputs (must match what derivation_code produces)
-  mean: NUMERIC_VALUE
-  variance: NUMERIC_VALUE
+  # Using outlier-robust statistics: median and IQR instead of mean and variance
+  median: NUMERIC_VALUE
+  iqr: NUMERIC_VALUE
   ci95: [NUMERIC_LOWER, NUMERIC_UPPER]
   units: "1/day"
 
@@ -207,7 +208,8 @@ derivation_explanation: |
   compartments for this therapeutic context.
 
   **Step 5:** Convert to daily rate by multiplying by 365.25 days/year. Compute final parameter
-  statistics (mean, variance, 95% CI) from bootstrap distribution.
+  statistics (median, IQR, 95% CI) from bootstrap distribution. We use outlier-robust statistics
+  (median/IQR) instead of mean/variance to reduce sensitivity to extreme values.
 
 # Important limitations and their specific impact on parameter reliability
 # ============================================================================

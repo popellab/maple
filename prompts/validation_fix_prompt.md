@@ -79,14 +79,42 @@ Return the corrected content as JSON inside a code fence. Requirements:
 - **Include** a \`\`\`json code fence around your response
 - **Do NOT include** explanations outside the code fence
 - **Do NOT include header fields** (schema_version, cancer_type, tags, context_hash, etc.) - these are preserved from the original and added back automatically
-- **Preserve** all content fields from the original
-- **Fix** only the specific errors mentioned
+- **CRITICAL STRUCTURE RULE**: Match the EXACT structure shown in "Original Content" above
+  - If `model_output` is at the root level, keep it at root level
+  - If `test_statistic_definition` is at the root level, keep it at root level
+  - Do NOT nest root-level fields under `model_output`
+  - For test statistics: `model_output` should ONLY contain `code`, all other fields (test_statistic_definition, study_overview, test_statistic_estimates, primary_data_sources, etc.) are separate root-level fields
+- **Fix** only the specific errors mentioned while preserving the original structure
 
-Example output format:
+Example output format for test statistics:
 \`\`\`json
 {
+  "model_output": {
+    "code": "import numpy as np\n\ndef compute_test_statistic(...):\n    ..."
+  },
+  "test_statistic_definition": "...",
+  "study_overview": "...",
+  "study_design": "...",
   "test_statistic_estimates": {
     "inputs": [...],
+    "derivation_code": "...",
+    "median": 1.23,
+    "iqr": 0.45,
+    "ci95": [0.5, 2.0],
+    "units": "...",
+    "key_assumptions": {
+      "1": "...",
+      "2": "...",
+      "3": "..."
+    }
+  },
+  "derivation_explanation": "...",
+  "key_study_limitations": "...",
+  "primary_data_sources": [...],
+  "secondary_data_sources": [...],
+  "methodological_sources": [...],
+  "validation_weights": {
+    "species_match": {"value": 1.0, "justification": "..."},
     ...
   }
 }
