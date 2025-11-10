@@ -600,14 +600,6 @@ When you run `run_all_validations.py`, the last step will:
 
 If verified, the validator will tag all files with `manual_snippet_source_verification`.
 
-**Optional: Automated snippet verification** (requires institutional access or email):
-```bash
-# Configure in .env for automated verification
-VALIDATION_EMAIL=your.email@jhu.edu
-```
-
-See CLAUDE.md for details on automated snippet verification setup.
-
 ### 5. Review Detailed Validation Reports
 
 Check files in `to-review/`:
