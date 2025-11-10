@@ -510,7 +510,8 @@ Next steps:
   4. Review validation reports in output/validation/
   5. Review files in to-review/
   6. Move approved files to appropriate directories
-  7. Merge to main when approved
+  7. Commit changes and open a pull request on GitHub
+  8. Merge PR after team review
 ======================================================================
 ```
 
@@ -582,18 +583,38 @@ echo "k_C_growth_Smith2020: Invalid source citation" >> review_notes.md
 rm to-review/k_C_growth_Smith2020_PDAC_abc123.yaml
 ```
 
-### 5. Commit and Merge
+### 5. Commit and Open Pull Request
 
 ```bash
+# Commit your review changes
 git add .
 git commit -m "Review complete: approved 12 files, rejected 3 files"
-git checkout main
-git merge review/batch-parameter-2025-10-27-abc123
+
+# Push to remote
 git push
 
-# Clean up review branch
-git branch -d review/batch-parameter-2025-10-27-abc123
-git push origin --delete review/batch-parameter-2025-10-27-abc123
+# Open a pull request on GitHub
+# Option 1: Using GitHub web interface
+#   Go to: https://github.com/popellab/qsp-metadata-storage/pulls
+#   Click "New pull request"
+#   Select your review branch (e.g., review/batch-parameter-2025-10-27-abc123)
+#   Add description of what was reviewed and approved
+#   Request review from team members
+#   Click "Create pull request"
+
+# Option 2: Using GitHub CLI (if installed)
+gh pr create --title "Review: batch-parameter-2025-10-27" \
+  --body "Reviewed and approved 12 files, rejected 3 files. See commit message for details."
+```
+
+**After PR is approved and merged:**
+
+```bash
+# Switch back to main and update
+git checkout main
+git pull
+
+# The review branch will be automatically deleted after merge
 ```
 
 ## Validation
