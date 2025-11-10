@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Note for end users:** If you're looking for setup and usage instructions, see [docs/automated_workflow.md](docs/automated_workflow.md) for a beginner-friendly guide. This file is for developers and contributors.
+
+---
+
 ## Overview
 
 This repository contains LLM workflow automation tools for extracting and validating quantitative systems pharmacology (QSP) metadata from scientific literature using OpenAI's batch API.
@@ -42,7 +46,7 @@ source venv/bin/activate
 
 ### Automated Workflow (Recommended)
 
-**Single-command automated extraction** - Handles batch creation, upload, monitoring, validation, unpacking, and git operations:
+**Single-command automated extraction** - Handles batch creation, upload, monitoring, unpacking, and git operations:
 
 ```bash
 # Parameter extraction (complete pipeline)
@@ -57,8 +61,8 @@ python scripts/run_extraction_workflow.py quick.csv --type quick_estimate
 # With custom timeout (default: 3600s)
 python scripts/run_extraction_workflow.py input.csv --type parameter --timeout 7200
 
-# Skip validation step
-python scripts/run_extraction_workflow.py input.csv --type parameter --skip-validation
+# Use immediate mode for faster processing (via Responses API)
+python scripts/run_extraction_workflow.py input.csv --type parameter --immediate
 
 # Create branch locally without pushing
 python scripts/run_extraction_workflow.py input.csv --type parameter --no-push
@@ -68,10 +72,16 @@ python scripts/run_extraction_workflow.py input.csv --type parameter --no-push
 1. Creates batch requests
 2. Uploads to OpenAI API
 3. Polls until completion (shows progress)
-4. Runs automatic validation (checklist)
-5. Unpacks validated results to `../qsp-metadata-storage/to-review/`
-6. Creates review branch and pushes to remote
-7. Prints summary with next steps
+4. Unpacks results to `../qsp-metadata-storage/to-review/`
+5. Creates review branch and pushes to remote
+6. Prints summary with next steps
+
+**After workflow completes, manually run validation:**
+```bash
+cd ../qsp-metadata-storage
+git checkout review/batch-parameter-2025-10-27-abc123
+python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_estimates
+```
 
 See `docs/automated_workflow.md` for complete documentation.
 
@@ -186,25 +196,7 @@ validation:
   validated_at: '2025-11-03T10:30:00'
 ```
 
-**Optional: Automated Snippet Verification**:
-For automated verification (requires email and optionally institutional access):
-```bash
-# Run standalone automated verifier
-python scripts/validate/check_snippet_sources.py \
-  ../qsp-metadata-storage/parameter_estimates \
-  output/snippet_sources.json \
-  --email your.email@jhu.edu \
-  --debug
-
-# Configure in .env for institutional access
-VALIDATION_EMAIL=your.email@jhu.edu
-HOPKINS_PROXY_URL=https://proxy1.library.jhu.edu/login?url=
-HOPKINS_PROXY_COOKIES={"session": "xxx", "auth_token": "yyy"}
-```
-
-The automated verifier fetches full text via Unpaywall API, Europe PMC, or institutional proxy and uses fuzzy matching to verify snippets appear in papers. Coverage: ~50-60% of papers (higher with proxy).
-
-### Manual Workflow (Legacy)
+### Manual Workflow (For Reference)
 
 For fine-grained control, you can run individual steps:
 
