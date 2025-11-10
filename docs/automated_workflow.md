@@ -381,7 +381,7 @@ python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [op
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--timeout SECONDS` | Max wait time for batch completion | 3600 (1 hour) |
-| `--skip-validation` | Skip automatic checklist validation | False |
+| `--skip-validation` | Skip automatic validation suite | False |
 | `--no-push` | Create branch locally without pushing | False |
 | `--branch-prefix PREFIX` | Custom prefix for review branches | `review/batch` |
 
@@ -467,17 +467,16 @@ Monitoring batch batch_ABC123...
   Status: in_progress (15/15 completed)
   Status: finalizing (15/15 completed)
 ✓ Results downloaded: batch_ABC123_results.jsonl
-Running checklist validation...
-✓ Batch requests created: checklist_from_json_requests.jsonl
-Uploading batch: checklist_from_json_requests.jsonl...
-✓ Batch uploaded: batch_DEF456
-Monitoring batch batch_DEF456...
-  Status: in_progress (8/15 completed)
-  Status: in_progress (15/15 completed)
-✓ Results downloaded: batch_DEF456_results.jsonl
-✓ Validation complete
-Unpacking validated results to to-review/...
+Unpacking results to to-review/...
 ✓ Unpacked 15 files to to-review/
+Running validation suite...
+  Schema compliance: 15/15 passed
+  Source references: 15/15 passed
+  Text snippets: 14/15 passed (1 warning)
+  DOI resolution: 15/15 passed
+  Code execution: 13/15 passed (2 errors)
+  Value consistency: 15/15 passed
+✓ Validation reports written to output/validation/
 Creating review branch and committing files...
 ✓ Pushed to origin/review/batch-parameter-2025-10-27-abc123
 
@@ -518,7 +517,13 @@ Check files in `to-review/`:
 - Confirm extracted values match sources
 - Validate derivation logic and assumptions
 - Check unit consistency
-- Review validation summary in `scratch/checklist_reviews_*.md`
+- Review validation reports in `output/validation/`
+  - `schema_compliance.json` - Template compliance results
+  - `source_references.json` - Source reference validation
+  - `text_snippets.json` - Text snippet verification
+  - `doi_validity.json` - DOI resolution results
+  - `code_execution.json` - Code execution test results
+  - `value_consistency.json` - Value consistency checks
 
 ### 3. Approve/Reject Files
 
@@ -561,15 +566,24 @@ git push origin --delete review/batch-parameter-2025-10-27-abc123
 
 ## Validation
 
-The workflow automatically runs checklist validation to catch common errors:
+The workflow automatically runs a comprehensive 6-layer validation suite (`run_all_validations.py`) to catch common errors:
 
-- **Citation verification**: Checks if sources are real publications
-- **Data consistency**: Verifies extracted values match text snippets
-- **Code validation**: Ensures derivation code is executable
-- **Schema compliance**: Validates all required fields are present
-- **Logical soundness**: Checks assumptions and derivation logic
+1. **Schema Compliance** - YAML structure matches template, all required fields present
+2. **Source References** - Every `source_ref` points to a defined source in `data_sources`
+3. **Text Snippets** - `value_snippet` fields contain the reported values
+4. **DOI Validity** - DOIs resolve to real publications, metadata matches
+5. **Code Execution** - Derivation code (R/Python) runs without errors
+6. **Value Consistency** - Values consistent across related extractions
 
-Files that fail validation are still unpacked but marked in the validation summary (`scratch/checklist_reviews_*.md`).
+**Validation outputs:**
+- Individual JSON reports for each validator in `output/validation/`
+- Pass/fail counts shown in workflow output
+- Files with errors are still unpacked but flagged for manual review
+- Validation tags added to YAML files that pass all checks
+
+**After validation completes:**
+- Files are automatically tagged with passed validation checks
+- Failed files can be sent back to OpenAI for fixing via `run_validation_fix.py`
 
 ## Error Handling
 
@@ -600,15 +614,20 @@ Workflow creates/uses these files in `batch_jobs/`:
 - `parameter_requests.jsonl` - Extraction batch requests
 - `parameter_requests.batch_id` - Batch metadata (ID, type, CSV)
 - `batch_ABC123_results.jsonl` - Raw extraction results
-- `checklist_from_json_requests.jsonl` - Validation batch requests
-- `checklist_from_json_requests.batch_id` - Validation batch metadata
-- `batch_DEF456_results.jsonl` - Validation results
 
-These files are gitignored and used for debugging if needed.
+Validation reports are written to `output/validation/`:
+- `schema_compliance.json`
+- `source_references.json`
+- `text_snippets.json`
+- `doi_validity.json`
+- `code_execution.json`
+- `value_consistency.json`
+
+All batch files are gitignored and available for debugging if needed.
 
 ## Comparison to Manual Workflow
 
-### Old Manual Workflow (6+ steps)
+### Old Manual Workflow (7+ steps)
 
 ```bash
 # 1. Create batch
@@ -620,24 +639,22 @@ python scripts/run/upload_batch.py batch_jobs/parameter_requests.jsonl
 # 3. Monitor batch (manual polling)
 python scripts/run/batch_monitor.py batch_ABC123
 
-# 4. Create validation batch
-python scripts/prepare/create_checklist_from_json_batch.py \
-  batch_jobs/batch_ABC123_results.jsonl input.csv
-
-# 5. Upload validation
-python scripts/run/upload_batch.py batch_jobs/checklist_from_json_requests.jsonl
-
-# 6. Monitor validation
-python scripts/run/batch_monitor.py batch_DEF456
-
-# 7. Unpack results
+# 4. Unpack results
 python scripts/process/unpack_results.py \
-  batch_jobs/batch_DEF456_results.jsonl \
+  batch_jobs/batch_ABC123_results.jsonl \
   ../qsp-metadata-storage/parameter_estimates \
   input.csv "" templates/parameter_metadata_template_v3.yaml
 
-# 8. Manual git operations
+# 5. Run validation suite
 cd ../qsp-metadata-storage
+python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_estimates
+
+# 6. Review validation reports
+cat output/validation/schema_compliance.json
+cat output/validation/code_execution.json
+# ... check all validators
+
+# 7. Manual git operations
 git checkout -b review-branch
 git add parameter_estimates/
 git commit -m "Add extractions"
