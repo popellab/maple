@@ -28,6 +28,39 @@ For this test statistic, find 1-2 real published papers that report:
 
 ---
 
+# Scientific Soundness Checklist
+
+Before finalizing your extraction, verify:
+
+**1. Biological Validity**
+- Does the measured entity actually represent what the test statistic claims? (e.g., cDC1/cDC2 are lineage subsets, NOT maturation states)
+- If using a proxy, is it well-established in the literature?
+- Weak proxies should reduce overall_confidence to ≤0.7 and be documented in limitations
+
+**2. Cross-Modality Harmonization**
+- Avoid combining flow cytometry + IHC unless absolutely necessary
+- If unavoidable: document ALL conversion factors in assumptions, set overall_confidence ≤0.6
+
+**3. Cascading Assumptions**
+- Count your inferred values and assumed conversion factors
+- 2-3 assumptions: acceptable with documentation
+- 4+ assumptions: high risk - consider finding better data
+- Each assumption should reduce overall_confidence by ~0.05-0.1
+
+**4. Plausibility Check**
+- Does your final median value make biological sense?
+- Does ratio of input medians ≈ output median?
+- Cross-check against other studies if possible
+- Red flags: extreme values, fractions >1, ratios that seem off by orders of magnitude
+
+**5. Honest Confidence Scores**
+- 0.85-1.0: Direct measurements, no proxies, large sample
+- 0.70-0.84: Minor proxy OR small sample, otherwise solid
+- 0.50-0.69: Weak proxy OR cross-modality OR 2-3 cascading assumptions
+- <0.50: Multiple significant issues - consider if extraction is justified
+
+---
+
 # What You'll Generate
 
 1. **model_output** - Python function computing test statistic from model simulation
