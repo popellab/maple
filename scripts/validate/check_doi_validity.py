@@ -103,12 +103,17 @@ class DOIValidator:
             if not url.startswith(('http://', 'https://', 'ftp://')):
                 url = 'https://' + url
 
+            # Add User-Agent header to avoid being blocked as a bot (especially by Wikipedia)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+
             # Try HEAD request first (faster)
-            response = requests.head(url, timeout=10, allow_redirects=True)
+            response = requests.head(url, timeout=10, allow_redirects=True, headers=headers)
 
             # If HEAD not allowed, try GET
             if response.status_code == 405:
-                response = requests.get(url, timeout=10, allow_redirects=True, stream=True)
+                response = requests.get(url, timeout=10, allow_redirects=True, stream=True, headers=headers)
 
             if response.status_code == 200:
                 return (True, None)

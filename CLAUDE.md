@@ -44,7 +44,68 @@ All extracted metadata is stored in the central `qsp-metadata-storage` repositor
 source venv/bin/activate
 ```
 
-### Automated Workflow (Recommended)
+### CSV Preparation (Step 1)
+
+**Before running the extraction workflow**, you must prepare an enriched input CSV with model definitions.
+
+#### Parameter Extraction CSV
+
+Simple input (parameter names only):
+```csv
+parameter_name
+k_C_growth
+k_C_death
+```
+
+**Export model definitions** (from model MATLAB file):
+```bash
+# Export from MATLAB model to JSON
+python scripts/export_model_definitions.py \
+  --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m \
+  --output batch_jobs/input_data/model_definitions.json
+```
+
+**Enrich with model definitions**:
+```bash
+# Enrich simple CSV with model definitions
+python scripts/prepare/enrich_parameter_csv.py \
+  simple_input.csv \
+  batch_jobs/input_data/model_definitions.json \
+  PDAC \
+  -o batch_jobs/input_data/pdac_extraction_input.csv
+```
+
+This creates an enriched CSV with:
+- `cancer_type`, `parameter_name`, `definition_hash`
+- `parameter_units`, `parameter_description`
+- `model_context` (JSON with reactions, rules, related parameters)
+
+#### Test Statistic CSV
+
+Partial input (test statistics without context):
+```csv
+test_statistic_id,required_species,derived_species_description
+tumor_volume_day14,V_T.C,Tumor volume in mm³ at 14 days
+```
+
+Enrich with model and scenario context:
+```bash
+# Enrich partial CSV with model and scenario context
+python scripts/prepare/enrich_test_statistic_csv.py \
+  partial_test_stats.csv \
+  model_context.txt \
+  baseline_no_treatment.yaml \
+  -o batch_jobs/input_data/test_statistic_input.csv
+```
+
+This creates an enriched CSV with:
+- `test_statistic_id`, `cancer_type`, `context_hash`
+- `model_context`, `scenario_context`
+- `required_species`, `derived_species_description`
+
+**Note:** Model definitions are exported from MATLAB model files using `scripts/export_model_definitions.py`. Scenario context files are stored in model-specific repositories (e.g., `qspio-pdac/scenarios/`).
+
+### Automated Workflow (Step 2)
 
 **Single-command automated extraction** - Handles batch creation, upload, monitoring, unpacking, and git operations:
 
@@ -161,7 +222,7 @@ python scripts/run_validation_fix.py test_statistics --timeout 7200
 
 ### Validation Suite
 
-The automated validation suite (`run_all_validations.py`) includes 7 validators:
+The automated validation suite (`run_all_validations.py`) includes 8 validators:
 
 1. **Schema Compliance** - YAML structure matches template
 2. **Code Execution** - R/Python code runs without errors
@@ -169,7 +230,8 @@ The automated validation suite (`run_all_validations.py`) includes 7 validators:
 4. **Source References** - All source_refs point to defined sources
 5. **DOI Validity** - DOIs resolve and metadata matches
 6. **Value Consistency** - Values consistent across related extractions
-7. **Manual Snippet Source Verification** - Interactive verification of snippets in papers
+7. **Duplicate Primary Sources** - Primary data sources not already used in accepted extractions
+8. **Manual Snippet Source Verification** - Interactive verification of snippets in papers
 
 **Manual Snippet Source Verification**:
 - Generates report with DOI links and snippets grouped by source
@@ -237,12 +299,16 @@ python ../qspio-pdac/metadata/aggregate_test_statistics.py input.csv \
 
 Scripts are organized by workflow stage:
 
-**Prepare** (`scripts/prepare/`): Create batch requests
-- `create_parameter_batch.py`: Parameter extraction batch requests
-- `create_quick_estimate_batch.py`: Quick estimate batch requests
-- `create_test_statistic_batch.py`: Test statistic batch requests
-- `create_pooling_metadata_batch.py`: Pooling metadata batch requests
-- `create_checklist_batch.py`, `create_schema_conversion_batch.py`: Other batch types
+**Prepare** (`scripts/prepare/`): CSV enrichment and batch request creation
+- **CSV Enrichment (Step 1):**
+  - `enrich_parameter_csv.py`: Enrich simple parameter CSV with model definitions
+  - `enrich_test_statistic_csv.py`: Enrich partial test statistic CSV with context
+- **Batch Creation (Step 2):**
+  - `create_parameter_batch.py`: Parameter extraction batch requests
+  - `create_quick_estimate_batch.py`: Quick estimate batch requests
+  - `create_test_statistic_batch.py`: Test statistic batch requests
+  - `create_pooling_metadata_batch.py`: Pooling metadata batch requests
+  - `create_checklist_batch.py`, `create_schema_conversion_batch.py`: Other batch types
 
 **Run** (`scripts/run/`): Execute batches
 - `upload_batch.py`: Upload to OpenAI batch API (slower, handles large volumes)
@@ -306,32 +372,45 @@ scripts/
 ### Data Flow
 
 **Parameter Extraction Workflow:**
-1. Input CSV with cancer_type and parameter_name columns
-2. **Prompt assembly system** combines base prompts + templates + examples + parameter context data
-3. Batch processing via OpenAI API creates structured YAML outputs
-4. Results are unpacked directly to `../qsp-metadata-storage/parameter_estimates/` with filename format: `{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
+1. **CSV Enrichment** (Step 1): Simple CSV (parameter names) + model definitions JSON → enriched CSV with units, descriptions, model context
+2. **Batch Creation**: Enriched CSV with all required fields (cancer_type, parameter_name, parameter_units, parameter_description, model_context, definition_hash)
+3. **Prompt Assembly**: System combines base prompts + templates + examples + parameter context data
+4. **LLM Processing**: Batch processing via OpenAI API creates structured YAML outputs
+5. **Unpacking**: Results unpacked to `../qsp-metadata-storage/parameter_estimates/` with format: `{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
 
 **Quick Estimate Workflow:**
-1. Input CSV with cancer_type and parameter_name columns
-2. Scripts generate quick estimate prompts for rapid parameter initialization
-3. LLM generates estimates with ranges based on literature knowledge
-4. Results are unpacked to `../qsp-metadata-storage/quick_estimates/` with format: `{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
-5. Aggregation script pools estimates using lognormal statistics for positive-only parameters
+1. **CSV Enrichment** (Step 1): Simple CSV (parameter names) + model definitions JSON → enriched CSV
+2. **Batch Creation**: Scripts generate quick estimate prompts for rapid parameter initialization
+3. **LLM Processing**: LLM generates estimates with ranges based on literature knowledge
+4. **Unpacking**: Results unpacked to `../qsp-metadata-storage/quick_estimates/` with format: `{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
+5. **Aggregation**: Script pools estimates using lognormal statistics for positive-only parameters
 
 **Test Statistics Workflow:**
-1. Input CSV with test_statistic_id, scenario_context, required_species, and derived_species_description
-2. Scripts generate prompts with model context and scenario information
-3. LLM creates test statistic definitions with uncertainty quantification (R bootstrap code)
-4. Results are unpacked to `../qsp-metadata-storage/test_statistics/` with format: `{test_stat_id}_{cancer_type}_{hash}.yaml`
-5. Aggregation script pools distributions using inverse-variance weighting
+1. **CSV Enrichment** (Step 1): Partial CSV (test_statistic_id, required_species, derived_species_description) + model_context.txt + scenario YAML → enriched CSV
+2. **Batch Creation**: Scripts generate prompts with model context and scenario information
+3. **LLM Processing**: LLM creates test statistic definitions with uncertainty quantification (R bootstrap code)
+4. **Unpacking**: Results unpacked to `../qsp-metadata-storage/test_statistics/` with format: `{test_stat_id}_{cancer_type}_{hash}.yaml`
+5. **Aggregation**: Script pools distributions using inverse-variance weighting
 
-### Key Data Files
-- `data/simbio_parameters.csv`: Parameter definitions with Name, Units, Definition, References columns
-- `data/model_context.csv`: Reaction context with Parameter, Reaction, ReactionRate, OtherParameters, OtherSpeciesWithNotes columns
+### Key Files and Directories
+
+**Templates and Configuration:**
 - `templates/configs/prompt_assembly.yaml`: Configuration controlling how prompts are assembled
 - `templates/parameter_metadata_template.yaml`: YAML template for parameter metadata
-- `templates/prior_metadata_template.yaml`: YAML template for prior metadata generation
+- `templates/test_statistic_template.yaml`: YAML template for test statistics
+- `templates/quick_estimate_template.yaml`: YAML template for quick estimates
 - `templates/examples/`: Example filled templates for different parameters
+
+**Prompts:**
+- `prompts/parameter_prompt.md`: Base prompt for parameter extraction
+- `prompts/test_statistic_prompt.md`: Base prompt for test statistics
+- `prompts/quick_estimate_prompt.md`: Base prompt for quick estimates
+
+**CSV Enrichment Scripts:**
+- `scripts/prepare/enrich_parameter_csv.py`: Enrich simple parameter CSV with model definitions
+- `scripts/prepare/enrich_test_statistic_csv.py`: Enrich partial test statistic CSV with context
+
+**Note:** Model definitions and context files are exported from model-specific repositories (e.g., `qspio-pdac`). This repository provides general-purpose workflow tools that work with any model system.
 
 ### Class-based Batch Creation Architecture
 Batch creation uses a modular class-based system:

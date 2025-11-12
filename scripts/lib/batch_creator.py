@@ -986,6 +986,108 @@ class ValidationFixBatchCreator(BatchCreator):
             print(f"Warning: Could not load template {template_path}: {e}")
             return None
 
+    def _generate_example_json(self, template_type: str) -> str:
+        """
+        Generate example JSON output format based on template type.
+
+        Args:
+            template_type: Type of template (parameter_metadata, test_statistic, quick_estimate)
+
+        Returns:
+            Example JSON string formatted with code fence
+        """
+        if template_type == 'test_statistic':
+            return """Example output format for test statistics:
+```json
+{
+  "model_output": {
+    "code": "import numpy as np\\n\\ndef compute_test_statistic(...):\\n    ..."
+  },
+  "test_statistic_definition": "...",
+  "study_overview": "...",
+  "study_design": "...",
+  "test_statistic_estimates": {
+    "inputs": [...],
+    "derivation_code": "...",
+    "median": 1.23,
+    "iqr": 0.45,
+    "ci95": [0.5, 2.0],
+    "units": "...",
+    "key_assumptions": {
+      "1": "...",
+      "2": "...",
+      "3": "..."
+    }
+  },
+  "derivation_explanation": "...",
+  "key_study_limitations": "...",
+  "primary_data_sources": [...],
+  "secondary_data_sources": [...],
+  "methodological_sources": [...],
+  "validation_weights": {
+    "species_match": {"value": 1.0, "justification": "..."},
+    ...
+  }
+}
+```"""
+        elif template_type == 'parameter_metadata':
+            return """Example output format for parameter estimates:
+```json
+{
+  "mathematical_role": "...",
+  "parameter_range": "positive_reals",
+  "study_overview": "...",
+  "study_design": "...",
+  "parameter_estimates": {
+    "inputs": [
+      {
+        "name": "...",
+        "value": 1.23,
+        "units": "...",
+        "description": "...",
+        "source_ref": "SOURCE_TAG",
+        "value_table_or_section": "Table 2",
+        "value_snippet": "...",
+        "units_table_or_section": "Table 2",
+        "units_snippet": "..."
+      }
+    ],
+    "derivation_code": "```python\\n...\\n```",
+    "median": 1.23,
+    "iqr": 0.45,
+    "ci95": [0.5, 2.0],
+    "units": "1/day",
+    "key_assumptions": {
+      "1": "...",
+      "2": "...",
+      "3": "..."
+    }
+  },
+  "derivation_explanation": "...",
+  "key_study_limitations": "...",
+  "primary_data_sources": [...],
+  "secondary_data_sources": [...],
+  "methodological_sources": [...],
+  "biological_relevance": {
+    "species_match": {"value": 1.0, "justification": "..."},
+    ...
+  }
+}
+```"""
+        else:  # quick_estimate
+            return """Example output format for quick estimates:
+```json
+{
+  "parameter_estimate": {
+    "value": 1.23,
+    "range": [0.5, 2.0],
+    "confidence": "medium"
+  },
+  "rationale": "Based on literature values...",
+  "primary_sources": [...]
+}
+```"""
+
     def create_fix_prompt(self, yaml_content: str, errors: List[str],
                          template_content: str, template_type: str) -> str:
         """
@@ -1022,10 +1124,14 @@ class ValidationFixBatchCreator(BatchCreator):
             # Format errors
             formatted_errors = "\n".join(f"- {error}" for error in errors)
 
+            # Generate appropriate example JSON based on template type
+            example_json = self._generate_example_json(template_type)
+
             # Fill placeholders (use content YAML without headers)
             prompt = template.replace("{{YAML_CONTENT}}", content_yaml)
             prompt = prompt.replace("{{VALIDATION_ERRORS}}", formatted_errors)
             prompt = prompt.replace("{{TEMPLATE_CONTENT}}", template_content)
+            prompt = prompt.replace("{{EXAMPLE_JSON}}", example_json)
 
             return prompt
         else:

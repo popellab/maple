@@ -1,5 +1,5 @@
-cancer_type,parameter_name
-PDAC,k_C_growth
-PDAC,k_C_death
-PDAC,k_CD8_act
-PDAC,k_APC_mat
+parameter_name
+k_C_growth
+k_C_death
+k_CD8_act
+k_APC_mat
