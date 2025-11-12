@@ -98,10 +98,8 @@ def unpack_results(results_file: Path, output_dir: Path, template_path: Path):
         [
             sys.executable, str(unpack_script),
             str(results_file),
-            str(output_dir),
-            "",  # No input CSV needed for fixes
-            str(output_dir),  # Source dir is same as output dir (for header extraction)
-            str(template_path)
+            str(output_dir)
+            # No input CSV needed for validation fixes
         ],
         capture_output=True,
         text=True
@@ -281,10 +279,7 @@ Note: Original files are backed up in git history before overwriting.
         print(f"✓ Fixed YAMLs written to: {yaml_dir}")
         print("\nNext steps:")
         print("  1. Re-run validation to verify fixes:")
-        print("     python scripts/validate/run_all_validations.py \\")
-        print(f"         {yaml_dir} \\")
-        print(f"         {template} \\")
-        print("         output/validation_results/")
+        print(f"     python scripts/validate/run_all_validations.py {args.workflow_type}")
         print("\n  2. If validation passes, review and merge")
         print("  3. If failures persist, investigate manually")
         print("=" * 70)
