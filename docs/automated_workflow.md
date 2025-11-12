@@ -16,11 +16,13 @@ This workflow automates LLM-based parameter extraction from scientific papers. I
 
 ### What Happens When You Run a Workflow?
 
+**Prerequisites:** Export model definitions and enrich your CSV (see [Input Files](#preparing-your-input-file))
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  You create a CSV file with parameters to extract           │
-│  cancer_type,parameter_name                                 │
-│  PDAC,k_C_growth                                            │
+│  You have an enriched CSV with parameter definitions        │
+│  cancer_type,parameter_name,definition_hash,...             │
+│  PDAC,k_C_growth,abc123,...                                 │
 └─────────────────────────────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -214,127 +216,176 @@ cd ~/Projects/qsp-llm-workflows
 # 2. Activate virtual environment (do this every time you open a new terminal)
 source venv/bin/activate
 
-# 3. Run the workflow with an example file
-python scripts/run_extraction_workflow.py \
+# 3. Try an example workflow
+# First export model definitions from MATLAB model (wherever that is located)
+python scripts/export_model_definitions.py \
+  --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m \
+  --output batch_jobs/input_data/model_definitions.json
+
+# Then enrich the simple example CSV
+python scripts/prepare/enrich_parameter_csv.py \
   docs/example_parameter_input.csv \
-  --type parameter
-```
+  batch_jobs/input_data/model_definitions.json \
+  PDAC \
+  -o batch_jobs/input_data/example_enriched.csv
 
-The script will handle everything automatically and show you progress updates.
-
-**Try the examples:** We've included example CSV files in the `docs/` directory:
-- `docs/example_parameter_input.csv` - Parameter extraction example (4 parameters)
-- `docs/example_test_statistic_input.csv` - Test statistics example (3 metrics)
-- `docs/example_quick_estimate_input.csv` - Quick estimates example (4 parameters)
-
-These are ready to run and will help you understand the workflow before creating your own input files.
-
-**For faster testing:** Add the `--immediate` flag to process via the Responses API instead of waiting for batch completion:
-```bash
+# Finally run extraction
 python scripts/run_extraction_workflow.py \
-  docs/example_parameter_input.csv \
+  batch_jobs/input_data/example_enriched.csv \
   --type parameter \
   --immediate
 ```
 
-This completes in minutes instead of hours, perfect for testing. The batch API is cheaper for large production runs.
+**Example CSV files:** We've included simple example CSVs in the `docs/` directory:
+- `docs/example_parameter_input.csv` - Simple list of 2 parameter names
+- `docs/example_test_statistic_input.csv` - Partial test statistic definitions (3 metrics)
+- `docs/example_quick_estimate_input.csv` - Simple list of 4 parameter names
+
+**Note:** These examples require files from `qspio-pdac` (model definitions, model context, scenarios). They demonstrate the two-step workflow: enrichment → extraction.
+
+**For faster testing:** Use the `--immediate` flag to process via the Responses API instead of waiting for batch completion (minutes instead of hours, perfect for testing). The batch API is cheaper for large production runs.
 
 ---
 
 ## Preparing Your Input File
 
-The workflow needs a CSV file telling it what to extract. The format depends on which workflow type you're using.
+The workflow requires a **two-step process**:
+1. **Step 1: Create enriched CSV** with model definitions (this section)
+2. **Step 2: Run extraction workflow** (next section)
 
 ### Parameter Extraction Input File
 
-For parameter extraction (`--type parameter`), your CSV needs these columns:
+**IMPORTANT:** Parameter extraction requires an enriched CSV with model definitions. The simple example CSVs in this repository (like `docs/example_parameter_input.csv`) are **NOT sufficient** for actual extraction - they're only for demonstration.
+
+#### Step 1: Create Enriched CSV
+
+Start with a simple CSV listing parameter names:
+
+```csv
+parameter_name
+k_C_growth
+k_C_death
+k_CD8_act
+```
+
+Then enrich it with model definitions:
+
+```bash
+# Enrich simple CSV with model definitions
+python scripts/prepare/enrich_parameter_csv.py \
+  simple_parameter_input.csv \
+  model_definitions.json \
+  PDAC \
+  -o batch_jobs/input_data/pdac_extraction_input.csv
+```
+
+**Where do model definitions come from?**
+
+Model definitions are exported from MATLAB model files using the export script:
+
+```bash
+# From qsp-llm-workflows repository:
+python scripts/export_model_definitions.py \
+  --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m \
+  --output batch_jobs/input_data/model_definitions.json
+```
+
+This script works with any SimBiology MATLAB model that creates a variable named `model`.
+
+#### Enriched CSV Format
+
+The enrichment script creates a CSV with these columns:
 
 | Column | Description | Example |
 |--------|-------------|---------|
-| `cancer_type` | Cancer type being studied | `PDAC`, `Melanoma`, `NSCLC` |
-| `parameter_name` | Name of parameter to extract | `k_C_growth`, `K_CD8_TEFF` |
-| `notes` (optional) | Additional context for extraction | Parameter description |
+| `cancer_type` | Cancer type | `PDAC` |
+| `parameter_name` | Parameter name | `k_C_growth` |
+| `definition_hash` | Hash of parameter definition | `abc123` |
+| `parameter_units` | Units | `1/day` |
+| `parameter_description` | Description | `Cancer cell growth rate` |
+| `model_context` | JSON with reactions/rules | `{"reactions_and_rules":[...]}` |
 
-**Example file to try:** `docs/example_parameter_input.csv` (included in this repository)
+#### Example Files
 
-```csv
-cancer_type,parameter_name,notes
-PDAC,k_C_growth,Cancer cell growth rate
-PDAC,k_C_death,Cancer cell death rate
-PDAC,k_CD8_act,CD8 activation rate
-PDAC,k_APC_mat,Maximum rate of APC maturation
-```
+The repository includes example CSVs in `docs/`:
+- `example_parameter_input.csv` - Simple parameter names (input for enrichment)
+- `example_test_statistic_input.csv` - Partial test statistics (input for enrichment)
+- `example_quick_estimate_input.csv` - Simple parameter names (input for enrichment)
 
-**To try this example:**
-```bash
-python scripts/run_extraction_workflow.py \
-  docs/example_parameter_input.csv \
-  --type parameter
-```
-
-**Creating the file:**
-
-Option 1 - Using a text editor:
-1. Open your favorite text editor (TextEdit, VS Code, nano, etc.)
-2. Type or paste the CSV content exactly as shown above
-3. Save as `parameter_input.csv` in the `qsp-llm-workflows` directory
-
-Option 2 - Using Excel/Google Sheets:
-1. Create a spreadsheet with column headers in first row: `cancer_type`, `parameter_name`
-2. Fill in your data
-3. Save/Export as CSV format
-4. Move the file to `qsp-llm-workflows` directory
+See the [Quick Start](#quick-start-for-regular-use) section for usage examples.
 
 ### Test Statistics Input File
 
-For test statistics (`--type test_statistic`), your CSV needs these columns:
+**IMPORTANT:** Test statistic extraction requires an enriched CSV with model and scenario context.
+
+#### Step 1: Create Enriched CSV
+
+Start with a partial CSV listing test statistics:
+
+```csv
+test_statistic_id,required_species,derived_species_description
+tumor_volume_day14,V_T.C,Tumor volume in mm³ at 14 days post-implantation
+cd8_infiltration,V_T.CD8,CD8+ T cell count per mm³ tumor tissue
+```
+
+Then enrich it with model and scenario context:
+
+```bash
+# Enrich partial CSV with context
+python scripts/prepare/enrich_test_statistic_csv.py \
+  partial_test_stats.csv \
+  model_context.txt \
+  baseline_no_treatment.yaml \
+  -o batch_jobs/input_data/test_statistic_input.csv
+```
+
+**Where do context files come from?**
+
+Context files are stored in model-specific repositories (e.g., `qspio-pdac`):
+- `model_context.txt`: Description of model structure (species, compartments, units)
+- Scenario YAMLs: Experimental conditions with `scenario_context` and `indication` fields
+
+See your model repository's documentation for context file locations.
+
+#### Enriched CSV Format
+
+The enrichment script creates a CSV with these columns:
 
 | Column | Description | Example |
 |--------|-------------|---------|
-| `test_statistic_id` | Unique ID for this test stat | `tumor_volume_day14` |
-| `cancer_type` | Cancer type | `PDAC` |
-| `scenario_context` | Description of experimental scenario | `Untreated PDAC tumor growth` |
-| `required_species` | Species needed from model | `V_T.C(t=14)` |
-| `derived_species_description` | What the statistic represents | `Tumor volume in mm³ at 14 days` |
-| `model_context` (optional) | Model structure details | See full example below |
+| `test_statistic_id` | Unique ID | `tumor_volume_day14` |
+| `cancer_type` | Cancer type from scenario | `PDAC` |
+| `model_context` | Model structure text | Full model description |
+| `scenario_context` | Experimental conditions | `Untreated PDAC tumor growth` |
+| `required_species` | Species from model | `V_T.C` |
+| `derived_species_description` | What it represents | `Tumor volume in mm³ at 14 days` |
+| `context_hash` | Hash of model+scenario | `abc123` |
 
-**Example file to try:** `docs/example_test_statistic_input.csv` (included in this repository)
+#### Example Files
 
-```csv
-test_statistic_id,cancer_type,scenario_context,required_species,derived_species_description
-tumor_volume_day14,PDAC,Untreated PDAC tumor growth in KPC mice,V_T.C,Tumor volume in mm³ at 14 days post-implantation
-cd8_infiltration,PDAC,Baseline immune infiltration in treatment-naive PDAC tumors,V_T.CD8,CD8+ T cell count per mm³ tumor tissue
-cdc1_cdc2_ratio,PDAC,Dendritic cell composition in untreated PDAC tumors,"V_T.cDC1,V_T.cDC2",Ratio of type 1 to type 2 conventional dendritic cells
-```
-
-**To try this example:**
-```bash
-python scripts/run_extraction_workflow.py \
-  docs/example_test_statistic_input.csv \
-  --type test_statistic
-```
-
-**Note:** The workflow can automatically generate the `model_context` field from your model specification files.
+See `docs/example_test_statistic_input.csv` for a simple example of partial input format.
 
 ### Quick Estimates Input File
 
-For quick estimates (`--type quick_estimate`), use the same format as parameter extraction (without notes column).
+Quick estimates use the same enrichment process as parameter extraction.
 
-**Example file to try:** `docs/example_quick_estimate_input.csv` (included in this repository)
+**Example file:** `docs/example_quick_estimate_input.csv` (just parameter names)
 
-```csv
-cancer_type,parameter_name
-PDAC,k_C_growth
-PDAC,k_C_death
-PDAC,k_CD8_act
-PDAC,k_APC_mat
-```
+To use it:
 
-**To try this example:**
 ```bash
-python scripts/run_extraction_workflow.py \
+# First enrich (same as parameter extraction)
+python scripts/prepare/enrich_parameter_csv.py \
   docs/example_quick_estimate_input.csv \
-  --type quick_estimate
+  ../qspio-pdac/model_definitions.json \
+  PDAC \
+  -o batch_jobs/input_data/enriched.csv
+
+# Then run extraction
+python scripts/run_extraction_workflow.py \
+  batch_jobs/input_data/enriched.csv \
+  --type quick_estimate \
+  --immediate
 ```
 
 Quick estimates are useful for getting rapid ballpark parameter values for model initialization before doing full literature extraction.
@@ -350,9 +401,10 @@ Quick estimates are useful for getting rapid ballpark parameter values for model
 - **Solution:** Check for hidden characters - save as plain text CSV, not Excel format
 - **Solution:** No empty rows at the beginning or end of file
 
-**Problem:** "Required column missing"
-- **Solution:** Double-check you have all required columns for your workflow type
-- **Solution:** Column names must match exactly (e.g., `cancer_type` not `Cancer Type`)
+**Problem:** "Missing model definitions" or "Required column missing"
+- **Solution:** Ensure you've run the CSV enrichment step first (see "Preparing Your Input File" above)
+- **Solution:** For production extractions, use enriched CSVs with all required columns
+- **Solution:** Example CSVs are for testing only - they lack model context needed for quality extractions
 
 ### Where to Put Your Input Files
 
@@ -407,18 +459,21 @@ python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [op
 ### Parameter Extraction
 
 ```bash
-# Simple example with 4 parameters (good for testing)
-python scripts/run_extraction_workflow.py \
+# Simple example with 4 parameters (good for testing - requires qspio-pdac)
+# Step 1: Enrich
+python scripts/prepare/enrich_parameter_csv.py \
   docs/example_parameter_input.csv \
-  --type parameter
+  ../qspio-pdac/model_definitions.json \
+  PDAC \
+  -o batch_jobs/input_data/example_enriched.csv
 
-# Use immediate mode for faster processing (good for testing)
+# Step 2: Extract (use --immediate for faster testing)
 python scripts/run_extraction_workflow.py \
-  docs/example_parameter_input.csv \
+  batch_jobs/input_data/example_enriched.csv \
   --type parameter \
   --immediate
 
-# Large real-world example with 77 parameters
+# Production example with enriched CSV (77 parameters)
 python scripts/run_extraction_workflow.py \
   scratch/pdac_parameters_modules_v2.csv \
   --type parameter \
@@ -428,12 +483,21 @@ python scripts/run_extraction_workflow.py \
 ### Test Statistics
 
 ```bash
-# Simple example with 3 test statistics (good for testing)
-python scripts/run_extraction_workflow.py \
+# Simple example with 3 test statistics (good for testing - requires qspio-pdac)
+# Step 1: Enrich
+python scripts/prepare/enrich_test_statistic_csv.py \
   docs/example_test_statistic_input.csv \
-  --type test_statistic
+  ../qspio-pdac/metadata/model/model_context.txt \
+  ../qspio-pdac/projects/pdac_2025/scenarios/baseline_no_treatment.yaml \
+  -o batch_jobs/input_data/example_enriched.csv
 
-# Full example with complete model context
+# Step 2: Extract
+python scripts/run_extraction_workflow.py \
+  batch_jobs/input_data/example_enriched.csv \
+  --type test_statistic \
+  --immediate
+
+# Production example with enriched CSV
 python scripts/run_extraction_workflow.py \
   scratch/test_statistic_input_baseline_no_treatment_24664d08.csv \
   --type test_statistic
@@ -442,10 +506,19 @@ python scripts/run_extraction_workflow.py \
 ### Quick Estimates
 
 ```bash
-# Simple example with 4 parameters (good for testing)
-python scripts/run_extraction_workflow.py \
+# Simple example with 4 parameters (good for testing - requires qspio-pdac)
+# Step 1: Enrich (same as parameter extraction)
+python scripts/prepare/enrich_parameter_csv.py \
   docs/example_quick_estimate_input.csv \
-  --type quick_estimate
+  ../qspio-pdac/model_definitions.json \
+  PDAC \
+  -o batch_jobs/input_data/example_enriched.csv
+
+# Step 2: Extract
+python scripts/run_extraction_workflow.py \
+  batch_jobs/input_data/example_enriched.csv \
+  --type quick_estimate \
+  --immediate
 ```
 
 **Note:** Validation is always a separate manual step. Run it after the workflow completes if needed.
