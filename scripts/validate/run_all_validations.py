@@ -9,6 +9,8 @@ Runs:
 4. Source reference validation
 5. DOI resolution validation
 6. Value consistency checking (vs legacy and same-context derivations)
+7. Duplicate primary sources check (prevents duplicate extractions)
+8. Manual snippet source verification (interactive)
 
 Usage:
     python scripts/validate/run_all_validations.py test_statistics
@@ -213,7 +215,19 @@ Examples:
         print("ERRORS:", file=sys.stderr)
         print(result['stderr'], file=sys.stderr)
 
-    # 7. Manual snippet source verification (interactive - run directly)
+    # 7. Duplicate primary sources
+    result = run_validation(
+        'check_duplicate_primary_sources.py',
+        [str(data_dir), str(output_dir / 'duplicate_primary_sources.json')],
+        "Duplicate Primary Sources Check"
+    )
+    all_results.append(result)
+    print(result['stdout'])
+    if not result['success'] and result.get('stderr'):
+        print("ERRORS:", file=sys.stderr)
+        print(result['stderr'], file=sys.stderr)
+
+    # 8. Manual snippet source verification (interactive - run directly)
     print(f"\n{'='*60}")
     print("Running: Manual Snippet Source Verification")
     print(f"{'='*60}")

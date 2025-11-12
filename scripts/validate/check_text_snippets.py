@@ -242,10 +242,24 @@ class TextSnippetValidator:
             if len(parts) == 2:
                 mantissa = parts[0]
                 exponent = int(parts[1])
-                patterns.append(f"{mantissa}×10^{exponent}")
-                patterns.append(f"{mantissa}×10^{{{exponent}}}")  # LaTeX style
-                patterns.append(f"{mantissa} × 10^{exponent}")
-                patterns.append(f"{mantissa}×10⁻{abs(exponent)}" if exponent < 0 else f"{mantissa}×10{exponent}")
+
+                # Create mantissa variations (with and without trailing zeros)
+                mantissa_variations = [mantissa]
+                # Strip trailing zeros: "5.00" -> "5.0" -> "5"
+                mantissa_stripped = mantissa.rstrip('0').rstrip('.')
+                if mantissa_stripped != mantissa:
+                    mantissa_variations.append(mantissa_stripped)
+                # Also try intermediate: "5.00" -> "5.0"
+                if mantissa.endswith('0') and not mantissa.endswith('.0'):
+                    mantissa_variations.append(mantissa.rstrip('0'))
+
+                # Generate patterns for each mantissa variation
+                for m in mantissa_variations:
+                    patterns.append(f"{m}×10^{exponent}")
+                    patterns.append(f"{m}×10^{{{exponent}}}")  # LaTeX style with braces
+                    patterns.append(f"{m} × 10^{exponent}")
+                    patterns.append(f"{m} × 10^{{{exponent}}}")  # LaTeX style with braces and space
+                    patterns.append(f"{m}×10⁻{abs(exponent)}" if exponent < 0 else f"{m}×10{exponent}")
 
         # Percentage format (if value is between 0 and 1)
         if 0 <= numeric_val <= 1:
@@ -375,21 +389,51 @@ class TextSnippetValidator:
             # Check value_snippet contains the value
             value_snippet = inp.get('value_snippet')
             if value_snippet:
-                found, pattern = self.check_snippet_contains_value(value_snippet, value, units)
+                # Handle list values by checking each element
+                if isinstance(value, list):
+                    all_found = True
+                    matched_patterns = []
+                    missing_values = []
 
-                input_result = {
-                    'input_name': name,
-                    'value': value,
-                    'found': found,
-                    'matched_pattern': pattern
-                }
-                input_results.append(input_result)
+                    for val in value:
+                        found, pattern = self.check_snippet_contains_value(value_snippet, val, units)
+                        if found:
+                            matched_patterns.append(f"{val}→{pattern}")
+                        else:
+                            all_found = False
+                            missing_values.append(val)
 
-                if not found:
-                    errors.append(
-                        f"Input '{name}': value_snippet does not contain declared value {value} "
-                        f"(tried formats: decimal, scientific, percentage, text-encoded)"
-                    )
+                    input_result = {
+                        'input_name': name,
+                        'value': value,
+                        'found': all_found,
+                        'matched_pattern': '; '.join(matched_patterns) if matched_patterns else None
+                    }
+                    input_results.append(input_result)
+
+                    if not all_found:
+                        errors.append(
+                            f"Input '{name}': value_snippet does not contain all declared values. "
+                            f"Missing: {missing_values} "
+                            f"(tried formats: decimal, scientific, percentage, text-encoded)"
+                        )
+                else:
+                    # Single value (not a list)
+                    found, pattern = self.check_snippet_contains_value(value_snippet, value, units)
+
+                    input_result = {
+                        'input_name': name,
+                        'value': value,
+                        'found': found,
+                        'matched_pattern': pattern
+                    }
+                    input_results.append(input_result)
+
+                    if not found:
+                        errors.append(
+                            f"Input '{name}': value_snippet does not contain declared value {value} "
+                            f"(tried formats: decimal, scientific, percentage, text-encoded)"
+                        )
 
             # Note: units_snippet validation is intentionally skipped
             # Units can be expressed in many ways (mg/kg vs milligrams per kilogram)
