@@ -1,4 +1,4 @@
-test_statistic_id,cancer_type,scenario_context,required_species,derived_species_description
-tumor_volume_day14,PDAC,Untreated PDAC tumor growth in KPC mice,V_T.C,Tumor volume in mm³ at 14 days post-implantation
-cd8_infiltration,PDAC,Baseline immune infiltration in treatment-naive PDAC tumors,V_T.CD8,CD8+ T cell count per mm³ tumor tissue
-cdc1_cdc2_ratio,PDAC,Dendritic cell composition in untreated PDAC tumors,"V_T.cDC1,V_T.cDC2",Ratio of type 1 to type 2 conventional dendritic cells
+test_statistic_id,required_species,derived_species_description
+tumor_volume_day14,V_T.C,Tumor volume in mm³ at 14 days post-implantation
+cd8_infiltration,V_T.CD8,CD8+ T cell count per mm³ tumor tissue
+cdc1_cdc2_ratio,"V_T.cDC1,V_T.cDC2",Ratio of type 1 to type 2 conventional dendritic cells
