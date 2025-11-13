@@ -239,7 +239,6 @@ python scripts/run_extraction_workflow.py \
 **Example CSV files:** We've included simple example CSVs in the `docs/` directory:
 - `docs/example_parameter_input.csv` - Simple list of 2 parameter names
 - `docs/example_test_statistic_input.csv` - Partial test statistic definitions (3 metrics)
-- `docs/example_quick_estimate_input.csv` - Simple list of 4 parameter names
 
 **Note:** These examples require files from `qspio-pdac` (model definitions, model context, scenarios). They demonstrate the two-step workflow: enrichment → extraction.
 
@@ -310,7 +309,6 @@ The enrichment script creates a CSV with these columns:
 The repository includes example CSVs in `docs/`:
 - `example_parameter_input.csv` - Simple parameter names (input for enrichment)
 - `example_test_statistic_input.csv` - Partial test statistics (input for enrichment)
-- `example_quick_estimate_input.csv` - Simple parameter names (input for enrichment)
 
 See the [Quick Start](#quick-start-for-regular-use) section for usage examples.
 
@@ -365,31 +363,6 @@ The enrichment script creates a CSV with these columns:
 
 See `docs/example_test_statistic_input.csv` for a simple example of partial input format.
 
-### Quick Estimates Input File
-
-Quick estimates use the same enrichment process as parameter extraction.
-
-**Example file:** `docs/example_quick_estimate_input.csv` (just parameter names)
-
-To use it:
-
-```bash
-# First enrich (same as parameter extraction)
-python scripts/prepare/enrich_parameter_csv.py \
-  docs/example_quick_estimate_input.csv \
-  ../qspio-pdac/model_definitions.json \
-  PDAC \
-  -o batch_jobs/input_data/enriched.csv
-
-# Then run extraction
-python scripts/run_extraction_workflow.py \
-  batch_jobs/input_data/enriched.csv \
-  --type quick_estimate \
-  --immediate
-```
-
-Quick estimates are useful for getting rapid ballpark parameter values for model initialization before doing full literature extraction.
-
 ### Common Issues
 
 **Problem:** Script says "No such file"
@@ -415,8 +388,7 @@ qsp-llm-workflows/
 ├── batch_jobs/
 │   └── input_data/          # Put your CSV files here
 │       ├── parameter_input.csv
-│       ├── test_stat_input.csv
-│       └── quick_estimate_input.csv
+│       └── test_stat_input.csv
 ```
 
 Then reference them in commands:
@@ -441,7 +413,6 @@ python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [op
 
 - `parameter` - Full parameter extraction with v3 schema
 - `test_statistic` - Test statistic extraction with v2 schema
-- `quick_estimate` - Quick ballpark estimates
 
 ### Options
 
@@ -501,24 +472,6 @@ python scripts/run_extraction_workflow.py \
 python scripts/run_extraction_workflow.py \
   scratch/test_statistic_input_baseline_no_treatment_24664d08.csv \
   --type test_statistic
-```
-
-### Quick Estimates
-
-```bash
-# Simple example with 4 parameters (good for testing - requires qspio-pdac)
-# Step 1: Enrich (same as parameter extraction)
-python scripts/prepare/enrich_parameter_csv.py \
-  docs/example_quick_estimate_input.csv \
-  ../qspio-pdac/model_definitions.json \
-  PDAC \
-  -o batch_jobs/input_data/example_enriched.csv
-
-# Step 2: Extract
-python scripts/run_extraction_workflow.py \
-  batch_jobs/input_data/example_enriched.csv \
-  --type quick_estimate \
-  --immediate
 ```
 
 **Note:** Validation is always a separate manual step. Run it after the workflow completes if needed.
@@ -639,9 +592,6 @@ python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_es
 
 # For test statistics
 python ../qsp-llm-workflows/scripts/validate/run_all_validations.py test_statistics
-
-# For quick estimates
-python ../qsp-llm-workflows/scripts/validate/run_all_validations.py quick_estimates
 ```
 
 The validation suite will run all 6 validators and generate detailed reports in `output/validation/`.
@@ -698,9 +648,6 @@ mv to-review/k_C_growth_*.yaml parameter_estimates/
 
 # Test statistics
 mv to-review/tumor_volume_*.yaml test_statistics/
-
-# Quick estimates
-mv to-review/k_death_*.yaml quick_estimates/
 ```
 
 **Reject files** by deleting:

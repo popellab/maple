@@ -2,7 +2,7 @@
 """
 Simplified unpacking of batch results to YAML files.
 
-Handles: parameter extraction, test statistics, quick estimates.
+Handles: parameter extraction, test statistics.
 Generates derivation IDs and filenames deterministically.
 """
 
@@ -58,7 +58,7 @@ def load_metadata(input_csv: Path, batch_type: str) -> Dict:
                     'required_species': row.get('required_species', ''),
                     'derived_species_description': row.get('derived_species_description', '')
                 }
-            else:  # parameter or quick_estimate
+            else:  # parameter
                 key = (row['cancer_type'], row['parameter_name'])
                 metadata[key] = {
                     'parameter_name': row['parameter_name'],
@@ -105,7 +105,7 @@ def add_header_fields(json_data: dict, metadata: dict, batch_type: str) -> dict:
         json_data['scenario_context'] = metadata.get('scenario_context', '')
         json_data['schema_version'] = 'v2'
 
-    else:  # parameter or quick_estimate
+    else:  # parameter
         param_name = metadata['parameter_name']
         cancer_type = metadata['cancer_type']
         context_hash = metadata['context_hash']
@@ -117,8 +117,6 @@ def add_header_fields(json_data: dict, metadata: dict, batch_type: str) -> dict:
 
         # Add tags
         tags = ['ai-generated']
-        if batch_type == 'quick_estimate':
-            tags.append('quick-estimate')
         json_data['tags'] = tags
 
         json_data['context_hash'] = context_hash
@@ -173,10 +171,6 @@ def parse_custom_id(custom_id: str) -> Tuple[str, str, str]:
         # fix_FILENAME (validation fix batch)
         # Return the original filename as identifier
         return ('validation_fix', '', '_'.join(parts[1:]))
-
-    elif parts[0] == 'quick':
-        # quick_CANCER_PARAMETER_INDEX
-        return ('quick_estimate', parts[1], '_'.join(parts[2:-1]))
 
     elif parts[0] == 'test' and parts[1] == 'stat':
         # test_stat_TEST_STATISTIC_ID_INDEX
@@ -300,22 +294,6 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                     json_data = move_field_to_top(json_data, 'context_hash')
                     json_data = move_field_to_top(json_data, 'cancer_type')
                     json_data = move_field_to_top(json_data, 'test_statistic_id')
-                    json_data = move_field_to_top(json_data, 'schema_version')
-
-                elif batch_type == 'quick_estimate':
-                    # param_cancer_hash_deriv001.yaml
-                    base = f"{identifier}_{cancer_type}_{meta['context_hash']}"
-                    deriv_num = find_next_derivation_number(output_dir, base)
-                    filename = f"{base}_deriv{deriv_num:03d}.yaml"
-
-                    # Move header fields to top (reverse order since we prepend)
-                    json_data = move_field_to_top(json_data, 'context_hash')
-                    json_data = move_field_to_top(json_data, 'model_context')
-                    json_data = move_field_to_top(json_data, 'tags')
-                    json_data = move_field_to_top(json_data, 'cancer_type')
-                    json_data = move_field_to_top(json_data, 'parameter_definition')
-                    json_data = move_field_to_top(json_data, 'parameter_units')
-                    json_data = move_field_to_top(json_data, 'parameter_name')
                     json_data = move_field_to_top(json_data, 'schema_version')
 
                 else:  # parameter

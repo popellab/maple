@@ -14,7 +14,6 @@ This toolkit automates metadata extraction from scientific papers using OpenAI's
 
 - **Parameter extraction**: Extract parameter values, ranges, and distributions from literature
 - **Test statistics**: Create validation constraints from experimental data
-- **Quick estimates**: Generate rapid ballpark estimates for model initialization
 
 All extracted metadata is validated and stored in the companion `qsp-metadata-storage` repository.
 

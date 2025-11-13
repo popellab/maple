@@ -300,155 +300,6 @@ class ParameterBatchCreator(BatchCreator):
         return requests
 
 
-class QuickEstimateBatchCreator(BatchCreator):
-    """
-    Creates batch requests for quick parameter estimation from scientific literature.
-
-    Processes CSV input with embedded parameter definitions and model context, generating
-    simplified prompts that ask for ballpark estimates with sources rather than
-    comprehensive metadata extraction.
-
-    Required CSV columns: cancer_type, parameter_name, parameter_units, parameter_description,
-    model_context (JSON), definition_hash
-    """
-
-    def get_batch_type(self) -> str:
-        return "quick_estimate"
-
-    def format_model_context(self, model_context_json: str) -> str:
-        """
-        Parse and format the model context JSON into readable text for the LLM.
-
-        Args:
-            model_context_json: JSON string containing reactions_and_rules with model context
-
-        Returns:
-            Formatted markdown text describing the model context
-        """
-        import json
-
-        try:
-            context_data = json.loads(model_context_json)
-        except json.JSONDecodeError as e:
-            return f"Error parsing model context: {e}"
-
-        output = []
-
-        # Add derived from context if available
-        if "derived_from_context" in context_data:
-            derived = context_data["derived_from_context"]
-            if derived:
-                output.append("## Parameter Context")
-                for item in derived:
-                    output.append(f"- **{item.get('name', 'Unknown')}**: {item.get('description', 'No description')}")
-                output.append("")
-
-        # Add reactions and rules
-        if "reactions_and_rules" in context_data:
-            reactions = context_data["reactions_and_rules"]
-            if reactions:
-                output.append("## Model Usage")
-                output.append(f"This parameter appears in {len(reactions)} reaction(s) and/or rule(s):")
-                output.append("")
-
-                for i, rxn in enumerate(reactions, 1):
-                    # Reaction or rule
-                    if rxn.get("reaction"):
-                        output.append(f"### {i}. Reaction: `{rxn['reaction']}`")
-                        if rxn.get("reaction_rate"):
-                            output.append(f"**Rate:** `{rxn['reaction_rate']}`")
-                    elif rxn.get("rule"):
-                        output.append(f"### {i}. Rule ({rxn.get('rule_type', 'unknown type')})")
-                        output.append(f"**Expression:** `{rxn['rule']}`")
-
-                    output.append("")
-
-                    # Other parameters
-                    other_params = rxn.get("other_parameters", [])
-                    if other_params:
-                        output.append("**Related Parameters:**")
-                        for param in other_params:
-                            name = param.get("name", "Unknown")
-                            desc = param.get("description", "")
-                            if desc:
-                                output.append(f"- `{name}`: {desc}")
-                            else:
-                                output.append(f"- `{name}`")
-                        output.append("")
-
-                    # Other species
-                    other_species = rxn.get("other_species", [])
-                    if other_species:
-                        output.append("**Related Species:**")
-                        for species in other_species:
-                            name = species.get("name", "Unknown")
-                            desc = species.get("description", "")
-                            if desc:
-                                output.append(f"- `{name}`: {desc}")
-                            else:
-                                output.append(f"- `{name}`")
-                        output.append("")
-
-        return "\n".join(output) if output else "No model context available."
-
-    def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
-        """
-        Process quick estimation inputs and generate batch requests.
-
-        Args:
-            input_csv: CSV file with columns: cancer_type, parameter_name, parameter_units,
-                      parameter_description, model_context (JSON), definition_hash
-            parameter_storage_dir: Optional path to parameter storage directory for existing studies
-
-        Returns:
-            List of batch request dictionaries
-        """
-        import csv
-        from .parameter_utils import render_parameter_to_search, collect_existing_studies
-
-        # Process CSV and create requests
-        requests = []
-        with open(input_csv, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-
-            for i, row in enumerate(reader):
-                cancer_type = row['cancer_type']
-                parameter_name = row['parameter_name']
-                units = row.get('parameter_units', '')
-                definition = row.get('parameter_description', '')
-                model_context_json = row.get('model_context', '{}')
-                definition_hash = row.get('definition_hash', '')
-
-                # Format the model context from JSON
-                model_context_block = self.format_model_context(model_context_json)
-
-                # Build parameter info block with cancer type
-                parameter_block = render_parameter_to_search(parameter_name, units, definition, cancer_type)
-
-                # Collect existing quick estimates to avoid re-using same sources
-                # Use definition_hash from CSV (same as context_hash in model_context)
-                if parameter_storage_dir is None:
-                    parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "quick_estimates"
-                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir, definition_hash)
-
-                # Prepare runtime data for prompt assembly (no canonical_scale)
-                runtime_data = {
-                    "EXISTING_STUDIES": existing_studies,
-                    "PARAMETER_INFO": parameter_block,
-                    "MODEL_CONTEXT": model_context_block
-                }
-
-                # Assemble the prompt using the quick_estimation prompt type
-                prompt = self.prompt_assembler.assemble_prompt("quick_estimation", runtime_data)
-
-                # Create batch request
-                custom_id = f"quick_{cancer_type}_{parameter_name}_{i}"
-                request = self.create_request(custom_id, prompt, reasoning_effort="medium")
-                requests.append(request)
-
-        return requests
-
-
 class SchemaConversionBatchCreator(BatchCreator):
     """
     Creates batch requests for converting YAML files from one schema version to another.
@@ -525,8 +376,6 @@ class SchemaConversionBatchCreator(BatchCreator):
             prompt_path = self.base_dir / "prompts" / "qsp_parameter_extraction_prompt.md"
         elif "test_statistic" in schema_name:
             prompt_path = self.base_dir / "prompts" / "test_statistic_prompt.md"
-        elif "quick_estimate" in schema_name:
-            prompt_path = self.base_dir / "prompts" / "quick_parameter_estimation_prompt.md"
         else:
             # Unknown type, return empty
             return "(Original extraction prompt not available)"
@@ -991,7 +840,7 @@ class ValidationFixBatchCreator(BatchCreator):
         Generate example JSON output format based on template type.
 
         Args:
-            template_type: Type of template (parameter_metadata, test_statistic, quick_estimate)
+            template_type: Type of template (parameter_metadata, test_statistic)
 
         Returns:
             Example JSON string formatted with code fence
@@ -1074,19 +923,6 @@ class ValidationFixBatchCreator(BatchCreator):
   }
 }
 ```"""
-        else:  # quick_estimate
-            return """Example output format for quick estimates:
-```json
-{
-  "parameter_estimate": {
-    "value": 1.23,
-    "range": [0.5, 2.0],
-    "confidence": "medium"
-  },
-  "rationale": "Based on literature values...",
-  "primary_sources": [...]
-}
-```"""
 
     def create_fix_prompt(self, yaml_content: str, errors: List[str],
                          template_content: str, template_type: str) -> str:
@@ -1097,7 +933,7 @@ class ValidationFixBatchCreator(BatchCreator):
             yaml_content: Original YAML content
             errors: List of error messages for this file
             template_content: Template YAML content for reference
-            template_type: Type of template (parameter_metadata, test_statistic, quick_estimate)
+            template_type: Type of template (parameter_metadata, test_statistic)
 
         Returns:
             Complete fix prompt
@@ -1244,7 +1080,7 @@ Return the corrected metadata as JSON inside a ```json code fence. The unpacker 
             template_path: Path to template file
 
         Returns:
-            Template type string (parameter_metadata, test_statistic, quick_estimate)
+            Template type string (parameter_metadata, test_statistic)
         """
         name = template_path.name.lower()
 
@@ -1252,8 +1088,6 @@ Return the corrected metadata as JSON inside a ```json code fence. The unpacker 
             return 'parameter_metadata'
         elif 'test_stat' in name:
             return 'test_statistic'
-        elif 'quick' in name:
-            return 'quick_estimate'
         else:
             # Default to parameter_metadata
             return 'parameter_metadata'

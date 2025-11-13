@@ -17,8 +17,7 @@ class SchemaVersionDetector:
     # Latest schema versions for each metadata type
     LATEST_VERSIONS = {
         "parameter": "v3",
-        "test_statistic": "v2",
-        "quick_estimate": "v1"  # Quick estimates don't have versioning yet
+        "test_statistic": "v2"
     }
 
     # Template paths for each schema version
@@ -30,9 +29,6 @@ class SchemaVersionDetector:
         },
         "test_statistic": {
             "v2": "templates/test_statistic_template.yaml"
-        },
-        "quick_estimate": {
-            "v1": "templates/quick_estimate_template.yaml"
         }
     }
 
@@ -98,7 +94,7 @@ class SchemaVersionDetector:
 
     def get_metadata_type_from_directory(self, yaml_file: Path) -> Optional[str]:
         """
-        Determine metadata type (parameter/test_statistic/quick_estimate) from file location.
+        Determine metadata type (parameter/test_statistic) from file location.
 
         Args:
             yaml_file: Path to YAML file
@@ -117,8 +113,6 @@ class SchemaVersionDetector:
             return "parameter"
         elif "test_statistics" in relative_path.parts:
             return "test_statistic"
-        elif "quick_estimates" in relative_path.parts:
-            return "quick_estimate"
 
         return None
 
@@ -128,7 +122,7 @@ class SchemaVersionDetector:
 
         Args:
             yaml_file: Path to YAML file
-            metadata_type: Type of metadata (parameter/test_statistic/quick_estimate)
+            metadata_type: Type of metadata (parameter/test_statistic)
 
         Returns:
             True if file needs conversion, False otherwise
@@ -191,7 +185,7 @@ class SchemaVersionDetector:
             Dictionary mapping metadata type to list of files needing conversion
         """
         if metadata_types is None:
-            metadata_types = ["parameter", "test_statistic", "quick_estimate"]
+            metadata_types = ["parameter", "test_statistic"]
 
         results = {}
 
@@ -201,8 +195,6 @@ class SchemaVersionDetector:
                 directory = self.storage_dir / "parameter_estimates"
             elif metadata_type == "test_statistic":
                 directory = self.storage_dir / "test_statistics"
-            elif metadata_type == "quick_estimate":
-                directory = self.storage_dir / "quick_estimates"
             else:
                 continue
 

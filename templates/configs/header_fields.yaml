@@ -82,13 +82,3 @@ test_statistic:
       - tags
       - context_hash
     content_starts_at: model_output
-
-quick_estimate:
-  v1:
-    header_fields:
-      - schema_version
-      - parameter_name
-      - cancer_type
-      - tags
-      - context_hash
-    content_starts_at: mathematical_role

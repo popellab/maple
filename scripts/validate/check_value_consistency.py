@@ -54,7 +54,6 @@ class ValueConsistencyChecker:
         Convention:
         - parameter_estimates -> parameter_estimates_legacy
         - test_statistics -> test_statistics_legacy
-        - quick_estimates -> quick_estimates_legacy
         """
         dir_name = self.data_dir.name
         parent = self.data_dir.parent

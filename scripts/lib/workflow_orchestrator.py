@@ -89,7 +89,7 @@ class WorkflowOrchestrator:
 
         Args:
             input_csv: Path to input CSV file
-            workflow_type: Type of workflow (parameter/test_statistic/quick_estimate)
+            workflow_type: Type of workflow (parameter/test_statistic)
             progress_callback: Optional callback for progress updates
 
         Returns:
@@ -101,8 +101,7 @@ class WorkflowOrchestrator:
         # Determine which script to use
         script_map = {
             "parameter": "create_parameter_batch.py",
-            "test_statistic": "create_test_statistic_batch.py",
-            "quick_estimate": "create_quick_estimate_batch.py"
+            "test_statistic": "create_test_statistic_batch.py"
         }
 
         if workflow_type not in script_map:
@@ -127,8 +126,6 @@ class WorkflowOrchestrator:
             output_file = self.batch_jobs_dir / "test_stat_requests.jsonl"
         elif workflow_type == "parameter":
             output_file = self.batch_jobs_dir / "parameter_requests.jsonl"
-        elif workflow_type == "quick_estimate":
-            output_file = self.batch_jobs_dir / "quick_estimate_requests.jsonl"
 
         if not output_file.exists():
             raise RuntimeError(f"Expected batch file not created: {output_file}")
@@ -387,7 +384,7 @@ before unpacking new results from LLM workflow."""
         Args:
             validated_results: Path to validation results JSONL
             input_csv: Path to original input CSV
-            workflow_type: Type of workflow (parameter/test_statistic/quick_estimate)
+            workflow_type: Type of workflow (parameter/test_statistic)
             progress_callback: Optional callback for progress updates
 
         Returns:
@@ -396,8 +393,7 @@ before unpacking new results from LLM workflow."""
         # Create subdirectory based on workflow type
         subdirectory_map = {
             "parameter": "parameter_estimates",
-            "test_statistic": "test_statistics",
-            "quick_estimate": "quick_estimates"
+            "test_statistic": "test_statistics"
         }
 
         subdir_name = subdirectory_map.get(workflow_type, workflow_type)
@@ -410,8 +406,7 @@ before unpacking new results from LLM workflow."""
         # Determine template based on workflow type
         template_map = {
             "parameter": "templates/parameter_metadata_template.yaml",
-            "test_statistic": "templates/test_statistic_template.yaml",
-            "quick_estimate": "templates/quick_estimate_template.yaml"
+            "test_statistic": "templates/test_statistic_template.yaml"
         }
 
         template_path = template_map.get(workflow_type)
@@ -451,7 +446,7 @@ before unpacking new results from LLM workflow."""
 
         Args:
             unpacked_files: List of unpacked YAML files
-            workflow_type: Type of workflow (parameter/test_statistic/quick_estimate)
+            workflow_type: Type of workflow (parameter/test_statistic)
             progress_callback: Optional callback for progress updates
 
         Returns:
@@ -466,8 +461,7 @@ before unpacking new results from LLM workflow."""
         # Determine template path
         template_map = {
             "parameter": "templates/parameter_metadata_template.yaml",
-            "test_statistic": "templates/test_statistic_template.yaml",
-            "quick_estimate": "templates/quick_estimate_template.yaml"
+            "test_statistic": "templates/test_statistic_template.yaml"
         }
 
         template_path = self.base_dir / template_map.get(workflow_type, "")
@@ -479,8 +473,7 @@ before unpacking new results from LLM workflow."""
         # Determine subdirectory based on workflow type
         subdirectory_map = {
             "parameter": "parameter_estimates",
-            "test_statistic": "test_statistics",
-            "quick_estimate": "quick_estimates"
+            "test_statistic": "test_statistics"
         }
         subdir_name = subdirectory_map.get(workflow_type, workflow_type)
         data_dir = self.to_review_dir / subdir_name
@@ -555,8 +548,7 @@ before unpacking new results from LLM workflow."""
             # Determine subdirectory based on workflow type
             subdirectory_map = {
                 "parameter": "parameter_estimates",
-                "test_statistic": "test_statistics",
-                "quick_estimate": "quick_estimates"
+                "test_statistic": "test_statistics"
             }
             subdir_name = subdirectory_map.get(workflow_type, workflow_type)
 
@@ -627,7 +619,7 @@ Automated extraction. Ready for validation and manual review."""
 
         Args:
             input_csv: Path to input CSV file
-            workflow_type: Type of workflow (parameter/test_statistic/quick_estimate)
+            workflow_type: Type of workflow (parameter/test_statistic)
             timeout: Maximum seconds to wait for batch completion
             push: Whether to push to remote
             branch_prefix: Prefix for review branch name
@@ -720,8 +712,7 @@ Automated extraction. Ready for validation and manual review."""
             # Add next steps info
             workflow_type_map = {
                 "parameter": "parameter_estimates",
-                "test_statistic": "test_statistics",
-                "quick_estimate": "quick_estimates"
+                "test_statistic": "test_statistics"
             }
             validation_type = workflow_type_map.get(workflow_type, workflow_type)
             results["next_step_validation_command"] = f"python scripts/validate/run_all_validations.py {validation_type}"
@@ -750,7 +741,7 @@ Automated extraction. Ready for validation and manual review."""
 
         Args:
             files_to_convert: List of YAML files to convert
-            metadata_type: Type of metadata (parameter/test_statistic/quick_estimate)
+            metadata_type: Type of metadata (parameter/test_statistic)
             from_version: Current schema version
             to_version: Target schema version
             timeout: Maximum seconds to wait for batch completion

@@ -93,7 +93,7 @@ class ValidationRunner:
         Run workflow-appropriate validation suite.
 
         Args:
-            workflow_type: Type of workflow (parameter/test_statistic/quick_estimate)
+            workflow_type: Type of workflow (parameter/test_statistic)
             data_dir: Directory with YAML files (not used - determined by script)
             template: Path to template file (not used - determined by script)
             output_dir: Output directory for validation results (not used - goes to output/validation_results)
@@ -105,8 +105,7 @@ class ValidationRunner:
         # Map workflow type to validation type
         workflow_type_map = {
             "parameter": "parameter_estimates",
-            "test_statistic": "test_statistics",
-            "quick_estimate": "quick_estimates"
+            "test_statistic": "test_statistics"
         }
         validation_type = workflow_type_map.get(workflow_type)
 
@@ -115,14 +114,6 @@ class ValidationRunner:
                 "workflow_type": workflow_type,
                 "status": "error",
                 "message": f"Unknown workflow type: {workflow_type}"
-            }
-
-        if workflow_type == "quick_estimate":
-            # Quick estimates don't have comprehensive validation yet
-            return {
-                "workflow_type": workflow_type,
-                "status": "skipped",
-                "message": "Quick estimate validation not implemented"
             }
 
         # Run validation script (it determines paths internally)

@@ -97,7 +97,7 @@ Examples:
 
     parser.add_argument(
         "--only",
-        choices=["parameter", "test_statistic", "quick_estimate"],
+        choices=["parameter", "test_statistic"],
         help="Only convert specific metadata type"
     )
 

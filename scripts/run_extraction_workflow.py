@@ -86,9 +86,6 @@ Examples:
   # Test statistic extraction with custom timeout
   python scripts/run_extraction_workflow.py test_stats.csv --type test_statistic --timeout 7200
 
-  # Quick estimates
-  python scripts/run_extraction_workflow.py quick.csv --type quick_estimate
-
   # Create branch locally without pushing
   python scripts/run_extraction_workflow.py input.csv --type parameter --no-push
         """
@@ -102,7 +99,7 @@ Examples:
 
     parser.add_argument(
         "--type",
-        choices=["parameter", "test_statistic", "quick_estimate"],
+        choices=["parameter", "test_statistic"],
         required=True,
         help="Type of extraction workflow to run"
     )

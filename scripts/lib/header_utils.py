@@ -47,7 +47,7 @@ class HeaderManager:
         Get list of header field names for a template type and version.
 
         Args:
-            template_type: Type of template (parameter_metadata, test_statistic, quick_estimate)
+            template_type: Type of template (parameter_metadata, test_statistic)
             schema_version: Schema version (e.g., "v3", "v2", "v1")
 
         Returns:

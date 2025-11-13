@@ -1,6 +1,6 @@
 # Validation Scripts
 
-Core automated validation tools for LLM-extracted metadata (parameters, test statistics, quick estimates).
+Core automated validation tools for LLM-extracted metadata (parameters, test statistics).
 
 ## Quick Start
 
@@ -25,7 +25,7 @@ Validates YAML files conform to template schema.
 - Numeric values valid
 - Validation weights in [0, 1]
 
-**Works for:** Parameters, test statistics, quick estimates
+**Works for:** Parameters, test statistics
 
 **Usage:**
 ```bash
@@ -136,7 +136,6 @@ python scripts/validate/check_value_consistency.py \
 **Note:** This validator automatically discovers the corresponding legacy directory:
 - `parameter_estimates/` → `parameter_estimates_legacy/`
 - `test_statistics/` → `test_statistics_legacy/`
-- `quick_estimates/` → `quick_estimates_legacy/`
 
 ### 7. Manual Snippet Source Verification
 
@@ -215,9 +214,7 @@ qsp-metadata-storage/
 ├── parameter_estimates/          # New parameter extractions
 ├── parameter_estimates_legacy/   # Legacy parameter database
 ├── test_statistics/              # New test statistic extractions
-├── test_statistics_legacy/       # Legacy test statistics (if any)
-├── quick_estimates/              # Quick parameter estimates
-└── quick_estimates_legacy/       # Legacy quick estimates (if any)
+└── test_statistics_legacy/       # Legacy test statistics (if any)
 ```
 
 **Validation behavior:**

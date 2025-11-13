@@ -288,7 +288,6 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
             # Parse filename to check cancer type
             # Formats:
             # - Parameter estimates: {param_name}_{author_year}_{cancer_type}_{hash}.yaml
-            # - Quick estimates: {param_name}_{cancer_type}_{hash}_deriv{N}.yaml
             filename_parts = yaml_file.stem.split('_')
 
             # Check if cancer_type appears in filename
@@ -323,10 +322,6 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
 
             if 'methodological_sources' in study_data and study_data['methodological_sources']:
                 all_sources.append(('methodological_sources', study_data['methodological_sources']))
-
-            # Check for quick estimate 'source' field (singular)
-            if 'source' in study_data and study_data['source']:
-                all_sources.append(('source', study_data['source']))
 
             # Check v1 schema: sources (fallback)
             if 'sources' in study_data and study_data['sources']:

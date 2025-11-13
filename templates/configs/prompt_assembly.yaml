@@ -74,23 +74,6 @@ prompt_types:
         source: runtime
         description: "Mathematical role and biological context"
 
-  quick_estimation:
-    base_prompt: prompts/quick_parameter_estimation_prompt.md
-    template: templates/quick_estimate_template.yaml
-    placeholders:
-      - name: TEMPLATE
-        source: template_file
-        description: "Insert the quick estimate template"
-      - name: PARAMETER_INFO
-        source: runtime
-        description: "Parameter-specific information (name, units, definition)"
-      - name: CANONICAL_SCALE
-        source: runtime
-        description: "The canonical scale for this parameter (identity/log/logit)"
-      - name: MODEL_CONTEXT
-        source: runtime
-        description: "Mathematical role and biological context"
-
   test_statistic:
     base_prompt: prompts/test_statistic_prompt.md
     template: templates/test_statistic_template.yaml

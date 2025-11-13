@@ -12,7 +12,6 @@ This repository contains LLM workflow automation tools for extracting and valida
 
 **Supported Workflows:**
 - **Parameter extraction**: Extract parameter values, ranges, and statistical distributions with detailed literature tracking
-- **Quick estimates**: Generate rapid parameter estimates for model initialization
 - **Test statistics**: Create validation constraints from experimental data with uncertainty quantification
 - **Pooling metadata**: Add statistical pooling information to existing extractions
 
@@ -116,9 +115,6 @@ python scripts/run_extraction_workflow.py input.csv --type parameter
 # Test statistics
 python scripts/run_extraction_workflow.py test_stats.csv --type test_statistic
 
-# Quick estimates
-python scripts/run_extraction_workflow.py quick.csv --type quick_estimate
-
 # With custom timeout (default: 3600s)
 python scripts/run_extraction_workflow.py input.csv --type parameter --timeout 7200
 
@@ -167,7 +163,6 @@ python scripts/run_schema_conversion.py --only test_statistic
 **Latest schema versions:**
 - Parameters: v3 (templates/parameter_metadata_template.yaml)
 - Test Statistics: v2 (templates/test_statistic_template.yaml)
-- Quick Estimates: v1 (templates/quick_estimate_template.yaml)
 
 **Note:** Only the latest templates are tracked in git. Old templates are retrieved from git history when needed for schema conversion.
 
@@ -271,18 +266,6 @@ python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
   ../qsp-metadata-storage/parameter_estimates input.csv "" templates/parameter_metadata_template_v3.yaml
 ```
 
-**Quick Estimates:**
-```bash
-python scripts/prepare/create_quick_estimate_batch.py input.csv
-python scripts/run/upload_batch.py batch_jobs/quick_estimate_requests.jsonl
-python scripts/run/batch_monitor.py batch_<id>
-python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
-  ../qsp-metadata-storage/quick_estimates input.csv
-# Aggregate results
-python ../qspio-pdac/metadata/aggregate_quick_estimates.py input.csv \
-  ../qsp-metadata-storage/quick_estimates output/
-```
-
 **Test Statistics:**
 ```bash
 python scripts/prepare/create_test_statistic_batch.py input.csv
@@ -305,7 +288,6 @@ Scripts are organized by workflow stage:
   - `enrich_test_statistic_csv.py`: Enrich partial test statistic CSV with context
 - **Batch Creation (Step 2):**
   - `create_parameter_batch.py`: Parameter extraction batch requests
-  - `create_quick_estimate_batch.py`: Quick estimate batch requests
   - `create_test_statistic_batch.py`: Test statistic batch requests
   - `create_pooling_metadata_batch.py`: Pooling metadata batch requests
   - `create_checklist_batch.py`, `create_schema_conversion_batch.py`: Other batch types
@@ -349,13 +331,11 @@ This repository uses a generalized prompt assembly system that builds prompts fr
 ```
 prompts/                         # Base prompt files with placeholders
 ├── parameter_prompt.md
-├── quick_estimate_prompt.md
 ├── test_statistic_prompt.md
 └── suggest_test_statistics_prompt.md
 templates/                       # YAML templates and examples
 ├── configs/prompt_assembly.yaml # Configuration for prompt assembly
 ├── parameter_metadata_template.yaml (v1 & v2)
-├── quick_estimate_template.yaml
 ├── test_statistic_template.yaml
 ├── prior_metadata_template.yaml
 └── examples/                    # Example filled templates
@@ -378,13 +358,6 @@ scripts/
 4. **LLM Processing**: Batch processing via OpenAI API creates structured YAML outputs
 5. **Unpacking**: Results unpacked to `../qsp-metadata-storage/parameter_estimates/` with format: `{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
 
-**Quick Estimate Workflow:**
-1. **CSV Enrichment** (Step 1): Simple CSV (parameter names) + model definitions JSON → enriched CSV
-2. **Batch Creation**: Scripts generate quick estimate prompts for rapid parameter initialization
-3. **LLM Processing**: LLM generates estimates with ranges based on literature knowledge
-4. **Unpacking**: Results unpacked to `../qsp-metadata-storage/quick_estimates/` with format: `{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
-5. **Aggregation**: Script pools estimates using lognormal statistics for positive-only parameters
-
 **Test Statistics Workflow:**
 1. **CSV Enrichment** (Step 1): Partial CSV (test_statistic_id, required_species, derived_species_description) + model_context.txt + scenario YAML → enriched CSV
 2. **Batch Creation**: Scripts generate prompts with model context and scenario information
@@ -398,13 +371,11 @@ scripts/
 - `templates/configs/prompt_assembly.yaml`: Configuration controlling how prompts are assembled
 - `templates/parameter_metadata_template.yaml`: YAML template for parameter metadata
 - `templates/test_statistic_template.yaml`: YAML template for test statistics
-- `templates/quick_estimate_template.yaml`: YAML template for quick estimates
 - `templates/examples/`: Example filled templates for different parameters
 
 **Prompts:**
 - `prompts/parameter_prompt.md`: Base prompt for parameter extraction
 - `prompts/test_statistic_prompt.md`: Base prompt for test statistics
-- `prompts/quick_estimate_prompt.md`: Base prompt for quick estimates
 
 **CSV Enrichment Scripts:**
 - `scripts/prepare/enrich_parameter_csv.py`: Enrich simple parameter CSV with model definitions
@@ -450,7 +421,6 @@ This repository integrates with the central metadata storage system:
 - Writes extracted metadata to different directories based on workflow type:
   - **Parameter estimates**: `../qsp-metadata-storage/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
     - Hash computed from study context to enable multiple extractions per parameter
-  - **Quick estimates**: `../qsp-metadata-storage/quick_estimates/{param_name}_{cancer_type}_{hash}_deriv{N}.yaml`
   - **Test statistics**: `../qsp-metadata-storage/test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
     - Hash computed from scenario context
 - Assumes `qsp-metadata-storage` repository exists as sibling directory
