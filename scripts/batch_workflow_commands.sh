@@ -96,43 +96,6 @@ python ./scripts/run/upload_immediate.py ./batch_jobs/checklist_requests.jsonl
 # batch_jobs/checklist_requests_immediate_results.jsonl (for immediate processing)
 
 # ============================================================================
-# SCHEMA CONVERSION WORKFLOW
-# ============================================================================
-# Convert existing YAML files to a new schema
-# Flow: YAML → strip headers → JSON → LLM → JSON → add headers → YAML
-# LLM receives: old schema (JSON), new schema (JSON), current data (JSON)
-# LLM returns: converted data (JSON)
-# Everything is JSON for consistency and reliability
-
-# Create schema conversion batch requests
-# Note: Pass migration notes as a text file (or empty string to skip)
-python ./scripts/prepare/create_schema_conversion_batch.py \
-  ../qsp-metadata-storage/parameter_estimates \
-  templates/parameter_metadata_template.yaml \
-  templates/parameter_metadata_template_v2.yaml \
-  scratch/migration_v1_to_v2.txt \
-  "*_PDAC_*.yaml"
-
-python ./scripts/debug/inspect_jsonl.py batch_jobs/schema_conversion_requests.jsonl 1
-# Optional: Extract prompt to examine
-python ./scripts/debug/extract_prompt.py batch_jobs/schema_conversion_requests.jsonl 0
-
-# Upload schema conversion requests (choose one method):
-# Option 1: Batch processing
-python ./scripts/run/upload_batch.py ./batch_jobs/schema_conversion_requests.jsonl
-python ./scripts/run/batch_monitor.py batch_{batch_id}
-
-# Option 2: Immediate processing (faster feedback)
-python ./scripts/run/upload_immediate.py ./batch_jobs/schema_conversion_requests.jsonl
-
-# Unpack converted files (LLM returns JSON, unpacking converts to YAML with original header fields)
-# Note: Pass source directory as 4th arg to extract header fields, target schema template as 5th arg
-# Schema template determines which header fields to add and filename format (v1 vs v2)
-python ./scripts/process/unpack_results.py ./batch_jobs/batch_{batch_id}_results.jsonl ../qsp-metadata-storage/parameter_estimates "" ../qsp-metadata-storage/parameter_estimates templates/parameter_metadata_template_v2.yaml
-# OR (if using immediate processing):
-python ./scripts/process/unpack_results.py ./batch_jobs/schema_conversion_requests_immediate_results.jsonl ../qsp-metadata-storage/parameter_estimates "" ../qsp-metadata-storage/parameter_estimates templates/parameter_metadata_template_v2.yaml
-
-# ============================================================================
 # TEST STATISTIC WORKFLOW
 # ============================================================================
 # Generate test statistics for model validation from literature

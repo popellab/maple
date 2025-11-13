@@ -142,38 +142,6 @@ python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_es
 
 See `docs/automated_workflow.md` for complete documentation.
 
-### Schema Conversion Workflow
-
-**Automated schema conversion** - Scans for outdated schemas and converts them automatically:
-
-```bash
-# Scan for outdated files (dry run)
-python scripts/run_schema_conversion.py --dry-run
-
-# Convert all outdated files
-python scripts/run_schema_conversion.py
-
-# Convert only parameters
-python scripts/run_schema_conversion.py --only parameter
-
-# Convert only test statistics
-python scripts/run_schema_conversion.py --only test_statistic
-```
-
-**Latest schema versions:**
-- Parameters: v3 (templates/parameter_metadata_template.yaml)
-- Test Statistics: v2 (templates/test_statistic_template.yaml)
-
-**Note:** Only the latest templates are tracked in git. Old templates are retrieved from git history when needed for schema conversion.
-
-The workflow automatically:
-1. Scans metadata directories for files with outdated schema_version fields
-2. Groups files by schema version transition (e.g., v1 → v3)
-3. Creates batch requests for schema conversion
-4. Monitors conversion progress
-5. Unpacks converted files to to-review/ for verification
-6. Creates review branch with converted files
-
 ### Validation Fix Workflow
 
 **Automated validation fixing** - Sends failed YAMLs back to OpenAI for correction:
@@ -290,7 +258,6 @@ Scripts are organized by workflow stage:
   - `create_parameter_batch.py`: Parameter extraction batch requests
   - `create_test_statistic_batch.py`: Test statistic batch requests
   - `create_pooling_metadata_batch.py`: Pooling metadata batch requests
-  - `create_checklist_batch.py`, `create_schema_conversion_batch.py`: Other batch types
 
 **Run** (`scripts/run/`): Execute batches
 - `upload_batch.py`: Upload to OpenAI batch API (slower, handles large volumes)
@@ -299,7 +266,6 @@ Scripts are organized by workflow stage:
 
 **Automated Workflows**:
 - `run_extraction_workflow.py`: Complete automated extraction pipeline (create → upload → monitor → validate → unpack → git commit/push)
-- `run_schema_conversion.py`: Automated schema conversion for outdated metadata files
 
 **Process** (`scripts/process/`): Extract results
 - `unpack_results.py`: Extract JSON from batch results, convert to YAML
@@ -331,8 +297,7 @@ This repository uses a generalized prompt assembly system that builds prompts fr
 ```
 prompts/                         # Base prompt files with placeholders
 ├── parameter_prompt.md
-├── test_statistic_prompt.md
-└── suggest_test_statistics_prompt.md
+└── test_statistic_prompt.md
 templates/                       # YAML templates and examples
 ├── configs/prompt_assembly.yaml # Configuration for prompt assembly
 ├── parameter_metadata_template.yaml (v1 & v2)
