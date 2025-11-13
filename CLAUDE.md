@@ -13,7 +13,6 @@ This repository contains LLM workflow automation tools for extracting and valida
 **Supported Workflows:**
 - **Parameter extraction**: Extract parameter values, ranges, and statistical distributions with detailed literature tracking
 - **Test statistics**: Create validation constraints from experimental data with uncertainty quantification
-- **Pooling metadata**: Add statistical pooling information to existing extractions
 
 All extracted metadata is stored in the central `qsp-metadata-storage` repository with flat file structures for easy access.
 
@@ -257,7 +256,6 @@ Scripts are organized by workflow stage:
 - **Batch Creation (Step 2):**
   - `create_parameter_batch.py`: Parameter extraction batch requests
   - `create_test_statistic_batch.py`: Test statistic batch requests
-  - `create_pooling_metadata_batch.py`: Pooling metadata batch requests
 
 **Run** (`scripts/run/`): Execute batches
 - `upload_batch.py`: Upload to OpenAI batch API (slower, handles large volumes)
@@ -269,7 +267,6 @@ Scripts are organized by workflow stage:
 
 **Process** (`scripts/process/`): Extract results
 - `unpack_results.py`: Extract JSON from batch results, convert to YAML
-- `unpack_single_json.py`: Process individual JSON responses
 
 **Lib** (`scripts/lib/`): Core libraries
 - `batch_creator.py`: Base classes for batch creation
@@ -353,7 +350,7 @@ Batch creation uses a modular class-based system:
 
 - `scripts/lib/batch_creator.py`: Base `BatchCreator` class with common functionality
 - `ParameterBatchCreator`: For parameter extraction requests (uses prompt assembly system)
-- `PoolingMetadataBatchCreator`: For adding statistical metadata to existing YAMLs
+- `TestStatisticBatchCreator`: For test statistic extraction requests
 - CLI scripts in `scripts/prepare/` provide simple interfaces to batch creators
 
 ### Script Dependencies
@@ -362,7 +359,6 @@ Batch creation uses a modular class-based system:
 - `scripts/lib/batch_creator.py`: Class-based batch creation with shared functionality
 - All API scripts expect `OPENAI_API_KEY` in `.env` file (current directory)
 - `scripts/process/unpack_results.py` writes directly to `../qsp-metadata-storage/` directories with flat structure
-- `scripts/prepare/create_pooling_metadata_batch.py` reads from `../qsp-metadata-storage/parameter_estimates/`
 
 ### Batch Processing Model
 - Uses OpenAI's batch API with GPT-5 model and high reasoning effort
@@ -393,13 +389,11 @@ This repository integrates with the central metadata storage system:
 
 ## Standard Usage
 
-- `scripts/process/unpack_results.py`: Extracts directly to `../qsp-metadata-storage/` directories with flat structure
-- `scripts/prepare/create_pooling_metadata_batch.py`: Reads from `../qsp-metadata-storage/parameter_estimates/`
+`scripts/process/unpack_results.py` extracts batch results directly to `../qsp-metadata-storage/` directories with flat structure.
 
 Example usage:
 ```bash
 python scripts/process/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
-python scripts/prepare/create_pooling_metadata_batch.py ../qsp-metadata-storage/parameter_estimates
 ```
 
 # Important Instructions
