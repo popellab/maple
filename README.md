@@ -1,5 +1,7 @@
 # QSP LLM Workflows
 
+[![Tests](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml)
+
 Automated tools for extracting and validating quantitative systems pharmacology (QSP) metadata from scientific literature using Large Language Models.
 
 ## Installation
