@@ -1,0 +1,112 @@
+prompt_types:
+  parameter_extraction:
+    base_prompt: prompts/qsp_parameter_extraction_prompt.md
+    template: templates/parameter_metadata_template.yaml
+    examples:
+      - templates/examples/k_ECM_fib_sec_example.yaml
+    placeholders:
+      - name: USED_PRIMARY_STUDIES
+        source: used_primary_studies
+        description: "List of primary studies already used for this parameter to prevent duplicates"
+      - name: SOURCE_AND_VALIDATION_RUBRICS
+        source: shared_file
+        path: prompts/shared/source_and_validation_rubrics.md
+        description: "Insert shared rubrics and source rules"
+      - name: TEMPLATE
+        source: template_file
+        description: "Insert the parameter metadata template"
+      - name: EXAMPLES
+        source: example_files
+        description: "Insert example filled templates"
+      - name: PARAMETER_INFO
+        source: runtime
+        description: "Parameter-specific information (name, units, definition)"
+      - name: CANONICAL_SCALE
+        source: runtime
+        description: "The canonical scale for this parameter (identity/log/logit)"
+      - name: MODEL_CONTEXT
+        source: runtime
+        description: "Mathematical role and biological context"
+
+  prior_metadata:
+    base_prompt: prompts/prior_metadata_prompt.md
+    template: templates/prior_metadata_template.yaml
+    placeholders:
+      - name: TEMPLATE
+        source: template_file
+        description: "Insert the prior metadata template"
+      - name: PARAMETER_INFO
+        source: runtime
+        description: "Parameter name, units, and basic information"
+      - name: STUDY_DATA
+        source: runtime
+        description: "Information about studies to be pooled"
+
+  parameter_definition:
+    base_prompt: prompts/parameter_definition_prompt.md
+    template: templates/parameter_definition_template.yaml
+    placeholders:
+      - name: TEMPLATE
+        source: template_file
+        description: "Insert the parameter definition template"
+      - name: PARAMETER_INFO
+        source: runtime
+        description: "Parameter name, units, and basic information"
+      - name: MODEL_CONTEXT
+        source: runtime
+        description: "Mathematical role and biological context"
+
+  test_statistic:
+    base_prompt: prompts/test_statistic_prompt.md
+    template: templates/test_statistic_template.yaml
+    placeholders:
+      - name: USED_PRIMARY_STUDIES
+        source: used_primary_studies
+        description: "List of primary studies already used for this test statistic to prevent duplicates"
+      - name: SOURCE_AND_VALIDATION_RUBRICS
+        source: shared_file
+        path: prompts/shared/source_and_validation_rubrics.md
+        description: "Insert shared rubrics and source rules"
+      - name: TEMPLATE
+        source: template_file
+        description: "Insert the test statistic template"
+      - name: MODEL_CONTEXT
+        source: runtime
+        description: "Model structure and relevant variables for test statistic computation"
+      - name: SCENARIO_CONTEXT
+        source: runtime
+        description: "Experimental scenario and dosing context information"
+      - name: REQUIRED_SPECIES_WITH_UNITS
+        source: runtime
+        description: "Required species with their units information formatted for clarity"
+      - name: DERIVED_SPECIES_DESCRIPTION
+        source: runtime
+        description: "Biological description of what the derived species/test statistic represents"
+
+# Configuration for how to handle different placeholder sources
+placeholder_sources:
+  template_file:
+    format: "yaml_code_block"  # Wrap in ```yaml ... ```
+    prefix: "Below is the metadata template for your reference:\n\n"
+
+  example_files:
+    format: "yaml_code_block"  # Wrap in ```yaml ... ```
+    prefix: "A complete example of well-constructed metadata:\n\n"
+
+  runtime:
+    format: "raw"  # Insert as-is
+    prefix: ""
+
+  shared_file:
+    format: "raw"  # Insert as-is
+    prefix: ""
+
+  used_primary_studies:
+    format: "raw"  # Insert as-is (already formatted as bulleted list)
+    prefix: ""
+
+# Global settings
+settings:
+  preserve_existing_placeholders: true  # Keep existing placeholders like ## PARAMETER_TO_SEARCH:
+  validate_yaml: true  # Validate YAML files before insertion
+  allow_multiple_examples: true  # Allow multiple example files
