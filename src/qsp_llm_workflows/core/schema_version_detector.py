@@ -15,21 +15,14 @@ class SchemaVersionDetector:
     """Detects schema versions and identifies files needing conversion."""
 
     # Latest schema versions for each metadata type
-    LATEST_VERSIONS = {
-        "parameter": "v3",
-        "test_statistic": "v2"
-    }
+    LATEST_VERSIONS = {"parameter": "v3", "test_statistic": "v2"}
 
     # Template paths for each schema version
     # Note: Only the latest template is kept in the repo
     # Older versions must be retrieved from git history if needed for conversion
     SCHEMA_TEMPLATES = {
-        "parameter": {
-            "v3": "templates/parameter_metadata_template.yaml"
-        },
-        "test_statistic": {
-            "v2": "templates/test_statistic_template.yaml"
-        }
+        "parameter": {"v3": "templates/parameter_metadata_template.yaml"},
+        "test_statistic": {"v2": "templates/test_statistic_template.yaml"},
     }
 
     def __init__(self, base_dir: Path, storage_dir: Path):
@@ -54,12 +47,12 @@ class SchemaVersionDetector:
             True if file has 'legacy' tag, False otherwise
         """
         try:
-            with open(yaml_file, 'r', encoding='utf-8') as f:
+            with open(yaml_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
 
-            tags = data.get('tags', [])
+            tags = data.get("tags", [])
             if isinstance(tags, list):
-                return 'legacy' in tags
+                return "legacy" in tags
             return False
 
         except Exception as e:
@@ -77,11 +70,11 @@ class SchemaVersionDetector:
             Schema version string (e.g., "v3") or None if not found
         """
         try:
-            with open(yaml_file, 'r', encoding='utf-8') as f:
+            with open(yaml_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
 
             # Check for schema_version field
-            version = data.get('schema_version')
+            version = data.get("schema_version")
             if version:
                 return str(version)
 
@@ -174,7 +167,9 @@ class SchemaVersionDetector:
 
         return files_to_convert
 
-    def scan_all_directories(self, metadata_types: Optional[List[str]] = None) -> Dict[str, List[Tuple[Path, str, str]]]:
+    def scan_all_directories(
+        self, metadata_types: Optional[List[str]] = None
+    ) -> Dict[str, List[Tuple[Path, str, str]]]:
         """
         Scan all metadata directories for files needing conversion.
 

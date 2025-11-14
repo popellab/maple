@@ -16,7 +16,6 @@ from pathlib import Path
 from datetime import datetime
 
 
-
 def tag_file(file_path: Path, validation_tags: list) -> bool:
     """
     Add validation tags to a YAML file by appending to the end.
@@ -31,18 +30,18 @@ def tag_file(file_path: Path, validation_tags: list) -> bool:
     """
     try:
         # Read original file content
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             content = f.read()
 
         # Check if validation section already exists
-        if '\nvalidation:' in content or content.startswith('validation:'):
+        if "\nvalidation:" in content or content.startswith("validation:"):
             # Remove existing validation section (including preceding comment and blank lines)
-            lines = content.split('\n')
+            lines = content.split("\n")
 
             # Find where validation section starts
             validation_start_idx = None
             for i, line in enumerate(lines):
-                if line.strip().startswith('validation:'):
+                if line.strip().startswith("validation:"):
                     validation_start_idx = i
                     break
 
@@ -52,7 +51,7 @@ def tag_file(file_path: Path, validation_tags: list) -> bool:
                 for i in range(validation_start_idx - 1, -1, -1):
                     line = lines[i]
                     # If blank or comment line immediately before, include it in removal
-                    if line.strip() == '' or line.strip().startswith('#'):
+                    if line.strip() == "" or line.strip().startswith("#"):
                         removal_start_idx = i
                     else:
                         break
@@ -62,7 +61,7 @@ def tag_file(file_path: Path, validation_tags: list) -> bool:
                 in_validation = False
                 for i in range(validation_start_idx, len(lines)):
                     line = lines[i]
-                    if line.strip().startswith('validation:'):
+                    if line.strip().startswith("validation:"):
                         in_validation = True
                     elif in_validation and line and not line[0].isspace():
                         # Found next top-level key
@@ -71,7 +70,7 @@ def tag_file(file_path: Path, validation_tags: list) -> bool:
 
                 # Keep lines before and after validation section
                 new_lines = lines[:removal_start_idx] + lines[validation_end_idx:]
-                content = '\n'.join(new_lines).rstrip()
+                content = "\n".join(new_lines).rstrip()
 
         # Append validation section to end
         validation_yaml = "\n\n# Validation metadata\nvalidation:\n"
@@ -81,7 +80,7 @@ def tag_file(file_path: Path, validation_tags: list) -> bool:
         validation_yaml += f"  validated_at: '{datetime.now().isoformat()}'\n"
 
         # Write back to file
-        with open(file_path, 'w') as f:
+        with open(file_path, "w") as f:
             f.write(content)
             f.write(validation_yaml)
 
@@ -123,9 +122,7 @@ def tag_directory(data_dir: str, validation_tags: list) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Tag YAML files with validation results"
-    )
+    parser = argparse.ArgumentParser(description="Tag YAML files with validation results")
     parser.add_argument("data_dir", help="Directory with YAML files")
     parser.add_argument("tags", nargs="+", help="Validation tags to add")
 

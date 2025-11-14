@@ -21,7 +21,7 @@ from qsp_llm_workflows.core.validation_utils import (
     load_yaml_directory,
     load_yaml_file,
     parse_numeric_value,
-    ValidationReport
+    ValidationReport,
 )
 
 
@@ -57,7 +57,7 @@ class SchemaValidator:
                 current_path = f"{path}.{key}" if path else key
 
                 # Skip example placeholder keys in sources sections
-                if key in ['PRIMARY_STUDY', 'SECONDARY_STUDY', 'METHOD_REFERENCE']:
+                if key in ["PRIMARY_STUDY", "SECONDARY_STUDY", "METHOD_REFERENCE"]:
                     continue
 
                 # Field is required if it exists in template
@@ -72,7 +72,9 @@ class SchemaValidator:
                 elif isinstance(value, dict):
                     required.append(current_path)
                     # Don't recursively check inside sources - those are examples
-                    if not (path.endswith('data_sources') or path.endswith('methodological_sources')):
+                    if not (
+                        path.endswith("data_sources") or path.endswith("methodological_sources")
+                    ):
                         nested = self._get_required_fields(value, current_path)
                         required.extend(nested)
                 elif isinstance(value, list) and len(value) > 0:
@@ -85,7 +87,7 @@ class SchemaValidator:
         Check if a nested field exists in data.
         field_path is dot-separated like 'parameter_estimates.mean'
         """
-        parts = field_path.split('.')
+        parts = field_path.split(".")
         current = data
 
         for part in parts:
@@ -105,21 +107,25 @@ class SchemaValidator:
             (is_valid, errors) tuple
         """
         errors = []
-        data = file_info['data']
-        file_info['filename']
+        data = file_info["data"]
+        file_info["filename"]
 
         # Check all required fields from template
         for field_path in self.required_top_level:
             if not self._check_field_exists(data, field_path):
                 # Check if this field has OR_NULL in template (making it optional)
                 template_value = self._get_field_value(self.template, field_path)
-                if template_value and isinstance(template_value, str) and "OR_NULL" in template_value:
+                if (
+                    template_value
+                    and isinstance(template_value, str)
+                    and "OR_NULL" in template_value
+                ):
                     continue  # Optional field
                 errors.append(f"Missing required field: {field_path}")
 
         # Additional specific validations (schema-agnostic)
         # Validate ci95 is a 2-element list (works for both params and test stats)
-        ci95_paths = ['parameter_estimates.ci95', 'test_statistic_estimates.ci95']
+        ci95_paths = ["parameter_estimates.ci95", "test_statistic_estimates.ci95"]
         for ci95_path in ci95_paths:
             if self._check_field_exists(data, ci95_path):
                 ci95 = self._get_field_value(data, ci95_path)
@@ -130,13 +136,13 @@ class SchemaValidator:
 
         # Validate numeric fields are actually numeric (works for both params and test stats)
         numeric_field_paths = [
-            'parameter_estimates.mean',
-            'parameter_estimates.variance',
+            "parameter_estimates.mean",
+            "parameter_estimates.variance",
             # Test statistics can have old (mean/variance) or new (median/iqr) fields
-            'test_statistic_estimates.mean',
-            'test_statistic_estimates.variance',
-            'test_statistic_estimates.median',
-            'test_statistic_estimates.iqr'
+            "test_statistic_estimates.mean",
+            "test_statistic_estimates.variance",
+            "test_statistic_estimates.median",
+            "test_statistic_estimates.iqr",
         ]
         for field_path in numeric_field_paths:
             if self._check_field_exists(data, field_path):
@@ -145,24 +151,28 @@ class SchemaValidator:
                     errors.append(f"{field_path} is not a valid number")
 
         # Validate pooling weights are in [0, 1] (parameter-specific, optional)
-        if 'pooling_weights' in data:
-            weights = data['pooling_weights']
+        if "pooling_weights" in data:
+            weights = data["pooling_weights"]
             if isinstance(weights, dict):
                 for weight_name, weight_obj in weights.items():
-                    if isinstance(weight_obj, dict) and 'value' in weight_obj:
-                        val = parse_numeric_value(weight_obj['value'])
+                    if isinstance(weight_obj, dict) and "value" in weight_obj:
+                        val = parse_numeric_value(weight_obj["value"])
                         if val is not None and (val < 0 or val > 1):
-                            errors.append(f"pooling_weights.{weight_name}.value must be in [0, 1], got {val}")
+                            errors.append(
+                                f"pooling_weights.{weight_name}.value must be in [0, 1], got {val}"
+                            )
 
         # Validate validation weights are in [0, 1] (both params and test stats)
-        if 'validation_weights' in data:
-            weights = data['validation_weights']
+        if "validation_weights" in data:
+            weights = data["validation_weights"]
             if isinstance(weights, dict):
                 for weight_name, weight_obj in weights.items():
-                    if isinstance(weight_obj, dict) and 'value' in weight_obj:
-                        val = parse_numeric_value(weight_obj['value'])
+                    if isinstance(weight_obj, dict) and "value" in weight_obj:
+                        val = parse_numeric_value(weight_obj["value"])
                         if val is not None and (val < 0 or val > 1):
-                            errors.append(f"validation_weights.{weight_name}.value must be in [0, 1], got {val}")
+                            errors.append(
+                                f"validation_weights.{weight_name}.value must be in [0, 1], got {val}"
+                            )
 
         is_valid = len(errors) == 0
         return (is_valid, errors)
@@ -172,7 +182,7 @@ class SchemaValidator:
         Get value of a nested field.
         field_path is dot-separated like 'parameter_estimates.mean'
         """
-        parts = field_path.split('.')
+        parts = field_path.split(".")
         current = data
 
         for part in parts:
@@ -190,7 +200,7 @@ class SchemaValidator:
         files = load_yaml_directory(self.data_dir)
 
         for file_info in files:
-            filename = file_info['filename']
+            filename = file_info["filename"]
 
             # Note: Legacy files should be in separate legacy directories and
             # won't be in the data_dir being validated, so no need to skip them here

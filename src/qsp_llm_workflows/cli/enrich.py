@@ -16,36 +16,25 @@ def main():
 Examples:
     qsp-enrich-csv parameter input.csv model_defs.json PDAC -o output.csv
     qsp-enrich-csv test_statistic input.csv model_context.txt scenario.yaml -o output.csv
-        """
+        """,
     )
 
-    parser.add_argument(
-        "type",
-        choices=["parameter", "test_statistic"],
-        help="Type of enrichment"
-    )
+    parser.add_argument("type", choices=["parameter", "test_statistic"], help="Type of enrichment")
 
-    parser.add_argument(
-        "input_csv",
-        type=Path,
-        help="Input CSV file"
-    )
+    parser.add_argument("input_csv", type=Path, help="Input CSV file")
 
     parser.add_argument(
         "context_file",
         type=Path,
-        help="Context file (model definitions JSON for parameters, model context text for test statistics)"
+        help="Context file (model definitions JSON for parameters, model context text for test statistics)",
     )
 
     parser.add_argument(
-        "additional_arg",
-        help="Cancer type for parameters, scenario YAML for test statistics"
+        "additional_arg", help="Cancer type for parameters, scenario YAML for test statistics"
     )
 
     parser.add_argument(
-        "-o", "--output",
-        type=Path,
-        help="Output CSV file (default: enriched_<input>.csv)"
+        "-o", "--output", type=Path, help="Output CSV file (default: enriched_<input>.csv)"
     )
 
     args = parser.parse_args()
@@ -62,6 +51,7 @@ Examples:
     # Import appropriate enrichment module
     if args.type == "parameter":
         from qsp_llm_workflows.prepare.enrich_parameter_csv import main as enrich_main
+
         cancer_type = args.additional_arg
 
         # Set up sys.argv for the enrich script
@@ -69,7 +59,7 @@ Examples:
             "enrich_parameter_csv.py",
             str(args.input_csv),
             str(args.context_file),
-            cancer_type
+            cancer_type,
         ]
 
         if args.output:
@@ -79,6 +69,7 @@ Examples:
 
     else:  # test_statistic
         from qsp_llm_workflows.prepare.enrich_test_statistic_csv import main as enrich_main
+
         scenario_file = Path(args.additional_arg)
 
         if not scenario_file.exists():
@@ -90,7 +81,7 @@ Examples:
             "enrich_test_statistic_csv.py",
             str(args.input_csv),
             str(args.context_file),
-            str(scenario_file)
+            str(scenario_file),
         ]
 
         if args.output:

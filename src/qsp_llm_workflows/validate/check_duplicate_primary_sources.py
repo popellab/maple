@@ -23,10 +23,7 @@ Usage:
 from pathlib import Path
 from collections import defaultdict
 
-from qsp_llm_workflows.core.validation_utils import (
-    load_yaml_directory,
-    ValidationReport
-)
+from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
 
 
 class DuplicatePrimarySourceChecker:
@@ -47,12 +44,14 @@ class DuplicatePrimarySourceChecker:
         returns qsp-metadata-storage/test_statistics/
         """
         # Check if we're in a to-review directory
-        if 'to-review' not in str(self.data_dir):
-            print("Warning: Not running on to-review directory. This validator is designed for to-review files.")
+        if "to-review" not in str(self.data_dir):
+            print(
+                "Warning: Not running on to-review directory. This validator is designed for to-review files."
+            )
             return None
 
         # Get main storage directory by removing to-review from path
-        main_dir = Path(str(self.data_dir).replace('/to-review/', '/').replace('/to-review', ''))
+        main_dir = Path(str(self.data_dir).replace("/to-review/", "/").replace("/to-review", ""))
 
         # Verify it's different and exists
         if main_dir != self.data_dir and main_dir.exists():
@@ -77,8 +76,8 @@ class DuplicatePrimarySourceChecker:
             return ""
 
         doi_normalized = doi.lower().strip()
-        doi_normalized = doi_normalized.replace('https://doi.org/', '')
-        doi_normalized = doi_normalized.replace('http://doi.org/', '')
+        doi_normalized = doi_normalized.replace("https://doi.org/", "")
+        doi_normalized = doi_normalized.replace("http://doi.org/", "")
 
         return doi_normalized
 
@@ -91,17 +90,17 @@ class DuplicatePrimarySourceChecker:
         """
         dois = []
 
-        if 'primary_data_sources' not in data:
+        if "primary_data_sources" not in data:
             return dois
 
-        pds = data['primary_data_sources']
+        pds = data["primary_data_sources"]
 
         # Handle list format
         if isinstance(pds, list):
             for source in pds:
                 if isinstance(source, dict):
-                    source_tag = source.get('source_tag', 'unknown')
-                    doi = source.get('doi', source.get('doi_or_url'))  # Support both fields
+                    source_tag = source.get("source_tag", "unknown")
+                    doi = source.get("doi", source.get("doi_or_url"))  # Support both fields
                     if doi:
                         dois.append((source_tag, doi))
 
@@ -109,7 +108,7 @@ class DuplicatePrimarySourceChecker:
         elif isinstance(pds, dict):
             for tag, source in pds.items():
                 if isinstance(source, dict):
-                    doi = source.get('doi', source.get('doi_or_url'))  # Support both fields
+                    doi = source.get("doi", source.get("doi_or_url"))  # Support both fields
                     if doi:
                         dois.append((tag, doi))
 
@@ -129,8 +128,8 @@ class DuplicatePrimarySourceChecker:
         accepted_files = load_yaml_directory(str(self.main_storage_dir))
 
         for file_info in accepted_files:
-            filename = file_info['filename']
-            data = file_info['data']
+            filename = file_info["filename"]
+            data = file_info["data"]
 
             # Extract primary DOIs
             primary_dois = self.extract_primary_dois(data)
@@ -149,8 +148,8 @@ class DuplicatePrimarySourceChecker:
         Returns:
             (is_valid, errors) tuple
         """
-        data = file_info['data']
-        file_info['filename']
+        data = file_info["data"]
+        file_info["filename"]
         errors = []
 
         # Extract primary DOIs from this file
@@ -192,7 +191,7 @@ class DuplicatePrimarySourceChecker:
         files = load_yaml_directory(str(self.data_dir))
 
         for file_info in files:
-            filename = file_info['filename']
+            filename = file_info["filename"]
 
             is_valid, errors = self.validate_file(file_info)
 

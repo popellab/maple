@@ -23,7 +23,7 @@ import re
 from qsp_llm_workflows.core.validation_utils import (
     load_yaml_directory,
     parse_numeric_value,
-    ValidationReport
+    ValidationReport,
 )
 
 
@@ -48,23 +48,44 @@ class TextSnippetValidator:
         """
         # Dictionary of text numbers
         ones = {
-            'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
-            'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
-            'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
-            'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17,
-            'eighteen': 18, 'nineteen': 19
+            "zero": 0,
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+            "eleven": 11,
+            "twelve": 12,
+            "thirteen": 13,
+            "fourteen": 14,
+            "fifteen": 15,
+            "sixteen": 16,
+            "seventeen": 17,
+            "eighteen": 18,
+            "nineteen": 19,
         }
         tens = {
-            'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50,
-            'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90
+            "twenty": 20,
+            "thirty": 30,
+            "forty": 40,
+            "fifty": 50,
+            "sixty": 60,
+            "seventy": 70,
+            "eighty": 80,
+            "ninety": 90,
         }
 
         text = text.lower().strip()
 
         # Handle "hundred" patterns first
-        if 'hundred' in text:
+        if "hundred" in text:
             # Remove "hundred" and split into parts
-            parts = text.replace('hundred', '').strip().split()
+            parts = text.replace("hundred", "").strip().split()
 
             result = 0
             i = 0
@@ -80,11 +101,11 @@ class TextSnippetValidator:
 
             # Check if there are additional parts after "hundred"
             # e.g., "one hundred fifty-two" or "one hundred fifty two"
-            remaining = ' '.join(parts[i:])
+            remaining = " ".join(parts[i:])
             if remaining:
                 # Handle hyphenated like "fifty-two"
-                if '-' in remaining:
-                    sub_parts = remaining.split('-')
+                if "-" in remaining:
+                    sub_parts = remaining.split("-")
                     if len(sub_parts) == 2:
                         ten_val = tens.get(sub_parts[0], 0)
                         one_val = ones.get(sub_parts[1], 0)
@@ -111,8 +132,8 @@ class TextSnippetValidator:
             return tens[text]
 
         # Handle hyphenated numbers like "fifty-two"
-        if '-' in text:
-            parts = text.split('-')
+        if "-" in text:
+            parts = text.split("-")
             if len(parts) == 2:
                 ten_val = tens.get(parts[0], 0)
                 one_val = ones.get(parts[1], 0)
@@ -120,7 +141,7 @@ class TextSnippetValidator:
                     return ten_val + one_val
 
         # Handle space-separated like "fifty two"
-        if ' ' in text:
+        if " " in text:
             parts = text.split()
             if len(parts) == 2:
                 ten_val = tens.get(parts[0], 0)
@@ -148,15 +169,36 @@ class TextSnippetValidator:
 
         # Dictionary of number words
         ones = {
-            0: 'zero', 1: 'one', 2: 'two', 3: 'three', 4: 'four',
-            5: 'five', 6: 'six', 7: 'seven', 8: 'eight', 9: 'nine',
-            10: 'ten', 11: 'eleven', 12: 'twelve', 13: 'thirteen',
-            14: 'fourteen', 15: 'fifteen', 16: 'sixteen', 17: 'seventeen',
-            18: 'eighteen', 19: 'nineteen'
+            0: "zero",
+            1: "one",
+            2: "two",
+            3: "three",
+            4: "four",
+            5: "five",
+            6: "six",
+            7: "seven",
+            8: "eight",
+            9: "nine",
+            10: "ten",
+            11: "eleven",
+            12: "twelve",
+            13: "thirteen",
+            14: "fourteen",
+            15: "fifteen",
+            16: "sixteen",
+            17: "seventeen",
+            18: "eighteen",
+            19: "nineteen",
         }
         tens = {
-            20: 'twenty', 30: 'thirty', 40: 'forty', 50: 'fifty',
-            60: 'sixty', 70: 'seventy', 80: 'eighty', 90: 'ninety'
+            20: "twenty",
+            30: "thirty",
+            40: "forty",
+            50: "fifty",
+            60: "sixty",
+            70: "seventy",
+            80: "eighty",
+            90: "ninety",
         }
 
         # Handle 0-19
@@ -231,7 +273,7 @@ class TextSnippetValidator:
             patterns.append(f"{numeric_val:.2e}")
             # Also add version with × instead of e
             sci_notation = f"{numeric_val:.2e}"
-            parts = sci_notation.split('e')
+            parts = sci_notation.split("e")
             if len(parts) == 2:
                 mantissa = parts[0]
                 exponent = int(parts[1])
@@ -239,12 +281,12 @@ class TextSnippetValidator:
                 # Create mantissa variations (with and without trailing zeros)
                 mantissa_variations = [mantissa]
                 # Strip trailing zeros: "5.00" -> "5.0" -> "5"
-                mantissa_stripped = mantissa.rstrip('0').rstrip('.')
+                mantissa_stripped = mantissa.rstrip("0").rstrip(".")
                 if mantissa_stripped != mantissa:
                     mantissa_variations.append(mantissa_stripped)
                 # Also try intermediate: "5.00" -> "5.0"
-                if mantissa.endswith('0') and not mantissa.endswith('.0'):
-                    mantissa_variations.append(mantissa.rstrip('0'))
+                if mantissa.endswith("0") and not mantissa.endswith(".0"):
+                    mantissa_variations.append(mantissa.rstrip("0"))
 
                 # Generate patterns for each mantissa variation
                 for m in mantissa_variations:
@@ -252,7 +294,9 @@ class TextSnippetValidator:
                     patterns.append(f"{m}×10^{{{exponent}}}")  # LaTeX style with braces
                     patterns.append(f"{m} × 10^{exponent}")
                     patterns.append(f"{m} × 10^{{{exponent}}}")  # LaTeX style with braces and space
-                    patterns.append(f"{m}×10⁻{abs(exponent)}" if exponent < 0 else f"{m}×10{exponent}")
+                    patterns.append(
+                        f"{m}×10⁻{abs(exponent)}" if exponent < 0 else f"{m}×10{exponent}"
+                    )
 
         # Percentage format (if value is between 0 and 1)
         if 0 <= numeric_val <= 1:
@@ -304,8 +348,8 @@ class TextSnippetValidator:
 
         # Search for each pattern (case-insensitive, handle whitespace variations)
         # Remove commas for numeric matching (e.g., "4,623" becomes "4623")
-        snippet_normalized = re.sub(r'\s+', ' ', snippet.lower())
-        snippet_normalized = snippet_normalized.replace(',', '')
+        snippet_normalized = re.sub(r"\s+", " ", snippet.lower())
+        snippet_normalized = snippet_normalized.replace(",", "")
 
         # Sort patterns by length (longest first) to match most specific patterns first
         # This ensures "16.07" is tried before "16"
@@ -320,7 +364,7 @@ class TextSnippetValidator:
         numeric_val = parse_numeric_value(value)
         if numeric_val is not None and numeric_val == int(numeric_val):
             # Extract potential text numbers from snippet
-            words = re.findall(r'\b[a-z]+(?:-[a-z]+)?\b', snippet_normalized)
+            words = re.findall(r"\b[a-z]+(?:-[a-z]+)?\b", snippet_normalized)
             for i, word in enumerate(words):
                 text_num = self.text_to_number(word)
                 if text_num == int(numeric_val):
@@ -342,14 +386,16 @@ class TextSnippetValidator:
             List of input dicts
         """
         # Try parameter_estimates first (params)
-        if 'parameter_estimates' in data and isinstance(data['parameter_estimates'], dict):
-            if 'inputs' in data['parameter_estimates']:
-                return data['parameter_estimates']['inputs']
+        if "parameter_estimates" in data and isinstance(data["parameter_estimates"], dict):
+            if "inputs" in data["parameter_estimates"]:
+                return data["parameter_estimates"]["inputs"]
 
         # Try test_statistic_estimates (test stats)
-        if 'test_statistic_estimates' in data and isinstance(data['test_statistic_estimates'], dict):
-            if 'inputs' in data['test_statistic_estimates']:
-                return data['test_statistic_estimates']['inputs']
+        if "test_statistic_estimates" in data and isinstance(
+            data["test_statistic_estimates"], dict
+        ):
+            if "inputs" in data["test_statistic_estimates"]:
+                return data["test_statistic_estimates"]["inputs"]
 
         return []
 
@@ -362,7 +408,7 @@ class TextSnippetValidator:
         """
         errors = []
         input_results = []
-        data = file_info['data']
+        data = file_info["data"]
 
         # Extract inputs
         inputs = self.extract_inputs_from_yaml(data)
@@ -375,12 +421,12 @@ class TextSnippetValidator:
             if not isinstance(inp, dict):
                 continue
 
-            name = inp.get('name', 'unnamed')
-            value = inp.get('value')
-            units = inp.get('units')
+            name = inp.get("name", "unnamed")
+            value = inp.get("value")
+            units = inp.get("units")
 
             # Check value_snippet contains the value
-            value_snippet = inp.get('value_snippet')
+            value_snippet = inp.get("value_snippet")
             if value_snippet:
                 # Handle list values by checking each element
                 if isinstance(value, list):
@@ -389,7 +435,9 @@ class TextSnippetValidator:
                     missing_values = []
 
                     for val in value:
-                        found, pattern = self.check_snippet_contains_value(value_snippet, val, units)
+                        found, pattern = self.check_snippet_contains_value(
+                            value_snippet, val, units
+                        )
                         if found:
                             matched_patterns.append(f"{val}→{pattern}")
                         else:
@@ -397,10 +445,12 @@ class TextSnippetValidator:
                             missing_values.append(val)
 
                     input_result = {
-                        'input_name': name,
-                        'value': value,
-                        'found': all_found,
-                        'matched_pattern': '; '.join(matched_patterns) if matched_patterns else None
+                        "input_name": name,
+                        "value": value,
+                        "found": all_found,
+                        "matched_pattern": (
+                            "; ".join(matched_patterns) if matched_patterns else None
+                        ),
                     }
                     input_results.append(input_result)
 
@@ -415,10 +465,10 @@ class TextSnippetValidator:
                     found, pattern = self.check_snippet_contains_value(value_snippet, value, units)
 
                     input_result = {
-                        'input_name': name,
-                        'value': value,
-                        'found': found,
-                        'matched_pattern': pattern
+                        "input_name": name,
+                        "value": value,
+                        "found": found,
+                        "matched_pattern": pattern,
                     }
                     input_results.append(input_result)
 
@@ -443,16 +493,16 @@ class TextSnippetValidator:
         files = load_yaml_directory(self.data_dir)
 
         for file_info in files:
-            filename = file_info['filename']
+            filename = file_info["filename"]
 
             is_valid, errors, input_results = self.validate_file(file_info)
 
             # Report on each input validated
             for inp_result in input_results:
-                input_name = inp_result['input_name']
-                value = inp_result['value']
-                found = inp_result['found']
-                pattern = inp_result['matched_pattern']
+                input_name = inp_result["input_name"]
+                value = inp_result["value"]
+                found = inp_result["found"]
+                pattern = inp_result["matched_pattern"]
 
                 item_desc = f"{filename} / input '{input_name}' (value={value})"
 
@@ -461,7 +511,7 @@ class TextSnippetValidator:
                 else:
                     report.add_fail(
                         item_desc,
-                        f"value_snippet does not contain value {value} (tried: decimal, scientific, percentage, text-encoded)"
+                        f"value_snippet does not contain value {value} (tried: decimal, scientific, percentage, text-encoded)",
                     )
 
         return report

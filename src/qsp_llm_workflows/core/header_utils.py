@@ -41,7 +41,7 @@ class HeaderManager:
                 "Expected: templates/configs/header_fields.yaml"
             )
 
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     def get_header_fields(self, template_type: str, schema_version: str) -> List[str]:
@@ -59,7 +59,7 @@ class HeaderManager:
             KeyError: If template_type or schema_version not found in config
         """
         try:
-            return self.config[template_type][schema_version]['header_fields']
+            return self.config[template_type][schema_version]["header_fields"]
         except KeyError:
             raise KeyError(
                 f"No header fields defined for {template_type} {schema_version}\n"
@@ -81,7 +81,7 @@ class HeaderManager:
             KeyError: If template_type or schema_version not found in config
         """
         try:
-            return self.config[template_type][schema_version]['content_starts_at']
+            return self.config[template_type][schema_version]["content_starts_at"]
         except KeyError:
             raise KeyError(
                 f"No content_starts_at defined for {template_type} {schema_version}\n"
@@ -89,10 +89,7 @@ class HeaderManager:
             )
 
     def strip_headers_from_yaml_string(
-        self,
-        yaml_content: str,
-        template_type: str,
-        schema_version: str
+        self, yaml_content: str, template_type: str, schema_version: str
     ) -> Tuple[Dict, Dict]:
         """
         Split YAML content into headers and content dictionaries.
@@ -132,7 +129,7 @@ class HeaderManager:
         self,
         template_path: Path,
         template_type: Optional[str] = None,
-        schema_version: Optional[str] = None
+        schema_version: Optional[str] = None,
     ) -> str:
         """
         Load template file and return only content section (strip headers).
@@ -155,7 +152,7 @@ class HeaderManager:
             # Returns YAML starting from mathematical_role onward
         """
         # Read template file
-        with open(template_path, 'r', encoding='utf-8') as f:
+        with open(template_path, "r", encoding="utf-8") as f:
             template_content = f.read()
 
         # Auto-detect template type and version if not provided
@@ -168,7 +165,7 @@ class HeaderManager:
         content_start_field = self.get_content_start_field(template_type, schema_version)
 
         # Find the line where content section begins
-        lines = template_content.split('\n')
+        lines = template_content.split("\n")
         content_start_idx = None
 
         for i, line in enumerate(lines):
@@ -184,7 +181,7 @@ class HeaderManager:
 
         # Return content section only
         content_lines = lines[content_start_idx:]
-        return '\n'.join(content_lines)
+        return "\n".join(content_lines)
 
     def _detect_template_type(self, template_content: str) -> Tuple[str, str]:
         """
@@ -199,22 +196,19 @@ class HeaderManager:
         data = yaml.safe_load(template_content)
 
         # Detect schema version
-        schema_version = data.get('schema_version', 'v1')
+        schema_version = data.get("schema_version", "v1")
 
         # Detect template type based on fields
-        if 'parameter_name' in data:
-            return 'parameter_metadata', schema_version
-        elif 'test_statistic_id' in data:
-            return 'test_statistic', schema_version
+        if "parameter_name" in data:
+            return "parameter_metadata", schema_version
+        elif "test_statistic_id" in data:
+            return "test_statistic", schema_version
         else:
             # Default to parameter_metadata
-            return 'parameter_metadata', schema_version
+            return "parameter_metadata", schema_version
 
     def extract_headers_from_file(
-        self,
-        yaml_path: Path,
-        template_type: str,
-        schema_version: Optional[str] = None
+        self, yaml_path: Path, template_type: str, schema_version: Optional[str] = None
     ) -> Optional[Dict]:
         """
         Extract header fields from an existing YAML file.
@@ -228,12 +222,12 @@ class HeaderManager:
             Dictionary with header fields, or None if file cannot be read
         """
         try:
-            with open(yaml_path, 'r', encoding='utf-8') as f:
+            with open(yaml_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
 
             # Auto-detect schema version if not provided
             if schema_version is None:
-                schema_version = data.get('schema_version', 'v1')
+                schema_version = data.get("schema_version", "v1")
 
             # Get header field names for this template type
             header_field_names = self.get_header_fields(template_type, schema_version)
@@ -254,7 +248,7 @@ class HeaderManager:
         self,
         headers_dict: Dict,
         content_dict: Dict,
-        schema_header_fields: Optional[List[str]] = None
+        schema_header_fields: Optional[List[str]] = None,
     ) -> str:
         """
         Combine header and content dictionaries into full YAML string.
@@ -288,11 +282,7 @@ class HeaderManager:
 
         # Convert to YAML with proper formatting
         yaml_str = yaml.dump(
-            full_data,
-            default_flow_style=False,
-            allow_unicode=True,
-            sort_keys=False,
-            width=120
+            full_data, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120
         )
 
         return yaml_str

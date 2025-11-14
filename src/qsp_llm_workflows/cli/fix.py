@@ -17,26 +17,26 @@ def main():
 Examples:
     qsp-fix parameter_estimates --immediate
     qsp-fix test_statistics --timeout 7200
-        """
+        """,
     )
 
     parser.add_argument(
         "workflow_type",
         choices=["parameter_estimates", "test_statistics"],
-        help="Type of workflow to fix"
+        help="Type of workflow to fix",
     )
 
     parser.add_argument(
         "--immediate",
         action="store_true",
-        help="Use immediate mode (Responses API) instead of batch API"
+        help="Use immediate mode (Responses API) instead of batch API",
     )
 
     parser.add_argument(
         "--timeout",
         type=int,
         default=3600,
-        help="Timeout in seconds for batch monitoring (default: 3600)"
+        help="Timeout in seconds for batch monitoring (default: 3600)",
     )
 
     args = parser.parse_args()
@@ -46,9 +46,7 @@ Examples:
 
     try:
         result = orchestrator.run_validation_fix_workflow(
-            workflow_type=args.workflow_type,
-            use_batch_api=not args.immediate,
-            timeout=args.timeout
+            workflow_type=args.workflow_type, use_batch_api=not args.immediate, timeout=args.timeout
         )
 
         sys.exit(0 if result else 1)

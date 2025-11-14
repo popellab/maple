@@ -17,21 +17,18 @@ def main():
         epilog="""
 Examples:
     qsp-export-model --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m --output model_defs.json
-        """
+        """,
     )
 
     parser.add_argument(
         "--matlab-model",
         required=True,
         type=Path,
-        help="Path to MATLAB model file (e.g., immune_oncology_model_PDAC.m)"
+        help="Path to MATLAB model file (e.g., immune_oncology_model_PDAC.m)",
     )
 
     parser.add_argument(
-        "--output",
-        required=True,
-        type=Path,
-        help="Output JSON file for model definitions"
+        "--output", required=True, type=Path, help="Output JSON file for model definitions"
     )
 
     args = parser.parse_args()

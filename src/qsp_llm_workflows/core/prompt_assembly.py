@@ -27,11 +27,11 @@ class PromptAssembler:
         """Load prompt assembly configuration."""
         if config_path is None:
             config_path = get_config_path("prompt_assembly.yaml")
-            
-        with open(config_path, 'r', encoding='utf-8') as f:
+
+        with open(config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
         return self.config
-        
+
     def load_template(self, template_path: Path) -> str:
         """
         Load a template file, excluding header fields.
@@ -41,12 +41,12 @@ class PromptAssembler:
         """
         full_path = self.base_dir / template_path
         return self.header_manager.strip_headers_from_template(full_path)
-            
+
     def load_example(self, example_path: Path) -> str:
         """Load an example file."""
-        with open(self.base_dir / example_path, 'r', encoding='utf-8') as f:
+        with open(self.base_dir / example_path, "r", encoding="utf-8") as f:
             return f.read()
-            
+
     def format_content(self, content: str, source_config: Dict[str, str]) -> str:
         """Format content based on source configuration."""
         format_type = source_config.get("format", "raw")
@@ -76,39 +76,39 @@ class PromptAssembler:
         else:
             # Default: capitalize and replace underscores
             return filename.replace("_", " ").title()
-            
+
     def assemble_prompt(self, prompt_type: str, runtime_data: Dict[str, str]) -> str:
         """Assemble a complete prompt from components."""
         if self.config is None:
             self.load_config()
-            
+
         if prompt_type not in self.config["prompt_types"]:
             raise ValueError(f"Unknown prompt type: {prompt_type}")
-            
+
         prompt_config = self.config["prompt_types"][prompt_type]
-        
+
         # Load base prompt
         base_prompt_path = self.base_dir / prompt_config["base_prompt"]
-        with open(base_prompt_path, 'r', encoding='utf-8') as f:
+        with open(base_prompt_path, "r", encoding="utf-8") as f:
             prompt_text = f.read()
-            
+
         # Process placeholders
         for placeholder_config in prompt_config["placeholders"]:
             placeholder_name = placeholder_config["name"]
             placeholder_tag = f"{{{{{placeholder_name}}}}}"
             source = placeholder_config["source"]
-            
+
             if placeholder_tag not in prompt_text:
                 continue  # Skip if placeholder not found
-                
+
             replacement_content = ""
-            
+
             if source == "template_file":
                 template_path = prompt_config["template"]
                 template_content = self.load_template(template_path)
                 source_config = self.config["placeholder_sources"]["template_file"]
                 replacement_content = self.format_content(template_content, source_config)
-                
+
             elif source == "example_files":
                 examples = prompt_config.get("examples", [])
                 example_contents = []
@@ -136,17 +136,19 @@ class PromptAssembler:
                 else:
                     # No example files found - remove the placeholder entirely
                     replacement_content = ""
-                    
+
                     # Also remove preceding "## Example" header if it exists
                     example_header_pattern = r"## Example\s*\n\s*" + re.escape(placeholder_tag)
                     if re.search(example_header_pattern, prompt_text):
                         prompt_text = re.sub(example_header_pattern, "", prompt_text)
                         continue  # Skip the normal replacement since we already handled it
-                
+
             elif source == "runtime":
                 if placeholder_name in runtime_data:
                     source_config = self.config["placeholder_sources"]["runtime"]
-                    replacement_content = self.format_content(runtime_data[placeholder_name], source_config)
+                    replacement_content = self.format_content(
+                        runtime_data[placeholder_name], source_config
+                    )
                 else:
                     replacement_content = f"[{placeholder_name} - TO BE PROVIDED]"
 
@@ -156,7 +158,7 @@ class PromptAssembler:
                 if shared_path:
                     shared_file_path = self.base_dir / shared_path
                     if shared_file_path.exists():
-                        with open(shared_file_path, 'r', encoding='utf-8') as f:
+                        with open(shared_file_path, "r", encoding="utf-8") as f:
                             shared_content = f.read()
                         source_config = self.config["placeholder_sources"]["shared_file"]
                         replacement_content = self.format_content(shared_content, source_config)
@@ -169,21 +171,19 @@ class PromptAssembler:
             elif source == "used_primary_studies":
                 # Special handling for USED_PRIMARY_STUDIES placeholder
                 # This queries existing files to prevent duplicate source usage
-                replacement_content = self._get_used_primary_studies(
-                    prompt_type, runtime_data
-                )
+                replacement_content = self._get_used_primary_studies(prompt_type, runtime_data)
 
             # Replace placeholder in prompt
             prompt_text = prompt_text.replace(placeholder_tag, replacement_content)
-            
+
         return prompt_text
-        
+
     def get_available_prompt_types(self) -> List[str]:
         """Get list of available prompt types."""
         if self.config is None:
             self.load_config()
         return list(self.config["prompt_types"].keys())
-        
+
     def validate_runtime_data(self, prompt_type: str, runtime_data: Dict[str, str]) -> bool:
         """Validate that required runtime data is provided."""
         if self.config is None:
@@ -191,8 +191,7 @@ class PromptAssembler:
 
         prompt_config = self.config["prompt_types"][prompt_type]
         required_runtime_placeholders = [
-            p["name"] for p in prompt_config["placeholders"]
-            if p["source"] == "runtime"
+            p["name"] for p in prompt_config["placeholders"] if p["source"] == "runtime"
         ]
 
         missing = [key for key in required_runtime_placeholders if key not in runtime_data]
@@ -201,9 +200,7 @@ class PromptAssembler:
 
         return True
 
-    def _get_used_primary_studies(self,
-                                  prompt_type: str,
-                                  runtime_data: Dict[str, str]) -> str:
+    def _get_used_primary_studies(self, prompt_type: str, runtime_data: Dict[str, str]) -> str:
         """
         Get used primary studies based on prompt type.
 
@@ -217,11 +214,11 @@ class PromptAssembler:
         # Determine storage directory based on prompt type
         if prompt_type == "parameter_extraction":
             storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
-            runtime_data.get('PARAMETER_INFO', '')
+            runtime_data.get("PARAMETER_INFO", "")
             # Extract parameter name from PARAMETER_INFO if needed
             # For now, assume it's passed directly in runtime_data
-            param_name = runtime_data.get('parameter_name', '')
-            context_hash = runtime_data.get('context_hash', '')
+            param_name = runtime_data.get("parameter_name", "")
+            context_hash = runtime_data.get("context_hash", "")
 
             if not param_name or not context_hash:
                 # If we don't have the required info, return default message
@@ -233,8 +230,8 @@ class PromptAssembler:
 
         elif prompt_type == "test_statistic":
             storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "test_statistics"
-            test_stat_id = runtime_data.get('test_statistic_id', '')
-            context_hash = runtime_data.get('context_hash', '')
+            test_stat_id = runtime_data.get("test_statistic_id", "")
+            context_hash = runtime_data.get("context_hash", "")
 
             if not test_stat_id or not context_hash:
                 # If we don't have the required info, return default message
@@ -248,10 +245,9 @@ class PromptAssembler:
             # Unknown prompt type, return default message
             return "None - this is the first derivation"
 
-    def _get_used_primary_studies_for_parameter(self,
-                                                parameter_name: str,
-                                                context_hash: str,
-                                                storage_dir: Path) -> str:
+    def _get_used_primary_studies_for_parameter(
+        self, parameter_name: str, context_hash: str, storage_dir: Path
+    ) -> str:
         """
         Query existing parameter files with matching name and context_hash
         to extract primary studies that have already been used.
@@ -272,26 +268,26 @@ class PromptAssembler:
 
         for filepath in matching_files:
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
 
                 # Check if context_hash matches
-                file_context_hash = data.get('context_hash', '')
+                file_context_hash = data.get("context_hash", "")
                 if file_context_hash != context_hash:
                     continue
 
                 # Extract primary_data_sources
-                primary_sources = data.get('primary_data_sources', [])
+                primary_sources = data.get("primary_data_sources", [])
                 for source in primary_sources:
-                    title = source.get('title', '')
-                    first_author = source.get('first_author', '')
-                    year = source.get('year', '')
-                    doi = source.get('doi', '')
+                    title = source.get("title", "")
+                    first_author = source.get("first_author", "")
+                    year = source.get("year", "")
+                    doi = source.get("doi", "")
 
                     if title and first_author and year:
                         # Format: "Title (First Author et al. Year, DOI: xxx)"
                         study_str = f"{title} ({first_author} et al. {year}"
-                        if doi and doi.lower() != 'null':
+                        if doi and doi.lower() != "null":
                             study_str += f", DOI: {doi}"
                         study_str += ")"
 
@@ -311,10 +307,9 @@ class PromptAssembler:
         formatted_list = "\n".join([f"- {study}" for study in used_studies])
         return formatted_list
 
-    def _get_used_primary_studies_for_test_statistic(self,
-                                                     test_statistic_id: str,
-                                                     context_hash: str,
-                                                     storage_dir: Path) -> str:
+    def _get_used_primary_studies_for_test_statistic(
+        self, test_statistic_id: str, context_hash: str, storage_dir: Path
+    ) -> str:
         """
         Query existing test statistic files with matching ID and context_hash
         to extract primary studies that have already been used.
@@ -335,26 +330,26 @@ class PromptAssembler:
 
         for filepath in matching_files:
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
 
                 # Check if context_hash matches
-                file_context_hash = data.get('context_hash', '')
+                file_context_hash = data.get("context_hash", "")
                 if file_context_hash != context_hash:
                     continue
 
                 # Extract primary_data_sources
-                primary_sources = data.get('primary_data_sources', [])
+                primary_sources = data.get("primary_data_sources", [])
                 for source in primary_sources:
-                    title = source.get('title', '')
-                    first_author = source.get('first_author', '')
-                    year = source.get('year', '')
-                    doi = source.get('doi', '')
+                    title = source.get("title", "")
+                    first_author = source.get("first_author", "")
+                    year = source.get("year", "")
+                    doi = source.get("doi", "")
 
                     if title and first_author and year:
                         # Format: "Title (First Author et al. Year, DOI: xxx)"
                         study_str = f"{title} ({first_author} et al. {year}"
-                        if doi and doi.lower() != 'null':
+                        if doi and doi.lower() != "null":
                             study_str += f", DOI: {doi}"
                         study_str += ")"
 

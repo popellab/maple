@@ -5,6 +5,7 @@ Uses importlib.resources for robust access across all installation types.
 """
 
 from pathlib import Path
+
 try:
     from importlib.resources import files
 except ImportError:
@@ -19,7 +20,7 @@ def get_package_root() -> Path:
     Returns:
         Path to the package root directory containing templates/, prompts/, etc.
     """
-    return Path(str(files('qsp_llm_workflows')))
+    return Path(str(files("qsp_llm_workflows")))
 
 
 def get_template_path(template_name: str) -> Path:
@@ -32,7 +33,7 @@ def get_template_path(template_name: str) -> Path:
     Returns:
         Path to the template file
     """
-    return get_package_root() / 'templates' / template_name
+    return get_package_root() / "templates" / template_name
 
 
 def get_config_path(config_name: str) -> Path:
@@ -45,7 +46,7 @@ def get_config_path(config_name: str) -> Path:
     Returns:
         Path to the config file
     """
-    return get_package_root() / 'templates' / 'configs' / config_name
+    return get_package_root() / "templates" / "configs" / config_name
 
 
 def get_prompt_path(prompt_name: str) -> Path:
@@ -58,7 +59,7 @@ def get_prompt_path(prompt_name: str) -> Path:
     Returns:
         Path to the prompt file
     """
-    return get_package_root() / 'prompts' / prompt_name
+    return get_package_root() / "prompts" / prompt_name
 
 
 def get_example_path(example_name: str) -> Path:
@@ -71,4 +72,4 @@ def get_example_path(example_name: str) -> Path:
     Returns:
         Path to the example file
     """
-    return get_package_root() / 'templates' / 'examples' / example_name
+    return get_package_root() / "templates" / "examples" / example_name

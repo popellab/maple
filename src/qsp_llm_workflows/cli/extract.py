@@ -19,39 +19,33 @@ Examples:
     qsp-extract input.csv --type parameter
     qsp-extract input.csv --type test_statistic --immediate
     qsp-extract input.csv --type parameter --timeout 7200 --no-push
-        """
+        """,
     )
 
-    parser.add_argument(
-        "input_csv",
-        type=Path,
-        help="Input CSV file with extraction requests"
-    )
+    parser.add_argument("input_csv", type=Path, help="Input CSV file with extraction requests")
 
     parser.add_argument(
         "--type",
         required=True,
         choices=["parameter", "test_statistic"],
-        help="Type of extraction workflow"
+        help="Type of extraction workflow",
     )
 
     parser.add_argument(
         "--immediate",
         action="store_true",
-        help="Use immediate mode (Responses API) instead of batch API"
+        help="Use immediate mode (Responses API) instead of batch API",
     )
 
     parser.add_argument(
         "--timeout",
         type=int,
         default=3600,
-        help="Timeout in seconds for batch monitoring (default: 3600)"
+        help="Timeout in seconds for batch monitoring (default: 3600)",
     )
 
     parser.add_argument(
-        "--no-push",
-        action="store_true",
-        help="Create branch locally without pushing to remote"
+        "--no-push", action="store_true", help="Create branch locally without pushing to remote"
     )
 
     args = parser.parse_args()
@@ -70,7 +64,7 @@ Examples:
             workflow_type=args.type,
             use_batch_api=not args.immediate,
             timeout=args.timeout,
-            push_to_remote=not args.no_push
+            push_to_remote=not args.no_push,
         )
 
         sys.exit(0 if result else 1)

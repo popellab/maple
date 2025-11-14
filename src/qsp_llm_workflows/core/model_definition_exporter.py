@@ -57,9 +57,7 @@ class ModelDefinitionExporter:
 
             # Generate parameter definitions
             param_definitions = self._generate_parameter_definitions(
-                simbio_params_df,
-                model_context_df,
-                simbio_species_df
+                simbio_params_df, model_context_df, simbio_species_df
             )
 
             return param_definitions
@@ -90,7 +88,7 @@ class ModelDefinitionExporter:
                 break
             project_root = project_root.parent
             # Stop if we find common project markers
-            if any((project_root / marker).exists() for marker in ['.git', 'README.md', 'LICENSE']):
+            if any((project_root / marker).exists() for marker in [".git", "README.md", "LICENSE"]):
                 break
 
         # Create MATLAB command with expanded path
@@ -103,9 +101,9 @@ class ModelDefinitionExporter:
         )
 
         # Run MATLAB from project root
-        result = subprocess.run([
-            "matlab", "-batch", matlab_cmd
-        ], capture_output=True, text=True, cwd=str(project_root))
+        result = subprocess.run(
+            ["matlab", "-batch", matlab_cmd], capture_output=True, text=True, cwd=str(project_root)
+        )
 
         if result.returncode != 0:
             raise RuntimeError(f"MATLAB export failed: {result.stderr}")
@@ -136,10 +134,12 @@ class ModelDefinitionExporter:
 
         return pd.read_csv(context_file)
 
-
-    def _generate_parameter_definitions(self, simbio_params_df: pd.DataFrame,
-                                       model_context_df: pd.DataFrame,
-                                       simbio_species_df: pd.DataFrame) -> Dict[str, Any]:
+    def _generate_parameter_definitions(
+        self,
+        simbio_params_df: pd.DataFrame,
+        model_context_df: pd.DataFrame,
+        simbio_species_df: pd.DataFrame,
+    ) -> Dict[str, Any]:
         """Generate parameter definition dictionaries.
 
         These are intermediary YAML files that will be processed to create
@@ -149,14 +149,14 @@ class ModelDefinitionExporter:
 
         # Create lookup dictionaries for descriptions
         # Parameters: name -> description (includes ALL parameters, even repeatedAssignment targets)
-        param_descriptions = dict(zip(simbio_params_df['Name'], simbio_params_df['Notes']))
+        param_descriptions = dict(zip(simbio_params_df["Name"], simbio_params_df["Notes"]))
 
         # Species: need to handle both "Species" and "Compartment.Species" lookups
         species_descriptions = {}
         for _, row in simbio_species_df.iterrows():
-            species_name = row['Name']
-            compartment = row['Compartment']
-            description = row['Notes']
+            species_name = row["Name"]
+            compartment = row["Compartment"]
+            description = row["Notes"]
 
             # Store under both names
             species_descriptions[species_name] = description
@@ -173,45 +173,42 @@ class ModelDefinitionExporter:
                 species_descriptions[name] = info.get("description", "")
 
         # Check if IsRepeatedAssignment column exists
-        has_repeated_assignment_flag = 'IsRepeatedAssignment' in simbio_params_df.columns
+        has_repeated_assignment_flag = "IsRepeatedAssignment" in simbio_params_df.columns
 
         for _, param_row in simbio_params_df.iterrows():
-            param_name = param_row['Name']
+            param_name = param_row["Name"]
 
             # Skip parameters that are updated via repeatedAssignment
             # These are kept in param_descriptions for lookups but not exported as main parameters
-            if has_repeated_assignment_flag and param_row['IsRepeatedAssignment']:
+            if has_repeated_assignment_flag and param_row["IsRepeatedAssignment"]:
                 continue
 
             # Get derivedFrom list - this is comma-separated list of parent parameter names
-            derived_from_str = param_row.get('DerivedFrom', param_name)
+            derived_from_str = param_row.get("DerivedFrom", param_name)
             if pd.isna(derived_from_str):
                 derived_from_list = [param_name]
             else:
-                derived_from_list = [p.strip() for p in str(derived_from_str).split(',')]
+                derived_from_list = [p.strip() for p in str(derived_from_str).split(",")]
 
             # Get model context entries for ALL parameters in derivedFrom list
             # PLUS the current parameter name (in case it was renamed after UserData was set)
             # This allows composite/renamed parameters to track their original contexts
             search_names = list(set(derived_from_list + [param_name]))
             param_context = model_context_df[
-                model_context_df['Parameter'].isin(search_names)
-            ].to_dict('records')
+                model_context_df["Parameter"].isin(search_names)
+            ].to_dict("records")
 
             # Create parameter definition (no value - that goes in parameter estimates)
             # Note: These YAMLs are intermediary files for generating CSV lists
             definition = {
                 "parameter_definition": {
                     "name": param_name,
-                    "units": param_row['Units'],
-                    "description": str(param_row['Notes']) if pd.notna(param_row['Notes']) else "",
+                    "units": param_row["Units"],
+                    "description": str(param_row["Notes"]) if pd.notna(param_row["Notes"]) else "",
                     "derived_from": derived_from_list,  # Track parent parameters for matching
                     "model_context": self._process_model_context(
-                        param_context,
-                        param_descriptions,
-                        species_descriptions,
-                        derived_from_list
-                    )
+                        param_context, param_descriptions, species_descriptions, derived_from_list
+                    ),
                 }
             }
 
@@ -222,15 +219,18 @@ class ModelDefinitionExporter:
             param_definitions[param_name] = {
                 "definition": definition,
                 "hash": content_hash,
-                "filename": filename
+                "filename": filename,
             }
 
         return param_definitions
 
-    def _process_model_context(self, context_entries: List[Dict],
-                               param_descriptions: Dict[str, str],
-                               species_descriptions: Dict[str, str],
-                               derived_from_list: List[str]) -> Dict[str, Any]:
+    def _process_model_context(
+        self,
+        context_entries: List[Dict],
+        param_descriptions: Dict[str, str],
+        species_descriptions: Dict[str, str],
+        derived_from_list: List[str],
+    ) -> Dict[str, Any]:
         """Process model context entries with full descriptions.
 
         Includes descriptions for:
@@ -256,20 +256,20 @@ class ModelDefinitionExporter:
             other_params_with_desc = []
             for pname in other_params:
                 desc = param_descriptions.get(pname, "")
-                other_params_with_desc.append({
-                    "name": pname,
-                    "description": str(desc) if pd.notna(desc) else ""
-                })
+                other_params_with_desc.append(
+                    {"name": pname, "description": str(desc) if pd.notna(desc) else ""}
+                )
 
             # Process other species with descriptions from model
-            species_list = self._parse_json_field(entry.get("OtherSpeciesWithNotes", "[]"), extract_names=True)
+            species_list = self._parse_json_field(
+                entry.get("OtherSpeciesWithNotes", "[]"), extract_names=True
+            )
             other_species_with_desc = []
             for sname in species_list:
                 desc = species_descriptions.get(sname, "")
-                other_species_with_desc.append({
-                    "name": sname,
-                    "description": str(desc) if pd.notna(desc) else ""
-                })
+                other_species_with_desc.append(
+                    {"name": sname, "description": str(desc) if pd.notna(desc) else ""}
+                )
 
             processed_entry = {
                 "reaction": clean_value(entry.get("Reaction")),
@@ -277,7 +277,7 @@ class ModelDefinitionExporter:
                 "rule": clean_value(entry.get("Rule")),
                 "rule_type": clean_value(entry.get("RuleType")),
                 "other_parameters": other_params_with_desc,
-                "other_species": other_species_with_desc
+                "other_species": other_species_with_desc,
             }
             processed.append(processed_entry)
 
@@ -285,16 +285,12 @@ class ModelDefinitionExporter:
         derived_from_with_desc = []
         for pname in derived_from_list:
             desc = param_descriptions.get(pname, "")
-            derived_from_with_desc.append({
-                "name": pname,
-                "description": str(desc) if pd.notna(desc) else ""
-            })
+            derived_from_with_desc.append(
+                {"name": pname, "description": str(desc) if pd.notna(desc) else ""}
+            )
 
         # Return context with derived_from info included
-        return {
-            "derived_from_context": derived_from_with_desc,
-            "reactions_and_rules": processed
-        }
+        return {"derived_from_context": derived_from_with_desc, "reactions_and_rules": processed}
 
     def _parse_json_field(self, json_str: str, extract_names: bool = False) -> List[str]:
         """
@@ -332,7 +328,7 @@ class ModelDefinitionExporter:
                             unique_species[name] = {
                                 "description": item.get("notes", ""),
                                 "compartment": item.get("compartment", ""),
-                                "units": "dimensionless"  # Default
+                                "units": "dimensionless",  # Default
                             }
             except (json.JSONDecodeError, ValueError):
                 continue

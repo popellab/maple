@@ -24,11 +24,9 @@ class ValidationRunner:
         self.base_dir = Path(base_dir)
         self.validate_dir = self.base_dir / "scripts" / "validate"
 
-    def run_parameter_validations(self,
-                                  data_dir: Path,
-                                  template: Path,
-                                  output_dir: Path,
-                                  timeout: int = 600) -> Dict[str, Any]:
+    def run_parameter_validations(
+        self, data_dir: Path, template: Path, output_dir: Path, timeout: int = 600
+    ) -> Dict[str, Any]:
         """
         Run parameter-specific validation suite.
 
@@ -48,16 +46,14 @@ class ValidationRunner:
             cwd=self.base_dir,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
         )
 
         return self._parse_validation_results(output_dir, result.returncode == 0)
 
-    def run_test_statistic_validations(self,
-                                      data_dir: Path,
-                                      template: Path,
-                                      output_dir: Path,
-                                      timeout: int = 600) -> Dict[str, Any]:
+    def run_test_statistic_validations(
+        self, data_dir: Path, template: Path, output_dir: Path, timeout: int = 600
+    ) -> Dict[str, Any]:
         """
         Run test statistic validation suite (uses same validators as parameters).
 
@@ -78,17 +74,19 @@ class ValidationRunner:
             cwd=self.base_dir,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
         )
 
         return self._parse_validation_results(output_dir, result.returncode == 0)
 
-    def run_validation(self,
-                      workflow_type: str,
-                      data_dir: Path,
-                      template: Path,
-                      output_dir: Path,
-                      timeout: int = 600) -> Dict[str, Any]:
+    def run_validation(
+        self,
+        workflow_type: str,
+        data_dir: Path,
+        template: Path,
+        output_dir: Path,
+        timeout: int = 600,
+    ) -> Dict[str, Any]:
         """
         Run workflow-appropriate validation suite.
 
@@ -105,7 +103,7 @@ class ValidationRunner:
         # Map workflow type to validation type
         workflow_type_map = {
             "parameter": "parameter_estimates",
-            "test_statistic": "test_statistics"
+            "test_statistic": "test_statistics",
         }
         validation_type = workflow_type_map.get(workflow_type)
 
@@ -113,7 +111,7 @@ class ValidationRunner:
             return {
                 "workflow_type": workflow_type,
                 "status": "error",
-                "message": f"Unknown workflow type: {workflow_type}"
+                "message": f"Unknown workflow type: {workflow_type}",
             }
 
         # Run validation script (it determines paths internally)
@@ -124,7 +122,7 @@ class ValidationRunner:
             cwd=self.base_dir,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
         )
 
         # Validation outputs to output/validation_results
@@ -149,17 +147,17 @@ class ValidationRunner:
             return {
                 "status": "error" if not success else "completed",
                 "message": "Validation summary not found",
-                "success": success
+                "success": success,
             }
 
         try:
-            with open(summary_file, 'r', encoding='utf-8') as f:
+            with open(summary_file, "r", encoding="utf-8") as f:
                 summary = json.load(f)
 
             # Extract key metrics
-            validations = summary.get('validations', [])
+            validations = summary.get("validations", [])
             total = len(validations)
-            passed = sum(1 for v in validations if v.get('success', False))
+            passed = sum(1 for v in validations if v.get("success", False))
             failed = total - passed
 
             return {
@@ -169,14 +167,14 @@ class ValidationRunner:
                 "passed": passed,
                 "failed": failed,
                 "validations": validations,
-                "details_path": str(summary_file)
+                "details_path": str(summary_file),
             }
 
         except Exception as e:
             return {
                 "status": "error",
                 "message": f"Failed to parse validation summary: {e}",
-                "success": False
+                "success": False,
             }
 
     def format_summary_for_commit(self, validation_results: Optional[Dict[str, Any]]) -> str:
@@ -205,9 +203,7 @@ class ValidationRunner:
             passed = validation_results.get("passed", 0)
             failed = validation_results.get("failed", 0)
 
-            lines = [
-                f"Validation: {passed}/{total} checks passed"
-            ]
+            lines = [f"Validation: {passed}/{total} checks passed"]
 
             if failed > 0:
                 lines.append(f"  ⚠ {failed} validation(s) failed - review recommended")
@@ -215,7 +211,7 @@ class ValidationRunner:
                 # List failed validations
                 validations = validation_results.get("validations", [])
                 for v in validations:
-                    if not v.get('success', False):
+                    if not v.get("success", False):
                         lines.append(f"    - {v.get('name', 'Unknown')}")
 
             return "\n".join(lines)

@@ -19,131 +19,127 @@ from qsp_llm_workflows.core.resource_utils import get_prompt_path
 class BatchCreator(ABC):
     """
     Abstract base class for creating OpenAI batch API requests.
-    
+
     Provides common functionality for request creation, file I/O, and batch processing
     while allowing subclasses to implement specific logic for different prompt types.
     """
-    
+
     def __init__(self, base_dir: Path, prompt_assembler: Optional[PromptAssembler] = None):
         """
         Initialize the batch creator.
-        
+
         Args:
             base_dir: Base directory of the project (used for relative path resolution)
             prompt_assembler: Optional PromptAssembler instance (created if not provided)
         """
         self.base_dir = Path(base_dir)
         self.prompt_assembler = prompt_assembler or PromptAssembler(self.base_dir)
-        
+
     def create_request(self, custom_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """
         Create a standardized batch API request.
-        
+
         Args:
             custom_id: Unique identifier for this request
             prompt: The prompt text to send to the model
             **kwargs: Additional request parameters (model, reasoning effort, etc.)
-            
+
         Returns:
             Dictionary representing a batch API request
         """
         # Set defaults
         model = kwargs.get("model", "gpt-5")
         reasoning_effort = kwargs.get("reasoning_effort", "high")
-        
+
         request = {
             "custom_id": custom_id,
             "method": "POST",
             "url": "/v1/responses",
-            "body": {
-                "model": model,
-                "input": prompt,
-                "reasoning": {"effort": reasoning_effort}
-            }
+            "body": {"model": model, "input": prompt, "reasoning": {"effort": reasoning_effort}},
         }
 
         # Note: metadata parameter is ignored - OpenAI Batch API doesn't support it
         # Metadata should be encoded in custom_id if needed
 
         return request
-    
+
     def write_batch_file(self, requests: List[Dict], output_path: Path) -> None:
         """
         Write batch requests to JSONL file.
-        
+
         Args:
             requests: List of batch request dictionaries
             output_path: Path where to write the JSONL file
         """
         # Create parent directories if they don't exist
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(output_path, 'w', encoding='utf-8') as f:
+
+        with open(output_path, "w", encoding="utf-8") as f:
             for request in requests:
-                f.write(json.dumps(request) + '\n')
-                
+                f.write(json.dumps(request) + "\n")
+
         print(f"Created {len(requests)} requests in {output_path}")
-    
+
     def get_default_output_path(self) -> Path:
         """
         Get the default output path for this batch creator type.
-        
+
         Returns:
             Default path for batch request files
         """
         return self.base_dir / "batch_jobs" / f"{self.get_batch_type()}_requests.jsonl"
-    
+
     @abstractmethod
     def get_batch_type(self) -> str:
         """
         Get the type identifier for this batch creator.
-        
+
         Used for default file naming and logging.
-        
+
         Returns:
             String identifier for this batch type (e.g., "parameter", "pooling_metadata")
         """
         pass
-    
+
     @abstractmethod
     def process(self, *args, **kwargs) -> List[Dict[str, Any]]:
         """
         Process input data and generate batch requests.
-        
+
         This method should be implemented by subclasses to handle their specific
         input processing and prompt generation logic.
-        
+
         Returns:
             List of batch request dictionaries ready for API submission
         """
         pass
-    
+
     def run(self, output_path: Optional[Path] = None, *args, **kwargs) -> Path:
         """
         Execute the complete batch creation process.
-        
+
         Args:
             output_path: Optional output path (uses default if not provided)
             *args, **kwargs: Arguments passed to the process() method
-            
+
         Returns:
             Path to the created batch file
         """
         # Generate requests
         requests = self.process(*args, **kwargs)
-        
+
         # Determine output path
         if output_path is None:
             output_path = self.get_default_output_path()
         else:
             output_path = Path(output_path)
-            
+
         # Write batch file
         self.write_batch_file(requests, output_path)
-        
+
         # Log batch type information
         print(f"Batch type: {self.get_batch_type()}")
-        
+
         return output_path
 
 
@@ -155,7 +151,7 @@ class ParameterBatchCreator(BatchCreator):
     prompts for comprehensive literature extraction. Requires columns: cancer_type,
     parameter_name, parameter_units, parameter_description, model_context, definition_hash.
     """
-    
+
     def get_batch_type(self) -> str:
         return "parameter"
 
@@ -184,7 +180,9 @@ class ParameterBatchCreator(BatchCreator):
             if derived:
                 output.append("## Parameter Context")
                 for item in derived:
-                    output.append(f"- **{item.get('name', 'Unknown')}**: {item.get('description', 'No description')}")
+                    output.append(
+                        f"- **{item.get('name', 'Unknown')}**: {item.get('description', 'No description')}"
+                    )
                 output.append("")
 
         # Add reactions and rules
@@ -192,7 +190,9 @@ class ParameterBatchCreator(BatchCreator):
             reactions = context_data["reactions_and_rules"]
             if reactions:
                 output.append("## Model Usage")
-                output.append(f"This parameter appears in {len(reactions)} reaction(s) and/or rule(s):")
+                output.append(
+                    f"This parameter appears in {len(reactions)} reaction(s) and/or rule(s):"
+                )
                 output.append("")
 
                 for i, rxn in enumerate(reactions, 1):
@@ -234,7 +234,7 @@ class ParameterBatchCreator(BatchCreator):
                         output.append("")
 
         return "\n".join(output) if output else "No model context available."
-    
+
     def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
         """
         Process parameter extraction inputs and generate batch requests.
@@ -252,28 +252,34 @@ class ParameterBatchCreator(BatchCreator):
 
         # Process CSV and create requests
         requests = []
-        with open(input_csv, 'r', encoding='utf-8') as f:
+        with open(input_csv, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
 
             for i, row in enumerate(reader):
-                cancer_type = row['cancer_type']
-                parameter_name = row['parameter_name']
-                units = row.get('parameter_units', '')
-                definition = row.get('parameter_description', '')
-                model_context_json = row.get('model_context', '{}')
-                definition_hash = row.get('definition_hash', '')
+                cancer_type = row["cancer_type"]
+                parameter_name = row["parameter_name"]
+                units = row.get("parameter_units", "")
+                definition = row.get("parameter_description", "")
+                model_context_json = row.get("model_context", "{}")
+                definition_hash = row.get("definition_hash", "")
 
                 # Format the model context from JSON
                 model_context_block = self.format_model_context(model_context_json)
 
                 # Build parameter info block with cancer type
-                parameter_block = render_parameter_to_search(parameter_name, units, definition, cancer_type)
+                parameter_block = render_parameter_to_search(
+                    parameter_name, units, definition, cancer_type
+                )
 
                 # Collect existing studies to avoid re-extracting from same sources
                 # Use definition_hash from CSV (same as context_hash in model_context)
                 if parameter_storage_dir is None:
-                    parameter_storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
-                existing_studies = collect_existing_studies(cancer_type, parameter_name, parameter_storage_dir, definition_hash)
+                    parameter_storage_dir = (
+                        self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
+                    )
+                existing_studies = collect_existing_studies(
+                    cancer_type, parameter_name, parameter_storage_dir, definition_hash
+                )
 
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
@@ -281,7 +287,7 @@ class ParameterBatchCreator(BatchCreator):
                     "PARAMETER_INFO": parameter_block,
                     "MODEL_CONTEXT": model_context_block,
                     "parameter_name": parameter_name,
-                    "context_hash": definition_hash
+                    "context_hash": definition_hash,
                 }
 
                 # Assemble the prompt
@@ -314,18 +320,42 @@ class TestStatisticBatchCreator(BatchCreator):
             Dictionary mapping species names to their default units
         """
         return {
-            "CD8": "cells", "CD4": "cells", "Treg": "cells", "Th": "cells",
-            "APC": "cells", "mAPC": "cells", "DC": "cells",
-            "Mac_M1": "cells", "Mac_M2": "cells", "MDSC": "cells",
-            "C": "cells", "C_x": "cells", "C1": "cells", "GVAX_cells": "cells",
-            "TumorVolume": "cm³", "K": "dimensionless",
-            "IL2": "pg/mL", "IL10": "pg/mL", "IL12": "pg/mL",
-            "IFNg": "pg/mL", "TNFa": "pg/mL", "TGFb": "pg/mL",
-            "GMCSF": "pg/mL", "CCL2": "pg/mL", "NO": "μM",
-            "ArgI": "units/mg protein", "ECM": "dimensionless",
-            "CAF": "cells", "Fib": "cells", "c_vas": "pg/mL",
-            "aPD1": "nanomolarity", "aPDL1": "nanomolarity", "aCTLA4": "nanomolarity",
-            "T_eff": "cells", "CD8_exh": "cells", "Th_exh": "cells"
+            "CD8": "cells",
+            "CD4": "cells",
+            "Treg": "cells",
+            "Th": "cells",
+            "APC": "cells",
+            "mAPC": "cells",
+            "DC": "cells",
+            "Mac_M1": "cells",
+            "Mac_M2": "cells",
+            "MDSC": "cells",
+            "C": "cells",
+            "C_x": "cells",
+            "C1": "cells",
+            "GVAX_cells": "cells",
+            "TumorVolume": "cm³",
+            "K": "dimensionless",
+            "IL2": "pg/mL",
+            "IL10": "pg/mL",
+            "IL12": "pg/mL",
+            "IFNg": "pg/mL",
+            "TNFa": "pg/mL",
+            "TGFb": "pg/mL",
+            "GMCSF": "pg/mL",
+            "CCL2": "pg/mL",
+            "NO": "μM",
+            "ArgI": "units/mg protein",
+            "ECM": "dimensionless",
+            "CAF": "cells",
+            "Fib": "cells",
+            "c_vas": "pg/mL",
+            "aPD1": "nanomolarity",
+            "aPDL1": "nanomolarity",
+            "aCTLA4": "nanomolarity",
+            "T_eff": "cells",
+            "CD8_exh": "cells",
+            "Th_exh": "cells",
         }
 
     def _load_species_units_mapping(self) -> Dict[str, str]:
@@ -340,7 +370,9 @@ class TestStatisticBatchCreator(BatchCreator):
         """
         return self._get_default_species_units()
 
-    def _parse_species_with_units(self, required_species: str, species_units_mapping: Dict[str, str]) -> str:
+    def _parse_species_with_units(
+        self, required_species: str, species_units_mapping: Dict[str, str]
+    ) -> str:
         """
         Parse required_species string and format with units information.
 
@@ -381,7 +413,9 @@ class TestStatisticBatchCreator(BatchCreator):
 
             # Format the output
             if compartment:
-                formatted_species.append(f"- `{species}`: {species_name} in {compartment} compartment (units: {units})")
+                formatted_species.append(
+                    f"- `{species}`: {species_name} in {compartment} compartment (units: {units})"
+                )
             else:
                 formatted_species.append(f"- `{species}`: {species_name} (units: {units})")
 
@@ -415,25 +449,26 @@ class TestStatisticBatchCreator(BatchCreator):
                     model_context_info[var_name] = {
                         "description": str(row.get("Description", "")).strip(),
                         "units": str(row.get("Units", "")).strip(),
-                        "compartment": str(row.get("Compartment", "")).strip()
+                        "compartment": str(row.get("Compartment", "")).strip(),
                     }
 
         # Process CSV and create requests
         requests = []
-        with open(input_csv, 'r', encoding='utf-8') as f:
+        with open(input_csv, "r", encoding="utf-8") as f:
             for i, row in enumerate(csv.DictReader(f)):
-                test_statistic_id = row.get('test_statistic_id', f'test_stat_{i}')
-                model_context = row.get('model_context', '')
-                scenario_context = row.get('scenario_context', '')
-                required_species = row.get('required_species', '')
-                derived_species_description = row.get('derived_species_description', '')
+                test_statistic_id = row.get("test_statistic_id", f"test_stat_{i}")
+                model_context = row.get("model_context", "")
+                scenario_context = row.get("scenario_context", "")
+                required_species = row.get("required_species", "")
+                derived_species_description = row.get("derived_species_description", "")
 
                 # Extract or generate context hash
-                context_hash = row.get('context_hash', '')
+                context_hash = row.get("context_hash", "")
                 if not context_hash:
                     # Auto-generate hash from model_context + scenario_context
                     # (excludes required_species so all test statistics for same model+scenario share hash)
                     import hashlib
+
                     context_str = f"{model_context}_{scenario_context}"
                     context_hash = hashlib.md5(context_str.encode()).hexdigest()[:8]
 
@@ -450,7 +485,9 @@ class TestStatisticBatchCreator(BatchCreator):
                     continue
 
                 if not derived_species_description.strip():
-                    print(f"Warning: Empty derived species description for {test_statistic_id}, skipping")
+                    print(
+                        f"Warning: Empty derived species description for {test_statistic_id}, skipping"
+                    )
                     continue
 
                 # Use provided context directly, with optional model context CSV enhancement
@@ -459,9 +496,9 @@ class TestStatisticBatchCreator(BatchCreator):
                     model_context_block += "\n\n**Additional Model Variables:**\n\n"
                     for var_name, info in model_context_info.items():
                         model_context_block += f"- `{var_name}`: {info['description']}"
-                        if info['units']:
+                        if info["units"]:
                             model_context_block += f" (units: {info['units']})"
-                        if info['compartment']:
+                        if info["compartment"]:
                             model_context_block += f" [compartment: {info['compartment']}]"
                         model_context_block += "\n"
 
@@ -469,7 +506,9 @@ class TestStatisticBatchCreator(BatchCreator):
                 scenario_context_block = scenario_context
 
                 # Parse required species with units information
-                required_species_with_units = self._parse_species_with_units(required_species, species_units_mapping)
+                required_species_with_units = self._parse_species_with_units(
+                    required_species, species_units_mapping
+                )
 
                 # Prepare runtime data for prompt assembly
                 runtime_data = {
@@ -478,7 +517,7 @@ class TestStatisticBatchCreator(BatchCreator):
                     "REQUIRED_SPECIES_WITH_UNITS": required_species_with_units,
                     "DERIVED_SPECIES_DESCRIPTION": derived_species_description,
                     "test_statistic_id": test_statistic_id,
-                    "context_hash": context_hash
+                    "context_hash": context_hash,
                 }
 
                 # Assemble the prompt
@@ -504,6 +543,7 @@ class ValidationFixBatchCreator(BatchCreator):
         """Initialize with base directory."""
         super().__init__(base_dir)
         from header_utils import HeaderManager
+
         self.header_manager = HeaderManager(base_dir)
 
     def get_batch_type(self) -> str:
@@ -525,12 +565,12 @@ class ValidationFixBatchCreator(BatchCreator):
             Extracted filename
         """
         # Check for reference-level format (arrow)
-        if ' → ' in item:
-            return item.split(' → ')[0].strip()
+        if " → " in item:
+            return item.split(" → ")[0].strip()
 
         # Check for input-level format (slash)
-        if ' / input ' in item:
-            return item.split(' / input ')[0].strip()
+        if " / input " in item:
+            return item.split(" / input ")[0].strip()
 
         # Simple format - just return as-is
         return item.strip()
@@ -559,17 +599,17 @@ class ValidationFixBatchCreator(BatchCreator):
                 continue
 
             try:
-                with open(validation_file, 'r', encoding='utf-8') as f:
+                with open(validation_file, "r", encoding="utf-8") as f:
                     report = json.load(f)
 
                 # Extract validation type from filename
-                validation_type = validation_file.stem.replace('_', ' ').title()
+                validation_type = validation_file.stem.replace("_", " ").title()
 
                 # Process failed items
-                failed_items = report.get('failed', [])
+                failed_items = report.get("failed", [])
                 for item in failed_items:
-                    item_str = item['item']
-                    reason = item['reason']
+                    item_str = item["item"]
+                    reason = item["reason"]
 
                     # Extract filename from item (handles reference/input-level formats)
                     filename = self._extract_filename_from_item(item_str)
@@ -598,7 +638,7 @@ class ValidationFixBatchCreator(BatchCreator):
             YAML content as string, or None if error
         """
         try:
-            with open(yaml_path, 'r', encoding='utf-8') as f:
+            with open(yaml_path, "r", encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
             print(f"Warning: Could not load {yaml_path}: {e}")
@@ -615,7 +655,7 @@ class ValidationFixBatchCreator(BatchCreator):
             Template content as string, or None if error
         """
         try:
-            with open(template_path, 'r', encoding='utf-8') as f:
+            with open(template_path, "r", encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
             print(f"Warning: Could not load template {template_path}: {e}")
@@ -631,7 +671,7 @@ class ValidationFixBatchCreator(BatchCreator):
         Returns:
             Example JSON string formatted with code fence
         """
-        if template_type == 'test_statistic':
+        if template_type == "test_statistic":
             return """Example output format for test statistics:
 ```json
 {
@@ -665,7 +705,7 @@ class ValidationFixBatchCreator(BatchCreator):
   }
 }
 ```"""
-        elif template_type == 'parameter_metadata':
+        elif template_type == "parameter_metadata":
             return """Example output format for parameter estimates:
 ```json
 {
@@ -710,8 +750,9 @@ class ValidationFixBatchCreator(BatchCreator):
 }
 ```"""
 
-    def create_fix_prompt(self, yaml_content: str, errors: List[str],
-                         template_content: str, template_type: str) -> str:
+    def create_fix_prompt(
+        self, yaml_content: str, errors: List[str], template_content: str, template_type: str
+    ) -> str:
         """
         Create fix prompt by assembling content (without headers), errors, and template.
 
@@ -726,7 +767,7 @@ class ValidationFixBatchCreator(BatchCreator):
         """
         # Parse YAML to detect schema version and strip headers
         data = yaml.safe_load(yaml_content)
-        schema_version = data.get('schema_version', 'v1')
+        schema_version = data.get("schema_version", "v1")
 
         # Strip headers from original YAML (LLM should only see content)
         headers, content_dict = self.header_manager.strip_headers_from_yaml_string(
@@ -734,13 +775,15 @@ class ValidationFixBatchCreator(BatchCreator):
         )
 
         # Convert content dict back to YAML string
-        content_yaml = yaml.dump(content_dict, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        content_yaml = yaml.dump(
+            content_dict, default_flow_style=False, allow_unicode=True, sort_keys=False
+        )
 
         # Use the validation fix prompt template
         prompt_path = get_prompt_path("validation_fix_prompt.md")
 
         if prompt_path.exists():
-            with open(prompt_path, 'r', encoding='utf-8') as f:
+            with open(prompt_path, "r", encoding="utf-8") as f:
                 template = f.read()
 
             # Format errors
@@ -795,8 +838,9 @@ Fix the validation errors listed below. While doing so, also review ALL units_sn
 **Output:**
 Return the corrected metadata as JSON inside a ```json code fence. The unpacker will convert to YAML with proper headers. Do not include header fields like cancer_type, tags, schema_version - those will be added during unpacking."""
 
-    def process(self, validation_dir: Path, yaml_dir: Path,
-                template_path: Path) -> List[Dict[str, Any]]:
+    def process(
+        self, validation_dir: Path, yaml_dir: Path, template_path: Path
+    ) -> List[Dict[str, Any]]:
         """
         Process validation results and generate fix batch requests.
 
@@ -847,11 +891,7 @@ Return the corrected metadata as JSON inside a ```json code fence. The unpacker 
             file_stem = yaml_path.stem
             custom_id = f"fix_{file_stem}"
 
-            request = self.create_request(
-                custom_id,
-                prompt,
-                reasoning_effort="high"
-            )
+            request = self.create_request(custom_id, prompt, reasoning_effort="high")
 
             requests.append(request)
             print(f"  Created fix request for {filename} ({len(errors)} error(s))")
@@ -870,10 +910,10 @@ Return the corrected metadata as JSON inside a ```json code fence. The unpacker 
         """
         name = template_path.name.lower()
 
-        if 'parameter' in name:
-            return 'parameter_metadata'
-        elif 'test_stat' in name:
-            return 'test_statistic'
+        if "parameter" in name:
+            return "parameter_metadata"
+        elif "test_stat" in name:
+            return "test_statistic"
         else:
             # Default to parameter_metadata
-            return 'parameter_metadata'
+            return "parameter_metadata"

@@ -15,10 +15,7 @@ Usage:
         output/source_reference_validation.json
 """
 
-from qsp_llm_workflows.core.validation_utils import (
-    load_yaml_directory,
-    ValidationReport
-)
+from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
 
 
 class SourceReferenceValidator:
@@ -40,54 +37,48 @@ class SourceReferenceValidator:
         sources = {}
 
         # Collect from primary_data_sources
-        if 'primary_data_sources' in data:
-            pds = data['primary_data_sources']
+        if "primary_data_sources" in data:
+            pds = data["primary_data_sources"]
             if isinstance(pds, list):
                 for source in pds:
-                    if isinstance(source, dict) and 'source_tag' in source:
-                        sources[source['source_tag']] = {
-                            'type': 'primary',
-                            'definition': source
-                        }
+                    if isinstance(source, dict) and "source_tag" in source:
+                        sources[source["source_tag"]] = {"type": "primary", "definition": source}
             elif isinstance(pds, dict):
                 for tag, source in pds.items():
                     sources[tag] = {
-                        'type': 'primary',
-                        'definition': source if isinstance(source, dict) else {'source_tag': tag}
+                        "type": "primary",
+                        "definition": source if isinstance(source, dict) else {"source_tag": tag},
                     }
 
         # Collect from secondary_data_sources
-        if 'secondary_data_sources' in data:
-            sds = data['secondary_data_sources']
+        if "secondary_data_sources" in data:
+            sds = data["secondary_data_sources"]
             if isinstance(sds, list):
                 for source in sds:
-                    if isinstance(source, dict) and 'source_tag' in source:
-                        sources[source['source_tag']] = {
-                            'type': 'secondary',
-                            'definition': source
-                        }
+                    if isinstance(source, dict) and "source_tag" in source:
+                        sources[source["source_tag"]] = {"type": "secondary", "definition": source}
             elif isinstance(sds, dict):
                 for tag, source in sds.items():
                     sources[tag] = {
-                        'type': 'secondary',
-                        'definition': source if isinstance(source, dict) else {'source_tag': tag}
+                        "type": "secondary",
+                        "definition": source if isinstance(source, dict) else {"source_tag": tag},
                     }
 
         # Collect from methodological_sources
-        if 'methodological_sources' in data:
-            ms = data['methodological_sources']
+        if "methodological_sources" in data:
+            ms = data["methodological_sources"]
             if isinstance(ms, list):
                 for source in ms:
-                    if isinstance(source, dict) and 'source_tag' in source:
-                        sources[source['source_tag']] = {
-                            'type': 'methodological',
-                            'definition': source
+                    if isinstance(source, dict) and "source_tag" in source:
+                        sources[source["source_tag"]] = {
+                            "type": "methodological",
+                            "definition": source,
                         }
             elif isinstance(ms, dict):
                 for tag, source in ms.items():
                     sources[tag] = {
-                        'type': 'methodological',
-                        'definition': source if isinstance(source, dict) else {'source_tag': tag}
+                        "type": "methodological",
+                        "definition": source if isinstance(source, dict) else {"source_tag": tag},
                     }
 
         return sources
@@ -100,14 +91,16 @@ class SourceReferenceValidator:
             List of input dicts
         """
         # Try parameter_estimates first (params)
-        if 'parameter_estimates' in data and isinstance(data['parameter_estimates'], dict):
-            if 'inputs' in data['parameter_estimates']:
-                return data['parameter_estimates']['inputs']
+        if "parameter_estimates" in data and isinstance(data["parameter_estimates"], dict):
+            if "inputs" in data["parameter_estimates"]:
+                return data["parameter_estimates"]["inputs"]
 
         # Try test_statistic_estimates (test stats)
-        if 'test_statistic_estimates' in data and isinstance(data['test_statistic_estimates'], dict):
-            if 'inputs' in data['test_statistic_estimates']:
-                return data['test_statistic_estimates']['inputs']
+        if "test_statistic_estimates" in data and isinstance(
+            data["test_statistic_estimates"], dict
+        ):
+            if "inputs" in data["test_statistic_estimates"]:
+                return data["test_statistic_estimates"]["inputs"]
 
         return []
 
@@ -125,8 +118,8 @@ class SourceReferenceValidator:
             if not isinstance(inp, dict):
                 continue
 
-            name = inp.get('name', 'unnamed')
-            source_ref = inp.get('source_ref')
+            name = inp.get("name", "unnamed")
+            source_ref = inp.get("source_ref")
 
             # Include both null and non-null refs for tracking
             refs.append((name, source_ref))
@@ -141,11 +134,11 @@ class SourceReferenceValidator:
             List of error messages (empty if valid)
         """
         errors = []
-        definition = source_info['definition']
-        source_type = source_info['type']
+        definition = source_info["definition"]
+        source_type = source_info["type"]
 
         # Required fields for all sources
-        common_fields = ['title', 'first_author', 'year']
+        common_fields = ["title", "first_author", "year"]
 
         for field in common_fields:
             if field not in definition or not definition[field]:
@@ -153,11 +146,11 @@ class SourceReferenceValidator:
 
         # Check DOI field based on source type
         # Primary sources use 'doi', secondary/methodological use 'doi_or_url'
-        if source_type == 'primary':
-            if 'doi' not in definition or not definition['doi']:
+        if source_type == "primary":
+            if "doi" not in definition or not definition["doi"]:
                 errors.append(f"Source '{source_tag}': missing required field 'doi'")
         else:  # secondary or methodological
-            if 'doi_or_url' not in definition or not definition['doi_or_url']:
+            if "doi_or_url" not in definition or not definition["doi_or_url"]:
                 errors.append(f"Source '{source_tag}': missing required field 'doi_or_url'")
 
         return errors
@@ -170,8 +163,8 @@ class SourceReferenceValidator:
             (is_valid, errors) tuple
         """
         errors = []
-        data = file_info['data']
-        file_info['filename']
+        data = file_info["data"]
+        file_info["filename"]
 
         # Collect all defined sources
         sources = self.collect_sources(data)
@@ -207,7 +200,7 @@ class SourceReferenceValidator:
         files = load_yaml_directory(self.data_dir)
 
         for file_info in files:
-            filename = file_info['filename']
+            filename = file_info["filename"]
 
             is_valid, errors = self.validate_file(file_info)
 

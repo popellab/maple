@@ -15,19 +15,13 @@ def main():
 Examples:
     qsp-batch-monitor batch_abc123
     qsp-batch-monitor batch_abc123 --timeout 7200
-        """
+        """,
     )
 
-    parser.add_argument(
-        "batch_id",
-        help="OpenAI batch ID to monitor"
-    )
+    parser.add_argument("batch_id", help="OpenAI batch ID to monitor")
 
     parser.add_argument(
-        "--timeout",
-        type=int,
-        default=3600,
-        help="Timeout in seconds (default: 3600)"
+        "--timeout", type=int, default=3600, help="Timeout in seconds (default: 3600)"
     )
 
     args = parser.parse_args()
@@ -36,10 +30,7 @@ Examples:
     from qsp_llm_workflows.run.batch_monitor import main as monitor_main
 
     # Set up sys.argv for the monitor script
-    sys.argv = [
-        "batch_monitor.py",
-        args.batch_id
-    ]
+    sys.argv = ["batch_monitor.py", args.batch_id]
 
     if args.timeout:
         sys.argv.extend(["--timeout", str(args.timeout)])

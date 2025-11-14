@@ -22,7 +22,7 @@ import numpy as np
 from qsp_llm_workflows.core.validation_utils import (
     load_yaml_directory,
     parse_numeric_value,
-    ValidationReport
+    ValidationReport,
 )
 
 
@@ -64,11 +64,11 @@ class ValueConsistencyChecker:
         returns qsp-metadata-storage/test_statistics/
         """
         # Check if we're in a to-review directory
-        if 'to-review' not in str(self.data_dir):
+        if "to-review" not in str(self.data_dir):
             return None
 
         # Get main storage directory by removing to-review from path
-        main_dir = Path(str(self.data_dir).replace('/to-review/', '/').replace('/to-review', ''))
+        main_dir = Path(str(self.data_dir).replace("/to-review/", "/").replace("/to-review", ""))
 
         # Verify it's different and exists
         if main_dir != self.data_dir and main_dir.exists():
@@ -96,9 +96,9 @@ class ValueConsistencyChecker:
         all_files_combined = self.all_files + main_storage_files + legacy_files
 
         for file_info in all_files_combined:
-            filename = file_info['filename']
-            filepath = file_info['filepath']
-            data = file_info['data']
+            filename = file_info["filename"]
+            filepath = file_info["filepath"]
+            data = file_info["data"]
 
             # Extract parameter/test_statistic identifier
             identifier = self._get_identifier(data, filename)
@@ -111,23 +111,20 @@ class ValueConsistencyChecker:
                 continue
 
             # Extract context_hash
-            context_hash = data.get('context_hash', 'unknown')
+            context_hash = data.get("context_hash", "unknown")
 
             # Determine if this is a legacy file (by directory only)
             is_legacy = self.legacy_dir and str(self.legacy_dir) in filepath
 
             # Store in appropriate collection
             if is_legacy:
-                self.legacy_values[identifier].append({
-                    'value': mean_value,
-                    'filename': filename,
-                    'context_hash': context_hash
-                })
+                self.legacy_values[identifier].append(
+                    {"value": mean_value, "filename": filename, "context_hash": context_hash}
+                )
             else:
-                self.context_groups[(identifier, context_hash)].append({
-                    'value': mean_value,
-                    'filename': filename
-                })
+                self.context_groups[(identifier, context_hash)].append(
+                    {"value": mean_value, "filename": filename}
+                )
 
         print(f"  Found {len(self.all_files)} regular files")
         if legacy_files:
@@ -143,12 +140,12 @@ class ValueConsistencyChecker:
             Identifier string or None
         """
         # Try parameter_name first
-        if 'parameter_name' in data:
-            return data['parameter_name']
+        if "parameter_name" in data:
+            return data["parameter_name"]
 
         # Try test_statistic_id
-        if 'test_statistic_id' in data:
-            return data['test_statistic_id']
+        if "test_statistic_id" in data:
+            return data["test_statistic_id"]
 
         return None
 
@@ -160,16 +157,16 @@ class ValueConsistencyChecker:
             Mean value or None
         """
         # Try parameter_estimates
-        if 'parameter_estimates' in data:
-            estimates = data['parameter_estimates']
-            if isinstance(estimates, dict) and 'mean' in estimates:
-                return parse_numeric_value(estimates['mean'])
+        if "parameter_estimates" in data:
+            estimates = data["parameter_estimates"]
+            if isinstance(estimates, dict) and "mean" in estimates:
+                return parse_numeric_value(estimates["mean"])
 
         # Try test_statistic_estimates
-        if 'test_statistic_estimates' in data:
-            estimates = data['test_statistic_estimates']
-            if isinstance(estimates, dict) and 'mean' in estimates:
-                return parse_numeric_value(estimates['mean'])
+        if "test_statistic_estimates" in data:
+            estimates = data["test_statistic_estimates"]
+            if isinstance(estimates, dict) and "mean" in estimates:
+                return parse_numeric_value(estimates["mean"])
 
         return None
 
@@ -187,11 +184,15 @@ class ValueConsistencyChecker:
         warnings = []
 
         for legacy_entry in legacy_entries:
-            legacy_value = legacy_entry['value']
-            legacy_file = legacy_entry['filename']
+            legacy_value = legacy_entry["value"]
+            legacy_file = legacy_entry["filename"]
 
             # Calculate percent difference
-            pct_diff = abs(value - legacy_value) / abs(legacy_value) * 100 if legacy_value != 0 else float('inf')
+            pct_diff = (
+                abs(value - legacy_value) / abs(legacy_value) * 100
+                if legacy_value != 0
+                else float("inf")
+            )
 
             # Report if difference is notable (>20%)
             if pct_diff > 20:
@@ -202,8 +203,9 @@ class ValueConsistencyChecker:
 
         return (True, warnings)
 
-    def compare_to_same_context(self, identifier: str, context_hash: str,
-                                value: float, filename: str) -> tuple:
+    def compare_to_same_context(
+        self, identifier: str, context_hash: str, value: float, filename: str
+    ) -> tuple:
         """
         Compare value to other derivations with same context_hash.
 
@@ -218,13 +220,13 @@ class ValueConsistencyChecker:
         same_context_entries = self.context_groups[key]
 
         # Exclude self
-        other_entries = [e for e in same_context_entries if e['filename'] != filename]
+        other_entries = [e for e in same_context_entries if e["filename"] != filename]
 
         if not other_entries:
             return (False, [])
 
         warnings = []
-        other_values = [e['value'] for e in other_entries]
+        other_values = [e["value"] for e in other_entries]
 
         # Calculate statistics of other values
         mean_others = np.mean(other_values)
@@ -234,7 +236,11 @@ class ValueConsistencyChecker:
 
         # Check if new value is within range
         if value < min_others or value > max_others:
-            pct_diff_from_mean = abs(value - mean_others) / abs(mean_others) * 100 if mean_others != 0 else float('inf')
+            pct_diff_from_mean = (
+                abs(value - mean_others) / abs(mean_others) * 100
+                if mean_others != 0
+                else float("inf")
+            )
             warnings.append(
                 f"Outside range of same-context derivations ({pct_diff_from_mean:.1f}% from mean): "
                 f"new={value:.3e}, range=[{min_others:.3e}, {max_others:.3e}], "
@@ -259,9 +265,9 @@ class ValueConsistencyChecker:
         Returns:
             (is_valid, warnings) tuple
         """
-        data = file_info['data']
-        filename = file_info['filename']
-        filepath = file_info['filepath']
+        data = file_info["data"]
+        filename = file_info["filename"]
+        filepath = file_info["filepath"]
 
         # Skip legacy files (they are the reference, not being validated)
         is_legacy = self.legacy_dir and str(self.legacy_dir) in filepath
@@ -277,7 +283,7 @@ class ValueConsistencyChecker:
         if value is None:
             return (True, [])
 
-        context_hash = data.get('context_hash', 'unknown')
+        context_hash = data.get("context_hash", "unknown")
 
         all_warnings = []
 
@@ -295,7 +301,9 @@ class ValueConsistencyChecker:
 
         # If no comparisons available, note it
         if not has_legacy and not has_context:
-            all_warnings.append("No comparison values available (first extraction for this context)")
+            all_warnings.append(
+                "No comparison values available (first extraction for this context)"
+            )
 
         # Always pass validation (warnings only)
         return (True, all_warnings)
@@ -310,7 +318,7 @@ class ValueConsistencyChecker:
         print("\nChecking value consistency...")
 
         for file_info in self.all_files:
-            filename = file_info['filename']
+            filename = file_info["filename"]
 
             is_valid, warnings = self.validate_file(file_info)
 

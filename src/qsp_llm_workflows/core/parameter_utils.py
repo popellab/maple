@@ -24,22 +24,30 @@ TARGET_BIO_CONTEXT = (
 def load_inputs(params_path: Path, reactions_path: Path, template_path: Path = None):
     """
     Load parameter and reaction data from CSV files.
-    
+
     Args:
         params_path: Path to simbio_parameters.csv with Name, Units, Definition columns
         reactions_path: Path to model_context.csv with reaction information
         template_path: Optional path to template file (legacy parameter)
-        
+
     Returns:
         Tuple of (params_df, reactions_df, template_text)
     """
     params_df = pd.read_csv(params_path)
     reactions_df = pd.read_csv(reactions_path)
     template_text = template_path.read_text() if template_path else ""
-    
+
     # Validate required columns
     need_params = {"Name", "Units", "Definition"}
-    need_rxns = {"Parameter", "Reaction", "ReactionRate", "Rule", "RuleType", "OtherParameters", "OtherSpeciesWithNotes"}
+    need_rxns = {
+        "Parameter",
+        "Reaction",
+        "ReactionRate",
+        "Rule",
+        "RuleType",
+        "OtherParameters",
+        "OtherSpeciesWithNotes",
+    }
     miss_p = need_params - set(params_df.columns)
     miss_r = need_rxns - set(reactions_df.columns)
 
@@ -54,27 +62,27 @@ def load_inputs(params_path: Path, reactions_path: Path, template_path: Path = N
 def index_param_info(params_df: pd.DataFrame) -> Dict[str, Dict[str, str]]:
     """
     Create a parameter lookup index from the parameters DataFrame.
-    
+
     Args:
         params_df: DataFrame with Name, Units, Definition, References columns
-        
+
     Returns:
         Dictionary mapping parameter names to their metadata
     """
     return (
         params_df.assign(Name=params_df["Name"].astype(str))
-                 .set_index("Name")[["Units", "Definition", "References"]]
-                 .to_dict(orient="index")
+        .set_index("Name")[["Units", "Definition", "References"]]
+        .to_dict(orient="index")
     )
 
 
 def parse_other_params_list(s: str) -> List[str]:
     """
     Parse parameter names from a string representation of a list.
-    
+
     Args:
         s: String like "['k1','k2']" containing parameter names
-        
+
     Returns:
         List of parameter names
     """
@@ -84,16 +92,18 @@ def parse_other_params_list(s: str) -> List[str]:
     return re.findall(r"'([^']+)'", s)
 
 
-def render_parameter_to_search(name: str, units: str, definition: str, cancer_type: str = None) -> str:
+def render_parameter_to_search(
+    name: str, units: str, definition: str, cancer_type: str = None
+) -> str:
     """
     Render a parameter information block for prompt generation.
-    
+
     Args:
         name: Parameter name
         units: Parameter units
         definition: Parameter definition/description
         cancer_type: Optional cancer type for this parameter
-        
+
     Returns:
         Formatted parameter information block
     """
@@ -103,26 +113,28 @@ def render_parameter_to_search(name: str, units: str, definition: str, cancer_ty
     return base_info
 
 
-def render_other_params_details(other_params: List[str], param_info: Dict[str, Dict[str, str]]) -> str:
+def render_other_params_details(
+    other_params: List[str], param_info: Dict[str, Dict[str, str]]
+) -> str:
     """
     Render details for other parameters referenced in reactions.
-    
+
     Args:
         other_params: List of parameter names
         param_info: Parameter lookup dictionary from index_param_info()
-        
+
     Returns:
         Formatted parameter details block
     """
     if not other_params:
         return "  - **Other parameters details:** —"
-        
+
     lines = []
     for nm in sorted(set(other_params)):
         info = param_info.get(nm, {}) or {}
         units = (info.get("Units") or "").strip()
         definition = (info.get("Definition") or "").strip()
-        
+
         if units and definition:
             lines.append(f"    - **{nm}** [{units}] — {definition}")
         elif definition:
@@ -131,17 +143,17 @@ def render_other_params_details(other_params: List[str], param_info: Dict[str, D
             lines.append(f"    - **{nm}** [{units}]")
         else:
             lines.append(f"    - **{nm}**")
-            
+
     return "  - **Other parameters details:**\n" + "\n".join(lines)
 
 
 def render_species_comp_details(species_json_str: str) -> str:
     """
     Render species/compartment details from JSON string.
-    
+
     Args:
         species_json_str: JSON string containing species information
-        
+
     Returns:
         Formatted species details block
     """
@@ -153,7 +165,7 @@ def render_species_comp_details(species_json_str: str) -> str:
                 items = [x for x in parsed if isinstance(x, dict)]
         except Exception:
             items = []
-            
+
     if not items:
         return "  - **Other species/compartment details:** —"
 
@@ -173,33 +185,40 @@ def render_species_comp_details(species_json_str: str) -> str:
             lines.append(f"    - **{name}** — {notes}")
         else:
             lines.append(f"    - **{name}**")
-            
-    return "  - **Other species/compartment details:**\n" + "\n".join(lines) if lines else \
-           "  - **Other species/compartment details:** —"
+
+    return (
+        "  - **Other species/compartment details:**\n" + "\n".join(lines)
+        if lines
+        else "  - **Other species/compartment details:** —"
+    )
 
 
-def build_model_context(param_name: str, rxns: pd.DataFrame, param_info: Dict[str, Dict[str, str]]) -> str:
+def build_model_context(
+    param_name: str, rxns: pd.DataFrame, param_info: Dict[str, Dict[str, str]]
+) -> str:
     """
     Build model context information for a parameter.
-    
+
     Args:
         param_name: Name of the parameter to build context for
         rxns: DataFrame with reaction and rule information for this parameter
         param_info: Parameter lookup dictionary from index_param_info()
-        
+
     Returns:
         Formatted model context block
     """
     if rxns.empty:
-        return (f"{param_name} is currently not referenced in any reactions or rules "
-                f"according to the provided mapping table.")
+        return (
+            f"{param_name} is currently not referenced in any reactions or rules "
+            f"according to the provided mapping table."
+        )
 
     # Separate reactions and rules
-    reactions = rxns[rxns['Reaction'].notna() & (rxns['Reaction'].astype(str).str.strip() != '')]
-    rules = rxns[rxns['Rule'].notna() & (rxns['Rule'].astype(str).str.strip() != '')]
+    reactions = rxns[rxns["Reaction"].notna() & (rxns["Reaction"].astype(str).str.strip() != "")]
+    rules = rxns[rxns["Rule"].notna() & (rxns["Rule"].astype(str).str.strip() != "")]
 
     bullets = []
-    
+
     # Process reactions
     for _, row in reactions.iterrows():
         other_params_str = row.get("OtherParameters", "")
@@ -215,9 +234,13 @@ def build_model_context(param_name: str, rxns: pd.DataFrame, param_info: Dict[st
             "{}".format(
                 row.get("Reaction", ""),
                 row.get("ReactionRate", ""),
-                other_params_str if (isinstance(other_params_str, str) and other_params_str.strip()) else "[]",
+                (
+                    other_params_str
+                    if (isinstance(other_params_str, str) and other_params_str.strip())
+                    else "[]"
+                ),
                 other_params_details,
-                species_details
+                species_details,
             )
         )
 
@@ -236,23 +259,33 @@ def build_model_context(param_name: str, rxns: pd.DataFrame, param_info: Dict[st
             "{}".format(
                 row.get("Rule", ""),
                 row.get("RuleType", ""),
-                other_params_str if (isinstance(other_params_str, str) and other_params_str.strip()) else "[]",
+                (
+                    other_params_str
+                    if (isinstance(other_params_str, str) and other_params_str.strip())
+                    else "[]"
+                ),
                 other_params_details,
-                species_details
+                species_details,
             )
         )
 
     if not bullets:
-        return (f"{param_name} is currently not referenced in any reactions or rules "
-                f"according to the provided mapping table.")
+        return (
+            f"{param_name} is currently not referenced in any reactions or rules "
+            f"according to the provided mapping table."
+        )
 
     # Return just the mathematical context without biological priority guidelines
     header = "Mathematical role and biological context for this parameter based on the model:\n"
     return header + "\n".join(bullets)
 
 
-def collect_existing_studies(cancer_type: str, parameter_name: str,
-                           parameter_storage_dir: Path = None, context_hash: str = None) -> str:
+def collect_existing_studies(
+    cancer_type: str,
+    parameter_name: str,
+    parameter_storage_dir: Path = None,
+    context_hash: str = None,
+) -> str:
     """
     Collect information about existing studies for a given parameter.
 
@@ -269,7 +302,9 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
 
     if parameter_storage_dir is None:
         # Default to sibling directory
-        parameter_storage_dir = Path(__file__).parent.parent.parent / "qsp-metadata-storage" / "parameter_estimates"
+        parameter_storage_dir = (
+            Path(__file__).parent.parent.parent / "qsp-metadata-storage" / "parameter_estimates"
+        )
 
     if not parameter_storage_dir.exists():
         return ""
@@ -288,13 +323,13 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
             # Parse filename to check cancer type
             # Formats:
             # - Parameter estimates: {param_name}_{author_year}_{cancer_type}_{hash}.yaml
-            filename_parts = yaml_file.stem.split('_')
+            filename_parts = yaml_file.stem.split("_")
 
             # Check if cancer_type appears in filename
             if cancer_type not in filename_parts:
                 continue
 
-            with open(yaml_file, 'r', encoding='utf-8') as f:
+            with open(yaml_file, "r", encoding="utf-8") as f:
                 study_data = yaml.safe_load(f)
 
             if not study_data:
@@ -305,27 +340,27 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
                 file_context_hash = None
 
                 # Check in model_context.context_hash
-                if 'model_context' in study_data and isinstance(study_data['model_context'], dict):
-                    file_context_hash = study_data['model_context'].get('context_hash')
+                if "model_context" in study_data and isinstance(study_data["model_context"], dict):
+                    file_context_hash = study_data["model_context"].get("context_hash")
 
                 # Also check top-level context_hash (some schemas have it there)
-                if not file_context_hash and 'context_hash' in study_data:
-                    file_context_hash = study_data['context_hash']
+                if not file_context_hash and "context_hash" in study_data:
+                    file_context_hash = study_data["context_hash"]
 
                 # Skip if context hash doesn't match
                 if file_context_hash and file_context_hash != context_hash:
                     continue
 
             # Extract raw source fields (handle multiple schema variants)
-            if 'data_sources' in study_data and study_data['data_sources']:
-                all_sources.append(('data_sources', study_data['data_sources']))
+            if "data_sources" in study_data and study_data["data_sources"]:
+                all_sources.append(("data_sources", study_data["data_sources"]))
 
-            if 'methodological_sources' in study_data and study_data['methodological_sources']:
-                all_sources.append(('methodological_sources', study_data['methodological_sources']))
+            if "methodological_sources" in study_data and study_data["methodological_sources"]:
+                all_sources.append(("methodological_sources", study_data["methodological_sources"]))
 
             # Check v1 schema: sources (fallback)
-            if 'sources' in study_data and study_data['sources']:
-                all_sources.append(('sources', study_data['sources']))
+            if "sources" in study_data and study_data["sources"]:
+                all_sources.append(("sources", study_data["sources"]))
 
         except Exception as e:
             print(f"Warning: Could not process {yaml_file}: {e}")
@@ -345,7 +380,12 @@ def collect_existing_studies(cancer_type: str, parameter_name: str,
         output.append(f"### {source_type}")
         output.append("```yaml")
         import yaml as yaml_lib
-        output.append(yaml_lib.dump(source_data, default_flow_style=False, sort_keys=False, allow_unicode=True).strip())
+
+        output.append(
+            yaml_lib.dump(
+                source_data, default_flow_style=False, sort_keys=False, allow_unicode=True
+            ).strip()
+        )
         output.append("```")
         output.append("")
 

@@ -19,12 +19,12 @@ from typing import Dict, Tuple, Optional
 def extract_json_from_content(content: str) -> Optional[str]:
     """Extract JSON from LLM response (handles markdown code blocks)."""
     # Try JSON code block
-    match = re.search(r'```json\n(.*?)\n```', content, re.DOTALL)
+    match = re.search(r"```json\n(.*?)\n```", content, re.DOTALL)
     if match:
         return match.group(1)
 
     # Try plain code block
-    match = re.search(r'```\n(\{.*?\})\n```', content, re.DOTALL)
+    match = re.search(r"```\n(\{.*?\})\n```", content, re.DOTALL)
     if match:
         return match.group(1)
 
@@ -43,29 +43,29 @@ def load_metadata(input_csv: Path, batch_type: str) -> Dict:
     if not input_csv or not input_csv.exists():
         return metadata
 
-    with open(input_csv, 'r', encoding='utf-8') as f:
+    with open(input_csv, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if batch_type == 'test_statistic':
-                key = row['test_statistic_id']
+            if batch_type == "test_statistic":
+                key = row["test_statistic_id"]
                 metadata[key] = {
-                    'test_statistic_id': key,
-                    'cancer_type': row['cancer_type'],
-                    'context_hash': row.get('context_hash', ''),
-                    'model_context': row.get('model_context', ''),
-                    'scenario_context': row.get('scenario_context', ''),
-                    'required_species': row.get('required_species', ''),
-                    'derived_species_description': row.get('derived_species_description', '')
+                    "test_statistic_id": key,
+                    "cancer_type": row["cancer_type"],
+                    "context_hash": row.get("context_hash", ""),
+                    "model_context": row.get("model_context", ""),
+                    "scenario_context": row.get("scenario_context", ""),
+                    "required_species": row.get("required_species", ""),
+                    "derived_species_description": row.get("derived_species_description", ""),
                 }
             else:  # parameter
-                key = (row['cancer_type'], row['parameter_name'])
+                key = (row["cancer_type"], row["parameter_name"])
                 metadata[key] = {
-                    'parameter_name': row['parameter_name'],
-                    'parameter_units': row.get('parameter_units', ''),
-                    'parameter_definition': row.get('parameter_description', ''),
-                    'cancer_type': row['cancer_type'],
-                    'model_context': row.get('model_context', ''),
-                    'context_hash': row.get('definition_hash', '')
+                    "parameter_name": row["parameter_name"],
+                    "parameter_units": row.get("parameter_units", ""),
+                    "parameter_definition": row.get("parameter_description", ""),
+                    "cancer_type": row["cancer_type"],
+                    "model_context": row.get("model_context", ""),
+                    "context_hash": row.get("definition_hash", ""),
                 }
 
     return metadata
@@ -80,54 +80,55 @@ def find_next_derivation_number(directory: Path, base_pattern: str) -> int:
 
     max_num = 0
     for file in existing:
-        match = re.search(r'_deriv(\d+)\.yaml$', file.name)
+        match = re.search(r"_deriv(\d+)\.yaml$", file.name)
         if match:
             max_num = max(max_num, int(match.group(1)))
 
     return max_num + 1
 
 
-def generate_derivation_id(param_name: str, cancer_type: str,
-                          context_hash: str, deriv_num: int) -> str:
+def generate_derivation_id(
+    param_name: str, cancer_type: str, context_hash: str, deriv_num: int
+) -> str:
     """Generate derivation_id: {param}_{cancer}_{context_hash}_deriv{num}"""
     return f"{param_name}_{cancer_type}_{context_hash}_deriv{deriv_num:03d}"
 
 
 def add_header_fields(json_data: dict, metadata: dict, batch_type: str) -> dict:
     """Add header fields to JSON data based on batch type."""
-    if batch_type == 'test_statistic':
+    if batch_type == "test_statistic":
         # Test statistics have different header structure
-        json_data['test_statistic_id'] = metadata['test_statistic_id']
-        json_data['cancer_type'] = metadata['cancer_type']
-        json_data['context_hash'] = metadata['context_hash']
-        json_data['model_context'] = metadata.get('model_context', '')
-        json_data['scenario_context'] = metadata.get('scenario_context', '')
-        json_data['schema_version'] = 'v2'
+        json_data["test_statistic_id"] = metadata["test_statistic_id"]
+        json_data["cancer_type"] = metadata["cancer_type"]
+        json_data["context_hash"] = metadata["context_hash"]
+        json_data["model_context"] = metadata.get("model_context", "")
+        json_data["scenario_context"] = metadata.get("scenario_context", "")
+        json_data["schema_version"] = "v2"
 
     else:  # parameter
-        param_name = metadata['parameter_name']
-        cancer_type = metadata['cancer_type']
-        context_hash = metadata['context_hash']
+        param_name = metadata["parameter_name"]
+        cancer_type = metadata["cancer_type"]
+        context_hash = metadata["context_hash"]
 
-        json_data['parameter_name'] = param_name
-        json_data['parameter_units'] = metadata['parameter_units']
-        json_data['parameter_definition'] = metadata['parameter_definition']
-        json_data['cancer_type'] = cancer_type
+        json_data["parameter_name"] = param_name
+        json_data["parameter_units"] = metadata["parameter_units"]
+        json_data["parameter_definition"] = metadata["parameter_definition"]
+        json_data["cancer_type"] = cancer_type
 
         # Add tags
-        tags = ['ai-generated']
-        json_data['tags'] = tags
+        tags = ["ai-generated"]
+        json_data["tags"] = tags
 
-        json_data['context_hash'] = context_hash
-        json_data['schema_version'] = 'v3'
+        json_data["context_hash"] = context_hash
+        json_data["schema_version"] = "v3"
 
         # Parse model_context if it's a JSON string
-        model_context = metadata.get('model_context', '')
+        model_context = metadata.get("model_context", "")
         if model_context:
             try:
-                json_data['model_context'] = json.loads(model_context)
+                json_data["model_context"] = json.loads(model_context)
             except Exception:
-                json_data['model_context'] = model_context
+                json_data["model_context"] = model_context
 
     return json_data
 
@@ -142,20 +143,23 @@ def move_field_to_top(data: dict, field_name: str) -> dict:
 
 def convert_to_yaml(json_data: dict) -> str:
     """Convert JSON to YAML with proper formatting."""
+
     # Custom representer for multi-line strings
     def str_representer(dumper, data):
-        if '\n' in data:
-            return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
-        return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+        if "\n" in data:
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
     yaml.add_representer(str, str_representer, Dumper=yaml.SafeDumper)
 
-    return yaml.dump(json_data,
-                    Dumper=yaml.SafeDumper,
-                    default_flow_style=False,
-                    allow_unicode=True,
-                    sort_keys=False,
-                    width=1000)
+    return yaml.dump(
+        json_data,
+        Dumper=yaml.SafeDumper,
+        default_flow_style=False,
+        allow_unicode=True,
+        sort_keys=False,
+        width=1000,
+    )
 
 
 def parse_custom_id(custom_id: str) -> Tuple[str, str, str]:
@@ -164,20 +168,20 @@ def parse_custom_id(custom_id: str) -> Tuple[str, str, str]:
 
     Returns: (batch_type, cancer_type, identifier)
     """
-    parts = custom_id.split('_')
+    parts = custom_id.split("_")
 
-    if parts[0] == 'fix':
+    if parts[0] == "fix":
         # fix_FILENAME (validation fix batch)
         # Return the original filename as identifier
-        return ('validation_fix', '', '_'.join(parts[1:]))
+        return ("validation_fix", "", "_".join(parts[1:]))
 
-    elif parts[0] == 'test' and parts[1] == 'stat':
+    elif parts[0] == "test" and parts[1] == "stat":
         # test_stat_TEST_STATISTIC_ID_INDEX
-        return ('test_statistic', '', '_'.join(parts[2:-1]))
+        return ("test_statistic", "", "_".join(parts[2:-1]))
 
     else:
         # CANCER_PARAMETER_INDEX (regular parameter extraction)
-        return ('parameter', parts[0], '_'.join(parts[1:-1]))
+        return ("parameter", parts[0], "_".join(parts[1:-1]))
 
 
 def process_results(results_file: Path, output_dir: Path, input_csv: Path = None):
@@ -185,14 +189,14 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Detect batch type from first line
-    with open(results_file, 'r') as f:
+    with open(results_file, "r") as f:
         first_line = f.readline()
         first_result = json.loads(first_line)
-        custom_id = first_result['custom_id']
+        custom_id = first_result["custom_id"]
         batch_type, _, _ = parse_custom_id(custom_id)
 
     # Load metadata (skip for validation fixes)
-    if batch_type == 'validation_fix':
+    if batch_type == "validation_fix":
         metadata = {}
     else:
         metadata = load_metadata(input_csv, batch_type)
@@ -200,19 +204,19 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
             print(f"Warning: No metadata loaded from {input_csv}")
 
     # Process each result
-    with open(results_file, 'r') as f:
+    with open(results_file, "r") as f:
         for line in f:
             result = json.loads(line)
-            custom_id = result['custom_id']
+            custom_id = result["custom_id"]
 
             # Parse custom_id
             batch_type, cancer_type, identifier = parse_custom_id(custom_id)
 
             # Get response content
             try:
-                output_items = result['response']['body']['output']
-                message_item = next(item for item in output_items if item.get('type') == 'message')
-                content = message_item['content'][0]['text']
+                output_items = result["response"]["body"]["output"]
+                message_item = next(item for item in output_items if item.get("type") == "message")
+                content = message_item["content"][0]["text"]
             except (KeyError, StopIteration):
                 print(f"Error: Could not extract content for {custom_id}")
                 continue
@@ -230,7 +234,7 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 continue
 
             # Handle validation fixes specially
-            if batch_type == 'validation_fix':
+            if batch_type == "validation_fix":
                 # For validation fixes, load original YAML to get headers
                 original_filename = f"{identifier}.yaml"
                 original_path = output_dir / original_filename
@@ -240,15 +244,23 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                     continue
 
                 # Load original YAML to get headers
-                with open(original_path, 'r', encoding='utf-8') as f:
+                with open(original_path, "r", encoding="utf-8") as f:
                     original_yaml = yaml.safe_load(f.read())
 
                 # Extract header fields from original
                 header_fields = [
-                    'schema_version', 'parameter_name', 'parameter_units',
-                    'parameter_definition', 'cancer_type', 'tags',
-                    'derivation_id', 'derivation_timestamp', 'model_context',
-                    'context_hash', 'test_statistic_id', 'scenario_context'
+                    "schema_version",
+                    "parameter_name",
+                    "parameter_units",
+                    "parameter_definition",
+                    "cancer_type",
+                    "tags",
+                    "derivation_id",
+                    "derivation_timestamp",
+                    "model_context",
+                    "context_hash",
+                    "test_statistic_id",
+                    "scenario_context",
                 ]
 
                 # Preserve original headers
@@ -265,10 +277,10 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
 
             else:
                 # Look up metadata for extraction workflows
-                if batch_type == 'test_statistic':
+                if batch_type == "test_statistic":
                     meta = metadata.get(identifier)
                     if meta:
-                        cancer_type = meta['cancer_type']
+                        cancer_type = meta["cancer_type"]
                 else:
                     meta = metadata.get((cancer_type, identifier))
 
@@ -280,20 +292,20 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 json_data = add_header_fields(json_data, meta, batch_type)
 
             # Generate filename with derivation numbering (for extraction workflows only)
-            if batch_type != 'validation_fix':
-                if batch_type == 'test_statistic':
+            if batch_type != "validation_fix":
+                if batch_type == "test_statistic":
                     # test_stat_id_cancer_hash_deriv001.yaml
                     base = f"{identifier}_{cancer_type}_{meta['context_hash']}"
                     deriv_num = find_next_derivation_number(output_dir, base)
                     filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
                     # Move header fields to top (reverse order since we prepend)
-                    json_data = move_field_to_top(json_data, 'scenario_context')
-                    json_data = move_field_to_top(json_data, 'model_context')
-                    json_data = move_field_to_top(json_data, 'context_hash')
-                    json_data = move_field_to_top(json_data, 'cancer_type')
-                    json_data = move_field_to_top(json_data, 'test_statistic_id')
-                    json_data = move_field_to_top(json_data, 'schema_version')
+                    json_data = move_field_to_top(json_data, "scenario_context")
+                    json_data = move_field_to_top(json_data, "model_context")
+                    json_data = move_field_to_top(json_data, "context_hash")
+                    json_data = move_field_to_top(json_data, "cancer_type")
+                    json_data = move_field_to_top(json_data, "test_statistic_id")
+                    json_data = move_field_to_top(json_data, "schema_version")
 
                 else:  # parameter
                     # param_cancer_hash_deriv001.yaml (v3 schema)
@@ -302,22 +314,22 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
 
                     # Generate derivation_id and add to JSON
                     derivation_id = generate_derivation_id(
-                        identifier, cancer_type, meta['context_hash'], deriv_num
+                        identifier, cancer_type, meta["context_hash"], deriv_num
                     )
-                    json_data['derivation_id'] = derivation_id
-                    json_data['derivation_timestamp'] = datetime.now().isoformat()
+                    json_data["derivation_id"] = derivation_id
+                    json_data["derivation_timestamp"] = datetime.now().isoformat()
 
                     # Move all header fields to top in correct order (reverse order since we prepend)
-                    json_data = move_field_to_top(json_data, 'context_hash')
-                    json_data = move_field_to_top(json_data, 'model_context')
-                    json_data = move_field_to_top(json_data, 'derivation_timestamp')
-                    json_data = move_field_to_top(json_data, 'derivation_id')
-                    json_data = move_field_to_top(json_data, 'tags')
-                    json_data = move_field_to_top(json_data, 'cancer_type')
-                    json_data = move_field_to_top(json_data, 'parameter_definition')
-                    json_data = move_field_to_top(json_data, 'parameter_units')
-                    json_data = move_field_to_top(json_data, 'parameter_name')
-                    json_data = move_field_to_top(json_data, 'schema_version')
+                    json_data = move_field_to_top(json_data, "context_hash")
+                    json_data = move_field_to_top(json_data, "model_context")
+                    json_data = move_field_to_top(json_data, "derivation_timestamp")
+                    json_data = move_field_to_top(json_data, "derivation_id")
+                    json_data = move_field_to_top(json_data, "tags")
+                    json_data = move_field_to_top(json_data, "cancer_type")
+                    json_data = move_field_to_top(json_data, "parameter_definition")
+                    json_data = move_field_to_top(json_data, "parameter_units")
+                    json_data = move_field_to_top(json_data, "parameter_name")
+                    json_data = move_field_to_top(json_data, "schema_version")
 
                     filename = f"{derivation_id}.yaml"
 
@@ -326,7 +338,7 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
 
             # Write file
             output_path = output_dir / filename
-            with open(output_path, 'w', encoding='utf-8') as f:
+            with open(output_path, "w", encoding="utf-8") as f:
                 f.write(yaml_content)
 
             print(f"Saved: {filename}")
@@ -338,7 +350,9 @@ def main():
         print()
         print("  results.jsonl - Batch results file")
         print("  output_dir    - Output directory for YAML files")
-        print("  input.csv     - Input CSV with metadata (optional, not needed for validation fixes)")
+        print(
+            "  input.csv     - Input CSV with metadata (optional, not needed for validation fixes)"
+        )
         sys.exit(1)
 
     results_file = Path(sys.argv[1])

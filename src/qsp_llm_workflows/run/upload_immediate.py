@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from openai import AsyncOpenAI
 
+
 def load_api_key():
     """Load API key from .env file."""
     env_file = Path(".env")
@@ -19,65 +20,63 @@ def load_api_key():
                     return line.split("=", 1)[1].strip()
     raise ValueError("OPENAI_API_KEY not found in .env file")
 
+
 async def process_request(client, request, index, total):
     """Process a single request asynchronously."""
     print(f"Starting {index}/{total}: {request['custom_id']}")
-    
+
     # Create synchronous response
     response = await client.responses.create(
-        model=request['body']['model'],
-        input=request['body']['input'],
-        reasoning=request['body']['reasoning'],
+        model=request["body"]["model"],
+        input=request["body"]["input"],
+        reasoning=request["body"]["reasoning"],
         tools=[{"type": "web_search"}],
-        background=False  # This makes it synchronous
+        background=False,  # This makes it synchronous
     )
-    
+
     print(f"Completed {index}/{total}: {request['custom_id']}")
-    
+
     # Format result to match batch output format
     result = {
-        "custom_id": request['custom_id'],
-        "response": {
-            "status_code": 200,
-            "request_id": response.id,
-            "body": response.model_dump()
-        }
+        "custom_id": request["custom_id"],
+        "response": {"status_code": 200, "request_id": response.id, "body": response.model_dump()},
     }
     return result
+
 
 async def main():
     if len(sys.argv) != 2:
         print("Usage: upload_immediate.py requests.jsonl")
         sys.exit(1)
-    
+
     jsonl_file = Path(sys.argv[1])
     client = AsyncOpenAI(api_key=load_api_key())
-    
+
     # Read all requests
     requests = []
-    with open(jsonl_file, 'r', encoding='utf-8') as f:
+    with open(jsonl_file, "r", encoding="utf-8") as f:
         for line in f:
             requests.append(json.loads(line))
-    
+
     print(f"Processing {len(requests)} requests concurrently...")
-    
+
     # Create tasks for all requests
     tasks = [
-        process_request(client, request, i+1, len(requests)) 
-        for i, request in enumerate(requests)
+        process_request(client, request, i + 1, len(requests)) for i, request in enumerate(requests)
     ]
-    
+
     # Execute all requests concurrently
     results = await asyncio.gather(*tasks)
-    
+
     # Save results to file
     output_file = jsonl_file.parent / f"{jsonl_file.stem}_immediate_results.jsonl"
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         for result in results:
-            f.write(json.dumps(result) + '\n')
-    
+            f.write(json.dumps(result) + "\n")
+
     print(f"Results saved to: {output_file}")
     print(f"Completed {len(results)} requests")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

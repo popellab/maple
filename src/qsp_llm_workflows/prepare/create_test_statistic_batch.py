@@ -39,26 +39,27 @@ def main():
     parser = argparse.ArgumentParser(
         description="Create test statistic batch requests from CSV input",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
+        epilog=__doc__,
     )
 
     parser.add_argument(
         "input_csv",
         type=Path,
-        help="CSV file with test_statistic_id, model_context, scenario_context, required_species, and derived_species_description columns"
+        help="CSV file with test_statistic_id, model_context, scenario_context, required_species, and derived_species_description columns",
     )
 
     parser.add_argument(
         "model_context_csv",
         type=Path,
         nargs="?",
-        help="Optional CSV file with model variable information"
+        help="Optional CSV file with model variable information",
     )
 
     parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=Path,
-        help="Output path for batch requests JSONL file (default: batch_jobs/test_statistic_requests.jsonl)"
+        help="Output path for batch requests JSONL file (default: batch_jobs/test_statistic_requests.jsonl)",
     )
 
     args = parser.parse_args()
@@ -88,7 +89,7 @@ def main():
         output_path = creator.run(
             output_path=args.output,
             input_csv=args.input_csv,
-            model_context_csv=args.model_context_csv
+            model_context_csv=args.model_context_csv,
         )
 
         print(f"✓ Test statistic batch requests created: {output_path}")

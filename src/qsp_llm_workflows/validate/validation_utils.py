@@ -1,6 +1,7 @@
 """
 Utility functions for validation scripts.
 """
+
 import yaml
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -18,7 +19,7 @@ def load_yaml_file(filepath: str) -> Optional[Dict[str, Any]]:
         Dictionary of YAML contents, or None if file cannot be loaded
     """
     try:
-        with open(filepath, 'r') as f:
+        with open(filepath, "r") as f:
             return yaml.safe_load(f)
     except Exception:
         return None
@@ -41,11 +42,7 @@ def load_yaml_directory(directory: str, pattern: str = "*.yaml") -> List[Dict[st
     for filepath in dir_path.glob(pattern):
         data = load_yaml_file(str(filepath))
         if data is not None:
-            results.append({
-                'filepath': str(filepath),
-                'filename': filepath.name,
-                'data': data
-            })
+            results.append({"filepath": str(filepath), "filename": filepath.name, "data": data})
 
     return results
 
@@ -63,10 +60,10 @@ def extract_parameter_name_from_filename(filename: str) -> str:
         Parameter name
     """
     # Remove .yaml extension
-    base = filename.replace('.yaml', '')
+    base = filename.replace(".yaml", "")
     # Split on underscore and take first part
-    parts = base.split('_')
-    return parts[0] if parts else ''
+    parts = base.split("_")
+    return parts[0] if parts else ""
 
 
 def parse_numeric_value(value: Any) -> Optional[float]:
@@ -107,26 +104,26 @@ class ValidationReport:
 
     def add_pass(self, item: str, details: str = ""):
         """Add a passing result."""
-        self.passed.append({'item': item, 'details': details})
+        self.passed.append({"item": item, "details": details})
 
     def add_fail(self, item: str, reason: str):
         """Add a failing result."""
-        self.failed.append({'item': item, 'reason': reason})
+        self.failed.append({"item": item, "reason": reason})
 
     def add_warning(self, item: str, message: str):
         """Add a warning."""
-        self.warnings.append({'item': item, 'message': message})
+        self.warnings.append({"item": item, "message": message})
 
     def get_summary(self) -> Dict[str, Any]:
         """Get summary statistics."""
         total = len(self.passed) + len(self.failed)
         return {
-            'name': self.name,
-            'total': total,
-            'passed': len(self.passed),
-            'failed': len(self.failed),
-            'warnings': len(self.warnings),
-            'pass_rate': len(self.passed) / total if total > 0 else 0.0
+            "name": self.name,
+            "total": total,
+            "passed": len(self.passed),
+            "failed": len(self.failed),
+            "warnings": len(self.warnings),
+            "pass_rate": len(self.passed) / total if total > 0 else 0.0,
         }
 
     def print_summary(self):
@@ -143,7 +140,7 @@ class ValidationReport:
         if self.passed:
             print("\nPassed Items:")
             for item in self.passed:  # Show all passed items
-                details = item.get('details', '')
+                details = item.get("details", "")
                 if details:
                     print(f"  ✓ {item['item']}: {details}")
                 else:
@@ -152,10 +149,10 @@ class ValidationReport:
         if self.failed:
             print("\nFailed Items:")
             for item in self.failed[:10]:  # Show first 10
-                reason = item['reason']
+                reason = item["reason"]
                 # If reason contains multiple errors (semicolon-separated), format as sub-bullets
-                if '; ' in reason and not reason.startswith('\n'):
-                    errors = reason.split('; ')
+                if "; " in reason and not reason.startswith("\n"):
+                    errors = reason.split("; ")
                     print(f"  - {item['item']}:")
                     for error in errors:
                         print(f"      {error}")
@@ -169,10 +166,10 @@ class ValidationReport:
         if self.warnings:
             print("\nWarnings:")
             for item in self.warnings[:10]:  # Show first 10
-                message = item['message']
+                message = item["message"]
                 # If message contains multiple warnings (semicolon-separated), format as sub-bullets
-                if '; ' in message and not message.startswith('\n'):
-                    messages = message.split('; ')
+                if "; " in message and not message.startswith("\n"):
+                    messages = message.split("; ")
                     print(f"  - {item['item']}:")
                     for msg in messages:
                         print(f"      {msg}")
@@ -185,10 +182,10 @@ class ValidationReport:
     def save_to_json(self, output_path: str):
         """Save full report to JSON file."""
         report = {
-            'summary': self.get_summary(),
-            'passed': self.passed,
-            'failed': self.failed,
-            'warnings': self.warnings
+            "summary": self.get_summary(),
+            "passed": self.passed,
+            "failed": self.failed,
+            "warnings": self.warnings,
         }
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(report, f, indent=2)
