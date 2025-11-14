@@ -27,8 +27,8 @@ This workflow automates LLM-based parameter extraction from scientific papers. I
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  You run ONE command:                                       │
-│  python scripts/run_extraction_workflow.py \                │
-│    input.csv --type parameter                               │
+│  qsp-extract input.csv --type parameter                     │
+│                                                              │
 └─────────────────────────────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -44,8 +44,8 @@ This workflow automates LLM-based parameter extraction from scientific papers. I
 │  You run validation manually:                               │
 │  cd ../qsp-metadata-storage                                 │
 │  git checkout review/batch-parameter-2025-10-27-abc123      │
-│  python ../qsp-llm-workflows/scripts/validate/\             │
-│    run_all_validations.py parameter_estimates               │
+│  qsp-validate parameter_estimates                           │
+│                                                              │
 └─────────────────────────────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -198,7 +198,7 @@ Replace `sk-your-key-here` with your actual API key.
 ```bash
 # Make sure you're in qsp-llm-workflows directory
 # Make sure virtual environment is activated (venv)
-python scripts/run_extraction_workflow.py --help
+qsp-extract --help
 ```
 
 You should see help text without errors. If so, you're ready to run extractions!
@@ -218,19 +218,19 @@ source venv/bin/activate
 
 # 3. Try an example workflow
 # First export model definitions from MATLAB model (wherever that is located)
-python scripts/export_model_definitions.py \
+qsp-export-model \
   --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m \
   --output batch_jobs/input_data/model_definitions.json
 
 # Then enrich the simple example CSV
-python scripts/prepare/enrich_parameter_csv.py \
+qsp-enrich-csv parameter \
   docs/example_parameter_input.csv \
   batch_jobs/input_data/model_definitions.json \
   PDAC \
   -o batch_jobs/input_data/example_enriched.csv
 
 # Finally run extraction
-python scripts/run_extraction_workflow.py \
+qsp-extract \
   batch_jobs/input_data/example_enriched.csv \
   --type parameter \
   --immediate
@@ -271,7 +271,7 @@ Then enrich it with model definitions:
 
 ```bash
 # Enrich simple CSV with model definitions
-python scripts/prepare/enrich_parameter_csv.py \
+qsp-enrich-csv parameter \
   simple_parameter_input.csv \
   model_definitions.json \
   PDAC \
@@ -284,7 +284,7 @@ Model definitions are exported from MATLAB model files using the export script:
 
 ```bash
 # From qsp-llm-workflows repository:
-python scripts/export_model_definitions.py \
+qsp-export-model \
   --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m \
   --output batch_jobs/input_data/model_definitions.json
 ```
@@ -330,7 +330,7 @@ Then enrich it with model and scenario context:
 
 ```bash
 # Enrich partial CSV with context
-python scripts/prepare/enrich_test_statistic_csv.py \
+qsp-enrich-csv test_statistic \
   partial_test_stats.csv \
   model_context.txt \
   baseline_no_treatment.yaml \
@@ -394,7 +394,7 @@ qsp-llm-workflows/
 Then reference them in commands:
 
 ```bash
-python scripts/run_extraction_workflow.py \
+qsp-extract \
   batch_jobs/input_data/parameter_input.csv \
   --type parameter
 ```
@@ -406,7 +406,7 @@ python scripts/run_extraction_workflow.py \
 ### Basic Syntax
 
 ```bash
-python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [options]
+qsp-extract <input.csv> --type <workflow_type> [options]
 ```
 
 ### Workflow Types
@@ -432,20 +432,20 @@ python scripts/run_extraction_workflow.py <input.csv> --type <workflow_type> [op
 ```bash
 # Simple example with 4 parameters (good for testing - requires qspio-pdac)
 # Step 1: Enrich
-python scripts/prepare/enrich_parameter_csv.py \
+qsp-enrich-csv parameter \
   docs/example_parameter_input.csv \
   ../qspio-pdac/model_definitions.json \
   PDAC \
   -o batch_jobs/input_data/example_enriched.csv
 
 # Step 2: Extract (use --immediate for faster testing)
-python scripts/run_extraction_workflow.py \
+qsp-extract \
   batch_jobs/input_data/example_enriched.csv \
   --type parameter \
   --immediate
 
 # Production example with enriched CSV (77 parameters)
-python scripts/run_extraction_workflow.py \
+qsp-extract \
   scratch/pdac_parameters_modules_v2.csv \
   --type parameter \
   --timeout 7200
@@ -456,20 +456,20 @@ python scripts/run_extraction_workflow.py \
 ```bash
 # Simple example with 3 test statistics (good for testing - requires qspio-pdac)
 # Step 1: Enrich
-python scripts/prepare/enrich_test_statistic_csv.py \
+qsp-enrich-csv test_statistic \
   docs/example_test_statistic_input.csv \
   ../qspio-pdac/metadata/model/model_context.txt \
   ../qspio-pdac/projects/pdac_2025/scenarios/baseline_no_treatment.yaml \
   -o batch_jobs/input_data/example_enriched.csv
 
 # Step 2: Extract
-python scripts/run_extraction_workflow.py \
+qsp-extract \
   batch_jobs/input_data/example_enriched.csv \
   --type test_statistic \
   --immediate
 
 # Production example with enriched CSV
-python scripts/run_extraction_workflow.py \
+qsp-extract \
   scratch/test_statistic_input_baseline_no_treatment_24664d08.csv \
   --type test_statistic
 ```
@@ -480,7 +480,7 @@ python scripts/run_extraction_workflow.py \
 
 ```bash
 # Create review branch but don't push (review locally first)
-python scripts/run_extraction_workflow.py \
+qsp-extract \
   input.csv \
   --type parameter \
   --no-push
@@ -531,7 +531,7 @@ Next steps:
   1. cd ../qsp-metadata-storage
   2. git checkout review/batch-parameter-2025-10-27-abc123
   3. Manual high-level review: Open a few YAMLs, check derivation_explanation and assumptions
-  4. Run validation: python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_estimates
+  4. Run validation: qsp-validate parameter_estimates
   5. Manual snippet verification: Click DOI links, verify snippets with Ctrl+F
   6. Review detailed validation reports in output/validation/
   7. Move approved files to appropriate directories (reject bad ones)
@@ -580,7 +580,7 @@ See `scripts/validate/MANUAL_REVIEW_CHECKLIST.md` for the complete checklist.
 
 **If you find major issues at this stage:**
 - Consider discarding the results and re-running the extraction with improved prompts
-- Or use the validation fix workflow: `python scripts/run_validation_fix.py <workflow_type>`
+- Or use the validation fix workflow: `qsp-fix <workflow_type>`
 
 ### 3. Run Automated Validation Suite
 
@@ -588,10 +588,10 @@ After the manual review, run the automated validators:
 
 ```bash
 # For parameter estimates
-python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_estimates
+qsp-validate parameter_estimates
 
 # For test statistics
-python ../qsp-llm-workflows/scripts/validate/run_all_validations.py test_statistics
+qsp-validate test_statistics
 ```
 
 The validation suite will run all 6 validators and generate detailed reports in `output/validation/`.
@@ -752,8 +752,8 @@ which python3
 # If not found, install Python (Mac with Homebrew)
 brew install python3
 
-# Try using python3 explicitly in all commands
-python3 scripts/run_extraction_workflow.py input.csv --type parameter
+# Try using python3 explicitly to check installation
+python3 --version
 ```
 
 #### "No module named 'openai'" or similar import errors
@@ -853,7 +853,7 @@ ls -la  # Should see: scripts/, templates/, batch_jobs/, etc.
 **Solution 1 - Use immediate mode for faster processing:**
 ```bash
 # Process via Responses API (faster, but more expensive)
-python scripts/run_extraction_workflow.py input.csv \
+qsp-extract input.csv \
   --type parameter \
   --immediate
 ```
@@ -863,12 +863,12 @@ The `--immediate` flag bypasses the batch API and processes requests immediately
 **Solution 2 - Increase timeout for batch API:**
 ```bash
 # Increase timeout to 2 hours (7200 seconds)
-python scripts/run_extraction_workflow.py input.csv \
+qsp-extract input.csv \
   --type parameter \
   --timeout 7200
 
 # For very large batches, try 4 hours
-python scripts/run_extraction_workflow.py input.csv \
+qsp-extract input.csv \
   --type parameter \
   --timeout 14400
 ```
@@ -883,7 +883,7 @@ python scripts/run_extraction_workflow.py input.csv \
 1. Review the validation reports in `output/validation/` to understand what failed
 2. For files with errors, you can either:
    - Fix them manually
-   - Use the validation fix workflow: `python scripts/run_validation_fix.py <workflow_type>`
+   - Use the validation fix workflow: `qsp-fix <workflow_type>`
    - Delete and re-extract problematic files
 
 See CLAUDE.md for details on the validation fix workflow.
@@ -913,7 +913,7 @@ source venv/bin/activate
 ls parameter_input.csv
 
 # Run parameter extraction
-python scripts/run_extraction_workflow.py \
+qsp-extract \
   batch_jobs/input_data/parameter_input.csv \
   --type parameter
 

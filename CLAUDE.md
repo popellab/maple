@@ -19,7 +19,7 @@ All extracted metadata is stored in the central `qsp-metadata-storage` repositor
 ## Repository Organization
 
 **This repository (`qsp-llm-workflows`):**
-- General-purpose LLM workflow tools for parameter extraction
+- Installable Python package for QSP metadata extraction workflows
 - Reusable across any QSP model or disease area
 - Focus: Core extraction, validation, and storage workflows
 
@@ -33,14 +33,36 @@ All extracted metadata is stored in the central `qsp-metadata-storage` repositor
 - Includes onboarding guide, presentation, and paper outline
 - Not checked into repository to keep codebase focused on reusable tools
 
-## Key Commands
+## Installation
 
-### Python Environment Setup
-**IMPORTANT:** Always activate the virtual environment before running Python scripts:
+### For Development (Recommended)
 
 ```bash
-source venv/bin/activate
+# Clone the repository
+git clone https://github.com/yourorg/qsp-llm-workflows.git
+cd qsp-llm-workflows
+
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install in editable mode
+pip install -e .
 ```
+
+### For End Users
+
+```bash
+# Install directly from GitHub
+pip install git+https://github.com/yourorg/qsp-llm-workflows.git
+
+# Or install from PyPI (if published)
+pip install qsp-llm-workflows
+```
+
+After installation, CLI commands (`qsp-extract`, `qsp-validate`, etc.) are available system-wide.
+
+## Key Commands
 
 ### CSV Preparation (Step 1)
 
@@ -58,7 +80,7 @@ k_C_death
 **Export model definitions** (from model MATLAB file):
 ```bash
 # Export from MATLAB model to JSON
-python scripts/export_model_definitions.py \
+qsp-export-model \
   --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m \
   --output batch_jobs/input_data/model_definitions.json
 ```
@@ -66,7 +88,7 @@ python scripts/export_model_definitions.py \
 **Enrich with model definitions**:
 ```bash
 # Enrich simple CSV with model definitions
-python scripts/prepare/enrich_parameter_csv.py \
+qsp-enrich-csv parameter \
   simple_input.csv \
   batch_jobs/input_data/model_definitions.json \
   PDAC \
@@ -89,7 +111,7 @@ tumor_volume_day14,V_T.C,Tumor volume in mm³ at 14 days
 Enrich with model and scenario context:
 ```bash
 # Enrich partial CSV with model and scenario context
-python scripts/prepare/enrich_test_statistic_csv.py \
+qsp-enrich-csv test_statistic \
   partial_test_stats.csv \
   model_context.txt \
   baseline_no_treatment.yaml \
@@ -101,7 +123,7 @@ This creates an enriched CSV with:
 - `model_context`, `scenario_context`
 - `required_species`, `derived_species_description`
 
-**Note:** Model definitions are exported from MATLAB model files using `scripts/export_model_definitions.py`. Scenario context files are stored in model-specific repositories (e.g., `qspio-pdac/scenarios/`).
+**Note:** Model definitions are exported from MATLAB model files. Scenario context files are stored in model-specific repositories (e.g., `qspio-pdac/scenarios/`).
 
 ### Automated Workflow (Step 2)
 
@@ -109,19 +131,19 @@ This creates an enriched CSV with:
 
 ```bash
 # Parameter extraction (complete pipeline)
-python scripts/run_extraction_workflow.py input.csv --type parameter
+qsp-extract input.csv --type parameter
 
 # Test statistics
-python scripts/run_extraction_workflow.py test_stats.csv --type test_statistic
+qsp-extract test_stats.csv --type test_statistic
 
 # With custom timeout (default: 3600s)
-python scripts/run_extraction_workflow.py input.csv --type parameter --timeout 7200
+qsp-extract input.csv --type parameter --timeout 7200
 
 # Use immediate mode for faster processing (via Responses API)
-python scripts/run_extraction_workflow.py input.csv --type parameter --immediate
+qsp-extract input.csv --type parameter --immediate
 
 # Create branch locally without pushing
-python scripts/run_extraction_workflow.py input.csv --type parameter --no-push
+qsp-extract input.csv --type parameter --no-push
 ```
 
 **What the automated workflow does:**
@@ -136,7 +158,7 @@ python scripts/run_extraction_workflow.py input.csv --type parameter --no-push
 ```bash
 cd ../qsp-metadata-storage
 git checkout review/batch-parameter-2025-10-27-abc123
-python ../qsp-llm-workflows/scripts/validate/run_all_validations.py parameter_estimates
+qsp-validate parameter_estimates
 ```
 
 See `docs/automated_workflow.md` for complete documentation.
@@ -147,17 +169,17 @@ See `docs/automated_workflow.md` for complete documentation.
 
 ```bash
 # Run validation first
-python scripts/validate/run_all_validations.py test_statistics
+qsp-validate test_statistics
 
-# If failures detected, run fix workflow (automatic prompt, or run manually)
-python scripts/run_validation_fix.py test_statistics --immediate
+# If failures detected, run fix workflow
+qsp-fix test_statistics --immediate
 
 # For parameter estimates
-python scripts/validate/run_all_validations.py parameter_estimates
-python scripts/run_validation_fix.py parameter_estimates --immediate
+qsp-validate parameter_estimates
+qsp-fix parameter_estimates --immediate
 
 # With custom timeout for Batch API (default: 3600s)
-python scripts/run_validation_fix.py test_statistics --timeout 7200
+qsp-fix test_statistics --timeout 7200
 ```
 
 **What the validation fix workflow does:**
@@ -171,7 +193,7 @@ python scripts/run_validation_fix.py test_statistics --timeout 7200
 **Important notes:**
 - Original files are backed up in git history before overwriting
 - Single fix attempt per run (prevents wasting API calls on unfixable errors)
-- After fixes complete, re-run `run_all_validations.py` to verify
+- After fixes complete, re-run `qsp-validate` to verify
 - Manual review recommended for persistent failures
 - **Use `--immediate` flag for faster processing** (good for testing, batch API can take up to 24 hours)
 
@@ -184,7 +206,7 @@ python scripts/run_validation_fix.py test_statistics --timeout 7200
 
 ### Validation Suite
 
-The automated validation suite (`run_all_validations.py`) includes 8 validators:
+The automated validation suite includes 8 validators:
 
 1. **Schema Compliance** - YAML structure matches template
 2. **Code Execution** - R/Python code runs without errors
@@ -220,186 +242,188 @@ validation:
   validated_at: '2025-11-03T10:30:00'
 ```
 
-### Manual Workflow (For Reference)
+### Other CLI Commands
 
-For fine-grained control, you can run individual steps:
-
-**Parameter Extraction:**
 ```bash
-python scripts/prepare/create_parameter_batch.py input.csv
-python scripts/run/upload_batch.py batch_jobs/parameter_requests.jsonl
-python scripts/run/batch_monitor.py batch_<id>
-python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
-  ../qsp-metadata-storage/parameter_estimates input.csv "" templates/parameter_metadata_template_v3.yaml
+# Monitor batch job progress
+qsp-batch-monitor batch_abc123
+
+# Export model definitions
+qsp-export-model --matlab-model model.m --output defs.json
 ```
 
-**Test Statistics:**
-```bash
-python scripts/prepare/create_test_statistic_batch.py input.csv
-python scripts/run/upload_batch.py batch_jobs/test_statistic_requests.jsonl
-python scripts/run/batch_monitor.py batch_<id>
-python scripts/process/unpack_results.py batch_jobs/batch_<id>_results.jsonl \
-  ../qsp-metadata-storage/test_statistics input.csv "" templates/test_statistic_template_v2.yaml
-# Aggregate distributions
-python ../qspio-pdac/metadata/aggregate_test_statistics.py input.csv \
-  ../qsp-metadata-storage/test_statistics ../qsp-metadata-storage/scratch/
+## Package Structure
+
+This repository is organized as an installable Python package:
+
 ```
-
-### Script Organization
-
-Scripts are organized by workflow stage:
-
-**Prepare** (`scripts/prepare/`): CSV enrichment and batch request creation
-- **CSV Enrichment (Step 1):**
-  - `enrich_parameter_csv.py`: Enrich simple parameter CSV with model definitions
-  - `enrich_test_statistic_csv.py`: Enrich partial test statistic CSV with context
-- **Batch Creation (Step 2):**
-  - `create_parameter_batch.py`: Parameter extraction batch requests
-  - `create_test_statistic_batch.py`: Test statistic batch requests
-
-**Run** (`scripts/run/`): Execute batches
-- `upload_batch.py`: Upload to OpenAI batch API (slower, handles large volumes)
-- `upload_immediate.py`: Process via Responses API (faster feedback, testing)
-- `batch_monitor.py`: Monitor batch progress and download results
-
-**Automated Workflows**:
-- `run_extraction_workflow.py`: Complete automated extraction pipeline (create → upload → monitor → validate → unpack → git commit/push)
-
-**Process** (`scripts/process/`): Extract results
-- `unpack_results.py`: Extract JSON from batch results, convert to YAML
-
-**Lib** (`scripts/lib/`): Core libraries
-- `batch_creator.py`: Base classes for batch creation
-- `parameter_utils.py`: Parameter processing utilities
-- `workflow_orchestrator.py`: Automated workflow orchestration
-- `prompt_assembly.py`: Modular prompt assembly engine
-- `schema_version_detector.py`: Schema version detection and file scanning
-
-**Debug** (`scripts/debug/`): Debug and inspection tools
-- `inspect_jsonl.py`: Examine batch request/response files
-- `extract_prompt.py`: Extract prompts from batch requests
-- `pretty_print_csv.py`: Format CSV output
-
-**Manuscript** (`docs-manuscript/`): Paper collaboration materials (gitignored)
-- `COLLABORATOR_ONBOARDING.md`: Comprehensive onboarding guide for paper collaborators
-- `presentation.tex`: Beamer presentation introducing the project
-- `paper_outline_standardization.md`: Complete paper outline
-- Note: These materials are shared via email, not checked into repository
+qsp-llm-workflows/
+├── src/
+│   └── qsp_llm_workflows/           # Main package
+│       ├── __init__.py              # Package version, public API
+│       │
+│       ├── core/                     # Core libraries
+│       │   ├── batch_creator.py     # Base classes for batch creation
+│       │   ├── prompt_assembly.py   # Modular prompt assembly engine
+│       │   ├── workflow_orchestrator.py  # Workflow automation
+│       │   ├── parameter_utils.py   # Parameter processing
+│       │   ├── model_definition_exporter.py
+│       │   ├── validation_utils.py  # Validation utilities
+│       │   ├── resource_utils.py    # Package resource access
+│       │   ├── header_utils.py      # Header field management
+│       │   ├── hash_utils.py        # Hashing utilities
+│       │   └── schema_version_detector.py
+│       │
+│       ├── prepare/                  # Batch preparation
+│       │   ├── create_parameter_batch.py
+│       │   ├── create_test_statistic_batch.py
+│       │   ├── enrich_parameter_csv.py
+│       │   └── enrich_test_statistic_csv.py
+│       │
+│       ├── run/                      # Batch execution
+│       │   ├── upload_batch.py
+│       │   ├── upload_immediate.py
+│       │   └── batch_monitor.py
+│       │
+│       ├── process/                  # Result processing
+│       │   └── unpack_results.py
+│       │
+│       ├── validate/                 # Validation checks
+│       │   ├── run_all_validations.py
+│       │   ├── check_schema_compliance.py
+│       │   ├── check_text_snippets.py
+│       │   ├── test_code_execution.py
+│       │   ├── check_doi_validity.py
+│       │   ├── check_source_references.py
+│       │   ├── check_value_consistency.py
+│       │   ├── check_duplicate_primary_sources.py
+│       │   └── check_snippet_sources_manual_verify.py
+│       │
+│       ├── cli/                      # CLI entry points
+│       │   ├── extract.py           # qsp-extract
+│       │   ├── validate.py          # qsp-validate
+│       │   ├── fix.py               # qsp-fix
+│       │   ├── enrich.py            # qsp-enrich-csv
+│       │   ├── export_model.py      # qsp-export-model
+│       │   └── monitor.py           # qsp-batch-monitor
+│       │
+│       ├── templates/                # YAML templates (package data)
+│       │   ├── parameter_metadata_template.yaml
+│       │   ├── test_statistic_template.yaml
+│       │   ├── configs/
+│       │   │   ├── prompt_assembly.yaml
+│       │   │   └── header_fields.yaml
+│       │   └── examples/
+│       │
+│       └── prompts/                  # Prompt files (package data)
+│           ├── parameter_prompt.md
+│           └── test_statistic_prompt.md
+│
+├── pyproject.toml                    # Package metadata & dependencies
+├── README.md
+├── CLAUDE.md
+└── .env                              # API keys (gitignored)
+```
 
 ## Architecture
 
 ### Modular Prompt Assembly System
-This repository uses a generalized prompt assembly system that builds prompts from modular components:
 
-```
-prompts/                         # Base prompt files with placeholders
-├── parameter_prompt.md
-└── test_statistic_prompt.md
-templates/                       # YAML templates and examples
-├── configs/prompt_assembly.yaml # Configuration for prompt assembly
-├── parameter_metadata_template.yaml (v1 & v2)
-├── test_statistic_template.yaml
-├── prior_metadata_template.yaml
-└── examples/                    # Example filled templates
-scripts/
-├── lib/                         # Core libraries
-│   ├── prompt_assembly.py      # Prompt assembly engine
-│   ├── batch_creator.py        # Base classes for batch creation
-│   └── parameter_utils.py      # Parameter processing utilities
-├── prepare/                     # Batch creation scripts
-├── run/                         # Batch execution scripts
-└── process/                     # Result processing scripts
-```
+The package uses a generalized prompt assembly system that builds prompts from modular components:
+
+- **Prompts** (`prompts/`): Base prompt files with placeholders
+- **Templates** (`templates/`): YAML templates and examples
+- **Configs** (`templates/configs/`): Configuration for prompt assembly
+- **Core** (`core/`): Core libraries (batch creation, prompt assembly, workflow orchestration)
 
 ### Data Flow
 
 **Parameter Extraction Workflow:**
-1. **CSV Enrichment** (Step 1): Simple CSV (parameter names) + model definitions JSON → enriched CSV with units, descriptions, model context
-2. **Batch Creation**: Enriched CSV with all required fields (cancer_type, parameter_name, parameter_units, parameter_description, model_context, definition_hash)
-3. **Prompt Assembly**: System combines base prompts + templates + examples + parameter context data
-4. **LLM Processing**: Batch processing via OpenAI API creates structured YAML outputs
-5. **Unpacking**: Results unpacked to `../qsp-metadata-storage/parameter_estimates/` with format: `{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
+1. **CSV Enrichment**: Simple CSV (parameter names) + model definitions JSON → enriched CSV
+2. **Batch Creation**: System generates batch requests with prompts and context
+3. **LLM Processing**: OpenAI API processes requests and creates structured YAML outputs
+4. **Unpacking**: Results unpacked to `../qsp-metadata-storage/parameter_estimates/`
+5. **Validation**: Automated validation suite checks quality and completeness
 
 **Test Statistics Workflow:**
-1. **CSV Enrichment** (Step 1): Partial CSV (test_statistic_id, required_species, derived_species_description) + model_context.txt + scenario YAML → enriched CSV
-2. **Batch Creation**: Scripts generate prompts with model context and scenario information
-3. **LLM Processing**: LLM creates test statistic definitions with uncertainty quantification (R bootstrap code)
-4. **Unpacking**: Results unpacked to `../qsp-metadata-storage/test_statistics/` with format: `{test_stat_id}_{cancer_type}_{hash}.yaml`
-5. **Aggregation**: Script pools distributions using inverse-variance weighting
+1. **CSV Enrichment**: Partial CSV + model context + scenario YAML → enriched CSV
+2. **Batch Creation**: System generates prompts with full context
+3. **LLM Processing**: LLM creates test statistic definitions with R bootstrap code
+4. **Unpacking**: Results unpacked to `../qsp-metadata-storage/test_statistics/`
+5. **Aggregation**: Distributions pooled using inverse-variance weighting
 
-### Key Files and Directories
+### Key Design Principles
 
-**Templates and Configuration:**
-- `templates/configs/prompt_assembly.yaml`: Configuration controlling how prompts are assembled
-- `templates/parameter_metadata_template.yaml`: YAML template for parameter metadata
-- `templates/test_statistic_template.yaml`: YAML template for test statistics
-- `templates/examples/`: Example filled templates for different parameters
+**Package Architecture:**
+- **Installable**: `pip install -e .` for development, `pip install` for distribution
+- **CLI-first**: Commands like `qsp-extract` available system-wide after install
+- **Resource Management**: Uses `importlib.resources` for robust template/prompt access
+- **No sys.path manipulation**: Clean imports throughout
+- **Library code is library code**: Validation scripts are imported, not called via subprocess
+- **Class-based**: Batch creators inherit from `BatchCreator` base class
 
-**Prompts:**
-- `prompts/parameter_prompt.md`: Base prompt for parameter extraction
-- `prompts/test_statistic_prompt.md`: Base prompt for test statistics
+**Code Standards:**
+- **No backward compatibility**: Use clean, modern interfaces without legacy support
+- **Class-focused architecture**: Prefer class-based designs over functional approaches
+- **No main runners in libraries**: Only CLI scripts have `if __name__ == "__main__"` blocks
+- **Explicit interfaces**: Require all necessary arguments, avoid complex default logic
 
-**CSV Enrichment Scripts:**
-- `scripts/prepare/enrich_parameter_csv.py`: Enrich simple parameter CSV with model definitions
-- `scripts/prepare/enrich_test_statistic_csv.py`: Enrich partial test statistic CSV with context
+### Integration with Metadata Storage
 
-**Note:** Model definitions and context files are exported from model-specific repositories (e.g., `qspio-pdac`). This repository provides general-purpose workflow tools that work with any model system.
-
-### Class-based Batch Creation Architecture
-Batch creation uses a modular class-based system:
-
-- `scripts/lib/batch_creator.py`: Base `BatchCreator` class with common functionality
-- `ParameterBatchCreator`: For parameter extraction requests (uses prompt assembly system)
-- `TestStatisticBatchCreator`: For test statistic extraction requests
-- CLI scripts in `scripts/prepare/` provide simple interfaces to batch creators
-
-### Script Dependencies
-- `scripts/lib/parameter_utils.py`: Utilities for parameter processing (CSV loading, model context generation)
-- `scripts/lib/prompt_assembly.py`: Modular prompt assembly from templates and examples
-- `scripts/lib/batch_creator.py`: Class-based batch creation with shared functionality
-- All API scripts expect `OPENAI_API_KEY` in `.env` file (current directory)
-- `scripts/process/unpack_results.py` writes directly to `../qsp-metadata-storage/` directories with flat structure
-
-### Batch Processing Model
-- Uses OpenAI's batch API with GPT-5 model and high reasoning effort
-- Custom IDs follow format: `{cancer_type}_{parameter_name}_{index}`
-- Results are saved to `batch_jobs/` directory (gitignored)
-- Batch IDs are tracked in `.batch_id` files alongside JSONL files
-
-### Architecture Benefits
-- **Modular Prompts**: Templates and examples are reusable across different prompt types
-- **Class-based Batching**: Common batch functionality shared via inheritance
-- **Maintainable**: Changes to templates or batch logic only need to be made once
-- **Extensible**: New prompt types and batch creators can be added easily
-- **Flexible**: Components can be mixed and matched for different use cases
-
-## Integration Points
-
-## Integration with Parameter Storage
-
-This repository integrates with the central metadata storage system:
+This package integrates with the central metadata storage system:
 - Reads API key from `.env` file (current directory)
-- Writes extracted metadata to different directories based on workflow type:
-  - **Parameter estimates**: `../qsp-metadata-storage/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
-    - Hash computed from study context to enable multiple extractions per parameter
-  - **Test statistics**: `../qsp-metadata-storage/test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
-    - Hash computed from scenario context
+- Writes extracted metadata to `../qsp-metadata-storage/` directories:
+  - **Parameter estimates**: `parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
+  - **Test statistics**: `test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
 - Assumes `qsp-metadata-storage` repository exists as sibling directory
-- Aggregation scripts in `qspio-pdac/metadata/` pool results from multiple sources
+- Hash-based filenames enable multiple extractions per parameter
 
-## Standard Usage
+## Development
 
-`scripts/process/unpack_results.py` extracts batch results directly to `../qsp-metadata-storage/` directories with flat structure.
+### Running Tests
 
-Example usage:
 ```bash
-python scripts/process/unpack_results.py batch_results.jsonl ../qsp-metadata-storage/parameter_estimates input.csv
+# Test package imports
+python -c "from qsp_llm_workflows import PromptAssembler; print('✓ Import works')"
+
+# Test CLI commands
+qsp-extract --help
+qsp-validate --help
 ```
 
-# Important Instructions
+### Adding New Validators
 
-## Code Standards
-- **No backward compatibility**: Use clean, modern interfaces without legacy support
-- **Class-focused architecture**: Prefer class-based designs over functional approaches  
-- **No main runners in libraries**: Only CLI scripts should have `if __name__ == "__main__":` blocks. Never add them to class files, utility modules, or library code
-- **Explicit interfaces**: Require all necessary arguments, avoid complex default logic
+Validators are classes with a `.validate()` method that returns a ValidationReport:
+
+```python
+from qsp_llm_workflows.core.validation_utils import ValidationReport
+
+class MyValidator:
+    def __init__(self, data_dir: str):
+        self.data_dir = data_dir
+
+    def validate(self) -> dict:
+        report = ValidationReport("My Validation")
+        # ... perform validation ...
+        report.add_pass(filename, message)
+        return report.to_dict()
+```
+
+Then import and call in `run_all_validations.py`.
+
+### Distribution
+
+To publish the package to PyPI:
+
+```bash
+# Build package
+python -m build
+
+# Upload to PyPI
+twine upload dist/*
+```
+
+Users can then install with:
+```bash
+pip install qsp-llm-workflows
+```
