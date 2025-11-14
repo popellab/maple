@@ -2,7 +2,6 @@
 Utility functions for validation scripts.
 """
 import yaml
-import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import json
@@ -21,7 +20,7 @@ def load_yaml_file(filepath: str) -> Optional[Dict[str, Any]]:
     try:
         with open(filepath, 'r') as f:
             return yaml.safe_load(f)
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -142,7 +141,7 @@ class ValidationReport:
         print(f"Warnings: {summary['warnings']}")
 
         if self.passed:
-            print(f"\nPassed Items:")
+            print("\nPassed Items:")
             for item in self.passed:  # Show all passed items
                 details = item.get('details', '')
                 if details:
@@ -151,7 +150,7 @@ class ValidationReport:
                     print(f"  ✓ {item['item']}")
 
         if self.failed:
-            print(f"\nFailed Items:")
+            print("\nFailed Items:")
             for item in self.failed[:10]:  # Show first 10
                 reason = item['reason']
                 # If reason contains multiple errors (semicolon-separated), format as sub-bullets
@@ -168,7 +167,7 @@ class ValidationReport:
                 print(f"  ... and {len(self.failed) - 10} more")
 
         if self.warnings:
-            print(f"\nWarnings:")
+            print("\nWarnings:")
             for item in self.warnings[:10]:  # Show first 10
                 message = item['message']
                 # If message contains multiple warnings (semicolon-separated), format as sub-bullets

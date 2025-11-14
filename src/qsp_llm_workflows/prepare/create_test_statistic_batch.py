@@ -92,10 +92,10 @@ def main():
         )
 
         print(f"✓ Test statistic batch requests created: {output_path}")
-        print(f"Next steps:")
+        print("Next steps:")
         print(f"  1. Upload batch: python scripts/run/upload_batch.py {output_path}")
-        print(f"  2. Monitor progress: python scripts/run/batch_monitor.py <batch_id>")
-        print(f"  3. Process results when complete")
+        print("  2. Monitor progress: python scripts/run/batch_monitor.py <batch_id>")
+        print("  3. Process results when complete")
 
     except Exception as e:
         print(f"Error creating batch requests: {e}")

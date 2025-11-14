@@ -15,9 +15,6 @@ Usage:
         ../qsp-metadata-storage/parameter_estimates \\
         output/doi_validation.json
 """
-import argparse
-import sys
-from pathlib import Path
 import time
 import requests
 from difflib import SequenceMatcher
@@ -180,7 +177,7 @@ class DOIValidator:
                 'doi': doi_clean
             }
 
-        except Exception as e:
+        except Exception:
             return None
 
     def fuzzy_match(self, str1: str, str2: str, threshold: float = 0.8) -> bool:
@@ -335,7 +332,7 @@ class DOIValidator:
         """
         errors = []
         data = file_info['data']
-        filename = file_info['filename']
+        file_info['filename']
 
         # Collect all sources with DOIs or URLs
         sources = self.collect_sources(data)

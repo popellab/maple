@@ -15,8 +15,6 @@ Usage:
         ../qsp-metadata-storage/parameter_estimates \\
         output/value_consistency.json
 """
-import argparse
-import sys
 from pathlib import Path
 from collections import defaultdict
 import numpy as np
@@ -230,7 +228,7 @@ class ValueConsistencyChecker:
 
         # Calculate statistics of other values
         mean_others = np.mean(other_values)
-        std_others = np.std(other_values, ddof=1) if len(other_values) > 1 else 0
+        np.std(other_values, ddof=1) if len(other_values) > 1 else 0
         min_others = np.min(other_values)
         max_others = np.max(other_values)
 
@@ -309,7 +307,7 @@ class ValueConsistencyChecker:
 
         report = ValidationReport("Value Consistency")
 
-        print(f"\nChecking value consistency...")
+        print("\nChecking value consistency...")
 
         for file_info in self.all_files:
             filename = file_info['filename']

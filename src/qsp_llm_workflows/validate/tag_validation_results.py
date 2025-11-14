@@ -13,10 +13,8 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
-import yaml
 from datetime import datetime
 
-from qsp_llm_workflows.core.validation_utils import load_yaml_directory
 
 
 def tag_file(file_path: Path, validation_tags: list) -> bool:
@@ -76,8 +74,8 @@ def tag_file(file_path: Path, validation_tags: list) -> bool:
                 content = '\n'.join(new_lines).rstrip()
 
         # Append validation section to end
-        validation_yaml = f"\n\n# Validation metadata\nvalidation:\n"
-        validation_yaml += f"  tags:\n"
+        validation_yaml = "\n\n# Validation metadata\nvalidation:\n"
+        validation_yaml += "  tags:\n"
         for tag in validation_tags:
             validation_yaml += f"    - {tag}\n"
         validation_yaml += f"  validated_at: '{datetime.now().isoformat()}'\n"

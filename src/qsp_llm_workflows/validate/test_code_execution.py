@@ -16,9 +16,6 @@ Usage:
         output/code_execution_report.json \\
         --threshold 5.0
 """
-import argparse
-import sys
-from pathlib import Path
 import re
 import numpy as np
 
@@ -279,7 +276,7 @@ class CodeExecutionValidator:
             (is_valid, error_msg) tuple
         """
         data = file_info['data']
-        filename = file_info['filename']
+        file_info['filename']
 
         # Extract Python code
         python_code, code_type = self.extract_python_code(data)

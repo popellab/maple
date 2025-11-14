@@ -217,7 +217,7 @@ class PromptAssembler:
         # Determine storage directory based on prompt type
         if prompt_type == "parameter_extraction":
             storage_dir = self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
-            parameter_name = runtime_data.get('PARAMETER_INFO', '')
+            runtime_data.get('PARAMETER_INFO', '')
             # Extract parameter name from PARAMETER_INFO if needed
             # For now, assume it's passed directly in runtime_data
             param_name = runtime_data.get('parameter_name', '')

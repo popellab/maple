@@ -20,8 +20,6 @@ Usage:
         ../qsp-metadata-storage/to-review/parameter_estimates \\
         output/duplicate_primary_sources.json
 """
-import argparse
-import sys
 from pathlib import Path
 from collections import defaultdict
 
@@ -152,7 +150,7 @@ class DuplicatePrimarySourceChecker:
             (is_valid, errors) tuple
         """
         data = file_info['data']
-        filename = file_info['filename']
+        file_info['filename']
         errors = []
 
         # Extract primary DOIs from this file

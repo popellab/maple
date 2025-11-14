@@ -11,7 +11,6 @@ import json
 import re
 import csv
 import yaml
-import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Tuple, Optional
@@ -33,7 +32,7 @@ def extract_json_from_content(content: str) -> Optional[str]:
     try:
         json.loads(content)
         return content
-    except:
+    except Exception:
         return None
 
 
@@ -127,7 +126,7 @@ def add_header_fields(json_data: dict, metadata: dict, batch_type: str) -> dict:
         if model_context:
             try:
                 json_data['model_context'] = json.loads(model_context)
-            except:
+            except Exception:
                 json_data['model_context'] = model_context
 
     return json_data

@@ -16,11 +16,6 @@ Usage:
         templates/parameter_metadata_template.yaml \\
         output/schema_validation.json
 """
-import argparse
-import sys
-import os
-from pathlib import Path
-import json
 
 from qsp_llm_workflows.core.validation_utils import (
     load_yaml_directory,
@@ -111,7 +106,7 @@ class SchemaValidator:
         """
         errors = []
         data = file_info['data']
-        filename = file_info['filename']
+        file_info['filename']
 
         # Check all required fields from template
         for field_path in self.required_top_level:

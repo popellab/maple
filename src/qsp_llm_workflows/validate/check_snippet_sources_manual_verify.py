@@ -10,13 +10,9 @@ Usage:
         ../qsp-metadata-storage/parameter_estimates \
         output/snippet_sources.json
 """
-import argparse
-import sys
-import json
-from pathlib import Path
 from collections import defaultdict
 
-from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
+from qsp_llm_workflows.core.validation_utils import load_yaml_directory
 
 
 def collect_sources(data: dict) -> dict:

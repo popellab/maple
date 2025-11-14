@@ -48,7 +48,7 @@ def main():
                         "source_csv": None
                     }
                     break
-        except:
+        except Exception:
             continue
 
     client = OpenAI(api_key=load_api_key())
@@ -92,12 +92,12 @@ def main():
                     # Test statistics need template for header fields
                     if source_csv:
                         print(f"  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv} \"\" {template}")
-                        print(f"\nThen aggregate test statistics:")
+                        print("\nThen aggregate test statistics:")
                         print(f"  python ../qspio-pdac/metadata/aggregate_test_statistics.py {source_csv} {target_dir} ../qsp-metadata-storage/scratch/")
                     else:
                         print(f"  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv \"\" {template}")
-                        print(f"\nNote: Replace 'input_csv' with path to CSV used to create this batch")
-                        print(f"\nThen aggregate test statistics:")
+                        print("\nNote: Replace 'input_csv' with path to CSV used to create this batch")
+                        print("\nThen aggregate test statistics:")
                         print(f"  python ../qspio-pdac/metadata/aggregate_test_statistics.py input_csv {target_dir} ../qsp-metadata-storage/scratch/")
                 else:
                     # Other batch types need template for header fields
@@ -105,12 +105,12 @@ def main():
                         print(f"  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv} \"\" {template}")
                     else:
                         print(f"  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv \"\" {template}")
-                        print(f"\nNote: Replace 'input_csv' with path to CSV used to create this batch")
+                        print("\nNote: Replace 'input_csv' with path to CSV used to create this batch")
             else:
                 # Fallback if no metadata found
-                print(f"\nNext: Unpack results to parameter_estimates:")
+                print("\nNext: Unpack results to parameter_estimates:")
                 print(f"  python scripts/process/unpack_results.py {output_file} ../qsp-metadata-storage/parameter_estimates input_csv")
-                print(f"\nNote: input_csv is required for header fields (parameter_name, units, definition, etc.)")
+                print("\nNote: input_csv is required for header fields (parameter_name, units, definition, etc.)")
 
 if __name__ == "__main__":
     main()

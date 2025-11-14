@@ -4,7 +4,6 @@ CLI wrapper for validation workflow.
 
 Entry point: qsp-validate
 """
-import sys
 
 # Import and run the validation module directly
 from qsp_llm_workflows.validate.run_all_validations import main

@@ -9,7 +9,7 @@ pure syntactic changes (like renaming).
 
 import hashlib
 import json
-from typing import Dict, Any, List, Union
+from typing import Dict, Any
 
 
 def _safe_sort_key(entry: Dict[str, Any]) -> tuple:

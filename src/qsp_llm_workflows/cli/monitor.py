@@ -6,7 +6,6 @@ Entry point: qsp-batch-monitor
 """
 import argparse
 import sys
-from pathlib import Path
 
 
 def main():

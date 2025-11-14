@@ -18,8 +18,6 @@ Usage:
         ../qsp-metadata-storage/parameter_estimates \\
         output/text_snippet_validation.json
 """
-import argparse
-import sys
 import re
 
 from qsp_llm_workflows.core.validation_utils import (

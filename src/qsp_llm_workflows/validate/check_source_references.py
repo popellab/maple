@@ -14,9 +14,6 @@ Usage:
         ../qsp-metadata-storage/parameter_estimates \\
         output/source_reference_validation.json
 """
-import argparse
-import sys
-from pathlib import Path
 
 from qsp_llm_workflows.core.validation_utils import (
     load_yaml_directory,
@@ -174,7 +171,7 @@ class SourceReferenceValidator:
         """
         errors = []
         data = file_info['data']
-        filename = file_info['filename']
+        file_info['filename']
 
         # Collect all defined sources
         sources = self.collect_sources(data)
