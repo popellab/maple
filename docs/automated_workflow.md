@@ -14,6 +14,8 @@ This workflow automates LLM-based parameter extraction from scientific papers. I
 
 **Time savings:** From 20-30 minutes of manual work → 1 minute to launch, then walk away.
 
+**Note on examples:** All code examples in this document use generic placeholder paths like `your-model-repo` and `YOUR_CANCER_TYPE`. Replace these with your actual repository and model names when running commands.
+
 ### What Happens When You Run a Workflow?
 
 **Prerequisites:** Export model definitions and enrich your CSV (see [Input Files](#preparing-your-input-file))
@@ -216,22 +218,22 @@ cd ~/Projects/qsp-llm-workflows
 # 2. Activate virtual environment (do this every time you open a new terminal)
 source venv/bin/activate
 
-# 3. Try an example workflow
-# First export model definitions from MATLAB model (wherever that is located)
+# 3. Run an example workflow
+# First export model definitions from your MATLAB model file
 qsp-export-model \
-  --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m \
+  --matlab-model ../your-model-repo/scripts/your_model_file.m \
   --output batch_jobs/input_data/model_definitions.json
 
-# Then enrich the simple example CSV
+# Then enrich your input CSV with model context
 qsp-enrich-csv parameter \
-  docs/example_parameter_input.csv \
+  your_parameter_input.csv \
   batch_jobs/input_data/model_definitions.json \
-  PDAC \
-  -o batch_jobs/input_data/example_enriched.csv
+  YOUR_CANCER_TYPE \
+  -o batch_jobs/input_data/enriched_input.csv
 
 # Finally run extraction
 qsp-extract \
-  batch_jobs/input_data/example_enriched.csv \
+  batch_jobs/input_data/enriched_input.csv \
   --type parameter \
   --immediate
 ```
@@ -240,7 +242,7 @@ qsp-extract \
 - `docs/example_parameter_input.csv` - Simple list of 2 parameter names
 - `docs/example_test_statistic_input.csv` - Partial test statistic definitions (3 metrics)
 
-**Note:** These examples require files from `qspio-pdac` (model definitions, model context, scenarios). They demonstrate the two-step workflow: enrichment → extraction.
+**Note:** These examples are generic templates. To run them, you'll need a model repository with your MATLAB model file, model context, and scenario definitions. The examples demonstrate the two-step workflow: enrichment → extraction.
 
 **For faster testing:** Use the `--immediate` flag to process via the Responses API instead of waiting for batch completion (minutes instead of hours, perfect for testing). The batch API is cheaper for large production runs.
 
@@ -285,11 +287,11 @@ Model definitions are exported from MATLAB model files using the export script:
 ```bash
 # From qsp-llm-workflows repository:
 qsp-export-model \
-  --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m \
+  --matlab-model ../your-model-repo/scripts/your_model_file.m \
   --output batch_jobs/input_data/model_definitions.json
 ```
 
-This script works with any SimBiology MATLAB model that creates a variable named `model`.
+This script works with any SimBiology MATLAB model that creates a variable named `model`. Replace `your-model-repo` and `your_model_file.m` with the actual path to your model repository and MATLAB model file.
 
 #### Enriched CSV Format
 
@@ -430,12 +432,12 @@ qsp-extract <input.csv> --type <workflow_type> [options]
 ### Parameter Extraction
 
 ```bash
-# Simple example with 4 parameters (good for testing - requires qspio-pdac)
-# Step 1: Enrich
+# Simple example with 2 parameters (good for testing)
+# Step 1: Enrich with model definitions
 qsp-enrich-csv parameter \
   docs/example_parameter_input.csv \
-  ../qspio-pdac/model_definitions.json \
-  PDAC \
+  batch_jobs/input_data/model_definitions.json \
+  YOUR_CANCER_TYPE \
   -o batch_jobs/input_data/example_enriched.csv
 
 # Step 2: Extract (use --immediate for faster testing)
@@ -444,9 +446,9 @@ qsp-extract \
   --type parameter \
   --immediate
 
-# Production example with enriched CSV (77 parameters)
+# Production example with enriched CSV
 qsp-extract \
-  scratch/pdac_parameters_modules_v2.csv \
+  batch_jobs/input_data/production_parameters.csv \
   --type parameter \
   --timeout 7200
 ```
@@ -454,12 +456,12 @@ qsp-extract \
 ### Test Statistics
 
 ```bash
-# Simple example with 3 test statistics (good for testing - requires qspio-pdac)
-# Step 1: Enrich
+# Simple example with 3 test statistics (good for testing)
+# Step 1: Enrich with model context and scenario
 qsp-enrich-csv test_statistic \
   docs/example_test_statistic_input.csv \
-  ../qspio-pdac/metadata/model/model_context.txt \
-  ../qspio-pdac/projects/pdac_2025/scenarios/baseline_no_treatment.yaml \
+  ../your-model-repo/model_context.txt \
+  ../your-model-repo/scenarios/baseline_scenario.yaml \
   -o batch_jobs/input_data/example_enriched.csv
 
 # Step 2: Extract
@@ -470,7 +472,7 @@ qsp-extract \
 
 # Production example with enriched CSV
 qsp-extract \
-  scratch/test_statistic_input_baseline_no_treatment_24664d08.csv \
+  batch_jobs/input_data/production_test_statistics.csv \
   --type test_statistic
 ```
 
@@ -594,7 +596,7 @@ qsp-validate parameter_estimates
 qsp-validate test_statistics
 ```
 
-The validation suite will run all 6 validators and generate detailed reports in `output/validation/`.
+The validation suite will run all 8 validators and generate detailed reports in `output/validation/`.
 
 **The automated validation includes:**
 1. Schema compliance (YAML structure)
@@ -603,6 +605,8 @@ The validation suite will run all 6 validators and generate detailed reports in 
 4. DOI validity (DOIs resolve to real papers)
 5. Code execution (R/Python derivation code runs)
 6. Value consistency (cross-checks against other extractions)
+7. Duplicate primary sources (checks for already-used primary data sources)
+8. Manual snippet source verification (interactive paper verification)
 
 ### 4. Manual Snippet Source Verification
 
@@ -635,6 +639,8 @@ Check files in `to-review/`:
   - `doi_validity.json` - DOI resolution results
   - `code_execution.json` - Code execution test results
   - `value_consistency.json` - Value consistency checks
+  - `duplicate_primary_sources.json` - Duplicate primary source checks
+  - `snippet_sources.json` - Manual snippet source verification results
 
 ### 6. Approve/Reject Files
 
@@ -731,6 +737,8 @@ Validation reports are written to `output/validation/`:
 - `doi_validity.json`
 - `code_execution.json`
 - `value_consistency.json`
+- `duplicate_primary_sources.json`
+- `snippet_sources.json`
 
 All batch files are gitignored and available for debugging if needed.
 

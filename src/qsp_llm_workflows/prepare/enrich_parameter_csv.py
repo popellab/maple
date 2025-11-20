@@ -10,7 +10,7 @@ import pandas as pd
 def main():
     parser = argparse.ArgumentParser(
         description="Enrich parameter CSV with model definitions",
-        epilog="Example: python scripts/prepare/enrich_parameter_csv.py input.csv defs.json PDAC -o output.csv",
+        epilog="Example: python scripts/prepare/enrich_parameter_csv.py input.csv defs.json YOUR_CANCER_TYPE -o output.csv",
     )
     parser.add_argument("simple_csv", type=Path, help="CSV with parameter_name column")
     parser.add_argument("definitions_json", type=Path, help="Model definitions JSON")

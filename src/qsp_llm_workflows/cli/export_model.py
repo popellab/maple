@@ -16,7 +16,7 @@ def main():
         description="Export model definitions from SimBiology MATLAB model",
         epilog="""
 Examples:
-    qsp-export-model --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m --output model_defs.json
+    qsp-export-model --matlab-model ../your-model-repo/scripts/your_model_file.m --output model_defs.json
         """,
     )
 
@@ -24,7 +24,7 @@ Examples:
         "--matlab-model",
         required=True,
         type=Path,
-        help="Path to MATLAB model file (e.g., immune_oncology_model_PDAC.m)",
+        help="Path to MATLAB model file (e.g., your_model_file.m)",
     )
 
     parser.add_argument(

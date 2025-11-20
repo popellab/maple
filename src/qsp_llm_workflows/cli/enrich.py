@@ -14,7 +14,7 @@ def main():
         description="Enrich CSV files with model context",
         epilog="""
 Examples:
-    qsp-enrich-csv parameter input.csv model_defs.json PDAC -o output.csv
+    qsp-enrich-csv parameter input.csv model_defs.json YOUR_CANCER_TYPE -o output.csv
     qsp-enrich-csv test_statistic input.csv model_context.txt scenario.yaml -o output.csv
         """,
     )

@@ -81,7 +81,7 @@ k_C_death
 ```bash
 # Export from MATLAB model to JSON
 qsp-export-model \
-  --matlab-model ../qspio-pdac/immune_oncology_model_PDAC.m \
+  --matlab-model ../your-model-repo/scripts/your_model_file.m \
   --output batch_jobs/input_data/model_definitions.json
 ```
 
@@ -91,8 +91,8 @@ qsp-export-model \
 qsp-enrich-csv parameter \
   simple_input.csv \
   batch_jobs/input_data/model_definitions.json \
-  PDAC \
-  -o batch_jobs/input_data/pdac_extraction_input.csv
+  YOUR_CANCER_TYPE \
+  -o batch_jobs/input_data/enriched_extraction_input.csv
 ```
 
 This creates an enriched CSV with:
@@ -123,7 +123,7 @@ This creates an enriched CSV with:
 - `model_context`, `scenario_context`
 - `required_species`, `derived_species_description`
 
-**Note:** Model definitions are exported from MATLAB model files. Scenario context files are stored in model-specific repositories (e.g., `qspio-pdac/scenarios/`).
+**Note:** Model definitions are exported from MATLAB model files. Scenario context files are stored in model-specific repositories (e.g., `your-model-repo/scenarios/`).
 
 ### Automated Workflow (Step 2)
 

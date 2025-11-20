@@ -96,9 +96,9 @@ def main():
                         print(
                             f'  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv} "" {template}'
                         )
-                        print("\nThen aggregate test statistics:")
+                        print("\nThen aggregate test statistics (if using model-specific aggregation):")
                         print(
-                            f"  python ../qspio-pdac/metadata/aggregate_test_statistics.py {source_csv} {target_dir} ../qsp-metadata-storage/scratch/"
+                            f"  python ../your-model-repo/metadata/aggregate_test_statistics.py {source_csv} {target_dir} ../qsp-metadata-storage/scratch/"
                         )
                     else:
                         print(
@@ -107,9 +107,9 @@ def main():
                         print(
                             "\nNote: Replace 'input_csv' with path to CSV used to create this batch"
                         )
-                        print("\nThen aggregate test statistics:")
+                        print("\nThen aggregate test statistics (if using model-specific aggregation):")
                         print(
-                            f"  python ../qspio-pdac/metadata/aggregate_test_statistics.py input_csv {target_dir} ../qsp-metadata-storage/scratch/"
+                            f"  python ../your-model-repo/metadata/aggregate_test_statistics.py input_csv {target_dir} ../qsp-metadata-storage/scratch/"
                         )
                 else:
                     # Other batch types need template for header fields
