@@ -71,7 +71,7 @@ Before finalizing your extraction, verify:
    - `inputs` - Extracted values with source references and verbatim text snippets
    - `derivation_code` - Python function deriving distribution with bootstrap/Monte Carlo
    - `median`, `iqr`, `ci95`, `units` - Statistical outputs (using outlier-robust statistics)
-   - `key_assumptions` - 3-5 critical assumptions as enumerated dict
+   - `key_assumptions` - 3-5 critical assumptions as list with number and text
 6. **derivation_explanation** - Step-by-step explanation referencing assumptions
 7. **key_study_limitations** - Critical limitations affecting reliability
 8. **primary_data_sources** - Papers with data (real DOIs required)
@@ -157,75 +157,13 @@ Assign weights [0-1] with brief justification:
 **Test statistic description:**
 {{DERIVED_SPECIES_DESCRIPTION}}
 
-**Template:** {{TEMPLATE}}
-
 ---
 
-# Response Format
-
-Return JSON with all 11 fields:
-
-```json
-{
-  "model_output": {
-    "code": "import numpy as np\\n\\ndef compute_test_statistic(time, species_dict):\\n    ..."
-  },
-  "test_statistic_definition": "Math definition...",
-  "study_overview": "What and why (1-2 sentences)",
-  "study_design": "How measured (1-2 sentences)",
-  "test_statistic_estimates": {
-    "inputs": [
-      {
-        "name": "baseline_volume",
-        "value": 100.0,
-        "units": "mm³",
-        "description": "Mean baseline tumor volume",
-        "source_ref": "JONES2021",
-        "value_table_or_section": "Table 1",
-        "value_snippet": "baseline tumor volumes (mean 100 mm³, SD 15 mm³)",
-        "units_table_or_section": "Table 1",
-        "units_snippet": "volumes measured in mm³"
-      }
-    ],
-    "derivation_code": "import numpy as np\\n\\ndef derive_distribution(inputs):\\n    ...",
-    "median": 0.123,
-    "iqr": 0.045,
-    "ci95": [0.1, 0.15],
-    "units": "days",
-    "key_assumptions": {
-      "1": "Exponential growth model applies during measured timeframe",
-      "2": "Bootstrap adequately captures patient variability"
-    }
-  },
-  "derivation_explanation": "**Step 1:** Extract volumes... **Step 2:** Fit growth... ASSUMPTION 1: ...",
-  "key_study_limitations": "- **Small sample:** n=30 limits CI precision\\n- **Single institution:** ...",
-  "primary_data_sources": [
-    {
-      "source_tag": "JONES2021",
-      "title": "Full exact title from paper",
-      "first_author": "Jones",
-      "year": 2021,
-      "doi": "10.1234/journal.2021.56789"
-    }
-  ],
-  "secondary_data_sources": [],
-  "methodological_sources": [],
-  "validation_weights": {
-    "species_match": {"value": 1.0, "justification": "Human, rubric=1.0"},
-    "system_match": {"value": 1.0, "justification": "In vivo, rubric=1.0"},
-    "overall_confidence": {"value": 0.85, "justification": "Good design, rubric=0.85"},
-    "indication_match": {"value": 1.0, "justification": "Exact match, rubric=1.0"},
-    "regimen_match": {"value": 0.85, "justification": "Same drug minor diffs, rubric=0.85"},
-    "biomarker_population_match": {"value": 0.65, "justification": "Mixed population, rubric=0.65"},
-    "stage_burden_match": {"value": 1.0, "justification": "Same stage, rubric=1.0"}
-  }
-}
-```
+Generate test statistic metadata following all requirements above.
 
 **Key points:**
-- Wrap in ```json block
-- Use `\n` for line breaks, `\n\n` for paragraphs
-- Raw Python (no ```python wrappers)
+- Use `\n` for line breaks, `\n\n` for paragraphs in text fields
+- Python code should be plain text (no markdown code fences within the code strings)
 - Numbers as numbers not strings
 - Text snippets must be verbatim quotes
 - Every DOI will be validated - use real DOIs only

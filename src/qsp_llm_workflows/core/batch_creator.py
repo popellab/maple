@@ -10,10 +10,13 @@ import json
 import yaml
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Type
+from pydantic import BaseModel
+
+from openai.lib._pydantic import to_strict_json_schema
 
 from qsp_llm_workflows.core.prompt_assembly import PromptAssembler
-from qsp_llm_workflows.core.resource_utils import get_prompt_path
+from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 
 
 class BatchCreator(ABC):
@@ -35,13 +38,16 @@ class BatchCreator(ABC):
         self.base_dir = Path(base_dir)
         self.prompt_assembler = prompt_assembler or PromptAssembler(self.base_dir)
 
-    def create_request(self, custom_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
+    def create_request(
+        self, custom_id: str, prompt: str, pydantic_model: Type[BaseModel], **kwargs
+    ) -> Dict[str, Any]:
         """
-        Create a standardized batch API request.
+        Create a standardized batch API request with structured outputs.
 
         Args:
             custom_id: Unique identifier for this request
             prompt: The prompt text to send to the model
+            pydantic_model: Pydantic model class for structured output
             **kwargs: Additional request parameters (model, reasoning effort, etc.)
 
         Returns:
@@ -51,15 +57,28 @@ class BatchCreator(ABC):
         model = kwargs.get("model", "gpt-5")
         reasoning_effort = kwargs.get("reasoning_effort", "high")
 
+        # Convert Pydantic model to strict JSON schema for batch API
+        schema_name = pydantic_model.__name__.lower()
+        schema = to_strict_json_schema(pydantic_model)
+
         request = {
             "custom_id": custom_id,
             "method": "POST",
             "url": "/v1/responses",
-            "body": {"model": model, "input": prompt, "reasoning": {"effort": reasoning_effort}},
+            "body": {
+                "model": model,
+                "input": prompt,
+                "reasoning": {"effort": reasoning_effort},
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": schema_name,
+                        "strict": True,
+                        "schema": schema,
+                    }
+                },
+            },
         }
-
-        # Note: metadata parameter is ignored - OpenAI Batch API doesn't support it
-        # Metadata should be encoded in custom_id if needed
 
         return request
 
@@ -293,9 +312,9 @@ class ParameterBatchCreator(BatchCreator):
                 # Assemble the prompt
                 prompt = self.prompt_assembler.assemble_prompt("parameter_extraction", runtime_data)
 
-                # Create batch request
+                # Create batch request with structured outputs
                 custom_id = f"{cancer_type}_{parameter_name}_{i}"
-                request = self.create_request(custom_id, prompt)
+                request = self.create_request(custom_id, prompt, ParameterMetadata)
                 requests.append(request)
 
         return requests
@@ -523,9 +542,9 @@ class TestStatisticBatchCreator(BatchCreator):
                 # Assemble the prompt
                 prompt = self.prompt_assembler.assemble_prompt("test_statistic", runtime_data)
 
-                # Create batch request
+                # Create batch request with structured outputs
                 custom_id = f"test_stat_{test_statistic_id}_{i}"
-                request = self.create_request(custom_id, prompt, reasoning_effort="high")
+                request = self.create_request(custom_id, prompt, TestStatistic, reasoning_effort="high")
                 requests.append(request)
 
         return requests
@@ -887,11 +906,16 @@ Return the corrected metadata as JSON inside a ```json code fence. The unpacker 
             # Create fix prompt (strips headers from YAML content)
             prompt = self.create_fix_prompt(yaml_content, errors, template_content, template_type)
 
+            # Select Pydantic model based on template type
+            pydantic_model = (
+                ParameterMetadata if template_type == "parameter_metadata" else TestStatistic
+            )
+
             # Create custom ID from filename
             file_stem = yaml_path.stem
             custom_id = f"fix_{file_stem}"
 
-            request = self.create_request(custom_id, prompt, reasoning_effort="high")
+            request = self.create_request(custom_id, prompt, pydantic_model, reasoning_effort="high")
 
             requests.append(request)
             print(f"  Created fix request for {filename} ({len(errors)} error(s))")
