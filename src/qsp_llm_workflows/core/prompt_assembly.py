@@ -11,7 +11,13 @@ from typing import Dict, List, Any, Optional
 import glob
 
 from qsp_llm_workflows.core.header_utils import HeaderManager
-from qsp_llm_workflows.core.resource_utils import get_config_path
+from qsp_llm_workflows.core.resource_utils import (
+    read_prompt,
+    read_template,
+    read_config,
+    read_shared_prompt,
+    get_package_root,
+)
 
 
 class PromptAssembler:
@@ -19,32 +25,40 @@ class PromptAssembler:
 
     def __init__(self, base_dir: Path):
         """Initialize the prompt assembler with base directory."""
-        self.base_dir = Path(base_dir)
+        self.base_dir = Path(base_dir)  # Only used for HeaderManager
         self.config = None
         self.header_manager = HeaderManager(base_dir)
 
-    def load_config(self, config_path: Optional[Path] = None) -> Dict[str, Any]:
+    def load_config(self, config_name: str = "prompt_assembly.yaml") -> Dict[str, Any]:
         """Load prompt assembly configuration."""
-        if config_path is None:
-            config_path = get_config_path("prompt_assembly.yaml")
-
-        with open(config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+        config_text = read_config(config_name)
+        self.config = yaml.safe_load(config_text)
         return self.config
 
-    def load_template(self, template_path: Path) -> str:
+    def load_template(self, template_path: str) -> str:
         """
         Load a template file, excluding header fields.
 
         Uses HeaderManager to strip header fields from ALL template types.
         Headers are added back during result unpacking.
+
+        Args:
+            template_path: Relative path like "templates/parameter_metadata_template.yaml"
         """
-        full_path = self.base_dir / template_path
+        package_root = get_package_root()
+        full_path = package_root / template_path
         return self.header_manager.strip_headers_from_template(full_path)
 
-    def load_example(self, example_path: Path) -> str:
-        """Load an example file."""
-        with open(self.base_dir / example_path, "r", encoding="utf-8") as f:
+    def load_example(self, example_path: str) -> str:
+        """
+        Load an example file.
+
+        Args:
+            example_path: Relative path like "templates/examples/k_ECM_fib_sec_example.yaml"
+        """
+        package_root = get_package_root()
+        full_path = package_root / example_path
+        with open(full_path, "r", encoding="utf-8") as f:
             return f.read()
 
     def format_content(self, content: str, source_config: Dict[str, str]) -> str:
@@ -87,10 +101,14 @@ class PromptAssembler:
 
         prompt_config = self.config["prompt_types"][prompt_type]
 
-        # Load base prompt
-        base_prompt_path = self.base_dir / prompt_config["base_prompt"]
-        with open(base_prompt_path, "r", encoding="utf-8") as f:
-            prompt_text = f.read()
+        # Load base prompt from package resources
+        # prompt_config["base_prompt"] is like "prompts/qsp_parameter_extraction_prompt.md"
+        prompt_path = prompt_config["base_prompt"]
+        if prompt_path.startswith("prompts/"):
+            prompt_name = prompt_path[len("prompts/"):]
+            prompt_text = read_prompt(prompt_name)
+        else:
+            raise ValueError(f"Unexpected prompt path format: {prompt_path}")
 
         # Process placeholders
         for placeholder_config in prompt_config["placeholders"]:
@@ -112,8 +130,9 @@ class PromptAssembler:
             elif source == "example_files":
                 examples = prompt_config.get("examples", [])
                 example_contents = []
+                package_root = get_package_root()
                 for example_path in examples:
-                    full_example_path = self.base_dir / example_path
+                    full_example_path = package_root / example_path
                     if full_example_path.exists():
                         example_content = self.load_example(example_path)
                         example_contents.append(example_content)
@@ -153,18 +172,22 @@ class PromptAssembler:
                     replacement_content = f"[{placeholder_name} - TO BE PROVIDED]"
 
             elif source == "shared_file":
-                # Load content from shared file
+                # Load content from shared file using package resources
                 shared_path = placeholder_config.get("path", "")
                 if shared_path:
-                    shared_file_path = self.base_dir / shared_path
-                    if shared_file_path.exists():
-                        with open(shared_file_path, "r", encoding="utf-8") as f:
-                            shared_content = f.read()
-                        source_config = self.config["placeholder_sources"]["shared_file"]
-                        replacement_content = self.format_content(shared_content, source_config)
+                    # shared_path is like "prompts/shared/source_and_validation_rubrics.md"
+                    if shared_path.startswith("prompts/shared/"):
+                        shared_name = shared_path[len("prompts/shared/"):]
+                        try:
+                            shared_content = read_shared_prompt(shared_name)
+                            source_config = self.config["placeholder_sources"]["shared_file"]
+                            replacement_content = self.format_content(shared_content, source_config)
+                        except Exception as e:
+                            print(f"Warning: Could not read shared file {shared_path}: {e}")
+                            replacement_content = f"[{placeholder_name} - FILE NOT FOUND]"
                     else:
-                        print(f"Warning: Shared file not found: {shared_file_path}")
-                        replacement_content = f"[{placeholder_name} - FILE NOT FOUND]"
+                        print(f"Warning: Unexpected shared file path format: {shared_path}")
+                        replacement_content = f"[{placeholder_name} - INVALID PATH]"
                 else:
                     replacement_content = f"[{placeholder_name} - NO PATH SPECIFIED]"
 
