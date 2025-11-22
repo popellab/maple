@@ -74,10 +74,7 @@ Fix the validation errors listed below, and while doing so:
 
 ## Output Format
 
-Return the corrected content as JSON inside a code fence. Requirements:
-- **Use JSON format** (the unpacker will convert to YAML and add headers automatically)
-- **Include** a \`\`\`json code fence around your response
-- **Do NOT include** explanations outside the code fence
+Your response will automatically be structured according to the defined schema. Requirements:
 - **Do NOT include header fields** (schema_version, cancer_type, tags, context_hash, etc.) - these are preserved from the original and added back automatically
 - **CRITICAL STRUCTURE RULE**: Match the EXACT structure shown in "Original Content" above
   - If `model_output` is at the root level, keep it at root level
@@ -85,5 +82,3 @@ Return the corrected content as JSON inside a code fence. Requirements:
   - Do NOT nest root-level fields under `model_output`
   - For test statistics: `model_output` should ONLY contain `code`, all other fields (test_statistic_definition, study_overview, test_statistic_estimates, primary_data_sources, etc.) are separate root-level fields
 - **Fix** only the specific errors mentioned while preserving the original structure
-
-{{EXAMPLE_JSON}}

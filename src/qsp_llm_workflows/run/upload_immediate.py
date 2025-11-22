@@ -8,6 +8,7 @@ import json
 import sys
 from pathlib import Path
 from openai import AsyncOpenAI
+from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 
 
 def load_api_key():
@@ -21,17 +22,17 @@ def load_api_key():
     raise ValueError("OPENAI_API_KEY not found in .env file")
 
 
-async def process_request(client, request, index, total):
-    """Process a single request asynchronously."""
+async def process_request(client, request, index, total, pydantic_model):
+    """Process a single request asynchronously with structured outputs."""
     print(f"Starting {index}/{total}: {request['custom_id']}")
 
-    # Create synchronous response
-    response = await client.responses.create(
+    # Use responses.parse() with Pydantic model for structured outputs
+    response = await client.responses.parse(
         model=request["body"]["model"],
         input=request["body"]["input"],
         reasoning=request["body"]["reasoning"],
         tools=[{"type": "web_search"}],
-        background=False,  # This makes it synchronous
+        text_format=pydantic_model,
     )
 
     print(f"Completed {index}/{total}: {request['custom_id']}")
@@ -42,6 +43,18 @@ async def process_request(client, request, index, total):
         "response": {"status_code": 200, "request_id": response.id, "body": response.model_dump()},
     }
     return result
+
+
+def detect_pydantic_model_from_request(request):
+    """Detect which Pydantic model to use based on request custom_id."""
+    custom_id = request["custom_id"]
+
+    # Check if it's a test statistic request
+    if custom_id.startswith("test_stat_"):
+        return TestStatistic
+
+    # Default to parameter metadata
+    return ParameterMetadata
 
 
 async def main():
@@ -62,7 +75,10 @@ async def main():
 
     # Create tasks for all requests
     tasks = [
-        process_request(client, request, i + 1, len(requests)) for i, request in enumerate(requests)
+        process_request(
+            client, request, i + 1, len(requests), detect_pydantic_model_from_request(request)
+        )
+        for i, request in enumerate(requests)
     ]
 
     # Execute all requests concurrently
