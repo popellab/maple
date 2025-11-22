@@ -67,6 +67,25 @@ class ModelDefinitionExporter:
             if self.temp_dir and Path(self.temp_dir).exists():
                 shutil.rmtree(self.temp_dir)
 
+    def export_to_json(self, output_file: str):
+        """
+        Export parameter definitions to JSON file.
+
+        Args:
+            output_file: Path to output JSON file
+        """
+        definitions = self.export_definitions()
+
+        # Create output directory if needed
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write to JSON
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(definitions, f, indent=2, ensure_ascii=False)
+
+        print(f"Exported {len(definitions)} parameter definitions")
+
     def _run_matlab_export(self):
         """Run MATLAB to export model data."""
         print("Running MATLAB to export model data...")
