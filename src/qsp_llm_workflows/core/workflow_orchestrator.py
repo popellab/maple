@@ -20,6 +20,12 @@ from typing import Dict, List, Any, Optional, Callable
 from datetime import datetime
 from openai import OpenAI
 
+from qsp_llm_workflows.core.batch_creator import (
+    ParameterBatchCreator,
+    TestStatisticBatchCreator,
+)
+from qsp_llm_workflows.core.immediate_processor import ImmediateRequestProcessor
+
 
 class WorkflowOrchestrator:
     """Orchestrates complete extraction workflow with validation and git operations."""
@@ -36,6 +42,7 @@ class WorkflowOrchestrator:
         self.base_dir = Path(base_dir)
         self.storage_dir = Path(storage_dir)
         self.batch_jobs_dir = self.base_dir / "batch_jobs"
+        self.api_key = api_key
         self.client = OpenAI(api_key=api_key)
 
         # Ensure directories exist
@@ -100,34 +107,16 @@ class WorkflowOrchestrator:
         if progress_callback:
             progress_callback(f"Creating {workflow_type} batch requests...")
 
-        # Determine which script to use
-        script_map = {
-            "parameter": "create_parameter_batch.py",
-            "test_statistic": "create_test_statistic_batch.py",
-        }
-
-        if workflow_type not in script_map:
+        # Select appropriate batch creator
+        if workflow_type == "parameter":
+            creator = ParameterBatchCreator(self.base_dir)
+        elif workflow_type == "test_statistic":
+            creator = TestStatisticBatchCreator(self.base_dir)
+        else:
             raise ValueError(f"Unknown workflow type: {workflow_type}")
 
-        script_path = self.base_dir / "scripts" / "prepare" / script_map[workflow_type]
-
-        # Run batch creation script
-        result = subprocess.run(
-            ["python3", str(script_path), str(input_csv)],
-            cwd=self.base_dir,
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(f"Batch creation failed: {result.stderr}")
-
-        # Determine output file based on workflow type
-        output_file = self.batch_jobs_dir / f"{workflow_type}_requests.jsonl"
-        if workflow_type == "test_statistic":
-            output_file = self.batch_jobs_dir / "test_stat_requests.jsonl"
-        elif workflow_type == "parameter":
-            output_file = self.batch_jobs_dir / "parameter_requests.jsonl"
+        # Create batch
+        output_file = creator.run(None, input_csv)
 
         if not output_file.exists():
             raise RuntimeError(f"Expected batch file not created: {output_file}")
@@ -247,43 +236,39 @@ class WorkflowOrchestrator:
             # Wait before next check
             time.sleep(poll_interval)
 
-    def process_immediate(
-        self, batch_file: Path, progress_callback: Optional[Callable[[str], None]] = None
+    def process_immediate_direct(
+        self,
+        input_csv: Path,
+        workflow_type: str,
+        progress_callback: Optional[Callable[[str], None]] = None,
     ) -> Path:
         """
-        Process batch requests immediately using Responses API.
+        Process requests directly via Responses API (no batch file creation).
 
         Args:
-            batch_file: Path to batch requests JSONL file
+            input_csv: Path to input CSV file
+            workflow_type: Type of workflow (parameter/test_statistic)
             progress_callback: Optional callback for progress updates
 
         Returns:
-            Path to results file (same format as batch results)
-
-        Note:
-            This uses the Responses API for immediate processing, which is faster
-            than the Batch API but doesn't have the same throughput guarantees.
-            Good for testing and small batches.
+            Path to results file (batch-compatible format for unpacker)
         """
+        # Create immediate processor
+        processor = ImmediateRequestProcessor(self.base_dir, self.api_key)
+
+        # Process requests directly from CSV
+        results = processor.run(input_csv, workflow_type, progress_callback)
+
+        # Write results to file (for unpacker compatibility)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_file = self.batch_jobs_dir / f"immediate_{workflow_type}_{timestamp}_results.jsonl"
+
+        with open(results_file, "w", encoding="utf-8") as f:
+            for result in results:
+                f.write(json.dumps(result) + "\n")
+
         if progress_callback:
-            progress_callback("Processing requests with Responses API...")
-
-        # Run upload_immediate.py script
-        script_path = self.base_dir / "scripts" / "run" / "upload_immediate.py"
-
-        result = subprocess.run(
-            [sys.executable, str(script_path), str(batch_file)],
-            capture_output=False,  # Show progress in real-time
-            text=True,
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError("Immediate processing failed")
-
-        # The script writes results with _immediate_results.jsonl suffix
-        results_file = batch_file.parent / f"{batch_file.stem}_immediate_results.jsonl"
-        if not results_file.exists():
-            raise RuntimeError(f"Results file not found: {results_file}")
+            progress_callback(f"✓ Results saved: {results_file.name}")
 
         return results_file
 
@@ -649,43 +634,45 @@ Automated extraction. Ready for validation and manual review."""
         }
 
         try:
-            # Step 1: Create batch
-            batch_file = self.create_batch(input_csv, workflow_type, progress_callback)
-            results["batch_file"] = str(batch_file)
-
-            # Step 1.5: Extract sample prompt and ask for confirmation
-            if progress_callback:
-                progress_callback("\n" + "=" * 70)
-                progress_callback("SAMPLE PROMPT VERIFICATION")
-                progress_callback("=" * 70)
-                progress_callback("\nExtracting first prompt for review...")
-
-            prompt_file = self.extract_prompt_to_file(batch_file, index=0)
-
-            if progress_callback:
-                progress_callback(f"✓ Sample prompt saved to: {prompt_file}")
-                progress_callback("\nPlease review the prompt before proceeding.")
-                progress_callback("=" * 70)
-
-            response = input("\nProceed with batch submission? [y/N]: ")
-            if response.lower() != "y":
-                if progress_callback:
-                    progress_callback("Aborted by user.")
-                results["status"] = "aborted"
-                results["error"] = "User aborted after prompt verification"
-                results["duration_seconds"] = time.time() - start_time
-                return results
-
-            # Step 2: Upload and process (immediate or batch mode)
+            # Branch: immediate mode or batch mode
             if immediate:
-                # Immediate mode: Process via Responses API
-                results_file = self.process_immediate(
-                    batch_file, progress_callback=progress_callback
+                # Immediate mode: Direct processing via Responses API (no batch file)
+                results_file = self.process_immediate_direct(
+                    input_csv, workflow_type, progress_callback
                 )
                 results["results_file"] = str(results_file)
                 results["immediate_mode"] = True
+                batch_id = f"immediate_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             else:
-                # Batch mode: Upload and monitor
+                # Batch mode: Create batch file, upload, monitor
+                # Step 1: Create batch
+                batch_file = self.create_batch(input_csv, workflow_type, progress_callback)
+                results["batch_file"] = str(batch_file)
+
+                # Step 1.5: Extract sample prompt and ask for confirmation
+                if progress_callback:
+                    progress_callback("\n" + "=" * 70)
+                    progress_callback("SAMPLE PROMPT VERIFICATION")
+                    progress_callback("=" * 70)
+                    progress_callback("\nExtracting first prompt for review...")
+
+                prompt_file = self.extract_prompt_to_file(batch_file, index=0)
+
+                if progress_callback:
+                    progress_callback(f"✓ Sample prompt saved to: {prompt_file}")
+                    progress_callback("\nPlease review the prompt before proceeding.")
+                    progress_callback("=" * 70)
+
+                response = input("\nProceed with batch submission? [y/N]: ")
+                if response.lower() != "y":
+                    if progress_callback:
+                        progress_callback("Aborted by user.")
+                    results["status"] = "aborted"
+                    results["error"] = "User aborted after prompt verification"
+                    results["duration_seconds"] = time.time() - start_time
+                    return results
+
+                # Step 2: Upload batch
                 batch_id = self.upload_batch(batch_file, progress_callback)
                 results["batch_id"] = batch_id
 
@@ -707,10 +694,6 @@ Automated extraction. Ready for validation and manual review."""
             results["file_count"] = len(unpacked_files)
 
             # Step 6: Commit and push
-            # Generate batch_id for branch naming if in immediate mode
-            if immediate:
-                batch_id = f"immediate_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
             branch_name = self.commit_and_push(
                 unpacked_files,
                 batch_id,

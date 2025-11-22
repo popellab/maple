@@ -6,8 +6,20 @@ Entry point: qsp-fix
 """
 import argparse
 import sys
+from pathlib import Path
 
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
+
+
+def load_api_key() -> str:
+    """Load OpenAI API key from .env file."""
+    env_file = Path(".env")
+    if env_file.exists():
+        with open(env_file) as f:
+            for line in f:
+                if line.startswith("OPENAI_API_KEY="):
+                    return line.split("=", 1)[1].strip()
+    raise ValueError("OPENAI_API_KEY not found in .env file")
 
 
 def main():
@@ -41,8 +53,25 @@ Examples:
 
     args = parser.parse_args()
 
+    # Determine directories
+    base_dir = Path.cwd()
+    storage_dir = base_dir.parent / "qsp-metadata-storage"
+
+    # Validate storage directory exists
+    if not storage_dir.exists():
+        print(f"Error: Metadata storage directory not found: {storage_dir}", file=sys.stderr)
+        print("Expected qsp-metadata-storage as sibling directory", file=sys.stderr)
+        sys.exit(1)
+
+    # Load API key
+    try:
+        api_key = load_api_key()
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     # Run validation fix workflow
-    orchestrator = WorkflowOrchestrator()
+    orchestrator = WorkflowOrchestrator(base_dir, storage_dir, api_key)
 
     try:
         result = orchestrator.run_validation_fix_workflow(

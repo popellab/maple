@@ -11,6 +11,17 @@ from pathlib import Path
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
 
 
+def load_api_key() -> str:
+    """Load OpenAI API key from .env file."""
+    env_file = Path(".env")
+    if env_file.exists():
+        with open(env_file) as f:
+            for line in f:
+                if line.startswith("OPENAI_API_KEY="):
+                    return line.split("=", 1)[1].strip()
+    raise ValueError("OPENAI_API_KEY not found in .env file")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run automated extraction workflow",
@@ -55,16 +66,33 @@ Examples:
         print(f"Error: Input file not found: {args.input_csv}", file=sys.stderr)
         sys.exit(1)
 
+    # Determine directories
+    base_dir = Path.cwd()
+    storage_dir = base_dir.parent / "qsp-metadata-storage"
+
+    # Validate storage directory exists
+    if not storage_dir.exists():
+        print(f"Error: Metadata storage directory not found: {storage_dir}", file=sys.stderr)
+        print("Expected qsp-metadata-storage as sibling directory", file=sys.stderr)
+        sys.exit(1)
+
+    # Load API key
+    try:
+        api_key = load_api_key()
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     # Run workflow
-    orchestrator = WorkflowOrchestrator()
+    orchestrator = WorkflowOrchestrator(base_dir, storage_dir, api_key)
 
     try:
-        result = orchestrator.run_extraction_workflow(
-            input_csv=str(args.input_csv),
+        result = orchestrator.run_complete_workflow(
+            input_csv=Path(args.input_csv),
             workflow_type=args.type,
-            use_batch_api=not args.immediate,
             timeout=args.timeout,
-            push_to_remote=not args.no_push,
+            push=not args.no_push,
+            immediate=args.immediate,
         )
 
         sys.exit(0 if result else 1)
