@@ -17,18 +17,8 @@ from typing import Dict, Tuple, Optional
 
 
 def extract_json_from_content(content: str) -> Optional[str]:
-    """Extract JSON from LLM response (handles markdown code blocks)."""
-    # Try JSON code block
-    match = re.search(r"```json\n(.*?)\n```", content, re.DOTALL)
-    if match:
-        return match.group(1)
-
-    # Try plain code block
-    match = re.search(r"```\n(\{.*?\})\n```", content, re.DOTALL)
-    if match:
-        return match.group(1)
-
-    # Try parsing entire content
+    """Extract JSON from structured output response."""
+    # With structured outputs, content is already valid JSON
     try:
         json.loads(content)
         return content
@@ -212,26 +202,34 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
             # Parse custom_id
             batch_type, cancer_type, identifier = parse_custom_id(custom_id)
 
-            # Get response content
-            try:
-                output_items = result["response"]["body"]["output"]
-                message_item = next(item for item in output_items if item.get("type") == "message")
-                content = message_item["content"][0]["text"]
-            except (KeyError, StopIteration):
-                print(f"Error: Could not extract content for {custom_id}")
-                continue
+            # Get response content - handle both batch and immediate formats
+            body = result["response"]["body"]
 
-            # Extract JSON
-            json_content = extract_json_from_content(content)
-            if not json_content:
-                print(f"Error: No JSON found for {custom_id}")
-                continue
+            # Check if this is batch format (has "output" key) or immediate format (direct JSON)
+            if "output" in body:
+                # Batch format: extract from output[type=message].content[0].text
+                try:
+                    output_items = body["output"]
+                    message_item = next(item for item in output_items if item.get("type") == "message")
+                    content = message_item["content"][0]["text"]
 
-            try:
-                json_data = json.loads(json_content)
-            except json.JSONDecodeError as e:
-                print(f"Error: Invalid JSON for {custom_id}: {e}")
-                continue
+                    # Extract JSON from markdown code fence
+                    json_content = extract_json_from_content(content)
+                    if not json_content:
+                        print(f"Error: No JSON found for {custom_id}")
+                        continue
+
+                    json_data = json.loads(json_content)
+                except (KeyError, StopIteration, json.JSONDecodeError) as e:
+                    print(f"Error: Could not extract content from batch format for {custom_id}: {e}")
+                    continue
+            else:
+                # Immediate format: body is already the JSON data
+                try:
+                    json_data = body
+                except Exception as e:
+                    print(f"Error: Invalid immediate format for {custom_id}: {e}")
+                    continue
 
             # Handle validation fixes specially
             if batch_type == "validation_fix":
