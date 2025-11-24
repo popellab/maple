@@ -40,14 +40,11 @@ class ValueConsistencyChecker(Validator):
         self.main_storage_dir = self._get_main_storage_dir()
         self.all_files = []
         self.legacy_values = defaultdict(list)  # param_name -> list of values
+        self.context_groups = defaultdict(list)  # (param_name, context_hash) -> list of values
 
     @property
     def name(self) -> str:
         return "Value Consistency Checking"
-
-    def _init_collections(self):
-        """Initialize data structures for consistency checking."""
-        self.context_groups = defaultdict(list)  # (param_name, context_hash) -> list of values
 
     def _get_legacy_dir(self) -> Path:
         """
