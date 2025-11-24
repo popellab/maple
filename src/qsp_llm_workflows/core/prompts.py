@@ -78,7 +78,6 @@ def build_test_statistic_prompt(
 def build_validation_fix_prompt(
     yaml_content: str,
     validation_errors: str,
-    template_content: str,
 ) -> str:
     """
     Build validation fix prompt with substitutions.
@@ -86,7 +85,6 @@ def build_validation_fix_prompt(
     Args:
         yaml_content: The original YAML content that failed validation
         validation_errors: Detailed validation error messages
-        template_content: The expected template structure
 
     Returns:
         Complete prompt with all placeholders replaced
@@ -97,6 +95,5 @@ def build_validation_fix_prompt(
     # Substitute placeholders
     prompt = prompt.replace("{{YAML_CONTENT}}", yaml_content)
     prompt = prompt.replace("{{VALIDATION_ERRORS}}", validation_errors)
-    prompt = prompt.replace("{{TEMPLATE_CONTENT}}", template_content)
 
     return prompt

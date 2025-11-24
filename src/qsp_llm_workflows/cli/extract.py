@@ -57,6 +57,12 @@ Examples:
         help="Reasoning effort level for OpenAI API (default: high)",
     )
 
+    parser.add_argument(
+        "--preview-prompts",
+        action="store_true",
+        help="Preview prompts without sending to API (saves to batch_jobs/prompt_preview.jsonl)",
+    )
+
     args = parser.parse_args()
 
     # Validate input file
@@ -86,7 +92,11 @@ Examples:
 
     try:
         # Run workflow
-        print(f"\nStarting {args.type} extraction workflow...")
+        if args.preview_prompts:
+            print("\n=== PREVIEW MODE ===")
+            print(f"Building prompts for {args.type} extraction workflow...")
+        else:
+            print(f"\nStarting {args.type} extraction workflow...")
         print(f"Mode: {'immediate' if args.immediate else 'batch'}")
         print(f"Input: {args.input_csv}")
         print(f"Reasoning effort: {args.reasoning_effort}")
@@ -99,25 +109,36 @@ Examples:
             timeout=args.timeout,
             reasoning_effort=args.reasoning_effort,
             progress_callback=print_progress,
+            preview_prompts=args.preview_prompts,
         )
 
         # Print summary
         print()
         print("=" * 70)
-        print("WORKFLOW COMPLETE")
-        print("=" * 70)
-        print(f"Status: {result.status}")
-        print(f"Files extracted: {result.file_count}")
-        print(f"Output directory: {result.output_directory}")
-        print(f"Duration: {result.duration_seconds:.1f}s")
-        print()
-        print("Next steps:")
-        print(f"  1. Review files in: {result.output_directory}")
-        print(f"  2. Run validation: qsp-validate {args.type} --dir {result.output_directory}")
-        print("  3. If satisfied, commit manually:")
-        print(f"       cd {config.storage_dir}")
-        print(f"       git add {result.output_directory}")
-        print(f'       git commit -m "Add {args.type} extractions"')
+        if args.preview_prompts:
+            print("PROMPT PREVIEW COMPLETE")
+            print("=" * 70)
+            print(f"Preview file: {result.output_directory}")
+            print(f"Request count: {result.file_count}")
+            print()
+            print("Next steps:")
+            print(f"  1. Review prompts in: {result.output_directory}")
+            print("  2. If satisfied, run without --preview-prompts to execute")
+        else:
+            print("WORKFLOW COMPLETE")
+            print("=" * 70)
+            print(f"Status: {result.status}")
+            print(f"Files extracted: {result.file_count}")
+            print(f"Output directory: {result.output_directory}")
+            print(f"Duration: {result.duration_seconds:.1f}s")
+            print()
+            print("Next steps:")
+            print(f"  1. Review files in: {result.output_directory}")
+            print(f"  2. Run validation: qsp-validate {args.type} --dir {result.output_directory}")
+            print("  3. If satisfied, commit manually:")
+            print(f"       cd {config.storage_dir}")
+            print(f"       git add {result.output_directory}")
+            print(f'       git commit -m "Add {args.type} extractions"')
         print()
 
         sys.exit(0)

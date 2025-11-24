@@ -5,8 +5,6 @@ These tests catch issues like missing MATLAB scripts, templates, or prompts
 that would cause runtime errors.
 """
 
-import pytest
-
 from qsp_llm_workflows.core.resource_utils import get_package_root
 
 
@@ -60,15 +58,6 @@ def test_validation_fix_prompt_exists():
     assert prompt_file.stat().st_size > 0, "Validation fix prompt is empty"
 
 
-def test_header_fields_config_exists():
-    """Test that header fields config exists."""
-    package_root = get_package_root()
-    config_file = package_root / "templates" / "configs" / "header_fields.yaml"
-
-    assert config_file.exists(), f"Header fields config not found: {config_file}"
-    assert config_file.stat().st_size > 0, "Header fields config is empty"
-
-
 def test_all_matlab_scripts_are_readable():
     """Test that all MATLAB scripts can be read."""
     package_root = get_package_root()
@@ -84,26 +73,6 @@ def test_all_matlab_scripts_are_readable():
             content = f.read()
             assert len(content) > 0, f"MATLAB file is empty: {matlab_file}"
             assert "function" in content, f"MATLAB file doesn't contain 'function': {matlab_file}"
-
-
-def test_all_templates_are_valid_yaml():
-    """Test that all template files are valid YAML."""
-    import yaml
-
-    package_root = get_package_root()
-    template_dir = package_root / "templates"
-
-    # Find all .yaml files
-    yaml_files = list(template_dir.glob("**/*.yaml"))
-
-    assert len(yaml_files) > 0, "No YAML templates found"
-
-    for yaml_file in yaml_files:
-        try:
-            with open(yaml_file, "r") as f:
-                yaml.safe_load(f)
-        except yaml.YAMLError as e:
-            pytest.fail(f"Invalid YAML in {yaml_file}: {e}")
 
 
 def test_all_prompts_are_readable():

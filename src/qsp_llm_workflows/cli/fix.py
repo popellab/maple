@@ -56,6 +56,12 @@ Examples:
         help="Timeout in seconds for batch monitoring (default: 3600)",
     )
 
+    parser.add_argument(
+        "--preview-prompts",
+        action="store_true",
+        help="Preview prompts without sending to API (saves to batch_jobs/prompt_preview.jsonl)",
+    )
+
     args = parser.parse_args()
 
     # Determine directories
@@ -76,23 +82,94 @@ Examples:
         print(f"Error: Data directory not found: {data_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # TODO: Implement validation fix workflow
-    # The validation fix workflow is not yet implemented in the refactored architecture.
-    # This would involve:
-    # 1. Loading validation reports from output/validation_results/
-    # 2. Creating fix batch requests with failed YAMLs + error messages
-    # 3. Using the validation_fix_prompt.md template
-    # 4. Running through batch or immediate API
-    # 5. Unpacking results back to the original directory
+    # Determine validation results directory
+    validation_results_dir = Path("output/validation_results")
+    if not validation_results_dir.exists():
+        print("Error: Validation results directory not found", file=sys.stderr)
+        print(f"Expected: {validation_results_dir}", file=sys.stderr)
+        print("\nRun qsp-validate first to generate validation reports.", file=sys.stderr)
+        sys.exit(1)
 
-    print("Error: Validation fix workflow is not yet implemented", file=sys.stderr)
-    print("\nThe qsp-fix command is currently under development.", file=sys.stderr)
-    print(
-        "For now, you'll need to manually fix validation errors in the YAML files.", file=sys.stderr
+    # Load API key
+    try:
+        api_key = load_api_key()
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Import workflow components
+    from qsp_llm_workflows.core.config import WorkflowConfig
+    from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
+
+    # Determine workflow type (convert CLI format to internal format)
+    if args.workflow_type == "test_statistics":
+        workflow_type = "test_statistic"
+    else:
+        workflow_type = "parameter"
+
+    # Create workflow config
+    config = WorkflowConfig(
+        base_dir=base_dir,
+        storage_dir=storage_dir,
+        openai_api_key=api_key,
+        batch_timeout=args.timeout,
     )
-    print(f"\nFiles to fix are in: {data_dir}", file=sys.stderr)
-    print("Validation reports are in: output/validation_results/", file=sys.stderr)
-    sys.exit(1)
+
+    # Create orchestrator
+    orchestrator = WorkflowOrchestrator(config)
+
+    # Run validation fix workflow
+    print("=" * 60)
+    if args.preview_prompts:
+        print("VALIDATION FIX WORKFLOW - PREVIEW MODE")
+    else:
+        print("VALIDATION FIX WORKFLOW")
+    print("=" * 60)
+    print(f"\nData directory: {data_dir}")
+    print(f"Validation results: {validation_results_dir}")
+    print(f"Mode: {'Immediate (Responses API)' if args.immediate else 'Batch API'}")
+    print()
+
+    result = orchestrator.run_validation_fix_workflow(
+        data_dir=data_dir,
+        validation_results_dir=validation_results_dir,
+        workflow_type=workflow_type,
+        immediate=args.immediate,
+        timeout=args.timeout,
+        progress_callback=print,
+        preview_prompts=args.preview_prompts,
+    )
+
+    # Check result
+    if result.status == "failed":
+        print(f"\n✗ Validation fix workflow failed: {result.error}", file=sys.stderr)
+        sys.exit(1)
+
+    # Success!
+    print()
+    print("=" * 60)
+    if args.preview_prompts:
+        print("PROMPT PREVIEW COMPLETE")
+        print("=" * 60)
+        print(f"\nPreview file: {result.output_directory}")
+        print(f"Fix request count: {result.file_count}")
+        print()
+        print("Next steps:")
+        print(f"  1. Review prompts in: {result.output_directory}")
+        print("  2. If satisfied, run without --preview-prompts to execute")
+    else:
+        print("VALIDATION FIX COMPLETE")
+        print("=" * 60)
+        print(f"\nFixed {result.file_count} files in {result.output_directory}")
+        print(f"Duration: {result.duration_seconds:.1f}s")
+        print()
+        print("Next steps:")
+        print("  1. Re-run validation to verify fixes")
+        if args.dir:
+            print(f"     qsp-validate {args.workflow_type} --dir {args.dir}")
+        else:
+            print(f"     qsp-validate {args.workflow_type}")
+    print()
 
 
 if __name__ == "__main__":

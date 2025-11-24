@@ -2,14 +2,11 @@ You are helping to fix validation errors in a QSP metadata file.
 
 **IMPORTANT:** Header fields (schema_version, cancer_type, tags, context_hash, etc.) are preserved separately and will be added back automatically. You only need to fix the scientific content fields shown below.
 
+**Note:** The expected schema structure is defined via structured outputs. Ensure your response conforms to the Pydantic model schema.
+
 **Original Content (headers preserved separately):**
 ```yaml
 {{YAML_CONTENT}}
-```
-
-**Template for Reference (content fields only):**
-```yaml
-{{TEMPLATE_CONTENT}}
 ```
 
 ## Task

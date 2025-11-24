@@ -115,13 +115,11 @@ class TestBuildValidationFixPrompt:
         prompt = build_validation_fix_prompt(
             yaml_content="schema_version: v3\nparameter_name: k_growth",
             validation_errors="Missing field: parameter_units",
-            template_content="schema_version: v3\nparameter_name: str\nparameter_units: str",
         )
 
         # Check substitutions worked
         assert "k_growth" in prompt
         assert "Missing field: parameter_units" in prompt
-        assert "parameter_units: str" in prompt
 
         # Check no placeholders remain
         assert "{{" not in prompt

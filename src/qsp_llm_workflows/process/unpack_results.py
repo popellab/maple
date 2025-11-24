@@ -15,6 +15,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Tuple, Optional
 
+from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
+from qsp_llm_workflows.core.header_utils import HeaderManager
+
 
 def extract_json_from_content(content: str) -> Optional[str]:
     """Extract JSON from structured output response."""
@@ -245,33 +248,29 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                     print(f"Error: Original file not found for fixing: {original_path}")
                     continue
 
-                # Load original YAML to get headers
+                # Load original YAML to determine model type
                 with open(original_path, "r", encoding="utf-8") as f:
                     original_yaml = yaml.safe_load(f.read())
 
-                # Extract header fields from original
-                header_fields = [
-                    "schema_version",
-                    "parameter_name",
-                    "parameter_units",
-                    "parameter_definition",
-                    "cancer_type",
-                    "tags",
-                    "derivation_id",
-                    "derivation_timestamp",
-                    "model_context",
-                    "context_hash",
-                    "test_statistic_id",
-                    "scenario_context",
-                ]
+                # Determine model class from file structure
+                if "parameter_name" in original_yaml:
+                    model_class = ParameterMetadata
+                elif "test_statistic_id" in original_yaml:
+                    model_class = TestStatistic
+                else:
+                    print(f"Error: Could not determine model type for {original_filename}")
+                    continue
 
-                # Preserve original headers
-                for field in header_fields:
-                    if field in original_yaml:
-                        json_data[field] = original_yaml[field]
+                # Use HeaderManager to extract headers from original file
+                header_manager = HeaderManager()
+                headers = header_manager.extract_headers_from_yaml(original_path, model_class)
 
-                # Move header fields to top (reverse order)
-                for field in reversed(header_fields):
+                # Merge headers with fixed content (headers take precedence)
+                json_data = {**json_data, **headers.model_dump()}
+
+                # Move header fields to top for readability (reverse order)
+                header_field_names = list(type(headers).model_fields.keys())
+                for field in reversed(header_field_names):
                     if field in json_data:
                         json_data = move_field_to_top(json_data, field)
 
