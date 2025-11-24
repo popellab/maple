@@ -231,9 +231,13 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                     )
                     continue
             else:
-                # Immediate format: body is already the JSON data
+                # Immediate format: extract from output_parsed field
                 try:
-                    json_data = body
+                    if "output_parsed" in body:
+                        json_data = body["output_parsed"]
+                    else:
+                        # Fallback for older format without output_parsed wrapper
+                        json_data = body
                 except Exception as e:
                     print(f"Error: Invalid immediate format for {custom_id}: {e}")
                     continue
