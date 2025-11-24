@@ -3,7 +3,7 @@ Unit tests for WorkflowContext.
 
 Tests the context object that holds workflow state between steps.
 """
-from pathlib import Path
+
 from unittest.mock import Mock
 
 from qsp_llm_workflows.core.workflow.context import WorkflowContext

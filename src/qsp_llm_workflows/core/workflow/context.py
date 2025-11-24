@@ -4,6 +4,7 @@ Workflow context that holds state between workflow steps.
 The context is passed through the chain of workflow steps, with each step
 reading from and writing to the context.
 """
+
 import logging
 from pathlib import Path
 from typing import Optional, Callable, Any

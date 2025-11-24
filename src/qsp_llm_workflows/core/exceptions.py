@@ -28,21 +28,25 @@ class WorkflowException(Exception):
 
 class ConfigurationError(WorkflowException):
     """Configuration validation or loading failed."""
+
     pass
 
 
 class BatchCreationError(WorkflowException):
     """Batch request creation from CSV failed."""
+
     pass
 
 
 class BatchUploadError(WorkflowException):
     """Batch upload to OpenAI API failed."""
+
     pass
 
 
 class BatchMonitoringError(WorkflowException):
     """Batch monitoring or status retrieval failed."""
+
     pass
 
 
@@ -58,21 +62,20 @@ class BatchTimeoutError(WorkflowException):
             batch_id: ID of the batch that timed out
             timeout: Timeout value in seconds
         """
-        super().__init__(
-            message,
-            context={"batch_id": batch_id, "timeout_seconds": timeout}
-        )
+        super().__init__(message, context={"batch_id": batch_id, "timeout_seconds": timeout})
         self.batch_id = batch_id
         self.timeout = timeout
 
 
 class ImmediateProcessingError(WorkflowException):
     """Direct processing via Responses API failed."""
+
     pass
 
 
 class ResultsUnpackError(WorkflowException):
     """Unpacking results to output directory failed."""
+
     pass
 
 
@@ -92,8 +95,8 @@ class ValidationError(WorkflowException):
             message,
             context={
                 "validation_type": validation_type,
-                "failure_count": len(failures) if failures else 0
-            }
+                "failure_count": len(failures) if failures else 0,
+            },
         )
         self.validation_type = validation_type
         self.failures = failures or []

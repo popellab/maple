@@ -114,18 +114,14 @@ class ParameterMetadata(BaseModel):
     - model_context, context_hash
     """
 
-    mathematical_role: str = Field(
-        description="Mathematical role of parameter in model equations"
-    )
+    mathematical_role: str = Field(description="Mathematical role of parameter in model equations")
     parameter_range: str = Field(
         description="Valid range for parameter (e.g., 'positive_reals', '[0,1]')"
     )
     study_overview: str = Field(
         description="High-level scientific context (WHAT and WHY) in 1-2 sentences"
     )
-    study_design: str = Field(
-        description="Concrete experimental details (HOW) in 1-2 sentences"
-    )
+    study_design: str = Field(description="Concrete experimental details (HOW) in 1-2 sentences")
     parameter_estimates: ParameterEstimates = Field(
         description="Parameter estimates with inputs and derivation"
     )
@@ -147,9 +143,7 @@ class ParameterMetadata(BaseModel):
     methodological_sources: List[MethodologicalSource] = Field(
         description="Methodological sources (formulas, analysis methods)"
     )
-    biological_relevance: BiologicalRelevance = Field(
-        description="Biological relevance weights"
-    )
+    biological_relevance: BiologicalRelevance = Field(description="Biological relevance weights")
 
 
 # ============================================================================
@@ -169,9 +163,7 @@ class TestStatisticEstimates(BaseModel):
     """Test statistic estimates with structured inputs and derivation."""
 
     inputs: List[Input] = Field(description="List of inputs used in derivation")
-    derivation_code: str = Field(
-        description="Python code for bootstrap derivation (in code fence)"
-    )
+    derivation_code: str = Field(description="Python code for bootstrap derivation (in code fence)")
     median: float = Field(description="Median value")
     iqr: float = Field(description="Interquartile range")
     ci95: List[float] = Field(description="95% confidence interval [lower, upper]")
@@ -203,18 +195,14 @@ class TestStatistic(BaseModel):
     - required_species, derived_species_description
     """
 
-    model_output: ModelOutput = Field(
-        description="Model output computation specification"
-    )
+    model_output: ModelOutput = Field(description="Model output computation specification")
     test_statistic_definition: str = Field(
         description="Mathematical definition of the test statistic"
     )
     study_overview: str = Field(
         description="High-level biological context (WHAT and WHY) in 1-2 sentences"
     )
-    study_design: str = Field(
-        description="Concrete experimental details (HOW) in 1-2 sentences"
-    )
+    study_design: str = Field(description="Concrete experimental details (HOW) in 1-2 sentences")
     test_statistic_estimates: TestStatisticEstimates = Field(
         description="Test statistic estimates with inputs and derivation"
     )

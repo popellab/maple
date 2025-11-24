@@ -3,6 +3,7 @@ Abstract base class for workflow steps.
 
 Implements the Chain of Responsibility pattern for workflow execution.
 """
+
 from abc import ABC, abstractmethod
 from qsp_llm_workflows.core.workflow.context import WorkflowContext
 

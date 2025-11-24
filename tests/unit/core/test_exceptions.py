@@ -3,7 +3,6 @@ Unit tests for custom exception hierarchy.
 
 Tests exception creation, context preservation, and inheritance.
 """
-import pytest
 
 from qsp_llm_workflows.core.exceptions import (
     WorkflowException,
@@ -61,9 +60,7 @@ class TestBatchTimeoutError:
     def test_create_timeout_error(self):
         """Test creating timeout error with batch_id and timeout."""
         exc = BatchTimeoutError(
-            "Batch timed out after 3600s",
-            batch_id="batch_abc123",
-            timeout=3600
+            "Batch timed out after 3600s", batch_id="batch_abc123", timeout=3600
         )
 
         assert str(exc) == "Batch timed out after 3600s"
@@ -100,11 +97,7 @@ class TestValidationError:
             "file1.yaml: Missing required field 'parameter_name'",
             "file2.yaml: Invalid type for 'value' field",
         ]
-        exc = ValidationError(
-            "Schema validation failed",
-            "schema",
-            failures=failures
-        )
+        exc = ValidationError("Schema validation failed", "schema", failures=failures)
 
         assert exc.validation_type == "schema"
         assert exc.failures == failures

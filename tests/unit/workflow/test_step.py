@@ -3,8 +3,8 @@ Unit tests for WorkflowStep base class.
 
 Tests the abstract base class for workflow steps.
 """
+
 import pytest
-from pathlib import Path
 from unittest.mock import Mock
 
 from qsp_llm_workflows.core.workflow.step import WorkflowStep

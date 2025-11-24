@@ -3,9 +3,8 @@ Unit tests for WorkflowOrchestrator.
 
 Tests the orchestrator's step selection and execution logic.
 """
-import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+
+from unittest.mock import Mock, patch
 
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator, WorkflowResult
 from qsp_llm_workflows.core.config import WorkflowConfig
@@ -230,8 +229,12 @@ class TestWorkflowExecution:
 
         callback = Mock()
 
-        with patch("qsp_llm_workflows.core.workflow_orchestrator.ProcessImmediateStep") as mock_process_class:
-            with patch("qsp_llm_workflows.core.workflow_orchestrator.UnpackResultsStep") as mock_unpack_class:
+        with patch(
+            "qsp_llm_workflows.core.workflow_orchestrator.ProcessImmediateStep"
+        ) as mock_process_class:
+            with patch(
+                "qsp_llm_workflows.core.workflow_orchestrator.UnpackResultsStep"
+            ) as mock_unpack_class:
                 # Mock successful execution
                 def execute_with_callback(context):
                     # Verify callback is in context

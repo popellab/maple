@@ -3,8 +3,6 @@ Simple prompt building functions.
 
 Replaces complex YAML-based prompt assembly with straightforward string substitution.
 """
-from pathlib import Path
-from typing import Dict, Optional
 
 from qsp_llm_workflows.core.resource_utils import read_prompt, read_shared_prompt
 

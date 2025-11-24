@@ -81,7 +81,7 @@ class ModelDefinitionExporter:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write to JSON
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(definitions, f, indent=2, ensure_ascii=False)
 
         print(f"Exported {len(definitions)} parameter definitions")

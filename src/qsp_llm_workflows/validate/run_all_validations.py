@@ -232,7 +232,7 @@ Examples:
     master_summary = {
         "timestamp": datetime.now().isoformat(),
         "data_dir": str(data_dir),
-        "template": str(template),
+        "model": model_class.__name__,
         "validations": [],
     }
 

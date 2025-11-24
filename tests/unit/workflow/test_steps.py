@@ -3,17 +3,14 @@ Unit tests for concrete workflow steps.
 
 Tests each workflow step in isolation with mocked dependencies.
 """
+
 import pytest
-import json
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, mock_open
+from unittest.mock import Mock, patch, mock_open
 
 from qsp_llm_workflows.core.workflow.context import WorkflowContext
 from qsp_llm_workflows.core.workflow.steps import (
     CreateBatchStep,
     UploadBatchStep,
-    MonitorBatchStep,
-    ProcessImmediateStep,
     UnpackResultsStep,
 )
 from qsp_llm_workflows.core.exceptions import (
@@ -220,9 +217,7 @@ class TestUnpackResultsStep:
             immediate=True,
             batch_id=None,
         )
-        mock_process.assert_called_once_with(
-            results_file, output_dir, tmp_path / "input.csv"
-        )
+        mock_process.assert_called_once_with(results_file, output_dir, tmp_path / "input.csv")
 
     def test_missing_results_file(self, tmp_path):
         """Test error when results file is not in context."""

@@ -19,9 +19,9 @@ def read_prompt(prompt_name: str) -> str:
     Returns:
         Prompt text content
     """
-    prompts = files('qsp_llm_workflows').joinpath('prompts')
+    prompts = files("qsp_llm_workflows").joinpath("prompts")
     prompt_file = prompts / prompt_name
-    return prompt_file.read_text(encoding='utf-8')
+    return prompt_file.read_text(encoding="utf-8")
 
 
 def read_template(template_name: str) -> str:
@@ -34,9 +34,9 @@ def read_template(template_name: str) -> str:
     Returns:
         Template text content
     """
-    templates = files('qsp_llm_workflows').joinpath('templates')
+    templates = files("qsp_llm_workflows").joinpath("templates")
     template_file = templates / template_name
-    return template_file.read_text(encoding='utf-8')
+    return template_file.read_text(encoding="utf-8")
 
 
 def read_config(config_name: str) -> str:
@@ -49,9 +49,9 @@ def read_config(config_name: str) -> str:
     Returns:
         Config text content
     """
-    configs = files('qsp_llm_workflows').joinpath('templates', 'configs')
+    configs = files("qsp_llm_workflows").joinpath("templates", "configs")
     config_file = configs / config_name
-    return config_file.read_text(encoding='utf-8')
+    return config_file.read_text(encoding="utf-8")
 
 
 def read_shared_prompt(shared_name: str) -> str:
@@ -64,9 +64,9 @@ def read_shared_prompt(shared_name: str) -> str:
     Returns:
         Shared prompt text content
     """
-    shared = files('qsp_llm_workflows').joinpath('prompts', 'shared')
+    shared = files("qsp_llm_workflows").joinpath("prompts", "shared")
     shared_file = shared / shared_name
-    return shared_file.read_text(encoding='utf-8')
+    return shared_file.read_text(encoding="utf-8")
 
 
 def get_package_root() -> Path:
@@ -79,7 +79,7 @@ def get_package_root() -> Path:
     Returns:
         Path to the package root directory
     """
-    package = files('qsp_llm_workflows')
+    package = files("qsp_llm_workflows")
     with as_file(package) as path:
         return Path(path)
 

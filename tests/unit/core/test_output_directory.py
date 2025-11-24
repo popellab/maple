@@ -3,6 +3,7 @@ Unit tests for output directory management.
 
 Tests the unique directory generation for extraction results.
 """
+
 from pathlib import Path
 from freezegun import freeze_time
 import time

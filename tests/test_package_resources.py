@@ -4,9 +4,8 @@ Test that required package resources exist and are accessible.
 These tests catch issues like missing MATLAB scripts, templates, or prompts
 that would cause runtime errors.
 """
+
 import pytest
-from pathlib import Path
-from importlib import resources
 
 from qsp_llm_workflows.core.resource_utils import get_package_root
 
@@ -81,7 +80,7 @@ def test_all_matlab_scripts_are_readable():
     assert len(matlab_files) > 0, "No MATLAB files found"
 
     for matlab_file in matlab_files:
-        with open(matlab_file, 'r') as f:
+        with open(matlab_file, "r") as f:
             content = f.read()
             assert len(content) > 0, f"MATLAB file is empty: {matlab_file}"
             assert "function" in content, f"MATLAB file doesn't contain 'function': {matlab_file}"
@@ -101,7 +100,7 @@ def test_all_templates_are_valid_yaml():
 
     for yaml_file in yaml_files:
         try:
-            with open(yaml_file, 'r') as f:
+            with open(yaml_file, "r") as f:
                 yaml.safe_load(f)
         except yaml.YAMLError as e:
             pytest.fail(f"Invalid YAML in {yaml_file}: {e}")
@@ -118,6 +117,6 @@ def test_all_prompts_are_readable():
     assert len(prompt_files) > 0, "No prompt files found"
 
     for prompt_file in prompt_files:
-        with open(prompt_file, 'r', encoding='utf-8') as f:
+        with open(prompt_file, "r", encoding="utf-8") as f:
             content = f.read()
             assert len(content) > 0, f"Prompt file is empty: {prompt_file}"

@@ -91,20 +91,24 @@ def main():
                     # Test statistics unpacking
                     if source_csv:
                         print(
-                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv}'
+                            f"  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv}"
                         )
-                        print("\nThen aggregate test statistics (if using model-specific aggregation):")
+                        print(
+                            "\nThen aggregate test statistics (if using model-specific aggregation):"
+                        )
                         print(
                             f"  python ../your-model-repo/metadata/aggregate_test_statistics.py {source_csv} {target_dir} ../qsp-metadata-storage/scratch/"
                         )
                     else:
                         print(
-                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv'
+                            f"  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv"
                         )
                         print(
                             "\nNote: Replace 'input_csv' with path to CSV used to create this batch"
                         )
-                        print("\nThen aggregate test statistics (if using model-specific aggregation):")
+                        print(
+                            "\nThen aggregate test statistics (if using model-specific aggregation):"
+                        )
                         print(
                             f"  python ../your-model-repo/metadata/aggregate_test_statistics.py input_csv {target_dir} ../qsp-metadata-storage/scratch/"
                         )
@@ -112,11 +116,11 @@ def main():
                     # Other batch types unpacking
                     if source_csv:
                         print(
-                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv}'
+                            f"  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv}"
                         )
                     else:
                         print(
-                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv'
+                            f"  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv"
                         )
                         print(
                             "\nNote: Replace 'input_csv' with path to CSV used to create this batch"

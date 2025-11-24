@@ -3,6 +3,7 @@ Output directory management for extraction workflows.
 
 Provides utilities for creating unique timestamped directories for extraction results.
 """
+
 from pathlib import Path
 from datetime import datetime
 from typing import Optional

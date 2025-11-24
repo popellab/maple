@@ -3,6 +3,7 @@ Configuration management for QSP LLM workflows.
 
 Provides centralized configuration with validation and environment loading.
 """
+
 import os
 from pathlib import Path
 from typing import Literal, Optional
@@ -152,14 +153,11 @@ class WorkflowConfig(BaseModel):
         except ValidationError as e:
             # Wrap Pydantic validation errors
             raise ConfigurationError(
-                f"Configuration validation failed: {e}",
-                context={"validation_errors": str(e)}
+                f"Configuration validation failed: {e}", context={"validation_errors": str(e)}
             ) from e
         except Exception as e:
             # Wrap any other errors
-            raise ConfigurationError(
-                f"Failed to load configuration: {e}"
-            ) from e
+            raise ConfigurationError(f"Failed to load configuration: {e}") from e
 
 
 def _load_env_file(env_file: Path) -> None:

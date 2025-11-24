@@ -40,18 +40,33 @@ class SchemaValidator:
         """
         errors = []
         data = file_info["data"]
-        filename = file_info["filename"]
 
         # Try to validate with Pydantic model
         try:
             # Extract only the LLM-generated content (exclude header fields)
             # Header fields are added during unpacking, not validated here
-            model_data = {k: v for k, v in data.items()
-                         if k not in ['schema_version', 'parameter_name', 'parameter_units',
-                                     'parameter_definition', 'cancer_type', 'tags',
-                                     'derivation_id', 'derivation_timestamp', 'model_context',
-                                     'context_hash', 'test_statistic_id', 'scenario_context',
-                                     'required_species', 'derived_species_description', 'validation']}
+            model_data = {
+                k: v
+                for k, v in data.items()
+                if k
+                not in [
+                    "schema_version",
+                    "parameter_name",
+                    "parameter_units",
+                    "parameter_definition",
+                    "cancer_type",
+                    "tags",
+                    "derivation_id",
+                    "derivation_timestamp",
+                    "model_context",
+                    "context_hash",
+                    "test_statistic_id",
+                    "scenario_context",
+                    "required_species",
+                    "derived_species_description",
+                    "validation",
+                ]
+            }
 
             self.model_class.model_validate(model_data)
         except ValidationError as e:

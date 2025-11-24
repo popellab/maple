@@ -3,10 +3,10 @@ Concrete workflow step implementations.
 
 Each step performs a specific part of the extraction workflow.
 """
+
 import json
 import time
 import logging
-from pathlib import Path
 from datetime import datetime
 from openai import OpenAI
 
@@ -51,7 +51,7 @@ class CreateBatchStep(WorkflowStep):
             logger.error("Unknown workflow type: %s", context.workflow_type)
             raise BatchCreationError(
                 f"Unknown workflow type: {context.workflow_type}",
-                context={"workflow_type": context.workflow_type}
+                context={"workflow_type": context.workflow_type},
             )
 
         # Create batch
@@ -62,14 +62,17 @@ class CreateBatchStep(WorkflowStep):
             logger.error("Batch creation failed: %s", e, exc_info=True)
             raise BatchCreationError(
                 f"Failed to create batch requests: {e}",
-                context={"workflow_type": context.workflow_type, "input_csv": str(context.input_csv)}
+                context={
+                    "workflow_type": context.workflow_type,
+                    "input_csv": str(context.input_csv),
+                },
             ) from e
 
         if not output_file.exists():
             logger.error("Batch file not found: %s", output_file)
             raise BatchCreationError(
                 f"Expected batch file not created: {output_file}",
-                context={"expected_file": str(output_file)}
+                context={"expected_file": str(output_file)},
             )
 
         context.batch_file = output_file
@@ -89,8 +92,7 @@ class UploadBatchStep(WorkflowStep):
         """Upload batch to OpenAI API."""
         if not context.batch_file:
             raise BatchUploadError(
-                "Batch file not found in context",
-                context={"workflow_type": context.workflow_type}
+                "Batch file not found in context", context={"workflow_type": context.workflow_type}
             )
 
         context.report_progress(f"Uploading batch: {context.batch_file.name}...")
@@ -114,8 +116,8 @@ class UploadBatchStep(WorkflowStep):
                 f"Failed to upload batch to OpenAI: {e}",
                 context={
                     "batch_file": str(context.batch_file),
-                    "workflow_type": context.workflow_type
-                }
+                    "workflow_type": context.workflow_type,
+                },
             ) from e
 
         # Save batch metadata
@@ -149,8 +151,7 @@ class MonitorBatchStep(WorkflowStep):
         """Monitor batch until completion and download results."""
         if not context.batch_id:
             raise BatchMonitoringError(
-                "Batch ID not found in context",
-                context={"workflow_type": context.workflow_type}
+                "Batch ID not found in context", context={"workflow_type": context.workflow_type}
             )
 
         context.report_progress(f"Monitoring batch {context.batch_id}...")
@@ -169,7 +170,7 @@ class MonitorBatchStep(WorkflowStep):
                     raise BatchTimeoutError(
                         f"Batch did not complete within {timeout}s",
                         batch_id=context.batch_id,
-                        timeout=timeout
+                        timeout=timeout,
                     )
 
                 batch = client.batches.retrieve(context.batch_id)
@@ -185,13 +186,15 @@ class MonitorBatchStep(WorkflowStep):
                 if batch.status == "completed":
                     if not batch.output_file_id:
                         raise BatchMonitoringError(
-                            f"Batch completed but no output file",
-                            context={"batch_id": context.batch_id}
+                            "Batch completed but no output file",
+                            context={"batch_id": context.batch_id},
                         )
 
                     # Download results
                     content = client.files.content(batch.output_file_id)
-                    output_file = context.config.batch_jobs_dir / f"{context.batch_id}_results.jsonl"
+                    output_file = (
+                        context.config.batch_jobs_dir / f"{context.batch_id}_results.jsonl"
+                    )
 
                     with open(output_file, "wb") as f:
                         f.write(content.content)
@@ -203,14 +206,14 @@ class MonitorBatchStep(WorkflowStep):
 
                 elif batch.status == "failed":
                     raise BatchMonitoringError(
-                        f"Batch failed",
-                        context={"batch_id": context.batch_id, "status": batch.status}
+                        "Batch failed",
+                        context={"batch_id": context.batch_id, "status": batch.status},
                     )
 
                 elif batch.status in ["expired", "cancelled"]:
                     raise BatchMonitoringError(
                         f"Batch was {batch.status}",
-                        context={"batch_id": context.batch_id, "status": batch.status}
+                        context={"batch_id": context.batch_id, "status": batch.status},
                     )
 
                 # Wait before next check
@@ -221,8 +224,7 @@ class MonitorBatchStep(WorkflowStep):
             raise
         except Exception as e:
             raise BatchMonitoringError(
-                f"Failed to monitor batch: {e}",
-                context={"batch_id": context.batch_id}
+                f"Failed to monitor batch: {e}", context={"batch_id": context.batch_id}
             ) from e
 
 
@@ -267,8 +269,8 @@ class ProcessImmediateStep(WorkflowStep):
                 f"Failed to process requests via Responses API: {e}",
                 context={
                     "input_csv": str(context.input_csv),
-                    "workflow_type": context.workflow_type
-                }
+                    "workflow_type": context.workflow_type,
+                },
             ) from e
 
 
@@ -284,7 +286,7 @@ class UnpackResultsStep(WorkflowStep):
         if not context.results_file:
             raise ResultsUnpackError(
                 "Results file not found in context",
-                context={"workflow_type": context.workflow_type}
+                context={"workflow_type": context.workflow_type},
             )
 
         try:
@@ -319,6 +321,6 @@ class UnpackResultsStep(WorkflowStep):
                 f"Failed to unpack results: {e}",
                 context={
                     "results_file": str(context.results_file),
-                    "workflow_type": context.workflow_type
-                }
+                    "workflow_type": context.workflow_type,
+                },
             ) from e

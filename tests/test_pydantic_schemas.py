@@ -4,6 +4,7 @@ Test that Pydantic models generate OpenAI-compatible strict JSON schemas.
 These tests catch issues like Dict[str, str] generating additionalProperties,
 which breaks OpenAI's strict JSON schema mode.
 """
+
 import pytest
 from openai.lib._pydantic import to_strict_json_schema
 
@@ -42,7 +43,9 @@ def check_no_additional_properties(schema: dict, path: str = "root"):
         if def_key in schema:
             for def_name, def_schema in schema[def_key].items():
                 if isinstance(def_schema, dict):
-                    issues.extend(check_no_additional_properties(def_schema, f"{path}.{def_key}.{def_name}"))
+                    issues.extend(
+                        check_no_additional_properties(def_schema, f"{path}.{def_key}.{def_name}")
+                    )
 
     # Check items (for arrays)
     if "items" in schema and isinstance(schema["items"], dict):
@@ -59,7 +62,7 @@ def test_parameter_metadata_schema_strict_compatible():
     issues = check_no_additional_properties(schema)
 
     if issues:
-        pytest.fail(f"ParameterMetadata schema has additionalProperties:\n" + "\n".join(issues))
+        pytest.fail("ParameterMetadata schema has additionalProperties:\n" + "\n".join(issues))
 
     # Verify required fields are present
     assert "properties" in schema
@@ -76,7 +79,7 @@ def test_test_statistic_schema_strict_compatible():
     issues = check_no_additional_properties(schema)
 
     if issues:
-        pytest.fail(f"TestStatistic schema has additionalProperties:\n" + "\n".join(issues))
+        pytest.fail("TestStatistic schema has additionalProperties:\n" + "\n".join(issues))
 
     # Verify required fields are present
     assert "properties" in schema
@@ -89,8 +92,9 @@ def test_parameter_estimates_schema_structure():
     schema = to_strict_json_schema(ParameterEstimates)
 
     # Verify key_assumptions is NOT in ParameterEstimates (should be in ParameterMetadata)
-    assert "key_assumptions" not in schema["properties"], \
-        "key_assumptions should be in ParameterMetadata, not ParameterEstimates"
+    assert (
+        "key_assumptions" not in schema["properties"]
+    ), "key_assumptions should be in ParameterMetadata, not ParameterEstimates"
 
 
 def test_test_statistic_estimates_schema_structure():
@@ -98,13 +102,15 @@ def test_test_statistic_estimates_schema_structure():
     schema = to_strict_json_schema(TestStatisticEstimates)
 
     # Verify key_assumptions IS in TestStatisticEstimates
-    assert "key_assumptions" in schema["properties"], \
-        "key_assumptions should be in TestStatisticEstimates"
+    assert (
+        "key_assumptions" in schema["properties"]
+    ), "key_assumptions should be in TestStatisticEstimates"
 
     # Check that it's a list, not a dict
     key_assumptions_schema = schema["properties"]["key_assumptions"]
-    assert key_assumptions_schema["type"] == "array", \
-        "key_assumptions should be an array, not an object with additionalProperties"
+    assert (
+        key_assumptions_schema["type"] == "array"
+    ), "key_assumptions should be an array, not an object with additionalProperties"
 
 
 def test_key_assumption_model():
@@ -131,8 +137,7 @@ def test_all_models_have_required_fields():
 
         # Check that required doesn't have extra keys
         extra_required = required - properties
-        assert not extra_required, \
-            f"{model.__name__} has extra keys in required: {extra_required}"
+        assert not extra_required, f"{model.__name__} has extra keys in required: {extra_required}"
 
         # Check that all properties are required (or explicitly optional)
         # Note: This is a strong check - adjust if we want optional fields
@@ -151,5 +156,6 @@ def test_schemas_have_descriptions():
 
         # Check that properties have descriptions
         for prop_name, prop_schema in schema.get("properties", {}).items():
-            assert "description" in prop_schema, \
-                f"{model.__name__}.{prop_name} is missing a description"
+            assert (
+                "description" in prop_schema
+            ), f"{model.__name__}.{prop_name} is missing a description"

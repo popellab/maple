@@ -18,6 +18,7 @@ from openai.lib._pydantic import to_strict_json_schema
 from qsp_llm_workflows.core.prompts import (
     build_parameter_extraction_prompt,
     build_test_statistic_prompt,
+    build_validation_fix_prompt,
 )
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 
@@ -536,7 +537,9 @@ class TestStatisticBatchCreator(BatchCreator):
 
                 # Create batch request with structured outputs
                 custom_id = f"test_stat_{test_statistic_id}_{i}"
-                request = self.create_request(custom_id, prompt, TestStatistic, reasoning_effort="high")
+                request = self.create_request(
+                    custom_id, prompt, TestStatistic, reasoning_effort="high"
+                )
                 requests.append(request)
 
         return requests
@@ -790,27 +793,18 @@ class ValidationFixBatchCreator(BatchCreator):
             content_dict, default_flow_style=False, allow_unicode=True, sort_keys=False
         )
 
-        # Use the validation fix prompt template
-        prompt_path = get_prompt_path("validation_fix_prompt.md")
+        # Format errors
+        formatted_errors = "\n".join(f"- {error}" for error in errors)
 
-        if prompt_path.exists():
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                template = f.read()
-
-            # Format errors
-            formatted_errors = "\n".join(f"- {error}" for error in errors)
-
-            # Generate appropriate example JSON based on template type
-            example_json = self._generate_example_json(template_type)
-
-            # Fill placeholders (use content YAML without headers)
-            prompt = template.replace("{{YAML_CONTENT}}", content_yaml)
-            prompt = prompt.replace("{{VALIDATION_ERRORS}}", formatted_errors)
-            prompt = prompt.replace("{{TEMPLATE_CONTENT}}", template_content)
-            prompt = prompt.replace("{{EXAMPLE_JSON}}", example_json)
-
+        # Use the new prompt builder function
+        try:
+            prompt = build_validation_fix_prompt(
+                yaml_content=content_yaml,
+                validation_errors=formatted_errors,
+                template_content=template_content,
+            )
             return prompt
-        else:
+        except Exception:
             # Fallback if template doesn't exist yet
             formatted_errors = "\n".join(f"- {error}" for error in errors)
 
@@ -907,7 +901,9 @@ Return the corrected metadata as JSON inside a ```json code fence. The unpacker 
             file_stem = yaml_path.stem
             custom_id = f"fix_{file_stem}"
 
-            request = self.create_request(custom_id, prompt, pydantic_model, reasoning_effort="high")
+            request = self.create_request(
+                custom_id, prompt, pydantic_model, reasoning_effort="high"
+            )
 
             requests.append(request)
             print(f"  Created fix request for {filename} ({len(errors)} error(s))")

@@ -210,7 +210,9 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 # Batch format: extract from output[type=message].content[0].text
                 try:
                     output_items = body["output"]
-                    message_item = next(item for item in output_items if item.get("type") == "message")
+                    message_item = next(
+                        item for item in output_items if item.get("type") == "message"
+                    )
                     content = message_item["content"][0]["text"]
 
                     # Extract JSON from markdown code fence
@@ -221,7 +223,9 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
 
                     json_data = json.loads(json_content)
                 except (KeyError, StopIteration, json.JSONDecodeError) as e:
-                    print(f"Error: Could not extract content from batch format for {custom_id}: {e}")
+                    print(
+                        f"Error: Could not extract content from batch format for {custom_id}: {e}"
+                    )
                     continue
             else:
                 # Immediate format: body is already the JSON data

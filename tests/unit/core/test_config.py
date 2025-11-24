@@ -3,6 +3,7 @@ Unit tests for WorkflowConfig.
 
 Tests the configuration object that centralizes workflow settings.
 """
+
 import pytest
 from pathlib import Path
 from pydantic import ValidationError
