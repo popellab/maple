@@ -51,6 +51,7 @@ class TestFixCLI:
             immediate=True,
             timeout=3600,
             preview_prompts=False,
+            validation_results_dir=str(validation_dir),
         )
 
         # Import main here to avoid running it at import time
@@ -90,6 +91,9 @@ class TestFixCLI:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
+        # Intentionally don't create validation_dir to test error handling
+        nonexistent_validation = tmp_path / "nonexistent_validation"
+
         mock_load_api_key.return_value = "test-api-key"
 
         # Create test args
@@ -101,6 +105,7 @@ class TestFixCLI:
             immediate=True,
             timeout=3600,
             preview_prompts=False,
+            validation_results_dir=str(nonexistent_validation),
         )
 
         # Import main
@@ -123,6 +128,9 @@ class TestFixCLI:
         """Test error when data directory doesn't exist."""
         # Setup
         nonexistent_dir = tmp_path / "nonexistent"
+        validation_dir = tmp_path / "validation_results"
+        validation_dir.mkdir()  # Create validation dir but not data dir
+
         mock_load_api_key.return_value = "test-api-key"
 
         # Create test args
@@ -134,6 +142,7 @@ class TestFixCLI:
             immediate=True,
             timeout=3600,
             preview_prompts=False,
+            validation_results_dir=str(validation_dir),
         )
 
         # Import main
@@ -189,6 +198,7 @@ class TestFixCLI:
             immediate=True,
             timeout=3600,
             preview_prompts=False,
+            validation_results_dir=str(validation_dir),
         )
 
         # Import main
@@ -245,6 +255,7 @@ class TestFixCLI:
             immediate=True,
             timeout=7200,
             preview_prompts=False,
+            validation_results_dir=str(validation_dir),
         )
 
         # Import main

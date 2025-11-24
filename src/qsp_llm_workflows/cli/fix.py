@@ -62,6 +62,13 @@ Examples:
         help="Preview prompts without sending to API (saves to batch_jobs/prompt_preview.jsonl)",
     )
 
+    parser.add_argument(
+        "--validation-results-dir",
+        type=str,
+        default=None,
+        help="Custom validation results directory (default: output/validation_results)",
+    )
+
     args = parser.parse_args()
 
     # Determine directories
@@ -83,7 +90,11 @@ Examples:
         sys.exit(1)
 
     # Determine validation results directory
-    validation_results_dir = Path("output/validation_results")
+    if args.validation_results_dir:
+        validation_results_dir = Path(args.validation_results_dir)
+    else:
+        validation_results_dir = Path("output/validation_results")
+
     if not validation_results_dir.exists():
         print("Error: Validation results directory not found", file=sys.stderr)
         print(f"Expected: {validation_results_dir}", file=sys.stderr)
