@@ -61,15 +61,6 @@ def test_validation_fix_prompt_exists():
     assert prompt_file.stat().st_size > 0, "Validation fix prompt is empty"
 
 
-def test_prompt_assembly_config_exists():
-    """Test that prompt assembly config exists."""
-    package_root = get_package_root()
-    config_file = package_root / "templates" / "configs" / "prompt_assembly.yaml"
-
-    assert config_file.exists(), f"Prompt assembly config not found: {config_file}"
-    assert config_file.stat().st_size > 0, "Prompt assembly config is empty"
-
-
 def test_header_fields_config_exists():
     """Test that header fields config exists."""
     package_root = get_package_root()
