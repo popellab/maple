@@ -3,6 +3,11 @@
     --matlab-model ../qspio-pdac/scripts/immune_oncology_model_PDAC.m \
     --output batch_jobs/input_data/model_definitions.json
 
+  # 1b. Or use a saved simbiology project
+  qsp-export-model \
+    --simbiology-project batch_jobs/input_data/tnbc_model.sbproj \
+    --output batch_jobs/input_data/model_definitions.json
+
   # 2. Enrich the example CSV
   qsp-enrich-csv parameter \
     docs/example_parameter_input.csv \

@@ -32,17 +32,21 @@ function export_model_definitions(model_file, temp_dir, model_type)
             fprintf('Loading SimBiology project...\n');
             proj = sbioloadproject(model_file);
 
-            % Get the first model from the project
-            if isempty(proj.Models)
+            % sbioloadproject returns a struct with model fields
+            % Get field names and extract first model
+            modelFields = fieldnames(proj);
+
+            if isempty(modelFields)
                 error('SimBiology project contains no models');
             end
 
-            model = proj.Models(1);
+            % Access first model using dynamic field access
+            model = proj.(modelFields{1});
             fprintf('Loaded model: %s\n', model.Name);
 
-            if length(proj.Models) > 1
+            if length(modelFields) > 1
                 warning('Project contains %d models. Using first model: %s', ...
-                    length(proj.Models), model.Name);
+                    length(modelFields), model.Name);
             end
         else
             % Load from MATLAB script (default behavior)

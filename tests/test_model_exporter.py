@@ -134,3 +134,42 @@ def test_model_exporter_invalid_model_type():
 
     finally:
         Path(mock_model_file.name).unlink()
+
+
+def test_matlab_script_handles_sbioloadproject_struct():
+    """
+    Regression test: Verify MATLAB script correctly handles sbioloadproject return value.
+
+    sbioloadproject returns a struct with dynamic field names (e.g., 'mw_sbmod1'),
+    not a Project object with a 'Models' property.
+
+    This test verifies the MATLAB script uses:
+        proj = sbioloadproject(file);
+        modelFields = fieldnames(proj);
+        model = proj.(modelFields{1});
+
+    Rather than the incorrect:
+        proj.Models  % This field doesn't exist!
+    """
+    from qsp_llm_workflows.core.resource_utils import get_package_root
+
+    # Read the MATLAB export script
+    package_root = get_package_root()
+    matlab_script = package_root / "matlab" / "export_model_definitions.m"
+
+    with open(matlab_script, "r") as f:
+        script_content = f.read()
+
+    # Verify correct struct access pattern is used
+    assert (
+        "fieldnames(proj)" in script_content
+    ), "MATLAB script should use fieldnames(proj) to get model names from struct"
+    assert (
+        "proj.(modelFields{1})" in script_content or "proj.(fields{1})" in script_content
+    ), "MATLAB script should use dynamic field access proj.(fieldNames{1}) to get model"
+
+    # Verify incorrect pattern is NOT used
+    assert "proj.Models" not in script_content, (
+        "MATLAB script should NOT use proj.Models - sbioloadproject returns a struct, "
+        "not a Project object with Models property"
+    )
