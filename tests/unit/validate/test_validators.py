@@ -259,6 +259,128 @@ class TestTextSnippetValidator:
             assert len(report.failed) == 1
             assert "0.5" in report.failed[0]["reason"]
 
+    def test_handles_scientific_notation_in_snippets(self):
+        """Test validator handles scientific notation in snippets."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "inputs": [
+                        {
+                            "name": "concentration",
+                            "value": 1.5e-6,
+                            "units": "M",
+                            "value_snippet": "The concentration was 1.5 × 10⁻⁶ M",
+                            "source_ref": "src1",
+                        }
+                    ]
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = TextSnippetValidator(tmpdir)
+            report = validator.validate()
+
+            # Should pass - validator handles scientific notation
+            assert len(report.failed) == 0
+
+    def test_multiple_inputs_mixed_results(self):
+        """Test validator with multiple inputs where some pass and some fail."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "inputs": [
+                        {
+                            "name": "growth_rate",
+                            "value": 0.234,
+                            "units": "1/day",
+                            "value_snippet": "The growth rate was 0.234 per day",  # Correct
+                            "source_ref": "src1",
+                        },
+                        {
+                            "name": "clearance",
+                            "value": 67.89,
+                            "units": "L/h",
+                            "value_snippet": "Clearance was measured at 15.3 L/h",  # Wrong - different value
+                            "source_ref": "src1",
+                        },
+                        {
+                            "name": "volume",
+                            "value": 400.0,
+                            "units": "mL",
+                            "value_snippet": "The volume was 400.0 mL",  # Correct
+                            "source_ref": "src1",
+                        },
+                    ]
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = TextSnippetValidator(tmpdir)
+            report = validator.validate()
+
+            # Should have 1 failure (clearance) and 2 passes
+            assert len(report.failed) == 1
+            assert len(report.passed) == 2
+            # Check that clearance is the one that failed
+            assert "clearance" in report.failed[0]["item"]
+
+    def test_passes_when_no_value_snippet(self):
+        """Test validator skips inputs without value_snippet."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "inputs": [
+                        {
+                            "name": "growth_rate",
+                            "value": 0.5,
+                            "units": "1/day",
+                            # No value_snippet field
+                            "source_ref": "src1",
+                        }
+                    ]
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = TextSnippetValidator(tmpdir)
+            report = validator.validate()
+
+            # Should pass - no snippet to validate
+            assert len(report.failed) == 0
+
+    def test_skips_empty_snippet(self):
+        """Test validator skips validation when snippet is empty."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "inputs": [
+                        {
+                            "name": "growth_rate",
+                            "value": 0.5,
+                            "units": "1/day",
+                            "value_snippet": "",  # Empty snippet
+                            "source_ref": "src1",
+                        }
+                    ]
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = TextSnippetValidator(tmpdir)
+            report = validator.validate()
+
+            # Empty snippets are skipped (falsy value), so no failures or passes
+            assert len(report.failed) == 0
+            assert len(report.passed) == 0
+
 
 class TestSourceReferenceValidator:
     """Test SourceReferenceValidator checks source reference integrity."""
@@ -342,6 +464,188 @@ class TestDOIValidator:
         assert validator.is_url("www.example.com") is True
         assert validator.is_url("10.1234/test") is False
         assert validator.is_url("doi.org/10.1234/test") is False
+
+    def test_is_url_handles_different_protocols(self):
+        """Test validator detects various URL protocols."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        # URLs with different protocols
+        assert validator.is_url("ftp://files.example.com") is True
+        assert validator.is_url("https://www.ncbi.nlm.nih.gov") is True
+        assert validator.is_url("http://arxiv.org/abs/1234.5678") is True
+
+        # DOI URLs (with https://doi.org/) are still URLs
+        assert validator.is_url("https://doi.org/10.1234/test") is True
+
+        # Bare DOI strings (without https://) with doi.org
+        assert validator.is_url("doi.org/10.1234/test") is False
+
+        # Pure DOIs (just the identifier)
+        assert validator.is_url("10.1056/NEJMoa1200690") is False
+        assert validator.is_url("10.1038/nature12345") is False
+
+    def test_is_url_handles_edge_cases(self):
+        """Test validator handles edge cases in URL detection."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        # Empty or None
+        assert validator.is_url("") is False
+        assert validator.is_url(None) is False
+
+        # Whitespace
+        assert validator.is_url("  https://example.com  ") is True
+        assert validator.is_url("  10.1234/test  ") is False
+
+    def test_fuzzy_match_exact_match(self):
+        """Test fuzzy matching with exact strings."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        assert validator.fuzzy_match("test", "test") is True
+        assert validator.fuzzy_match("Test Title", "Test Title") is True
+
+    def test_fuzzy_match_case_insensitive(self):
+        """Test fuzzy matching is case insensitive."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        assert validator.fuzzy_match("Test", "TEST") is True
+        assert validator.fuzzy_match("Test Title", "test title") is True
+
+    def test_fuzzy_match_whitespace_normalized(self):
+        """Test fuzzy matching normalizes whitespace."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        assert validator.fuzzy_match("  test  ", "test") is True
+        assert validator.fuzzy_match("test title", "test  title") is True
+
+    def test_fuzzy_match_similar_strings(self):
+        """Test fuzzy matching with similar but not identical strings."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        # Similar strings should match with default threshold (0.8)
+        assert validator.fuzzy_match("A study of cancer cells", "A study of cancer cell") is True
+
+        # Very different strings should not match
+        assert validator.fuzzy_match("Cancer study", "Completely different title") is False
+
+    def test_fuzzy_match_with_custom_threshold(self):
+        """Test fuzzy matching with custom similarity threshold."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        str1 = "Testing fuzzy matching"
+        str2 = "Testing fuzzy"
+
+        # Should match with lower threshold
+        assert validator.fuzzy_match(str1, str2, threshold=0.7) is True
+
+        # Should not match with higher threshold
+        assert validator.fuzzy_match(str1, str2, threshold=0.95) is False
+
+    def test_fuzzy_match_handles_empty_strings(self):
+        """Test fuzzy matching handles empty or None strings."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        assert validator.fuzzy_match("", "test") is False
+        assert validator.fuzzy_match("test", "") is False
+        assert validator.fuzzy_match("", "") is False
+        assert validator.fuzzy_match(None, "test") is False
+        assert validator.fuzzy_match("test", None) is False
+
+    def test_collect_sources_from_primary(self):
+        """Test collecting sources from primary_data_sources."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        data = {
+            "primary_data_sources": [
+                {
+                    "source_tag": "src1",
+                    "title": "Test Paper",
+                    "first_author": "Smith",
+                    "year": 2020,
+                    "doi": "10.1234/test",
+                }
+            ]
+        }
+
+        sources = validator.collect_sources(data)
+        assert len(sources) == 1
+        assert sources[0][0] == "src1"
+        assert sources[0][1]["doi"] == "10.1234/test"
+
+    def test_collect_sources_from_secondary(self):
+        """Test collecting sources from secondary_data_sources."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        data = {
+            "secondary_data_sources": [
+                {
+                    "source_tag": "src1",
+                    "title": "Reference Book",
+                    "first_author": "Jones",
+                    "year": 2019,
+                    "doi_or_url": "10.5678/ref",
+                }
+            ]
+        }
+
+        sources = validator.collect_sources(data)
+        assert len(sources) == 1
+        assert sources[0][0] == "src1"
+
+    def test_collect_sources_from_methodological(self):
+        """Test collecting sources from methodological_sources."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        data = {
+            "methodological_sources": [
+                {
+                    "source_tag": "method1",
+                    "title": "Statistical Methods",
+                    "first_author": "Fisher",
+                    "year": 2018,
+                    "doi_or_url": "https://example.com/methods",
+                    "used_for": "Statistical analysis",
+                    "method_description": "Bootstrap methods",
+                }
+            ]
+        }
+
+        sources = validator.collect_sources(data)
+        assert len(sources) == 1
+        assert sources[0][0] == "method1"
+
+    def test_collect_sources_skips_missing_doi(self):
+        """Test collector skips sources without DOI/URL."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        data = {
+            "primary_data_sources": [
+                {
+                    "source_tag": "src1",
+                    "title": "Paper without DOI",
+                    "first_author": "Smith",
+                    "year": 2020,
+                    # No doi field
+                }
+            ]
+        }
+
+        sources = validator.collect_sources(data)
+        assert len(sources) == 0
+
+    def test_collect_sources_handles_empty_data(self):
+        """Test collector handles data without source sections."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        data = {
+            "parameter_estimates": {
+                "median": 1.0,
+                "iqr": 0.5,
+                "ci95": [0.5, 1.5],
+            }
+        }
+
+        sources = validator.collect_sources(data)
+        assert len(sources) == 0
 
 
 class TestValueConsistencyChecker:
