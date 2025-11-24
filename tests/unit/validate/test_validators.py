@@ -1,13 +1,13 @@
 """
 Tests for individual validators.
 
-Tests core functionality of each validator to ensure they work with base Validator class.
+Tests core validation logic of each validator.
 """
 
 import tempfile
+from pathlib import Path
+import yaml
 
-
-from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.validate.check_schema_compliance import SchemaValidator
 from qsp_llm_workflows.validate.test_code_execution import CodeExecutionValidator
 from qsp_llm_workflows.validate.check_text_snippets import TextSnippetValidator
@@ -17,192 +17,370 @@ from qsp_llm_workflows.validate.check_value_consistency import ValueConsistencyC
 from qsp_llm_workflows.validate.check_duplicate_primary_sources import (
     DuplicatePrimarySourceChecker,
 )
-from qsp_llm_workflows.validate.check_snippet_sources_manual_verify import (
-    SnippetSourceManualVerifier,
-)
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata
-from qsp_llm_workflows.core.validation_utils import ValidationReport
 
 
 class TestSchemaValidator:
-    """Test SchemaValidator inherits from Validator and works correctly."""
+    """Test SchemaValidator validates schema compliance."""
 
-    def test_inherits_from_validator(self):
-        """Test SchemaValidator inherits from Validator base class."""
-        validator = SchemaValidator("/data", model_class=ParameterMetadata)
-        assert isinstance(validator, Validator)
-
-    def test_has_name_property(self):
-        """Test validator has correct name property."""
-        validator = SchemaValidator("/data", model_class=ParameterMetadata)
-        assert validator.name == "Template Compliance Validation"
-
-    def test_validate_returns_report(self):
-        """Test validate() returns ValidationReport."""
+    def test_passes_valid_yaml(self):
+        """Test validator passes valid YAML that matches Pydantic schema."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            # Create complete valid parameter metadata
+            data = {
+                "mathematical_role": "Growth rate parameter",
+                "parameter_range": "positive_reals",
+                "study_overview": "Test study",
+                "study_design": "Experimental",
+                "parameter_estimates": {
+                    "median": 1.0,
+                    "iqr": 0.5,
+                    "ci95": [0.5, 1.5],
+                    "units": "1/day",
+                    "derivation_code": "import numpy as np\nresult = {'mean': 1.0, 'variance': 0.25}",
+                    "inputs": [
+                        {
+                            "name": "test_input",
+                            "value": 1.0,
+                            "units": "dimensionless",
+                            "description": "Test input description",
+                            "source_ref": "src1",
+                            "value_table_or_section": "Table 1",
+                            "value_snippet": "The value was 1.0",
+                            "units_table_or_section": "Methods section",
+                            "units_snippet": "dimensionless",
+                        }
+                    ],
+                },
+                "key_assumptions": [],
+                "derivation_explanation": "Test explanation",
+                "key_study_limitations": "No major limitations",
+                "primary_data_sources": [
+                    {
+                        "source_tag": "src1",
+                        "title": "Test",
+                        "first_author": "Smith",
+                        "year": 2020,
+                        "doi": "10.1234/test",
+                    }
+                ],
+                "secondary_data_sources": [],
+                "methodological_sources": [],
+                "biological_relevance": {
+                    "species_match": {"value": 1.0, "justification": "Same species"},
+                    "system_match": {"value": 1.0, "justification": "Same system"},
+                    "overall_confidence": {"value": 0.8, "justification": "High confidence"},
+                    "indication_match": {"value": 1.0, "justification": "Same indication"},
+                    "regimen_match": {"value": 1.0, "justification": "Same regimen"},
+                    "biomarker_population_match": {
+                        "value": 0.8,
+                        "justification": "Similar population",
+                    },
+                    "stage_burden_match": {"value": 0.9, "justification": "Similar stage"},
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
             validator = SchemaValidator(tmpdir, model_class=ParameterMetadata)
             report = validator.validate()
-            assert isinstance(report, ValidationReport)
-            assert report.name == "Template Compliance Validation"
 
-    def test_accepts_model_class_parameter(self):
-        """Test validator accepts model_class parameter."""
-        validator = SchemaValidator("/data", model_class=ParameterMetadata)
-        assert validator.model_class == ParameterMetadata
+            assert len(report.failed) == 0
+            assert len(report.passed) == 1
+
+    def test_fails_invalid_yaml(self):
+        """Test validator fails YAML with invalid schema."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            # Missing required fields
+            data = {
+                "parameter_estimates": {
+                    "median": 1.0,
+                    # Missing iqr, ci95, derivation_code, inputs
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = SchemaValidator(tmpdir, model_class=ParameterMetadata)
+            report = validator.validate()
+
+            assert len(report.failed) == 1
+            assert "test.yaml" in report.failed[0]["item"]
+
+    def test_fails_wrong_ci95_format(self):
+        """Test validator fails when ci95 is not a 2-element list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "median": 1.0,
+                    "iqr": 0.5,
+                    "ci95": [0.5, 1.5, 2.0],  # Wrong: should be 2 elements
+                    "derivation_code": "print('test')",
+                    "inputs": [],
+                },
+                "primary_data_sources": [],
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = SchemaValidator(tmpdir, model_class=ParameterMetadata)
+            report = validator.validate()
+
+            assert len(report.failed) == 1
+            assert "ci95" in report.failed[0]["reason"]
 
 
 class TestCodeExecutionValidator:
-    """Test CodeExecutionValidator."""
+    """Test CodeExecutionValidator executes and validates code."""
 
-    def test_inherits_from_validator(self):
-        """Test inherits from Validator base class."""
-        validator = CodeExecutionValidator("/data")
-        assert isinstance(validator, Validator)
-
-    def test_has_name_property(self):
-        """Test has correct name property."""
-        validator = CodeExecutionValidator("/data")
-        assert validator.name == "Code Execution Testing"
-
-    def test_validate_returns_report(self):
-        """Test validate() returns ValidationReport."""
+    def test_passes_valid_python_code(self):
+        """Test validator passes valid Python code."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            validator = CodeExecutionValidator(tmpdir, threshold_pct=5.0)
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "median": 1.0,
+                    "iqr": 0.5,
+                    "ci95": [0.5, 1.5],
+                    "derivation_code": """
+import numpy as np
+def derive_parameter(inputs):
+    return {
+        "median_param": 1.0,
+        "iqr_param": 0.5,
+        "ci95_param": [0.5, 1.5]
+    }
+""",
+                    "inputs": [
+                        {
+                            "name": "input1",
+                            "value": 1.0,
+                            "units": "dimensionless",
+                            "description": "Test input",
+                            "source_ref": "src1",
+                        }
+                    ],
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = CodeExecutionValidator(tmpdir)
             report = validator.validate()
-            assert isinstance(report, ValidationReport)
+
+            assert len(report.failed) == 0
+
+    def test_fails_syntax_error_code(self):
+        """Test validator fails code with syntax errors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "median": 1.0,
+                    "iqr": 0.5,
+                    "ci95": [0.5, 1.5],
+                    "derivation_code": "def bad_syntax(\nprint('missing parenthesis')",
+                    "inputs": [
+                        {
+                            "name": "input1",
+                            "value": 1.0,
+                            "units": "dimensionless",
+                            "description": "Test input",
+                            "source_ref": "src1",
+                        }
+                    ],
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = CodeExecutionValidator(tmpdir)
+            report = validator.validate()
+
+            assert len(report.failed) == 1
+            assert "error" in report.failed[0]["reason"].lower()
 
 
 class TestTextSnippetValidator:
-    """Test TextSnippetValidator."""
+    """Test TextSnippetValidator checks values in snippets."""
 
-    def test_inherits_from_validator(self):
-        """Test inherits from Validator base class."""
-        validator = TextSnippetValidator("/data")
-        assert isinstance(validator, Validator)
-
-    def test_has_name_property(self):
-        """Test has correct name property."""
-        validator = TextSnippetValidator("/data")
-        assert validator.name == "Text Snippet Validation"
-
-    def test_validate_returns_report(self):
-        """Test validate() returns ValidationReport."""
+    def test_passes_when_value_in_snippet(self):
+        """Test validator passes when declared value is in snippet."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "inputs": [
+                        {
+                            "name": "growth_rate",
+                            "value": 0.5,
+                            "units": "1/day",
+                            "value_snippet": "The growth rate was 0.5 per day",
+                            "source_ref": "src1",
+                        }
+                    ]
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
             validator = TextSnippetValidator(tmpdir)
             report = validator.validate()
-            assert isinstance(report, ValidationReport)
+
+            assert len(report.failed) == 0
+            assert len(report.passed) > 0
+
+    def test_fails_when_value_not_in_snippet(self):
+        """Test validator fails when declared value is not in snippet."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "inputs": [
+                        {
+                            "name": "growth_rate",
+                            "value": 0.5,
+                            "units": "1/day",
+                            "value_snippet": "The growth rate was 1.5 per day",  # Wrong value
+                            "source_ref": "src1",
+                        }
+                    ]
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = TextSnippetValidator(tmpdir)
+            report = validator.validate()
+
+            assert len(report.failed) == 1
+            assert "0.5" in report.failed[0]["reason"]
 
 
 class TestSourceReferenceValidator:
-    """Test SourceReferenceValidator."""
+    """Test SourceReferenceValidator checks source reference integrity."""
 
-    def test_inherits_from_validator(self):
-        """Test inherits from Validator base class."""
-        validator = SourceReferenceValidator("/data")
-        assert isinstance(validator, Validator)
-
-    def test_has_name_property(self):
-        """Test has correct name property."""
-        validator = SourceReferenceValidator("/data")
-        assert validator.name == "Source Reference Validation"
-
-    def test_validate_returns_report(self):
-        """Test validate() returns ValidationReport."""
+    def test_passes_when_all_refs_defined(self):
+        """Test validator passes when all source_refs have definitions."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "inputs": [
+                        {
+                            "name": "growth_rate",
+                            "value": 0.5,
+                            "source_ref": "smith2020",
+                        }
+                    ]
+                },
+                "primary_data_sources": [
+                    {
+                        "source_tag": "smith2020",
+                        "title": "Test Paper",
+                        "first_author": "Smith",
+                        "year": 2020,
+                        "doi": "10.1234/test",
+                    }
+                ],
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
             validator = SourceReferenceValidator(tmpdir)
             report = validator.validate()
-            assert isinstance(report, ValidationReport)
+
+            assert len(report.failed) == 0
+
+    def test_fails_when_ref_undefined(self):
+        """Test validator fails when source_ref has no definition."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "inputs": [
+                        {
+                            "name": "growth_rate",
+                            "value": 0.5,
+                            "source_ref": "missing_source",  # Not defined
+                        }
+                    ]
+                },
+                "primary_data_sources": [],
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = SourceReferenceValidator(tmpdir)
+            report = validator.validate()
+
+            assert len(report.failed) == 1
+            assert "missing_source" in report.failed[0]["reason"]
 
 
 class TestDOIValidator:
-    """Test DOIValidator."""
+    """Test DOIValidator validates DOI format and structure."""
 
-    def test_inherits_from_validator(self):
-        """Test inherits from Validator base class."""
-        validator = DOIValidator("/data")
-        assert isinstance(validator, Validator)
-
-    def test_has_name_property(self):
-        """Test has correct name property."""
-        validator = DOIValidator("/data")
-        assert validator.name == "DOI Resolution Validation"
-
-    def test_validate_returns_report(self):
-        """Test validate() returns ValidationReport."""
+    def test_passes_empty_directory(self):
+        """Test validator passes when no DOIs to validate."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            validator = DOIValidator(tmpdir, rate_limit=1.0)
+            validator = DOIValidator(tmpdir, rate_limit=0.1)
             report = validator.validate()
-            assert isinstance(report, ValidationReport)
 
-    def test_accepts_rate_limit_parameter(self):
-        """Test validator accepts rate_limit parameter."""
-        validator = DOIValidator("/data", rate_limit=2.0)
-        assert validator.rate_limit == 2.0
+            # Should pass with no files
+            assert len(report.failed) == 0
+
+    def test_is_url_detection(self):
+        """Test validator can distinguish URLs from DOIs."""
+        validator = DOIValidator("/tmp", rate_limit=0.1)
+
+        assert validator.is_url("https://example.com") is True
+        assert validator.is_url("http://example.com") is True
+        assert validator.is_url("www.example.com") is True
+        assert validator.is_url("10.1234/test") is False
+        assert validator.is_url("doi.org/10.1234/test") is False
 
 
 class TestValueConsistencyChecker:
-    """Test ValueConsistencyChecker."""
+    """Test ValueConsistencyChecker checks value consistency."""
 
-    def test_inherits_from_validator(self):
-        """Test inherits from Validator base class."""
-        validator = ValueConsistencyChecker("/data")
-        assert isinstance(validator, Validator)
+    def test_initializes_collections(self):
+        """Test validator initializes data structures correctly."""
+        validator = ValueConsistencyChecker("/tmp")
 
-    def test_has_name_property(self):
-        """Test has correct name property."""
-        validator = ValueConsistencyChecker("/data")
-        assert validator.name == "Value Consistency Checking"
+        assert hasattr(validator, "context_groups")
+        assert hasattr(validator, "legacy_values")
+        assert hasattr(validator, "all_files")
 
-    def test_validate_returns_report(self):
-        """Test validate() returns ValidationReport."""
+    def test_passes_empty_directory(self):
+        """Test validator passes when no files to check."""
         with tempfile.TemporaryDirectory() as tmpdir:
             validator = ValueConsistencyChecker(tmpdir)
             report = validator.validate()
-            assert isinstance(report, ValidationReport)
+
+            # Should pass with no files
+            assert len(report.failed) == 0
 
 
 class TestDuplicatePrimarySourceChecker:
-    """Test DuplicatePrimarySourceChecker."""
+    """Test DuplicatePrimarySourceChecker detects duplicates."""
 
-    def test_inherits_from_validator(self):
-        """Test inherits from Validator base class."""
-        validator = DuplicatePrimarySourceChecker("/data")
-        assert isinstance(validator, Validator)
+    def test_normalizes_doi(self):
+        """Test validator normalizes DOIs correctly."""
+        validator = DuplicatePrimarySourceChecker("/tmp")
 
-    def test_has_name_property(self):
-        """Test has correct name property."""
-        validator = DuplicatePrimarySourceChecker("/data")
-        assert validator.name == "Duplicate Primary Sources Check"
+        assert validator.normalize_doi("10.1234/TEST") == "10.1234/test"
+        assert validator.normalize_doi("https://doi.org/10.1234/Test") == "10.1234/test"
+        assert validator.normalize_doi("  10.1234/TEST  ") == "10.1234/test"
 
-    def test_validate_returns_report(self):
-        """Test validate() returns ValidationReport."""
+    def test_passes_non_review_directory(self):
+        """Test validator skips validation when not in to-review directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             validator = DuplicatePrimarySourceChecker(tmpdir)
             report = validator.validate()
-            assert isinstance(report, ValidationReport)
 
-
-class TestSnippetSourceManualVerifier:
-    """Test SnippetSourceManualVerifier."""
-
-    def test_inherits_from_validator(self):
-        """Test inherits from Validator base class."""
-        validator = SnippetSourceManualVerifier("/data")
-        assert isinstance(validator, Validator)
-
-    def test_has_name_property(self):
-        """Test has correct name property."""
-        validator = SnippetSourceManualVerifier("/data")
-        assert validator.name == "Manual Snippet Source Verification"
-
-    def test_has_validate_method(self):
-        """Test validator has validate() method."""
-        validator = SnippetSourceManualVerifier("/data")
-        assert hasattr(validator, "validate")
-        assert callable(validator.validate)
-
-    def test_has_verify_interactive_method(self):
-        """Test validator still has verify_interactive() method."""
-        validator = SnippetSourceManualVerifier("/data")
-        assert hasattr(validator, "verify_interactive")
-        assert callable(validator.verify_interactive)
+            # Should skip validation for non to-review directories
+            assert len(report.failed) == 0
