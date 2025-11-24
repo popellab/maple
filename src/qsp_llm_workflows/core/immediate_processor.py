@@ -68,9 +68,8 @@ class ImmediateRequestProcessor:
             param_name = row.get("parameter_name", "UNKNOWN")
             return f"{cancer_type}_{param_name}_{index}"
         elif workflow_type == "test_statistic":
-            cancer_type = row.get("cancer_type", "UNKNOWN")
             test_stat_id = row.get("test_statistic_id", "UNKNOWN")
-            return f"{cancer_type}_{test_stat_id}_{index}"
+            return f"test_stat_{test_stat_id}_{index}"
         else:
             return f"request_{index}"
 
