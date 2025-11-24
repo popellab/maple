@@ -282,10 +282,10 @@ biological_relevance:
         assert all(req["method"] == "POST" for req in requests)
         assert all(req["url"] == "/v1/responses" for req in requests)
 
-        # Check custom IDs
+        # Check custom IDs (should have "fix_" prefix)
         custom_ids = [req["custom_id"] for req in requests]
-        assert "k_APC_mat_PDAC_8d98da17_deriv001" in custom_ids
-        assert "k_C1_growth_PDAC_04e798b1_deriv001" in custom_ids
+        assert "fix_k_APC_mat_PDAC_8d98da17_deriv001" in custom_ids
+        assert "fix_k_C1_growth_PDAC_04e798b1_deriv001" in custom_ids
 
         # Verify prompt assembly was called with correct arguments
         assert mock_build_prompt.call_count == 2
@@ -389,7 +389,7 @@ biological_relevance:
         # Verify - should only create requests for files with errors
         assert len(requests) == 2
         custom_ids = [req["custom_id"] for req in requests]
-        assert "k_extra_param_PDAC_12345678_deriv001" not in custom_ids
+        assert "fix_k_extra_param_PDAC_12345678_deriv001" not in custom_ids
 
     def test_parameter_workflow_type(self, tmp_path):
         """Test that parameter workflow type is correctly determined."""

@@ -167,9 +167,10 @@ class ValidationFixBatchCreator(BatchCreator):
                 validation_errors=error_text,
             )
 
-            # Create request
+            # Create request with "fix_" prefix for custom_id
+            # The unpacker expects validation fix IDs to start with "fix_"
             request = self.create_request(
-                custom_id=filename.replace(".yaml", ""),
+                custom_id=f"fix_{filename.replace('.yaml', '')}",
                 prompt=prompt,
                 pydantic_model=self.model_class,
             )
