@@ -1,9 +1,6 @@
 prompt_types:
   parameter_extraction:
     base_prompt: prompts/qsp_parameter_extraction_prompt.md
-    template: templates/parameter_metadata_template.yaml
-    examples:
-      - templates/examples/k_ECM_fib_sec_example.yaml
     placeholders:
       - name: USED_PRIMARY_STUDIES
         source: used_primary_studies
@@ -12,12 +9,6 @@ prompt_types:
         source: shared_file
         path: prompts/shared/source_and_validation_rubrics.md
         description: "Insert shared rubrics and source rules"
-      - name: TEMPLATE
-        source: template_file
-        description: "Insert the parameter metadata template"
-      - name: EXAMPLES
-        source: example_files
-        description: "Insert example filled templates"
       - name: PARAMETER_INFO
         source: runtime
         description: "Parameter-specific information (name, units, definition)"
@@ -58,7 +49,6 @@ prompt_types:
 
   test_statistic:
     base_prompt: prompts/test_statistic_prompt.md
-    template: templates/test_statistic_template.yaml
     placeholders:
       - name: USED_PRIMARY_STUDIES
         source: used_primary_studies
@@ -67,9 +57,6 @@ prompt_types:
         source: shared_file
         path: prompts/shared/source_and_validation_rubrics.md
         description: "Insert shared rubrics and source rules"
-      - name: TEMPLATE
-        source: template_file
-        description: "Insert the test statistic template"
       - name: MODEL_CONTEXT
         source: runtime
         description: "Model structure and relevant variables for test statistic computation"
@@ -85,14 +72,6 @@ prompt_types:
 
 # Configuration for how to handle different placeholder sources
 placeholder_sources:
-  template_file:
-    format: "yaml_code_block"  # Wrap in ```yaml ... ```
-    prefix: "Below is the metadata template for your reference:\n\n"
-
-  example_files:
-    format: "yaml_code_block"  # Wrap in ```yaml ... ```
-    prefix: "A complete example of well-constructed metadata:\n\n"
-
   runtime:
     format: "raw"  # Insert as-is
     prefix: ""
