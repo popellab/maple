@@ -9,6 +9,8 @@ Your task is to create **comprehensive, reproducible metadata** for a model para
 
 If no studies are listed above, this is the first derivation for this parameter.
 
+**ADDITIONAL RESTRICTION:** Do NOT use any sources that are already cited or referenced in the parameter descriptions, species descriptions, or other context information in the MODEL_CONTEXT section below. These sources were used to define the model structure, not to estimate this specific parameter value. You must find NEW, INDEPENDENT sources for your parameter estimation.
+
 For this parameter, you must:
 
 ---

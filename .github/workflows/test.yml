@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [ main, structured-model-outputs ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
