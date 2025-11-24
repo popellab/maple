@@ -13,10 +13,6 @@
   # 3. Run extraction with immediate mode
   qsp-extract batch_jobs/input_data/test_enriched.csv --type parameter --immediate --reasoning-effort low
 
-  qsp-validate /Users/joeleliason/Projects/qsp-metadata-storage/to-review/20251124_011317_parameter_immediate
-
-  qsp-fix --immediate --dir /Users/joeleliason/Projects/qsp-metadata-storage/to-review/20251124_011317_parameter_immediate --preview-prompts parameter_estimates
-
   # 4. Check the results (results go to timestamped directory)
   cd ../qsp-metadata-storage/to-review
   ls  # You'll see a timestamped directory like: 20251123_143022_parameter_immediate/
