@@ -8,18 +8,13 @@ import argparse
 import sys
 from pathlib import Path
 
+from qsp_llm_workflows.core.config import WorkflowConfig
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
 
 
-def load_api_key() -> str:
-    """Load OpenAI API key from .env file."""
-    env_file = Path(".env")
-    if env_file.exists():
-        with open(env_file) as f:
-            for line in f:
-                if line.startswith("OPENAI_API_KEY="):
-                    return line.split("=", 1)[1].strip()
-    raise ValueError("OPENAI_API_KEY not found in .env file")
+def print_progress(message: str):
+    """Print progress message to stdout."""
+    print(message)
 
 
 def main():
@@ -29,7 +24,7 @@ def main():
 Examples:
     qsp-extract input.csv --type parameter
     qsp-extract input.csv --type test_statistic --immediate
-    qsp-extract input.csv --type parameter --timeout 7200 --no-push
+    qsp-extract input.csv --type parameter --timeout 7200
         """,
     )
 
@@ -51,12 +46,7 @@ Examples:
     parser.add_argument(
         "--timeout",
         type=int,
-        default=3600,
-        help="Timeout in seconds for batch monitoring (default: 3600)",
-    )
-
-    parser.add_argument(
-        "--no-push", action="store_true", help="Create branch locally without pushing to remote"
+        help="Timeout in seconds for batch monitoring (default: from config or 3600)",
     )
 
     args = parser.parse_args()
@@ -66,42 +56,67 @@ Examples:
         print(f"Error: Input file not found: {args.input_csv}", file=sys.stderr)
         sys.exit(1)
 
-    # Determine directories
-    base_dir = Path.cwd()
-    storage_dir = base_dir.parent / "qsp-metadata-storage"
+    # Load configuration from environment
+    try:
+        config = WorkflowConfig.from_env()
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print("Make sure OPENAI_API_KEY is set in .env file", file=sys.stderr)
+        sys.exit(1)
 
     # Validate storage directory exists
-    if not storage_dir.exists():
-        print(f"Error: Metadata storage directory not found: {storage_dir}", file=sys.stderr)
+    if not config.storage_dir.exists():
+        print(
+            f"Error: Metadata storage directory not found: {config.storage_dir}",
+            file=sys.stderr,
+        )
         print("Expected qsp-metadata-storage as sibling directory", file=sys.stderr)
         sys.exit(1)
 
-    # Load API key
-    try:
-        api_key = load_api_key()
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Run workflow
-    orchestrator = WorkflowOrchestrator(base_dir, storage_dir, api_key)
+    # Create orchestrator
+    orchestrator = WorkflowOrchestrator(config)
 
     try:
+        # Run workflow
+        print(f"\nStarting {args.type} extraction workflow...")
+        print(f"Mode: {'immediate' if args.immediate else 'batch'}")
+        print(f"Input: {args.input_csv}")
+        print()
+
         result = orchestrator.run_complete_workflow(
             input_csv=Path(args.input_csv),
             workflow_type=args.type,
-            timeout=args.timeout,
-            push=not args.no_push,
             immediate=args.immediate,
+            timeout=args.timeout,
+            progress_callback=print_progress,
         )
 
-        sys.exit(0 if result else 1)
+        # Print summary
+        print()
+        print("=" * 70)
+        print("WORKFLOW COMPLETE")
+        print("=" * 70)
+        print(f"Status: {result.status}")
+        print(f"Files extracted: {result.file_count}")
+        print(f"Output directory: {result.output_directory}")
+        print(f"Duration: {result.duration_seconds:.1f}s")
+        print()
+        print("Next steps:")
+        print(f"  1. Review files in: {result.output_directory}")
+        print(f"  2. Run validation: qsp-validate {result.output_directory}")
+        print(f"  3. If satisfied, commit manually:")
+        print(f"       cd {config.storage_dir}")
+        print(f"       git add {result.output_directory}")
+        print(f'       git commit -m "Add {args.type} extractions"')
+        print()
+
+        sys.exit(0)
 
     except KeyboardInterrupt:
         print("\nWorkflow interrupted by user", file=sys.stderr)
         sys.exit(130)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"\nError: {e}", file=sys.stderr)
         sys.exit(1)
 
 
