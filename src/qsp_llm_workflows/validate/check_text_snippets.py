@@ -20,6 +20,7 @@ Usage:
 """
 import re
 
+from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import (
     load_yaml_directory,
     parse_numeric_value,
@@ -27,14 +28,18 @@ from qsp_llm_workflows.core.validation_utils import (
 )
 
 
-class TextSnippetValidator:
+class TextSnippetValidator(Validator):
     """
     Validate that text snippets contain their declared values.
     Works for both parameters and test statistics.
     """
 
-    def __init__(self, data_dir: str):
-        self.data_dir = data_dir
+    def __init__(self, data_dir: str, **kwargs):
+        super().__init__(data_dir, **kwargs)
+
+    @property
+    def name(self) -> str:
+        return "Text Snippet Validation"
 
     def text_to_number(self, text: str) -> int:
         """
@@ -485,9 +490,9 @@ class TextSnippetValidator:
         is_valid = len(errors) == 0
         return (is_valid, errors, input_results)
 
-    def validate_directory(self) -> ValidationReport:
+    def validate(self) -> ValidationReport:
         """Validate text snippets in all YAML files."""
-        report = ValidationReport("Text Snippet Validation")
+        report = ValidationReport(self.name)
 
         print(f"Validating text snippets in {self.data_dir}...")
         files = load_yaml_directory(self.data_dir)

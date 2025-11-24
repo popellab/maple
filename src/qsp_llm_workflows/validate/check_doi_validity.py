@@ -19,19 +19,24 @@ import time
 import requests
 from difflib import SequenceMatcher
 
+from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
 
 
-class DOIValidator:
+class DOIValidator(Validator):
     """
     Validate DOI and URL resolution.
     Works for both parameters and test statistics.
     """
 
-    def __init__(self, data_dir: str, rate_limit: float = 1.0):
-        self.data_dir = data_dir
+    def __init__(self, data_dir: str, rate_limit: float = 1.0, **kwargs):
+        super().__init__(data_dir, **kwargs)
         self.rate_limit = rate_limit  # seconds between requests
         self.last_request_time = 0
+
+    @property
+    def name(self) -> str:
+        return "DOI Resolution Validation"
 
     def rate_limit_wait(self):
         """Enforce rate limiting between requests."""
@@ -340,9 +345,9 @@ class DOIValidator:
         is_valid = len(errors) == 0
         return (is_valid, errors)
 
-    def validate_directory(self) -> ValidationReport:
+    def validate(self) -> ValidationReport:
         """Validate DOIs and URLs in all YAML files."""
-        report = ValidationReport("DOI/URL Validation")
+        report = ValidationReport(self.name)
 
         print(f"Validating DOIs and URLs in {self.data_dir}...")
         print(f"Rate limit: {self.rate_limit}s between requests")

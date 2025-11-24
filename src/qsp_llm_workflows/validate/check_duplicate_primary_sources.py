@@ -23,18 +23,24 @@ Usage:
 from pathlib import Path
 from collections import defaultdict
 
+from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
 
 
-class DuplicatePrimarySourceChecker:
+class DuplicatePrimarySourceChecker(Validator):
     """
     Check for duplicate primary data sources across test statistics.
     """
 
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, **kwargs):
+        super().__init__(data_dir, **kwargs)
         self.data_dir = Path(data_dir)
         self.main_storage_dir = self._get_main_storage_dir()
         self.doi_to_files = defaultdict(list)  # normalized_doi -> list of (filename, source_tag)
+
+    @property
+    def name(self) -> str:
+        return "Duplicate Primary Sources Check"
 
     def _get_main_storage_dir(self) -> Path:
         """
@@ -175,12 +181,12 @@ class DuplicatePrimarySourceChecker:
         is_valid = len(errors) == 0
         return (is_valid, errors)
 
-    def validate_directory(self) -> ValidationReport:
+    def validate(self) -> ValidationReport:
         """Validate all to-review files for duplicate primary sources."""
         # First load accepted files to build DOI index
         self.load_accepted_primary_dois()
 
-        report = ValidationReport("Duplicate Primary Sources Check")
+        report = ValidationReport(self.name)
 
         if not self.main_storage_dir:
             # Can't perform validation without main storage

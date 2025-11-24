@@ -12,7 +12,8 @@ Usage:
 """
 from collections import defaultdict
 
-from qsp_llm_workflows.core.validation_utils import load_yaml_directory
+from qsp_llm_workflows.validate.validator import Validator
+from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
 
 
 def collect_sources(data: dict) -> dict:
@@ -190,12 +191,34 @@ def get_user_verification() -> bool:
             print("Please enter 'y' or 'n'")
 
 
-class SnippetSourceManualVerifier:
+class SnippetSourceManualVerifier(Validator):
     """Interactive manual verification of snippets in source papers."""
 
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, **kwargs):
         """Initialize verifier with data directory."""
-        self.data_dir = data_dir
+        super().__init__(data_dir, **kwargs)
+
+    @property
+    def name(self) -> str:
+        return "Manual Snippet Source Verification"
+
+    def validate(self) -> ValidationReport:
+        """
+        Run validation (calls verify_interactive).
+
+        Returns:
+            ValidationReport with verification results
+        """
+        results = self.verify_interactive()
+
+        report = ValidationReport(self.name)
+
+        if results.get("user_verified", False):
+            report.add_pass("All sources", "User verified all snippets")
+        else:
+            report.add_fail("User verification", "User did not verify snippets")
+
+        return report
 
     def verify_interactive(self) -> dict:
         """

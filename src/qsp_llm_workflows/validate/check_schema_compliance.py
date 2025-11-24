@@ -12,8 +12,9 @@ Works for both parameter estimates and test statistics.
 """
 
 from typing import Type
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 
+from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import (
     load_yaml_directory,
     parse_numeric_value,
@@ -21,15 +22,19 @@ from qsp_llm_workflows.core.validation_utils import (
 )
 
 
-class SchemaValidator:
+class SchemaValidator(Validator):
     """
     Validate YAML files against Pydantic model schema.
     Uses Pydantic models as single source of truth for schema validation.
     """
 
-    def __init__(self, data_dir: str, model_class: Type[BaseModel]):
-        self.data_dir = data_dir
-        self.model_class = model_class
+    def __init__(self, data_dir: str, model_class: Type[BaseModel] = None, **kwargs):
+        super().__init__(data_dir, **kwargs)
+        self.model_class = model_class or kwargs.get("model_class")
+
+    @property
+    def name(self) -> str:
+        return "Template Compliance Validation"
 
     def validate_file(self, file_info: dict) -> tuple:
         """
@@ -69,7 +74,7 @@ class SchemaValidator:
             }
 
             self.model_class.model_validate(model_data)
-        except ValidationError as e:
+        except PydanticValidationError as e:
             # Convert Pydantic errors to human-readable messages
             for error in e.errors():
                 field_path = ".".join(str(x) for x in error["loc"])
@@ -171,9 +176,9 @@ class SchemaValidator:
 
         return current
 
-    def validate_directory(self) -> ValidationReport:
+    def validate(self) -> ValidationReport:
         """Validate all YAML files in directory."""
-        report = ValidationReport("Schema Compliance")
+        report = ValidationReport(self.name)
 
         print(f"Validating files in {self.data_dir}...")
         files = load_yaml_directory(self.data_dir)
