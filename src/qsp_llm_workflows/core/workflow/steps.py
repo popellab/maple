@@ -243,9 +243,15 @@ class ProcessImmediateStep(WorkflowStep):
                 context.config.base_dir, context.config.openai_api_key
             )
 
+            # Get reasoning effort from context (default to high)
+            reasoning_effort = context.get_metadata("reasoning_effort", "high")
+
             # Process requests directly from CSV
             results = processor.run(
-                context.input_csv, context.workflow_type, context.progress_callback
+                context.input_csv,
+                context.workflow_type,
+                context.progress_callback,
+                reasoning_effort=reasoning_effort,
             )
 
             # Write results to file (for unpacker compatibility)

@@ -25,6 +25,7 @@ Examples:
     qsp-extract input.csv --type parameter
     qsp-extract input.csv --type test_statistic --immediate
     qsp-extract input.csv --type parameter --timeout 7200
+    qsp-extract input.csv --type parameter --immediate --reasoning-effort medium
         """,
     )
 
@@ -47,6 +48,13 @@ Examples:
         "--timeout",
         type=int,
         help="Timeout in seconds for batch monitoring (default: from config or 3600)",
+    )
+
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=["low", "medium", "high"],
+        default="high",
+        help="Reasoning effort level for OpenAI API (default: high)",
     )
 
     args = parser.parse_args()
@@ -81,6 +89,7 @@ Examples:
         print(f"\nStarting {args.type} extraction workflow...")
         print(f"Mode: {'immediate' if args.immediate else 'batch'}")
         print(f"Input: {args.input_csv}")
+        print(f"Reasoning effort: {args.reasoning_effort}")
         print()
 
         result = orchestrator.run_complete_workflow(
@@ -88,6 +97,7 @@ Examples:
             workflow_type=args.type,
             immediate=args.immediate,
             timeout=args.timeout,
+            reasoning_effort=args.reasoning_effort,
             progress_callback=print_progress,
         )
 

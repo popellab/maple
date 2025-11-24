@@ -120,6 +120,7 @@ class WorkflowOrchestrator:
         workflow_type: str,
         immediate: bool = False,
         timeout: Optional[int] = None,
+        reasoning_effort: str = "high",
         progress_callback: Optional[Callable[[str], None]] = None,
     ) -> WorkflowResult:
         """
@@ -130,6 +131,7 @@ class WorkflowOrchestrator:
             workflow_type: Type of workflow (parameter/test_statistic)
             immediate: Use Responses API for immediate processing (faster, good for testing)
             timeout: Maximum seconds to wait for batch completion (uses config default if None)
+            reasoning_effort: Reasoning effort level (low/medium/high, default: high)
             progress_callback: Optional callback for progress updates
 
         Returns:
@@ -148,6 +150,9 @@ class WorkflowOrchestrator:
             config=self.config,
             progress_callback=progress_callback,
         )
+
+        # Store reasoning effort in metadata
+        context.set_metadata("reasoning_effort", reasoning_effort)
 
         # Store start time in metadata
         context.set_metadata("started_at", datetime.now().isoformat())
