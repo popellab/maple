@@ -139,7 +139,12 @@ class ImmediateRequestProcessor:
             raise ValueError(f"Unknown workflow type: {workflow_type}")
 
     async def process_single_request(
-        self, row: Dict[str, str], index: int, workflow_type: str, reasoning_effort: str = "high"
+        self,
+        row: Dict[str, str],
+        index: int,
+        workflow_type: str,
+        progress_callback: Optional[callable] = None,
+        reasoning_effort: str = "high",
     ) -> Dict[str, Any]:
         """
         Process a single extraction request.
@@ -148,11 +153,22 @@ class ImmediateRequestProcessor:
             row: CSV row data
             index: Row index
             workflow_type: "parameter" or "test_statistic"
+            progress_callback: Optional callback for progress updates
+            reasoning_effort: Reasoning effort level
 
         Returns:
             Result dictionary in batch-compatible format
         """
         custom_id = self.create_custom_id(row, index, workflow_type)
+
+        # Get item name for logging
+        if workflow_type == "parameter":
+            item_name = row.get("parameter_name", f"item_{index}")
+        else:
+            item_name = row.get("test_statistic_id", f"item_{index}")
+
+        if progress_callback:
+            progress_callback(f"  [{index + 1}] Processing {item_name}...")
 
         try:
             # Build prompt from CSV data
@@ -173,6 +189,9 @@ class ImmediateRequestProcessor:
             # Use output_parsed and convert to dict
             parsed_data = response.output_parsed.model_dump()
 
+            if progress_callback:
+                progress_callback(f"  [{index + 1}] ✓ Completed {item_name}")
+
             # Return in simple format (unpacker will handle both batch and immediate formats)
             return {
                 "custom_id": custom_id,
@@ -185,6 +204,9 @@ class ImmediateRequestProcessor:
             }
 
         except Exception as e:
+            if progress_callback:
+                progress_callback(f"  [{index + 1}] ✗ Failed {item_name}: {e}")
+
             # Return error in batch-compatible format
             return {
                 "custom_id": custom_id,
@@ -221,11 +243,11 @@ class ImmediateRequestProcessor:
         rows = self.read_csv_rows(input_csv)
 
         if progress_callback:
-            progress_callback(f"Processing {len(rows)} requests via Responses API...")
+            progress_callback(f"Processing {len(rows)} requests via Responses API...\n")
 
         # Create tasks for all requests
         tasks = [
-            self.process_single_request(row, i, workflow_type, reasoning_effort)
+            self.process_single_request(row, i, workflow_type, progress_callback, reasoning_effort)
             for i, row in enumerate(rows)
         ]
 
@@ -234,7 +256,7 @@ class ImmediateRequestProcessor:
 
         if progress_callback:
             success_count = sum(1 for r in results if r.get("error") is None)
-            progress_callback(f"✓ Completed {success_count}/{len(results)} requests")
+            progress_callback(f"\n✓ Completed {success_count}/{len(results)} requests")
 
         return results
 
