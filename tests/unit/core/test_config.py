@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from qsp_llm_workflows.core.config import WorkflowConfig
+from qsp_llm_workflows.core.exceptions import ConfigurationError
 
 
 class TestWorkflowConfig:
@@ -145,7 +146,7 @@ class TestWorkflowConfig:
         monkeypatch.setenv("QSP_BASE_DIR", str(tmp_path / "workflows"))
         monkeypatch.setenv("QSP_STORAGE_DIR", str(tmp_path / "storage"))
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConfigurationError) as exc_info:
             WorkflowConfig.from_env()
 
         assert "OPENAI_API_KEY" in str(exc_info.value)

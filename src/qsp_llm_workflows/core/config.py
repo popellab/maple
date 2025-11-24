@@ -6,7 +6,9 @@ Provides centralized configuration with validation and environment loading.
 import os
 from pathlib import Path
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, ConfigDict, ValidationError
+
+from qsp_llm_workflows.core.exceptions import ConfigurationError
 
 
 class WorkflowConfig(BaseModel):
@@ -97,51 +99,67 @@ class WorkflowConfig(BaseModel):
             WorkflowConfig instance
 
         Raises:
-            ValueError: If required environment variables are missing
+            ConfigurationError: If required environment variables are missing or validation fails
         """
-        # Load from .env file if it exists
-        if env_file is None:
-            env_file = Path(".env")
+        try:
+            # Load from .env file if it exists
+            if env_file is None:
+                env_file = Path(".env")
 
-        if env_file.exists():
-            _load_env_file(env_file)
+            if env_file.exists():
+                _load_env_file(env_file)
 
-        # Load API key
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OPENAI_API_KEY not found in environment variables or .env file"
-            )
+            # Load API key
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ConfigurationError(
+                    "OPENAI_API_KEY not found in environment variables or .env file"
+                )
 
-        # Load directory settings
-        base_dir = os.getenv("QSP_BASE_DIR", ".")
-        storage_dir = os.getenv("QSP_STORAGE_DIR")
+            # Load directory settings
+            base_dir = os.getenv("QSP_BASE_DIR", ".")
+            storage_dir = os.getenv("QSP_STORAGE_DIR")
 
-        if not storage_dir:
-            # Default to sibling directory
-            storage_dir = str(Path(base_dir).parent / "qsp-metadata-storage")
+            if not storage_dir:
+                # Default to sibling directory
+                storage_dir = str(Path(base_dir).parent / "qsp-metadata-storage")
 
-        # Load optional settings
-        config_dict = {
-            "base_dir": base_dir,
-            "storage_dir": storage_dir,
-            "openai_api_key": api_key,
-        }
+            # Load optional settings
+            config_dict = {
+                "base_dir": base_dir,
+                "storage_dir": storage_dir,
+                "openai_api_key": api_key,
+            }
 
-        # Optional overrides
-        if model := os.getenv("QSP_MODEL"):
-            config_dict["openai_model"] = model
+            # Optional overrides
+            if model := os.getenv("QSP_MODEL"):
+                config_dict["openai_model"] = model
 
-        if effort := os.getenv("QSP_REASONING_EFFORT"):
-            config_dict["reasoning_effort"] = effort
+            if effort := os.getenv("QSP_REASONING_EFFORT"):
+                config_dict["reasoning_effort"] = effort
 
-        if timeout := os.getenv("QSP_BATCH_TIMEOUT"):
-            config_dict["batch_timeout"] = int(timeout)
+            if timeout := os.getenv("QSP_BATCH_TIMEOUT"):
+                config_dict["batch_timeout"] = int(timeout)
 
-        if interval := os.getenv("QSP_POLL_INTERVAL"):
-            config_dict["poll_interval"] = int(interval)
+            if interval := os.getenv("QSP_POLL_INTERVAL"):
+                config_dict["poll_interval"] = int(interval)
 
-        return cls(**config_dict)
+            return cls(**config_dict)
+
+        except ConfigurationError:
+            # Re-raise our custom exception as-is
+            raise
+        except ValidationError as e:
+            # Wrap Pydantic validation errors
+            raise ConfigurationError(
+                f"Configuration validation failed: {e}",
+                context={"validation_errors": str(e)}
+            ) from e
+        except Exception as e:
+            # Wrap any other errors
+            raise ConfigurationError(
+                f"Failed to load configuration: {e}"
+            ) from e
 
 
 def _load_env_file(env_file: Path) -> None:

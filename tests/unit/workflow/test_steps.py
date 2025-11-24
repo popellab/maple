@@ -16,6 +16,11 @@ from qsp_llm_workflows.core.workflow.steps import (
     ProcessImmediateStep,
     UnpackResultsStep,
 )
+from qsp_llm_workflows.core.exceptions import (
+    BatchCreationError,
+    BatchUploadError,
+    ResultsUnpackError,
+)
 
 
 class TestCreateBatchStep:
@@ -96,7 +101,7 @@ class TestCreateBatchStep:
 
         step = CreateBatchStep()
 
-        with pytest.raises(ValueError, match="Unknown workflow type"):
+        with pytest.raises(BatchCreationError, match="Unknown workflow type"):
             step.execute(context)
 
     def test_step_name(self):
@@ -166,7 +171,7 @@ class TestUploadBatchStep:
 
         step = UploadBatchStep()
 
-        with pytest.raises(RuntimeError, match="Batch file not found"):
+        with pytest.raises(BatchUploadError, match="Batch file not found"):
             step.execute(context)
 
 
@@ -233,5 +238,5 @@ class TestUnpackResultsStep:
 
         step = UnpackResultsStep()
 
-        with pytest.raises(RuntimeError, match="Results file not found"):
+        with pytest.raises(ResultsUnpackError, match="Results file not found"):
             step.execute(context)

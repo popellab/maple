@@ -4,9 +4,12 @@ Workflow context that holds state between workflow steps.
 The context is passed through the chain of workflow steps, with each step
 reading from and writing to the context.
 """
+import logging
 from pathlib import Path
 from typing import Optional, Callable, Any
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,7 +41,19 @@ class WorkflowContext:
     metadata: dict = field(default_factory=dict)
 
     def report_progress(self, message: str) -> None:
-        """Report progress if callback is available."""
+        """
+        Report progress to logger and optional callback.
+
+        Always logs the message. If a progress callback is provided,
+        also calls the callback for user-facing output.
+
+        Args:
+            message: Progress message to report
+        """
+        # Always log progress messages
+        logger.info(message)
+
+        # Also call user callback if provided
         if self.progress_callback:
             self.progress_callback(message)
 
