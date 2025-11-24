@@ -77,11 +77,16 @@ k_C_growth
 k_C_death
 ```
 
-**Export model definitions** (from model MATLAB file):
+**Export model definitions** (from MATLAB script or SimBiology project):
 ```bash
-# Export from MATLAB model to JSON
+# Option 1: Export from MATLAB script
 qsp-export-model \
   --matlab-model ../your-model-repo/scripts/your_model_file.m \
+  --output batch_jobs/input_data/model_definitions.json
+
+# Option 2: Export from SimBiology project file (faster if already compiled)
+qsp-export-model \
+  --simbiology-project ../your-model-repo/models/your_model.sbproj \
   --output batch_jobs/input_data/model_definitions.json
 ```
 
@@ -248,8 +253,12 @@ validation:
 # Monitor batch job progress
 qsp-batch-monitor batch_abc123
 
-# Export model definitions
+# Export model definitions (from MATLAB script or SimBiology project)
 qsp-export-model --matlab-model model.m --output defs.json
+qsp-export-model --simbiology-project model.sbproj --output defs.json
+
+# Custom validation results directory for qsp-fix (useful for testing)
+qsp-fix parameter_estimates --validation-results-dir custom/path/validation_results
 ```
 
 ## Package Structure

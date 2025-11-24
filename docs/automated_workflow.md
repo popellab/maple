@@ -219,10 +219,15 @@ cd ~/Projects/qsp-llm-workflows
 source venv/bin/activate
 
 # 3. Run an example workflow
-# First export model definitions from your MATLAB model file
+# First export model definitions from your MATLAB model file or SimBiology project
 qsp-export-model \
   --matlab-model ../your-model-repo/scripts/your_model_file.m \
   --output batch_jobs/input_data/model_definitions.json
+
+# Or if you have a SimBiology project file:
+# qsp-export-model \
+#   --simbiology-project ../your-model-repo/models/your_model.sbproj \
+#   --output batch_jobs/input_data/model_definitions.json
 
 # Then enrich your input CSV with model context
 qsp-enrich-csv parameter \
@@ -282,16 +287,23 @@ qsp-enrich-csv parameter \
 
 **Where do model definitions come from?**
 
-Model definitions are exported from MATLAB model files using the export script:
+Model definitions are exported from MATLAB model files or SimBiology project files using the export script:
 
 ```bash
 # From qsp-llm-workflows repository:
+
+# Option 1: From MATLAB script (runs the .m file to create model)
 qsp-export-model \
   --matlab-model ../your-model-repo/scripts/your_model_file.m \
   --output batch_jobs/input_data/model_definitions.json
+
+# Option 2: From SimBiology project file (faster if model is already compiled)
+qsp-export-model \
+  --simbiology-project ../your-model-repo/models/your_model.sbproj \
+  --output batch_jobs/input_data/model_definitions.json
 ```
 
-This script works with any SimBiology MATLAB model that creates a variable named `model`. Replace `your-model-repo` and `your_model_file.m` with the actual path to your model repository and MATLAB model file.
+The MATLAB script option works with any SimBiology model file that creates a variable named `model`. The SimBiology project option loads a saved `.sbproj` file directly, which can be faster for large models. Replace paths with your actual model repository location.
 
 #### Enriched CSV Format
 
