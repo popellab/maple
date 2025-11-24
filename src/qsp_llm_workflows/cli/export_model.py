@@ -13,18 +13,30 @@ from qsp_llm_workflows.core.model_definition_exporter import ModelDefinitionExpo
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Export model definitions from SimBiology MATLAB model",
+        description="Export model definitions from SimBiology model",
         epilog="""
 Examples:
+    # Export from MATLAB script
     qsp-export-model --matlab-model ../your-model-repo/scripts/your_model_file.m --output model_defs.json
+
+    # Export from SimBiology project
+    qsp-export-model --simbiology-project ../your-model-repo/models/your_model.sbproj --output model_defs.json
         """,
     )
 
-    parser.add_argument(
+    # Create mutually exclusive group for model source
+    model_group = parser.add_mutually_exclusive_group(required=True)
+
+    model_group.add_argument(
         "--matlab-model",
-        required=True,
         type=Path,
-        help="Path to MATLAB model file (e.g., your_model_file.m)",
+        help="Path to MATLAB model script (e.g., your_model_file.m)",
+    )
+
+    model_group.add_argument(
+        "--simbiology-project",
+        type=Path,
+        help="Path to SimBiology project file (e.g., your_model.sbproj)",
     )
 
     parser.add_argument(
@@ -33,15 +45,23 @@ Examples:
 
     args = parser.parse_args()
 
+    # Determine model file and type
+    if args.matlab_model:
+        model_file = args.matlab_model
+        model_type = "matlab_script"
+    else:
+        model_file = args.simbiology_project
+        model_type = "simbiology_project"
+
     # Validate input
-    if not args.matlab_model.exists():
-        print(f"Error: MATLAB model file not found: {args.matlab_model}", file=sys.stderr)
+    if not model_file.exists():
+        print(f"Error: Model file not found: {model_file}", file=sys.stderr)
         sys.exit(1)
 
     try:
-        print(f"Exporting model definitions from {args.matlab_model}...")
+        print(f"Exporting model definitions from {model_file}...")
 
-        exporter = ModelDefinitionExporter(str(args.matlab_model))
+        exporter = ModelDefinitionExporter(str(model_file), model_type=model_type)
         exporter.export_to_json(str(args.output))
 
         print(f"✓ Model definitions exported to {args.output}")

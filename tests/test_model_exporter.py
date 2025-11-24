@@ -74,9 +74,10 @@ def test_model_exporter_initialization():
         exporter = ModelDefinitionExporter(mock_model_file.name)
 
         # Check that attributes are set
-        assert hasattr(exporter, "matlab_model_file")
-        assert exporter.matlab_model_file.exists()
-        assert exporter.matlab_model_file.suffix == ".m"
+        assert hasattr(exporter, "model_file")
+        assert exporter.model_file.exists()
+        assert exporter.model_file.suffix == ".m"
+        assert exporter.model_type == "matlab_script"  # Default type
 
     finally:
         Path(mock_model_file.name).unlink()
@@ -99,6 +100,37 @@ def test_model_exporter_finds_matlab_export_script():
 
         # Verify exporter can be instantiated
         _ = ModelDefinitionExporter(mock_model_file.name)
+
+    finally:
+        Path(mock_model_file.name).unlink()
+
+
+def test_model_exporter_supports_simbiology_project():
+    """Test that ModelDefinitionExporter supports SimBiology project files."""
+    mock_project_file = tempfile.NamedTemporaryFile(suffix=".sbproj", delete=False)
+    mock_project_file.close()
+
+    try:
+        exporter = ModelDefinitionExporter(mock_project_file.name, model_type="simbiology_project")
+
+        # Check that attributes are set correctly
+        assert hasattr(exporter, "model_file")
+        assert exporter.model_file.exists()
+        assert exporter.model_file.suffix == ".sbproj"
+        assert exporter.model_type == "simbiology_project"
+
+    finally:
+        Path(mock_project_file.name).unlink()
+
+
+def test_model_exporter_invalid_model_type():
+    """Test that ModelDefinitionExporter rejects invalid model types."""
+    mock_model_file = tempfile.NamedTemporaryFile(suffix=".m", delete=False)
+    mock_model_file.close()
+
+    try:
+        with pytest.raises(ValueError, match="Invalid model_type"):
+            ModelDefinitionExporter(mock_model_file.name, model_type="invalid_type")
 
     finally:
         Path(mock_model_file.name).unlink()

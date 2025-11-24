@@ -1,22 +1,57 @@
-function export_model_definitions(model_script, temp_dir)
+function export_model_definitions(model_file, temp_dir, model_type)
 % Export model definitions for the metadata workflow
 %
 % Inputs:
-%   model_script - path to the model script (without .m extension)
+%   model_file - path to the model file (MATLAB script .m or SimBiology project .sbproj)
 %   temp_dir - directory to save the exported CSV files
+%   model_type - (optional) 'matlab_script' or 'simbiology_project'.
+%                If not provided, inferred from file extension.
 %
 % Outputs:
-%   Creates two CSV files:
+%   Creates three CSV files:
 %   - simbio_parameters.csv - parameter definitions table
+%   - simbio_species.csv - species definitions table
 %   - model_context.csv - parameter-reaction context table
 
     try
-        % Load the model by running the model script
-        fprintf('Loading model from: %s\n', model_script);
-        run(model_script);
+        % Infer model type from extension if not provided
+        if nargin < 3 || isempty(model_type)
+            [~, ~, ext] = fileparts(model_file);
+            if strcmp(ext, '.sbproj')
+                model_type = 'simbiology_project';
+            else
+                model_type = 'matlab_script';
+            end
+        end
 
-        if ~exist('model', 'var')
-            error('Model script did not create a variable named "model"');
+        % Load the model based on type
+        fprintf('Loading model from: %s (type: %s)\n', model_file, model_type);
+
+        if strcmp(model_type, 'simbiology_project')
+            % Load from SimBiology project file
+            fprintf('Loading SimBiology project...\n');
+            proj = sbioloadproject(model_file);
+
+            % Get the first model from the project
+            if isempty(proj.Models)
+                error('SimBiology project contains no models');
+            end
+
+            model = proj.Models(1);
+            fprintf('Loaded model: %s\n', model.Name);
+
+            if length(proj.Models) > 1
+                warning('Project contains %d models. Using first model: %s', ...
+                    length(proj.Models), model.Name);
+            end
+        else
+            % Load from MATLAB script (default behavior)
+            fprintf('Running MATLAB model script...\n');
+            run(model_file);
+
+            if ~exist('model', 'var')
+                error('Model script did not create a variable named "model"');
+            end
         end
 
         % Export parameters
