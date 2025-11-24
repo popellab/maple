@@ -15,6 +15,8 @@
 
   qsp-validate /Users/joeleliason/Projects/qsp-metadata-storage/to-review/20251124_011317_parameter_immediate
 
+  qsp-fix parameter_estimates --immediate --dir /Users/joeleliason/Projects/qsp-metadata-storage/to-review/20251124_011317_parameter_immediate
+
   # 4. Check the results (results go to timestamped directory)
   cd ../qsp-metadata-storage/to-review
   ls  # You'll see a timestamped directory like: 20251123_143022_parameter_immediate/

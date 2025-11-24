@@ -113,7 +113,7 @@ Examples:
         print()
         print("Next steps:")
         print(f"  1. Review files in: {result.output_directory}")
-        print(f"  2. Run validation: qsp-validate {result.output_directory}")
+        print(f"  2. Run validation: qsp-validate {args.type} --dir {result.output_directory}")
         print("  3. If satisfied, commit manually:")
         print(f"       cd {config.storage_dir}")
         print(f"       git add {result.output_directory}")

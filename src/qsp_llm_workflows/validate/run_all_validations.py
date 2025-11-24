@@ -69,8 +69,9 @@ def main():
         description="Run all validation checks on metadata files",
         epilog="""
 Examples:
-    python scripts/validate/run_all_validations.py test_statistics
-    python scripts/validate/run_all_validations.py parameter_estimates
+    qsp-validate test_statistics
+    qsp-validate parameter_estimates
+    qsp-validate parameter_estimates --dir /path/to/custom/directory
         """,
     )
     parser.add_argument(
@@ -78,16 +79,25 @@ Examples:
         choices=["parameter_estimates", "test_statistics"],
         help="Type of workflow to validate",
     )
+    parser.add_argument(
+        "--dir",
+        type=str,
+        default=None,
+        help="Custom directory to validate (default: ../qsp-metadata-storage/to-review/{workflow_type})",
+    )
 
     args = parser.parse_args()
 
     # Determine paths and model based on workflow type
     if args.workflow_type == "test_statistics":
-        data_dir = Path("../qsp-metadata-storage/to-review/test_statistics")
         model_class = TestStatistic
+        default_dir = Path("../qsp-metadata-storage/to-review/test_statistics")
     else:  # parameter_estimates
-        data_dir = Path("../qsp-metadata-storage/to-review/parameter_estimates")
         model_class = ParameterMetadata
+        default_dir = Path("../qsp-metadata-storage/to-review/parameter_estimates")
+
+    # Use custom directory if provided, otherwise use default
+    data_dir = Path(args.dir) if args.dir else default_dir
 
     output_dir = Path("output/validation_results")
 
@@ -136,42 +146,30 @@ Examples:
 
     # Check if any validations failed
     if result.has_failures:
-        # Prompt user to run validation fix workflow
+        # Provide instructions for running validation fix workflow
         print("\n" + "=" * 60)
         print("VALIDATION FAILURES DETECTED")
         print("=" * 60)
         print("\nYou can automatically fix validation errors by submitting")
         print("failed YAMLs back to OpenAI for correction.")
+        print("\nTo run validation fix workflow:")
+
+        # Construct fix command with --dir if custom directory was used
+        if args.dir:
+            fix_cmd = f"qsp-fix {args.workflow_type} --immediate --dir {args.dir}"
+        else:
+            fix_cmd = f"qsp-fix {args.workflow_type} --immediate"
+
+        print(f"  {fix_cmd}")
         print("\nThis will:")
         print("  1. Create fix batch requests from validation failures")
         print("  2. Upload to OpenAI API")
         print("  3. Monitor until completion")
         print("  4. Unpack fixed YAMLs (overwrites originals)")
         print("  5. Prompt you to re-run validation")
-        print("\nNote: Original files are backed up in git history.")
+        print()
 
-        response = input("\nRun validation fix workflow? [y/N]: ")
-
-        if response.lower() == "y":
-            print("\nLaunching validation fix workflow...")
-            print("=" * 60 + "\n")
-
-            # Import and run validation fix workflow directly
-            from qsp_llm_workflows.core.workflow_orchestrator import (
-                WorkflowOrchestrator,
-            )
-
-            fix_orchestrator = WorkflowOrchestrator()
-            fix_result = fix_orchestrator.run_validation_fix_workflow(
-                workflow_type=args.workflow_type,
-                use_batch_api=False,  # Use immediate mode by default
-            )
-
-            sys.exit(0 if fix_result else 1)
-        else:
-            print("\nTo manually run validation fix later:")
-            print(f"  python scripts/run_validation_fix.py {args.workflow_type} --immediate")
-            sys.exit(1)
+        sys.exit(1)
     else:
         print("\n✓ All validations passed!")
         sys.exit(0)

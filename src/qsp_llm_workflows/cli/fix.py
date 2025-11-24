@@ -8,8 +8,6 @@ import argparse
 import sys
 from pathlib import Path
 
-from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
-
 
 def load_api_key() -> str:
     """Load OpenAI API key from .env file."""
@@ -39,6 +37,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--dir",
+        type=str,
+        default=None,
+        help="Custom directory containing files to fix (default: ../qsp-metadata-storage/to-review/{workflow_type})",
+    )
+
+    parser.add_argument(
         "--immediate",
         action="store_true",
         help="Use immediate mode (Responses API) instead of batch API",
@@ -57,35 +62,37 @@ Examples:
     base_dir = Path.cwd()
     storage_dir = base_dir.parent / "qsp-metadata-storage"
 
-    # Validate storage directory exists
-    if not storage_dir.exists():
-        print(f"Error: Metadata storage directory not found: {storage_dir}", file=sys.stderr)
-        print("Expected qsp-metadata-storage as sibling directory", file=sys.stderr)
-        sys.exit(1)
-
-    # Load API key
-    try:
-        api_key = load_api_key()
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Run validation fix workflow
-    orchestrator = WorkflowOrchestrator(base_dir, storage_dir, api_key)
-
-    try:
-        result = orchestrator.run_validation_fix_workflow(
-            workflow_type=args.workflow_type, use_batch_api=not args.immediate, timeout=args.timeout
+    # Determine data directory
+    if args.dir:
+        data_dir = Path(args.dir)
+    else:
+        to_review_subdir = (
+            "test_statistics" if args.workflow_type == "test_statistics" else "parameter_estimates"
         )
+        data_dir = storage_dir / "to-review" / to_review_subdir
 
-        sys.exit(0 if result else 1)
-
-    except KeyboardInterrupt:
-        print("\nWorkflow interrupted by user", file=sys.stderr)
-        sys.exit(130)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+    # Validate data directory exists
+    if not data_dir.exists():
+        print(f"Error: Data directory not found: {data_dir}", file=sys.stderr)
         sys.exit(1)
+
+    # TODO: Implement validation fix workflow
+    # The validation fix workflow is not yet implemented in the refactored architecture.
+    # This would involve:
+    # 1. Loading validation reports from output/validation_results/
+    # 2. Creating fix batch requests with failed YAMLs + error messages
+    # 3. Using the validation_fix_prompt.md template
+    # 4. Running through batch or immediate API
+    # 5. Unpacking results back to the original directory
+
+    print("Error: Validation fix workflow is not yet implemented", file=sys.stderr)
+    print("\nThe qsp-fix command is currently under development.", file=sys.stderr)
+    print(
+        "For now, you'll need to manually fix validation errors in the YAML files.", file=sys.stderr
+    )
+    print(f"\nFiles to fix are in: {data_dir}", file=sys.stderr)
+    print("Validation reports are in: output/validation_results/", file=sys.stderr)
+    sys.exit(1)
 
 
 if __name__ == "__main__":
