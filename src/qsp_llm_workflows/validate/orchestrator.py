@@ -139,7 +139,7 @@ class ValidationOrchestrator:
 
     def print_report_summary(self, report: ValidationReport):
         """
-        Print summary of validation report.
+        Print summary of validation report with detailed failure information.
 
         Args:
             report: ValidationReport to summarize
@@ -150,6 +150,17 @@ class ValidationOrchestrator:
             print(f"  Total: {summary['total']}")
             print(f"  Passed: {summary['passed']}")
             print(f"  Failed: {summary['failed']}")
+
+            # Print detailed failure information
+            if report.failed:
+                print("\n  Failures:")
+                for failure in report.failed:
+                    item = failure.get("item", "Unknown")
+                    reason = failure.get("reason", "No reason provided")
+                    print(f"    ✗ {item}")
+                    print(f"      {reason}")
+                print()  # Blank line after failures
+
         elif "n_comparisons" in summary:
             print(f"  Comparisons: {summary['n_comparisons']}")
             if "pearson_r" in summary:
