@@ -122,8 +122,9 @@ class WorkflowConfig(BaseModel):
             storage_dir = os.getenv("QSP_STORAGE_DIR")
 
             if not storage_dir:
-                # Default to sibling directory
-                storage_dir = str(Path(base_dir).parent / "qsp-metadata-storage")
+                # Default to sibling directory (resolve base_dir first)
+                base_path = Path(base_dir).resolve()
+                storage_dir = str(base_path.parent / "qsp-metadata-storage")
 
             # Load optional settings
             config_dict = {
