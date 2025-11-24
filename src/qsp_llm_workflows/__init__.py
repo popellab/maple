@@ -18,7 +18,6 @@ from qsp_llm_workflows.core.batch_creator import (
     ValidationFixBatchCreator,
 )
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
-from qsp_llm_workflows.core.prompt_assembly import PromptAssembler
 
 __all__ = [
     "__version__",
@@ -27,5 +26,4 @@ __all__ = [
     "TestStatisticBatchCreator",
     "ValidationFixBatchCreator",
     "WorkflowOrchestrator",
-    "PromptAssembler",
 ]

@@ -15,7 +15,10 @@ from pydantic import BaseModel
 
 from openai.lib._pydantic import to_strict_json_schema
 
-from qsp_llm_workflows.core.prompt_assembly import PromptAssembler
+from qsp_llm_workflows.core.prompts import (
+    build_parameter_extraction_prompt,
+    build_test_statistic_prompt,
+)
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 
 
@@ -27,16 +30,14 @@ class BatchCreator(ABC):
     while allowing subclasses to implement specific logic for different prompt types.
     """
 
-    def __init__(self, base_dir: Path, prompt_assembler: Optional[PromptAssembler] = None):
+    def __init__(self, base_dir: Path):
         """
         Initialize the batch creator.
 
         Args:
             base_dir: Base directory of the project (used for relative path resolution)
-            prompt_assembler: Optional PromptAssembler instance (created if not provided)
         """
         self.base_dir = Path(base_dir)
-        self.prompt_assembler = prompt_assembler or PromptAssembler(self.base_dir)
 
     def create_request(
         self, custom_id: str, prompt: str, pydantic_model: Type[BaseModel], **kwargs
@@ -300,17 +301,12 @@ class ParameterBatchCreator(BatchCreator):
                     cancer_type, parameter_name, parameter_storage_dir, definition_hash
                 )
 
-                # Prepare runtime data for prompt assembly
-                runtime_data = {
-                    "EXISTING_STUDIES": existing_studies,
-                    "PARAMETER_INFO": parameter_block,
-                    "MODEL_CONTEXT": model_context_block,
-                    "parameter_name": parameter_name,
-                    "context_hash": definition_hash,
-                }
-
-                # Assemble the prompt
-                prompt = self.prompt_assembler.assemble_prompt("parameter_extraction", runtime_data)
+                # Build the prompt using simple prompt builder
+                prompt = build_parameter_extraction_prompt(
+                    parameter_info=parameter_block,
+                    model_context=model_context_block,
+                    used_primary_studies=existing_studies,
+                )
 
                 # Create batch request with structured outputs
                 custom_id = f"{cancer_type}_{parameter_name}_{i}"
@@ -529,18 +525,14 @@ class TestStatisticBatchCreator(BatchCreator):
                     required_species, species_units_mapping
                 )
 
-                # Prepare runtime data for prompt assembly
-                runtime_data = {
-                    "MODEL_CONTEXT": model_context_block,
-                    "SCENARIO_CONTEXT": scenario_context_block,
-                    "REQUIRED_SPECIES_WITH_UNITS": required_species_with_units,
-                    "DERIVED_SPECIES_DESCRIPTION": derived_species_description,
-                    "test_statistic_id": test_statistic_id,
-                    "context_hash": context_hash,
-                }
-
-                # Assemble the prompt
-                prompt = self.prompt_assembler.assemble_prompt("test_statistic", runtime_data)
+                # Build the prompt using simple prompt builder
+                prompt = build_test_statistic_prompt(
+                    model_context=model_context_block,
+                    scenario_context=scenario_context_block,
+                    required_species_with_units=required_species_with_units,
+                    derived_species_description=derived_species_description,
+                    used_primary_studies="",  # No used studies tracking for test statistics yet
+                )
 
                 # Create batch request with structured outputs
                 custom_id = f"test_stat_{test_statistic_id}_{i}"

@@ -80,21 +80,18 @@ def main():
                 # Determine target directory based on batch type
                 if batch_type == "test_stat":
                     target_dir = "../qsp-metadata-storage/test_statistics"
-                    template = "templates/test_statistic_template.yaml"
                 elif batch_type.startswith("checklist") or batch_type.startswith("validate"):
                     target_dir = "../qsp-metadata-storage/parameter_estimates"
-                    template = "templates/parameter_metadata_template.yaml"
                 else:
                     target_dir = "../qsp-metadata-storage/parameter_estimates"
-                    template = "templates/parameter_metadata_template.yaml"
 
                 # Print next command
                 print(f"\nNext: Unpack results to {target_dir.split('/')[-1]}:")
                 if batch_type == "test_stat":
-                    # Test statistics need template for header fields
+                    # Test statistics unpacking
                     if source_csv:
                         print(
-                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv} "" {template}'
+                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv}'
                         )
                         print("\nThen aggregate test statistics (if using model-specific aggregation):")
                         print(
@@ -102,7 +99,7 @@ def main():
                         )
                     else:
                         print(
-                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv "" {template}'
+                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv'
                         )
                         print(
                             "\nNote: Replace 'input_csv' with path to CSV used to create this batch"
@@ -112,14 +109,14 @@ def main():
                             f"  python ../your-model-repo/metadata/aggregate_test_statistics.py input_csv {target_dir} ../qsp-metadata-storage/scratch/"
                         )
                 else:
-                    # Other batch types need template for header fields
+                    # Other batch types unpacking
                     if source_csv:
                         print(
-                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv} "" {template}'
+                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv}'
                         )
                     else:
                         print(
-                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv "" {template}'
+                            f'  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv'
                         )
                         print(
                             "\nNote: Replace 'input_csv' with path to CSV used to create this batch"

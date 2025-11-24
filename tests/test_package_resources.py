@@ -34,24 +34,6 @@ def test_matlab_helper_script_exists():
     assert helper_script.stat().st_size > 0, "MATLAB helper script is empty"
 
 
-def test_parameter_template_exists():
-    """Test that parameter metadata template exists."""
-    package_root = get_package_root()
-    template_file = package_root / "templates" / "parameter_metadata_template.yaml"
-
-    assert template_file.exists(), f"Parameter template not found: {template_file}"
-    assert template_file.stat().st_size > 0, "Parameter template is empty"
-
-
-def test_test_statistic_template_exists():
-    """Test that test statistic template exists."""
-    package_root = get_package_root()
-    template_file = package_root / "templates" / "test_statistic_template.yaml"
-
-    assert template_file.exists(), f"Test statistic template not found: {template_file}"
-    assert template_file.stat().st_size > 0, "Test statistic template is empty"
-
-
 def test_parameter_prompt_exists():
     """Test that parameter extraction prompt exists."""
     package_root = get_package_root()

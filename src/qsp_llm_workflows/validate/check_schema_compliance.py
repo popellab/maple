@@ -1,25 +1,21 @@
 #!/usr/bin/env python3
 """
-Validate YAML files against expected schema.
+Validate YAML files against expected schema using Pydantic models.
 
 Checks:
 - Valid YAML parsing
-- Required fields present
-- Field types match expectations
+- Required fields present (via Pydantic)
+- Field types match expectations (via Pydantic)
 - Numeric values in valid ranges
 
 Works for both parameter estimates and test statistics.
-
-Usage:
-    python scripts/validate/check_schema_compliance.py \\
-        ../qsp-metadata-storage/parameter_estimates \\
-        templates/parameter_metadata_template.yaml \\
-        output/schema_validation.json
 """
+
+from typing import Type
+from pydantic import BaseModel, ValidationError
 
 from qsp_llm_workflows.core.validation_utils import (
     load_yaml_directory,
-    load_yaml_file,
     parse_numeric_value,
     ValidationReport,
 )
@@ -27,104 +23,46 @@ from qsp_llm_workflows.core.validation_utils import (
 
 class SchemaValidator:
     """
-    Validate YAML files against template schema.
-    Uses template file to determine required fields dynamically.
+    Validate YAML files against Pydantic model schema.
+    Uses Pydantic models as single source of truth for schema validation.
     """
 
-    def __init__(self, data_dir: str, template_path: str):
+    def __init__(self, data_dir: str, model_class: Type[BaseModel]):
         self.data_dir = data_dir
-        self.template_path = template_path
-        self.template = load_yaml_file(template_path)
-
-        if not self.template:
-            raise ValueError(f"Could not load template from {template_path}")
-
-        # Extract required fields from template
-        self.required_top_level = self._get_required_fields(self.template)
-
-    def _get_required_fields(self, obj, path=""):
-        """
-        Extract required fields from template by finding non-placeholder values.
-        Placeholder patterns: UPPERCASE, NUMERIC_VALUE, etc.
-
-        Special handling for sources: don't treat example keys (PRIMARY_STUDY, etc.)
-        as required - only check that the dict structure exists.
-        """
-        required = []
-
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                current_path = f"{path}.{key}" if path else key
-
-                # Skip example placeholder keys in sources sections
-                if key in ["PRIMARY_STUDY", "SECONDARY_STUDY", "METHOD_REFERENCE"]:
-                    continue
-
-                # Field is required if it exists in template
-                # (We consider all fields in template as required unless they have specific markers)
-                if isinstance(value, str):
-                    # Skip if it's an optional field marker
-                    if "OR_NULL" in value or (isinstance(key, str) and "optional" in key.lower()):
-                        continue
-                    required.append(current_path)
-                elif isinstance(value, (int, float, bool)):
-                    required.append(current_path)
-                elif isinstance(value, dict):
-                    required.append(current_path)
-                    # Don't recursively check inside sources - those are examples
-                    if not (
-                        path.endswith("data_sources") or path.endswith("methodological_sources")
-                    ):
-                        nested = self._get_required_fields(value, current_path)
-                        required.extend(nested)
-                elif isinstance(value, list) and len(value) > 0:
-                    required.append(current_path)
-
-        return required
-
-    def _check_field_exists(self, data, field_path):
-        """
-        Check if a nested field exists in data.
-        field_path is dot-separated like 'parameter_estimates.mean'
-        """
-        parts = field_path.split(".")
-        current = data
-
-        for part in parts:
-            if not isinstance(current, dict) or part not in current:
-                return False
-            current = current[part]
-            if current is None:
-                return False
-
-        return True
+        self.model_class = model_class
 
     def validate_file(self, file_info: dict) -> tuple:
         """
-        Validate a single YAML file against template.
+        Validate a single YAML file against Pydantic model.
 
         Returns:
             (is_valid, errors) tuple
         """
         errors = []
         data = file_info["data"]
-        file_info["filename"]
+        filename = file_info["filename"]
 
-        # Check all required fields from template
-        for field_path in self.required_top_level:
-            if not self._check_field_exists(data, field_path):
-                # Check if this field has OR_NULL in template (making it optional)
-                template_value = self._get_field_value(self.template, field_path)
-                if (
-                    template_value
-                    and isinstance(template_value, str)
-                    and "OR_NULL" in template_value
-                ):
-                    continue  # Optional field
-                errors.append(f"Missing required field: {field_path}")
+        # Try to validate with Pydantic model
+        try:
+            # Extract only the LLM-generated content (exclude header fields)
+            # Header fields are added during unpacking, not validated here
+            model_data = {k: v for k, v in data.items()
+                         if k not in ['schema_version', 'parameter_name', 'parameter_units',
+                                     'parameter_definition', 'cancer_type', 'tags',
+                                     'derivation_id', 'derivation_timestamp', 'model_context',
+                                     'context_hash', 'test_statistic_id', 'scenario_context',
+                                     'required_species', 'derived_species_description', 'validation']}
 
-        # Additional specific validations (schema-agnostic)
-        # Validate ci95 is a 2-element list (works for both params and test stats)
+            self.model_class.model_validate(model_data)
+        except ValidationError as e:
+            # Convert Pydantic errors to human-readable messages
+            for error in e.errors():
+                field_path = ".".join(str(x) for x in error["loc"])
+                msg = error["msg"]
+                errors.append(f"{field_path}: {msg}")
+
+        # Additional specific validations (beyond Pydantic)
+        # Validate ci95 is a 2-element list (Pydantic checks type, we check structure)
         ci95_paths = ["parameter_estimates.ci95", "test_statistic_estimates.ci95"]
         for ci95_path in ci95_paths:
             if self._check_field_exists(data, ci95_path):
@@ -134,13 +72,10 @@ class SchemaValidator:
                 elif None in ci95:
                     errors.append(f"{ci95_path} contains null values")
 
-        # Validate numeric fields are actually numeric (works for both params and test stats)
+        # Validate numeric fields are actually numeric
         numeric_field_paths = [
-            "parameter_estimates.mean",
-            "parameter_estimates.variance",
-            # Test statistics can have old (mean/variance) or new (median/iqr) fields
-            "test_statistic_estimates.mean",
-            "test_statistic_estimates.variance",
+            "parameter_estimates.median",
+            "parameter_estimates.iqr",
             "test_statistic_estimates.median",
             "test_statistic_estimates.iqr",
         ]
@@ -174,13 +109,42 @@ class SchemaValidator:
                                 f"validation_weights.{weight_name}.value must be in [0, 1], got {val}"
                             )
 
+        # Validate biological_relevance weights are in [0, 1] (parameter-specific)
+        if "biological_relevance" in data:
+            weights = data["biological_relevance"]
+            if isinstance(weights, dict):
+                for weight_name, weight_obj in weights.items():
+                    if isinstance(weight_obj, dict) and "value" in weight_obj:
+                        val = parse_numeric_value(weight_obj["value"])
+                        if val is not None and (val < 0 or val > 1):
+                            errors.append(
+                                f"biological_relevance.{weight_name}.value must be in [0, 1], got {val}"
+                            )
+
         is_valid = len(errors) == 0
         return (is_valid, errors)
+
+    def _check_field_exists(self, data, field_path):
+        """
+        Check if a nested field exists in data.
+        field_path is dot-separated like 'parameter_estimates.median'
+        """
+        parts = field_path.split(".")
+        current = data
+
+        for part in parts:
+            if not isinstance(current, dict) or part not in current:
+                return False
+            current = current[part]
+            if current is None:
+                return False
+
+        return True
 
     def _get_field_value(self, data, field_path):
         """
         Get value of a nested field.
-        field_path is dot-separated like 'parameter_estimates.mean'
+        field_path is dot-separated like 'parameter_estimates.median'
         """
         parts = field_path.split(".")
         current = data
@@ -201,9 +165,6 @@ class SchemaValidator:
 
         for file_info in files:
             filename = file_info["filename"]
-
-            # Note: Legacy files should be in separate legacy directories and
-            # won't be in the data_dir being validated, so no need to skip them here
 
             is_valid, errors = self.validate_file(file_info)
 

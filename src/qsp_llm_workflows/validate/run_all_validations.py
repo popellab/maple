@@ -23,7 +23,7 @@ from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
-from qsp_llm_workflows.core.resource_utils import get_template_path
+from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 from qsp_llm_workflows.validate.check_schema_compliance import SchemaValidator
 from qsp_llm_workflows.validate.test_code_execution import CodeExecutionValidator
 from qsp_llm_workflows.validate.check_text_snippets import TextSnippetValidator
@@ -85,13 +85,13 @@ Examples:
 
     args = parser.parse_args()
 
-    # Determine paths based on workflow type
+    # Determine paths and model based on workflow type
     if args.workflow_type == "test_statistics":
         data_dir = Path("../qsp-metadata-storage/to-review/test_statistics")
-        template = get_template_path("test_statistic_template.yaml")
+        model_class = TestStatistic
     else:  # parameter_estimates
         data_dir = Path("../qsp-metadata-storage/to-review/parameter_estimates")
-        template = get_template_path("parameter_metadata_template.yaml")
+        model_class = ParameterMetadata
 
     output_dir = Path("output/validation_results")
 
@@ -103,22 +103,18 @@ Examples:
         print(f"Error: Data directory not found: {data_dir}")
         sys.exit(1)
 
-    if not template.exists():
-        print(f"Error: Template not found: {template}")
-        sys.exit(1)
-
     print(f"\n{'#'*60}")
     print("# CORE AUTOMATED VALIDATION SUITE")
     print(f"# Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"# Data directory: {data_dir}")
-    print(f"# Template: {template}")
+    print(f"# Pydantic model: {model_class.__name__}")
     print(f"# Output directory: {output_dir}")
     print(f"{'#'*60}")
 
     all_results = []
 
-    # 1. Template compliance
-    validator = SchemaValidator(str(data_dir), str(template))
+    # 1. Schema compliance (using Pydantic models)
+    validator = SchemaValidator(str(data_dir), model_class)
     result = run_validation(validator, "Template Compliance Validation")
     all_results.append(result)
     if result.get("results"):

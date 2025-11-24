@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 
-from qsp_llm_workflows.core.prompt_assembly import PromptAssembler
+from qsp_llm_workflows.core.prompts import (
+    build_parameter_extraction_prompt,
+    build_test_statistic_prompt,
+)
 from qsp_llm_workflows.core.pydantic_models import (
     ParameterMetadata,
     TestStatistic,
@@ -32,7 +35,6 @@ class ImmediateRequestProcessor:
         self.base_dir = Path(base_dir)
         self.api_key = api_key
         self.client = AsyncOpenAI(api_key=api_key)
-        self.prompt_assembler = PromptAssembler(base_dir)
 
     def read_csv_rows(self, input_csv: Path) -> List[Dict[str, str]]:
         """
@@ -73,16 +75,16 @@ class ImmediateRequestProcessor:
         else:
             return f"request_{index}"
 
-    def build_runtime_data(self, row: Dict[str, str], workflow_type: str) -> Dict[str, str]:
+    def build_prompt(self, row: Dict[str, str], workflow_type: str) -> str:
         """
-        Build runtime data dictionary for prompt assembly.
+        Build prompt from CSV row data.
 
         Args:
             row: CSV row data
             workflow_type: "parameter" or "test_statistic"
 
         Returns:
-            Runtime data dictionary
+            Assembled prompt string
         """
         if workflow_type == "parameter":
             # Extract parameter info from CSV
@@ -90,42 +92,34 @@ class ImmediateRequestProcessor:
             param_units = row.get("parameter_units", "")
             param_desc = row.get("parameter_description", "")
             model_context = row.get("model_context", "")
-            context_hash = row.get("definition_hash", "")
 
             parameter_info = f"**Parameter Name:** {param_name}\n"
             parameter_info += f"**Units:** {param_units}\n"
             parameter_info += f"**Description:** {param_desc}\n"
 
-            return {
-                "PARAMETER_INFO": parameter_info,
-                "MODEL_CONTEXT": model_context,
-                "parameter_name": param_name,
-                "context_hash": context_hash,
-            }
+            return build_parameter_extraction_prompt(
+                parameter_info=parameter_info,
+                model_context=model_context,
+                used_primary_studies="",  # No used studies tracking in immediate mode yet
+            )
 
         elif workflow_type == "test_statistic":
             # Extract test statistic info from CSV
-            test_stat_id = row.get("test_statistic_id", "")
             required_species = row.get("required_species", "")
             derived_desc = row.get("derived_species_description", "")
             model_context = row.get("model_context", "")
             scenario_context = row.get("scenario_context", "")
-            context_hash = row.get("context_hash", "")
 
-            test_stat_info = f"**Test Statistic ID:** {test_stat_id}\n"
-            test_stat_info += f"**Required Species:** {required_species}\n"
-            test_stat_info += f"**Derived Description:** {derived_desc}\n"
-
-            return {
-                "TEST_STATISTIC_INFO": test_stat_info,
-                "MODEL_CONTEXT": model_context,
-                "SCENARIO_CONTEXT": scenario_context,
-                "test_statistic_id": test_stat_id,
-                "context_hash": context_hash,
-            }
+            return build_test_statistic_prompt(
+                model_context=model_context,
+                scenario_context=scenario_context,
+                required_species_with_units=required_species,
+                derived_species_description=derived_desc,
+                used_primary_studies="",  # No used studies tracking yet
+            )
 
         else:
-            return {}
+            return ""
 
     def get_pydantic_model(self, workflow_type: str):
         """
@@ -141,23 +135,6 @@ class ImmediateRequestProcessor:
             return ParameterMetadata
         elif workflow_type == "test_statistic":
             return TestStatistic
-        else:
-            raise ValueError(f"Unknown workflow type: {workflow_type}")
-
-    def get_prompt_type(self, workflow_type: str) -> str:
-        """
-        Map workflow type to prompt type.
-
-        Args:
-            workflow_type: "parameter" or "test_statistic"
-
-        Returns:
-            Prompt type string
-        """
-        if workflow_type == "parameter":
-            return "parameter_extraction"
-        elif workflow_type == "test_statistic":
-            return "test_statistic"
         else:
             raise ValueError(f"Unknown workflow type: {workflow_type}")
 
@@ -179,9 +156,7 @@ class ImmediateRequestProcessor:
 
         try:
             # Build prompt from CSV data
-            runtime_data = self.build_runtime_data(row, workflow_type)
-            prompt_type = self.get_prompt_type(workflow_type)
-            prompt = self.prompt_assembler.assemble_prompt(prompt_type, runtime_data)
+            prompt = self.build_prompt(row, workflow_type)
 
             # Get Pydantic model
             pydantic_model = self.get_pydantic_model(workflow_type)
