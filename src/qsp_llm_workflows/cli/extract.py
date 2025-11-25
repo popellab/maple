@@ -8,7 +8,13 @@ import argparse
 import sys
 from pathlib import Path
 
+from qsp_llm_workflows.core.config import WorkflowConfig
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
+
+
+def print_progress(message: str):
+    """Print progress message to stdout."""
+    print(message)
 
 
 def main():
@@ -18,7 +24,8 @@ def main():
 Examples:
     qsp-extract input.csv --type parameter
     qsp-extract input.csv --type test_statistic --immediate
-    qsp-extract input.csv --type parameter --timeout 7200 --no-push
+    qsp-extract input.csv --type parameter --timeout 7200
+    qsp-extract input.csv --type parameter --immediate --reasoning-effort medium
         """,
     )
 
@@ -40,12 +47,20 @@ Examples:
     parser.add_argument(
         "--timeout",
         type=int,
-        default=3600,
-        help="Timeout in seconds for batch monitoring (default: 3600)",
+        help="Timeout in seconds for batch monitoring (default: from config or 3600)",
     )
 
     parser.add_argument(
-        "--no-push", action="store_true", help="Create branch locally without pushing to remote"
+        "--reasoning-effort",
+        choices=["low", "medium", "high"],
+        default="high",
+        help="Reasoning effort level for OpenAI API (default: high)",
+    )
+
+    parser.add_argument(
+        "--preview-prompts",
+        action="store_true",
+        help="Preview prompts without sending to API (saves to batch_jobs/prompt_preview.jsonl)",
     )
 
     args = parser.parse_args()
@@ -55,25 +70,84 @@ Examples:
         print(f"Error: Input file not found: {args.input_csv}", file=sys.stderr)
         sys.exit(1)
 
-    # Run workflow
-    orchestrator = WorkflowOrchestrator()
+    # Load configuration from environment
+    try:
+        config = WorkflowConfig.from_env()
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print("Make sure OPENAI_API_KEY is set in .env file", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate storage directory exists
+    if not config.storage_dir.exists():
+        print(
+            f"Error: Metadata storage directory not found: {config.storage_dir}",
+            file=sys.stderr,
+        )
+        print("Expected qsp-metadata-storage as sibling directory", file=sys.stderr)
+        sys.exit(1)
+
+    # Create orchestrator
+    orchestrator = WorkflowOrchestrator(config)
 
     try:
-        result = orchestrator.run_extraction_workflow(
-            input_csv=str(args.input_csv),
+        # Run workflow
+        if args.preview_prompts:
+            print("\n=== PREVIEW MODE ===")
+            print(f"Building prompts for {args.type} extraction workflow...")
+        else:
+            print(f"\nStarting {args.type} extraction workflow...")
+        print(f"Mode: {'immediate' if args.immediate else 'batch'}")
+        print(f"Input: {args.input_csv}")
+        print(f"Reasoning effort: {args.reasoning_effort}")
+        print()
+
+        result = orchestrator.run_complete_workflow(
+            input_csv=Path(args.input_csv),
             workflow_type=args.type,
-            use_batch_api=not args.immediate,
+            immediate=args.immediate,
             timeout=args.timeout,
-            push_to_remote=not args.no_push,
+            reasoning_effort=args.reasoning_effort,
+            progress_callback=print_progress,
+            preview_prompts=args.preview_prompts,
         )
 
-        sys.exit(0 if result else 1)
+        # Print summary
+        print()
+        print("=" * 70)
+        if args.preview_prompts:
+            print("PROMPT PREVIEW COMPLETE")
+            print("=" * 70)
+            print(f"Preview file: {result.output_directory}")
+            print(f"Request count: {result.file_count}")
+            print()
+            print("Next steps:")
+            print(f"  1. Review prompts in: {result.output_directory}")
+            print("  2. If satisfied, run without --preview-prompts to execute")
+        else:
+            print("WORKFLOW COMPLETE")
+            print("=" * 70)
+            print(f"Status: {result.status}")
+            print(f"Files extracted: {result.file_count}")
+            print(f"Output directory: {result.output_directory}")
+            print(f"Duration: {result.duration_seconds:.1f}s")
+            print()
+            print("Next steps:")
+            print(f"  1. Review files in: {result.output_directory}")
+            print(f"  2. Run validation: qsp-validate {args.type} --dir {result.output_directory}")
+            print("  3. If satisfied, commit manually:")
+            print(f"       cd {config.storage_dir}")
+            print(f"       git add {result.output_directory}")
+            print(f'       git commit -m "Add {args.type} extractions"')
+        print()
+
+        sys.exit(0)
 
     except KeyboardInterrupt:
         print("\nWorkflow interrupted by user", file=sys.stderr)
         sys.exit(130)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"\nError: {e}", file=sys.stderr)
         sys.exit(1)
 
 

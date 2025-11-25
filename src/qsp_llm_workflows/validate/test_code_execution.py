@@ -19,18 +19,23 @@ Usage:
 import re
 import numpy as np
 
+from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
 
 
-class CodeExecutionValidator:
+class CodeExecutionValidator(Validator):
     """
     Validate Python code execution from YAML files.
     Works for both parameters (v3) and test statistics (v2).
     """
 
-    def __init__(self, data_dir: str, threshold_pct: float = 5.0):
-        self.data_dir = data_dir
+    def __init__(self, data_dir: str, threshold_pct: float = 5.0, **kwargs):
+        super().__init__(data_dir, **kwargs)
         self.threshold_pct = threshold_pct
+
+    @property
+    def name(self) -> str:
+        return "Code Execution Testing"
 
     def extract_python_code(self, data: dict) -> tuple:
         """
@@ -343,9 +348,9 @@ class CodeExecutionValidator:
 
         return (success, message)
 
-    def validate_directory(self) -> ValidationReport:
+    def validate(self) -> ValidationReport:
         """Validate Python code in all YAML files."""
-        report = ValidationReport("Code Execution (Python)")
+        report = ValidationReport(self.name)
 
         print(f"Testing Python code execution in {self.data_dir}...")
         files = load_yaml_directory(self.data_dir)

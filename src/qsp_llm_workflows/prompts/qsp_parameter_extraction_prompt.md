@@ -9,6 +9,8 @@ Your task is to create **comprehensive, reproducible metadata** for a model para
 
 If no studies are listed above, this is the first derivation for this parameter.
 
+**ADDITIONAL RESTRICTION:** Do NOT use any sources that are already cited or referenced in the parameter descriptions, species descriptions, or other context information in the MODEL_CONTEXT section below. These sources were used to define the model structure, not to estimate this specific parameter value. You must find NEW, INDEPENDENT sources for your parameter estimation.
+
 For this parameter, you must:
 
 ---
@@ -35,7 +37,7 @@ For this parameter, you must:
 
 6. **Study overview (1-2 sentences):** WHAT parameter is being measured, WHY it's biologically relevant, and the overall approach
 7. **Study design (1-2 sentences):** HOW the measurement was performed (assay type, sample size, key methods)
-8. **Key assumptions (enumerated dict):** 3-5 critical assumptions only (e.g., distributional assumptions, model choices, data quality). Use format: `1: "Assumption text"`, `2: "Assumption text"`. Do NOT include trivial assumptions like "bootstrap samples are independent" or "conversion factors are standard".
+8. **Key assumptions (list):** 3-5 critical assumptions only (e.g., distributional assumptions, model choices, data quality). Each assumption should have a number and text. Do NOT include trivial assumptions like "bootstrap samples are independent" or "conversion factors are standard".
 9. **Derivation explanation:** Step-by-step plain-language explanation of the Python code (3-6 steps recommended). Reference and justify assumptions using "ASSUMPTION N: ..." format where N matches the key from key_assumptions.
 10. **Key study limitations:** List critical limitations and their specific impact on reliability
 
@@ -56,7 +58,7 @@ For this parameter, you must:
 **Documentation:**
 - `study_overview` (1-2 sentences): WHAT and WHY
 - `study_design` (1-2 sentences): HOW
-- `key_assumptions` (enumerated dict): 3-5 critical assumptions only
+- `key_assumptions` (list): 3-5 critical assumptions only with number and text
 - `derivation_explanation`: Step-by-step with "ASSUMPTION N: ..." references
 
 **Sources:**
@@ -72,12 +74,6 @@ For this parameter, you must:
 
 ---
 
-## Provided Template
-{{TEMPLATE}}
-
-## Example
-{{EXAMPLES}}
-
 # PARAMETER INFORMATION
 
 {{PARAMETER_INFO}}
@@ -85,41 +81,13 @@ For this parameter, you must:
 ## MODEL_CONTEXT:
 {{MODEL_CONTEXT}}
 
-Fill out the metadata template for this parameter.
+---
 
-**IMPORTANT: Return your response as JSON** (the template above is shown in YAML for readability, but respond with JSON).
+Extract parameter metadata following all requirements above.
 
-Response structure (see template for field details):
-```json
-{
-  "mathematical_role": "...",
-  "parameter_range": "positive_reals",
-  "study_overview": "...",
-  "study_design": "...",
-  "parameter_estimates": {
-    "inputs": [{"name": "...", "value": 0.45, "units": "...", ...}],
-    "derivation_code": "import numpy as np\\n...",
-    "median": 0.123,
-    "iqr": 0.045,
-    "ci95": [0.1, 0.15],
-    "units": "1/day",
-    "key_assumptions": {"1": "...", "2": "...", "3": "..."}
-  },
-  "derivation_explanation": "**Step 1:** ...\\n\\n**Step 2:** ...",
-  "key_study_limitations": "- **Issue:** ...\\n- **Issue:** ...",
-  "primary_data_sources": [{"source_tag": "...", "title": "...", ...}],
-  "secondary_data_sources": [...],
-  "methodological_sources": [...],
-  "biological_relevance": {
-    "species_match": {"value": 1.0, "justification": "..."},
-    ...
-  }
-}
-```
-
-Key requirements:
-- Wrap in ```json code block tags
-- Use `\n` for line breaks, `\n\n` for paragraphs
+**Key points:**
+- Use `\n` for line breaks, `\n\n` for paragraphs in text fields
+- Python code should be plain text (no markdown code fences within the code strings)
 - `derivation_code`: raw Python (no ```python wrapper)
 - `inputs`: array with name, value, units, description, source_ref, value_table_or_section, value_snippet, units_table_or_section, units_snippet
 - Numbers as numbers, not strings

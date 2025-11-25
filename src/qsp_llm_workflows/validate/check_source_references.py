@@ -15,17 +15,22 @@ Usage:
         output/source_reference_validation.json
 """
 
+from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
 
 
-class SourceReferenceValidator:
+class SourceReferenceValidator(Validator):
     """
     Validate source reference integrity.
     Works for both parameters and test statistics.
     """
 
-    def __init__(self, data_dir: str):
-        self.data_dir = data_dir
+    def __init__(self, data_dir: str, **kwargs):
+        super().__init__(data_dir, **kwargs)
+
+    @property
+    def name(self) -> str:
+        return "Source Reference Validation"
 
     def collect_sources(self, data: dict) -> dict:
         """
@@ -192,9 +197,9 @@ class SourceReferenceValidator:
         is_valid = len(errors) == 0
         return (is_valid, errors)
 
-    def validate_directory(self) -> ValidationReport:
+    def validate(self) -> ValidationReport:
         """Validate source references in all YAML files."""
-        report = ValidationReport("Source Reference Validation")
+        report = ValidationReport(self.name)
 
         print(f"Validating source references in {self.data_dir}...")
         files = load_yaml_directory(self.data_dir)

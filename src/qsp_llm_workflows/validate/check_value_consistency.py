@@ -19,6 +19,7 @@ from pathlib import Path
 from collections import defaultdict
 import numpy as np
 
+from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import (
     load_yaml_directory,
     parse_numeric_value,
@@ -26,19 +27,24 @@ from qsp_llm_workflows.core.validation_utils import (
 )
 
 
-class ValueConsistencyChecker:
+class ValueConsistencyChecker(Validator):
     """
     Check value consistency across related extractions.
     Works for both parameters and test statistics.
     """
 
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, **kwargs):
+        super().__init__(data_dir, **kwargs)
         self.data_dir = Path(data_dir)
         self.legacy_dir = self._get_legacy_dir()
         self.main_storage_dir = self._get_main_storage_dir()
         self.all_files = []
         self.legacy_values = defaultdict(list)  # param_name -> list of values
         self.context_groups = defaultdict(list)  # (param_name, context_hash) -> list of values
+
+    @property
+    def name(self) -> str:
+        return "Value Consistency Checking"
 
     def _get_legacy_dir(self) -> Path:
         """
@@ -308,12 +314,12 @@ class ValueConsistencyChecker:
         # Always pass validation (warnings only)
         return (True, all_warnings)
 
-    def validate_directory(self) -> ValidationReport:
+    def validate(self) -> ValidationReport:
         """Check value consistency across all files."""
         # First load all files to build comparison database
         self.load_all_files()
 
-        report = ValidationReport("Value Consistency")
+        report = ValidationReport(self.name)
 
         print("\nChecking value consistency...")
 

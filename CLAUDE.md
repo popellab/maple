@@ -311,8 +311,7 @@ qsp-llm-workflows/
 │       │   ├── parameter_metadata_template.yaml
 │       │   ├── test_statistic_template.yaml
 │       │   ├── configs/
-│       │   │   ├── prompt_assembly.yaml
-│       │   │   └── header_fields.yaml
+│       │   │   └── prompt_assembly.yaml
 │       │   └── examples/
 │       │
 │       └── prompts/                  # Prompt files (package data)

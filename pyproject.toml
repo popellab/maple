@@ -28,6 +28,7 @@ dependencies = [
     "pyyaml>=6.0",
     "pandas>=2.0.0",
     "requests>=2.31.0",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +36,7 @@ dev = [
     "pytest>=7.0",
     "black>=23.0",
     "ruff>=0.1.0",
+    "freezegun>=1.2.0",
 ]
 
 [project.scripts]
@@ -74,4 +76,8 @@ python_functions = ["test_*"]
 addopts = [
     "-v",
     "--strict-markers",
+]
+# Ignore Pydantic models that start with "Test" (not test classes)
+filterwarnings = [
+    "ignore::pytest.PytestCollectionWarning:qsp_llm_workflows.core.pydantic_models",
 ]

@@ -1,748 +1,296 @@
 #!/usr/bin/env python3
 """
-Workflow orchestrator for automated extraction pipeline.
+Refactored workflow orchestrator using Chain of Responsibility pattern.
 
-Handles the complete extraction workflow from batch creation through git commit/push:
-1. Create batch requests
-2. Upload and monitor batch
-3. Run validation (checklist)
-4. Unpack results to review folder
-5. Commit and push to review branch
+Uses workflow steps for clean, testable architecture with clear separation
+of concerns. Each step performs a specific part of the workflow and passes
+state through a context object.
 """
 
-import json
-import sys
 import time
-import subprocess
-import hashlib
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Callable
+from typing import Optional, Callable, List
 from datetime import datetime
-from openai import OpenAI
+
+from qsp_llm_workflows.core.config import WorkflowConfig
+from qsp_llm_workflows.core.workflow.context import WorkflowContext
+from qsp_llm_workflows.core.workflow.step import WorkflowStep
+from qsp_llm_workflows.core.workflow.steps import (
+    CreateBatchStep,
+    UploadBatchStep,
+    MonitorBatchStep,
+    ProcessImmediateStep,
+    UnpackResultsStep,
+    CreateValidationFixBatchStep,
+    ProcessImmediateValidationFixStep,
+    UnpackValidationFixResultsStep,
+)
+
+
+class WorkflowResult:
+    """Result of workflow execution with metadata."""
+
+    def __init__(self, context: WorkflowContext, duration: float):
+        """
+        Create workflow result from context.
+
+        Args:
+            context: Final workflow context after all steps
+            duration: Workflow execution duration in seconds
+        """
+        self.workflow_type = context.workflow_type
+        self.input_csv = str(context.input_csv) if context.input_csv else None
+        self.immediate_mode = context.immediate
+        self.batch_id = context.batch_id
+        self.batch_file = str(context.batch_file) if context.batch_file else None
+        self.results_file = str(context.results_file) if context.results_file else None
+
+        # In preview mode, output_directory is the batch file path
+        # In normal mode, output_directory is the unpacked results directory
+        if context.get_metadata("preview_prompts", False):
+            self.output_directory = str(context.batch_file) if context.batch_file else None
+            # Count requests in batch file
+            if context.batch_file and context.batch_file.exists():
+                with open(context.batch_file) as f:
+                    self.file_count = sum(1 for _ in f)
+            else:
+                self.file_count = 0
+        else:
+            self.output_directory = (
+                str(context.output_directory) if context.output_directory else None
+            )
+            self.file_count = context.file_count
+
+        self.status = "success"
+        self.error = None
+        self.started_at = context.get_metadata("started_at")
+        self.completed_at = datetime.now().isoformat()
+        self.duration_seconds = duration
+
+    @classmethod
+    def from_error(cls, context: WorkflowContext, error: Exception, duration: float):
+        """
+        Create failure result from error.
+
+        Args:
+            context: Workflow context at time of failure
+            error: Exception that caused failure
+            duration: Duration before failure
+
+        Returns:
+            WorkflowResult with error status
+        """
+        result = cls(context, duration)
+        result.status = "failed"
+        result.error = str(error)
+        return result
 
 
 class WorkflowOrchestrator:
-    """Orchestrates complete extraction workflow with validation and git operations."""
+    """
+    Orchestrates extraction workflow using workflow steps.
 
-    def __init__(self, base_dir: Path, storage_dir: Path, api_key: str):
+    Uses Chain of Responsibility pattern to execute workflow steps in sequence,
+    passing state through a WorkflowContext object.
+    """
+
+    def __init__(self, config: WorkflowConfig):
         """
         Initialize workflow orchestrator.
 
         Args:
-            base_dir: Base directory of qsp-llm-workflows
-            storage_dir: Path to qsp-metadata-storage repository
-            api_key: OpenAI API key
+            config: WorkflowConfig instance with all settings
         """
-        self.base_dir = Path(base_dir)
-        self.storage_dir = Path(storage_dir)
-        self.batch_jobs_dir = self.base_dir / "batch_jobs"
-        self.client = OpenAI(api_key=api_key)
+        self.config = config
 
         # Ensure directories exist
-        self.batch_jobs_dir.mkdir(exist_ok=True)
-        self.to_review_dir = self.storage_dir / "to-review"
-        self.to_review_dir.mkdir(exist_ok=True)
+        self.config.batch_jobs_dir.mkdir(parents=True, exist_ok=True)
+        self.config.to_review_dir.mkdir(parents=True, exist_ok=True)
 
-    def extract_prompt_to_file(self, batch_file: Path, index: int = 0) -> Path:
+    def _get_workflow_steps(self, immediate: bool) -> List[WorkflowStep]:
         """
-        Extract a sample prompt from batch file to scratch directory.
-
-        Uses scripts/debug/extract_prompt.py to extract prompt and save to file.
+        Get workflow steps for execution mode.
 
         Args:
-            batch_file: Path to batch JSONL file
-            index: Index of request to extract (default: 0 for first request)
+            immediate: True for immediate mode, False for batch mode
 
         Returns:
-            Path to extracted prompt file
+            List of workflow steps to execute
         """
-        # Create scratch directory
-        scratch_dir = self.base_dir / "scratch"
-        scratch_dir.mkdir(exist_ok=True)
-
-        # Generate output filename
-        output_file = scratch_dir / f"prompt_preview_{batch_file.stem}.txt"
-
-        # Run extract_prompt.py script
-        extract_script = self.base_dir / "scripts" / "debug" / "extract_prompt.py"
-
-        result = subprocess.run(
-            ["python3", str(extract_script), str(batch_file), str(index)],
-            cwd=self.base_dir,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-
-        # Write output to file
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(result.stdout)
-
-        return output_file
-
-    def create_batch(
-        self,
-        input_csv: Path,
-        workflow_type: str,
-        progress_callback: Optional[Callable[[str], None]] = None,
-    ) -> Path:
-        """
-        Create batch requests using appropriate batch creator.
-
-        Args:
-            input_csv: Path to input CSV file
-            workflow_type: Type of workflow (parameter/test_statistic)
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            Path to created batch requests JSONL file
-        """
-        if progress_callback:
-            progress_callback(f"Creating {workflow_type} batch requests...")
-
-        # Determine which script to use
-        script_map = {
-            "parameter": "create_parameter_batch.py",
-            "test_statistic": "create_test_statistic_batch.py",
-        }
-
-        if workflow_type not in script_map:
-            raise ValueError(f"Unknown workflow type: {workflow_type}")
-
-        script_path = self.base_dir / "scripts" / "prepare" / script_map[workflow_type]
-
-        # Run batch creation script
-        result = subprocess.run(
-            ["python3", str(script_path), str(input_csv)],
-            cwd=self.base_dir,
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(f"Batch creation failed: {result.stderr}")
-
-        # Determine output file based on workflow type
-        output_file = self.batch_jobs_dir / f"{workflow_type}_requests.jsonl"
-        if workflow_type == "test_statistic":
-            output_file = self.batch_jobs_dir / "test_stat_requests.jsonl"
-        elif workflow_type == "parameter":
-            output_file = self.batch_jobs_dir / "parameter_requests.jsonl"
-
-        if not output_file.exists():
-            raise RuntimeError(f"Expected batch file not created: {output_file}")
-
-        if progress_callback:
-            progress_callback(f"✓ Batch requests created: {output_file.name}")
-
-        return output_file
-
-    def upload_batch(
-        self, batch_file: Path, progress_callback: Optional[Callable[[str], None]] = None
-    ) -> str:
-        """
-        Upload batch to OpenAI API.
-
-        Args:
-            batch_file: Path to batch requests JSONL file
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            Batch ID
-        """
-        if progress_callback:
-            progress_callback(f"Uploading batch: {batch_file.name}...")
-
-        # Upload file
-        with open(batch_file, "rb") as f:
-            batch_input_file = self.client.files.create(file=f, purpose="batch")
-
-        # Create batch
-        batch = self.client.batches.create(
-            input_file_id=batch_input_file.id, endpoint="/v1/responses", completion_window="24h"
-        )
-
-        # Save batch metadata
-        batch_id_file = batch_file.with_suffix(".batch_id")
-        with open(batch_id_file, "w") as f:
-            json.dump(
-                {
-                    "batch_id": batch.id,
-                    "batch_type": batch_file.stem.replace("_requests", ""),
-                    "source_csv": None,
-                    "created_at": datetime.now().isoformat(),
-                },
-                f,
-                indent=2,
-            )
-
-        if progress_callback:
-            progress_callback(f"✓ Batch uploaded: {batch.id}")
-
-        return batch.id
-
-    def monitor_batch(
-        self,
-        batch_id: str,
-        timeout: int = 3600,
-        poll_interval: int = 30,
-        progress_callback: Optional[Callable[[str], None]] = None,
-    ) -> Path:
-        """
-        Monitor batch until completion and download results.
-
-        Args:
-            batch_id: Batch ID to monitor
-            timeout: Maximum seconds to wait (default: 1 hour)
-            poll_interval: Seconds between status checks (default: 30)
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            Path to downloaded results file
-
-        Raises:
-            TimeoutError: If batch doesn't complete within timeout
-            RuntimeError: If batch fails
-        """
-        if progress_callback:
-            progress_callback(f"Monitoring batch {batch_id}...")
-
-        start_time = time.time()
-
-        while True:
-            elapsed = time.time() - start_time
-            if elapsed > timeout:
-                raise TimeoutError(f"Batch {batch_id} did not complete within {timeout}s")
-
-            batch = self.client.batches.retrieve(batch_id)
-
-            # Progress update
-            if batch.request_counts and progress_callback:
-                completed = batch.request_counts.completed
-                total = batch.request_counts.total
-                progress_callback(f"  Status: {batch.status} ({completed}/{total} completed)")
-
-            if batch.status == "completed":
-                if not batch.output_file_id:
-                    raise RuntimeError(f"Batch completed but no output file: {batch_id}")
-
-                # Download results
-                content = self.client.files.content(batch.output_file_id)
-                output_file = self.batch_jobs_dir / f"{batch_id}_results.jsonl"
-
-                with open(output_file, "wb") as f:
-                    f.write(content.content)
-
-                if progress_callback:
-                    progress_callback(f"✓ Results downloaded: {output_file.name}")
-
-                return output_file
-
-            elif batch.status == "failed":
-                raise RuntimeError(f"Batch {batch_id} failed")
-
-            elif batch.status in ["expired", "cancelled"]:
-                raise RuntimeError(f"Batch {batch_id} was {batch.status}")
-
-            # Wait before next check
-            time.sleep(poll_interval)
-
-    def process_immediate(
-        self, batch_file: Path, progress_callback: Optional[Callable[[str], None]] = None
-    ) -> Path:
-        """
-        Process batch requests immediately using Responses API.
-
-        Args:
-            batch_file: Path to batch requests JSONL file
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            Path to results file (same format as batch results)
-
-        Note:
-            This uses the Responses API for immediate processing, which is faster
-            than the Batch API but doesn't have the same throughput guarantees.
-            Good for testing and small batches.
-        """
-        if progress_callback:
-            progress_callback("Processing requests with Responses API...")
-
-        # Run upload_immediate.py script
-        script_path = self.base_dir / "scripts" / "run" / "upload_immediate.py"
-
-        result = subprocess.run(
-            [sys.executable, str(script_path), str(batch_file)],
-            capture_output=False,  # Show progress in real-time
-            text=True,
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError("Immediate processing failed")
-
-        # The script writes results with _immediate_results.jsonl suffix
-        results_file = batch_file.parent / f"{batch_file.stem}_immediate_results.jsonl"
-        if not results_file.exists():
-            raise RuntimeError(f"Results file not found: {results_file}")
-
-        return results_file
-
-    def check_and_commit_existing_changes(
-        self, progress_callback: Optional[Callable[[str], None]] = None
-    ) -> bool:
-        """
-        Check for existing changes in storage repo and commit them on current branch.
-
-        Args:
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            True if changes were committed, False if no changes found
-
-        Raises:
-            RuntimeError: If user declines to commit changes
-        """
-        # Check git status
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=self.storage_dir,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-
-        # If no changes, return early
-        if not result.stdout.strip():
-            return False
-
-        # Parse status to show what will be committed
-        status_lines = result.stdout.strip().split("\n")
-        tracked_changes = [line for line in status_lines if not line.startswith("??")]
-        untracked_files = [line for line in status_lines if line.startswith("??")]
-
-        if progress_callback:
-            progress_callback("\n⚠  Detected existing changes in qsp-metadata-storage:")
-            if tracked_changes:
-                progress_callback(f"  - {len(tracked_changes)} tracked change(s)")
-            if untracked_files:
-                progress_callback(f"  - {len(untracked_files)} untracked file(s)")
-
-        # Get current branch name
-        branch_result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=self.storage_dir,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        current_branch = branch_result.stdout.strip()
-
-        if progress_callback:
-            progress_callback(f"  - Current branch: {current_branch}")
-
-        # Prompt user to commit existing changes
-        response = input("\nCommit these changes on current branch before proceeding? [y/N]: ")
-        if response.lower() != "y":
-            raise RuntimeError(
-                "Cannot proceed with uncommitted changes in qsp-metadata-storage. "
-                "Please commit or stash changes manually."
-            )
-
-        # Stage all changes (tracked and untracked)
-        subprocess.run(["git", "add", "-A"], cwd=self.storage_dir, check=True, capture_output=True)
-
-        # Create commit message
-        commit_msg = f"""Save work in progress before automated workflow
-
-Branch: {current_branch}
-Tracked changes: {len(tracked_changes)}
-Untracked files: {len(untracked_files)}
-Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-
-This commit was created automatically to preserve existing work
-before unpacking new results from LLM workflow."""
-
-        # Commit
-        subprocess.run(
-            ["git", "commit", "-m", commit_msg],
-            cwd=self.storage_dir,
-            check=True,
-            capture_output=True,
-        )
-
-        if progress_callback:
-            progress_callback(f"✓ Committed existing changes on branch: {current_branch}\n")
-
-        return True
-
-    def unpack_to_review(
-        self,
-        validated_results: Path,
-        input_csv: Path,
-        workflow_type: str,
-        progress_callback: Optional[Callable[[str], None]] = None,
-    ) -> List[Path]:
-        """
-        Unpack validated results to to-review folder.
-
-        Args:
-            validated_results: Path to validation results JSONL
-            input_csv: Path to original input CSV
-            workflow_type: Type of workflow (parameter/test_statistic)
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            List of unpacked YAML files
-        """
-        # Create subdirectory based on workflow type
-        subdirectory_map = {"parameter": "parameter_estimates", "test_statistic": "test_statistics"}
-
-        subdir_name = subdirectory_map.get(workflow_type, workflow_type)
-        output_dir = self.to_review_dir / subdir_name
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        if progress_callback:
-            progress_callback(f"Unpacking validated results to to-review/{subdir_name}/...")
-
-        # Determine template based on workflow type
-        template_map = {
-            "parameter": "templates/parameter_metadata_template.yaml",
-            "test_statistic": "templates/test_statistic_template.yaml",
-        }
-
-        template_path = template_map.get(workflow_type)
-
-        # Run unpack script
-        script_path = self.base_dir / "scripts" / "process" / "unpack_results.py"
-
-        result = subprocess.run(
-            [
-                "python3",
-                str(script_path),
-                str(validated_results),
-                str(output_dir),
-                str(input_csv),
-                "",  # No source directory for header extraction
-                str(self.base_dir / template_path) if template_path else "",
-            ],
-            cwd=self.base_dir,
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(f"Unpacking failed: {result.stderr}")
-
-        # Find unpacked files
-        unpacked_files = list(output_dir.glob("*.yaml"))
-
-        if progress_callback:
-            progress_callback(f"✓ Unpacked {len(unpacked_files)} files to to-review/{subdir_name}/")
-
-        return unpacked_files
-
-    def run_full_validation(
-        self,
-        unpacked_files: List[Path],
-        workflow_type: str,
-        progress_callback: Optional[Callable[[str], None]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Run full validation suite on unpacked YAML files.
-
-        Args:
-            unpacked_files: List of unpacked YAML files
-            workflow_type: Type of workflow (parameter/test_statistic)
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            Dictionary with validation results
-        """
-        if progress_callback:
-            progress_callback("Running full validation suite...")
-
-        # Import validation runner
-        from validation_runner import ValidationRunner
-
-        # Determine template path
-        template_map = {
-            "parameter": "templates/parameter_metadata_template.yaml",
-            "test_statistic": "templates/test_statistic_template.yaml",
-        }
-
-        template_path = self.base_dir / template_map.get(workflow_type, "")
-
-        # Create validation output directory
-        validation_output = self.batch_jobs_dir / "validation"
-        validation_output.mkdir(exist_ok=True)
-
-        # Determine subdirectory based on workflow type
-        subdirectory_map = {"parameter": "parameter_estimates", "test_statistic": "test_statistics"}
-        subdir_name = subdirectory_map.get(workflow_type, workflow_type)
-        data_dir = self.to_review_dir / subdir_name
-
-        # Run validation
-        runner = ValidationRunner(self.base_dir)
-        validation_results = runner.run_validation(
-            workflow_type=workflow_type,
-            data_dir=data_dir,
-            template=template_path,
-            output_dir=validation_output,
-            timeout=600,
-        )
-
-        # Report results
-        if progress_callback:
-            if validation_results.get("status") == "completed":
-                total = validation_results.get("total_validations", 0)
-                passed = validation_results.get("passed", 0)
-                failed = validation_results.get("failed", 0)
-                progress_callback(f"✓ Validation complete: {passed}/{total} checks passed")
-                if failed > 0:
-                    progress_callback(f"  ⚠ {failed} validation(s) failed - review recommended")
-            elif validation_results.get("status") == "skipped":
-                progress_callback(
-                    f"⚠ Validation skipped: {validation_results.get('message', 'N/A')}"
-                )
-            else:
-                progress_callback(
-                    f"⚠ Validation error: {validation_results.get('message', 'Unknown error')}"
-                )
-
-        return validation_results
-
-    def commit_and_push(
-        self,
-        unpacked_files: List[Path],
-        batch_id: str,
-        workflow_type: str,
-        validation_summary: Optional[Dict[str, Any]] = None,
-        branch_prefix: str = "review/batch",
-        push: bool = True,
-        progress_callback: Optional[Callable[[str], None]] = None,
-    ) -> str:
-        """
-        Commit unpacked files to review branch and push to remote.
-
-        Args:
-            unpacked_files: List of unpacked YAML files
-            batch_id: Batch ID for naming
-            workflow_type: Type of workflow
-            validation_summary: Optional validation results to include in commit
-            branch_prefix: Prefix for branch name
-            push: Whether to push to remote (default: True)
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            Name of created branch
-        """
-        if progress_callback:
-            progress_callback("Creating review branch and committing files...")
-
-        # Generate branch name
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        batch_hash = hashlib.md5(batch_id.encode()).hexdigest()[:6]
-        branch_name = f"{branch_prefix}-{workflow_type}-{date_str}-{batch_hash}"
-
-        # Git operations in storage directory
-        try:
-            # Create new branch
-            subprocess.run(
-                ["git", "checkout", "-b", branch_name],
-                cwd=self.storage_dir,
-                check=True,
-                capture_output=True,
-            )
-
-            # Determine subdirectory based on workflow type
-            subdirectory_map = {
-                "parameter": "parameter_estimates",
-                "test_statistic": "test_statistics",
-            }
-            subdir_name = subdirectory_map.get(workflow_type, workflow_type)
-
-            # Add only files from this workflow's subdirectory
-            subprocess.run(
-                ["git", "add", f"to-review/{subdir_name}/"],
-                cwd=self.storage_dir,
-                check=True,
-                capture_output=True,
-            )
-
-            # Format validation summary for commit message (if provided)
-            validation_text = ""
-            if validation_summary:
-                from validation_runner import ValidationRunner
-
-                runner = ValidationRunner(self.base_dir)
-                validation_text = runner.format_summary_for_commit(validation_summary)
-
-            # Create commit message
-            commit_msg = f"""Add {workflow_type} extractions for review
-
-Batch ID: {batch_id}
-Files: {len(unpacked_files)} extractions
-Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-{validation_text}
-Automated extraction. Ready for validation and manual review."""
-
-            # Commit
-            subprocess.run(
-                ["git", "commit", "-m", commit_msg],
-                cwd=self.storage_dir,
-                check=True,
-                capture_output=True,
-            )
-
-            # Push if requested
-            if push:
-                subprocess.run(
-                    ["git", "push", "-u", "origin", branch_name],
-                    cwd=self.storage_dir,
-                    check=True,
-                    capture_output=True,
-                )
-                if progress_callback:
-                    progress_callback(f"✓ Pushed to origin/{branch_name}")
-            else:
-                if progress_callback:
-                    progress_callback(f"✓ Created local branch: {branch_name}")
-
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Git operation failed: {e.stderr.decode() if e.stderr else str(e)}")
-
-        return branch_name
+        if immediate:
+            # Immediate mode: process directly and unpack
+            return [
+                ProcessImmediateStep(),
+                UnpackResultsStep(),
+            ]
+        else:
+            # Batch mode: create, upload, monitor, unpack
+            return [
+                CreateBatchStep(),
+                UploadBatchStep(),
+                MonitorBatchStep(),
+                UnpackResultsStep(),
+            ]
 
     def run_complete_workflow(
         self,
         input_csv: Path,
         workflow_type: str,
-        timeout: int = 3600,
-        push: bool = True,
-        branch_prefix: str = "review/batch",
         immediate: bool = False,
+        timeout: Optional[int] = None,
+        reasoning_effort: str = "high",
         progress_callback: Optional[Callable[[str], None]] = None,
-    ) -> Dict[str, Any]:
+        preview_prompts: bool = False,
+    ) -> WorkflowResult:
         """
         Run complete extraction workflow from start to finish.
-
-        Validation is NOT run during this workflow. After completion, run:
-        python scripts/validate/run_all_validations.py <workflow_type>
 
         Args:
             input_csv: Path to input CSV file
             workflow_type: Type of workflow (parameter/test_statistic)
-            timeout: Maximum seconds to wait for batch completion
-            push: Whether to push to remote
-            branch_prefix: Prefix for review branch name
             immediate: Use Responses API for immediate processing (faster, good for testing)
+            timeout: Maximum seconds to wait for batch completion (uses config default if None)
+            reasoning_effort: Reasoning effort level (low/medium/high, default: high)
             progress_callback: Optional callback for progress updates
+            preview_prompts: If True, only build and save prompts without sending to API
 
         Returns:
-            Dictionary with workflow results and metadata
+            WorkflowResult with execution metadata
+
+        Raises:
+            Exception: If any workflow step fails
         """
         start_time = time.time()
-        results = {
-            "workflow_type": workflow_type,
-            "input_csv": str(input_csv),
-            "started_at": datetime.now().isoformat(),
-        }
+
+        # Create workflow context
+        context = WorkflowContext(
+            input_csv=input_csv,
+            workflow_type=workflow_type,
+            immediate=immediate,
+            config=self.config,
+            progress_callback=progress_callback,
+        )
+
+        # Store reasoning effort in metadata
+        context.set_metadata("reasoning_effort", reasoning_effort)
+
+        # Store start time in metadata
+        context.set_metadata("started_at", datetime.now().isoformat())
+
+        # Store preview mode in metadata
+        context.set_metadata("preview_prompts", preview_prompts)
 
         try:
-            # Step 1: Create batch
-            batch_file = self.create_batch(input_csv, workflow_type, progress_callback)
-            results["batch_file"] = str(batch_file)
-
-            # Step 1.5: Extract sample prompt and ask for confirmation
-            if progress_callback:
-                progress_callback("\n" + "=" * 70)
-                progress_callback("SAMPLE PROMPT VERIFICATION")
-                progress_callback("=" * 70)
-                progress_callback("\nExtracting first prompt for review...")
-
-            prompt_file = self.extract_prompt_to_file(batch_file, index=0)
-
-            if progress_callback:
-                progress_callback(f"✓ Sample prompt saved to: {prompt_file}")
-                progress_callback("\nPlease review the prompt before proceeding.")
-                progress_callback("=" * 70)
-
-            response = input("\nProceed with batch submission? [y/N]: ")
-            if response.lower() != "y":
-                if progress_callback:
-                    progress_callback("Aborted by user.")
-                results["status"] = "aborted"
-                results["error"] = "User aborted after prompt verification"
-                results["duration_seconds"] = time.time() - start_time
-                return results
-
-            # Step 2: Upload and process (immediate or batch mode)
-            if immediate:
-                # Immediate mode: Process via Responses API
-                results_file = self.process_immediate(
-                    batch_file, progress_callback=progress_callback
-                )
-                results["results_file"] = str(results_file)
-                results["immediate_mode"] = True
+            # Get workflow steps for this mode
+            if preview_prompts:
+                # Preview mode: only create batch file
+                steps = [CreateBatchStep()]
             else:
-                # Batch mode: Upload and monitor
-                batch_id = self.upload_batch(batch_file, progress_callback)
-                results["batch_id"] = batch_id
+                steps = self._get_workflow_steps(immediate)
 
-                # Step 3: Monitor batch
-                results_file = self.monitor_batch(
-                    batch_id, timeout, progress_callback=progress_callback
-                )
-                results["results_file"] = str(results_file)
-                results["immediate_mode"] = False
-
-            # Step 4: Check for existing changes and commit if needed
-            self.check_and_commit_existing_changes(progress_callback)
-
-            # Step 5: Unpack to review
-            unpacked_files = self.unpack_to_review(
-                results_file, input_csv, workflow_type, progress_callback
-            )
-            results["unpacked_files"] = [str(f) for f in unpacked_files]
-            results["file_count"] = len(unpacked_files)
-
-            # Step 6: Commit and push
-            # Generate batch_id for branch naming if in immediate mode
-            if immediate:
-                batch_id = f"immediate_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-            branch_name = self.commit_and_push(
-                unpacked_files,
-                batch_id,
-                workflow_type,
-                validation_summary=None,  # Validation happens separately
-                branch_prefix=branch_prefix,
-                push=push,
-                progress_callback=progress_callback,
-            )
-            results["branch_name"] = branch_name
-            results["pushed"] = push
+            # Execute steps in sequence
+            for step in steps:
+                context = step.execute(context)
 
             # Success!
-            results["status"] = "success"
-            results["completed_at"] = datetime.now().isoformat()
-            results["duration_seconds"] = time.time() - start_time
-
-            # Add next steps info
-            workflow_type_map = {
-                "parameter": "parameter_estimates",
-                "test_statistic": "test_statistics",
-            }
-            validation_type = workflow_type_map.get(workflow_type, workflow_type)
-            results["next_step_validation_command"] = (
-                f"python scripts/validate/run_all_validations.py {validation_type}"
-            )
-
-            return results
+            duration = time.time() - start_time
+            return WorkflowResult(context, duration)
 
         except Exception as e:
-            results["status"] = "failed"
-            results["error"] = str(e)
-            results["completed_at"] = datetime.now().isoformat()
-            results["duration_seconds"] = time.time() - start_time
-            raise
+            # Failure
+            duration = time.time() - start_time
+            return WorkflowResult.from_error(context, e, duration)
+
+    def _get_validation_fix_steps(self, immediate: bool) -> List[WorkflowStep]:
+        """
+        Get workflow steps for validation fix mode.
+
+        Args:
+            immediate: True for immediate mode, False for batch mode
+
+        Returns:
+            List of workflow steps to execute
+        """
+        if immediate:
+            # Immediate mode: process directly and unpack to original dir
+            return [
+                ProcessImmediateValidationFixStep(),
+                UnpackValidationFixResultsStep(),
+            ]
+        else:
+            # Batch mode: create, upload, monitor, unpack to original dir
+            return [
+                CreateValidationFixBatchStep(),
+                UploadBatchStep(),
+                MonitorBatchStep(),
+                UnpackValidationFixResultsStep(),
+            ]
+
+    def run_validation_fix_workflow(
+        self,
+        data_dir: Path,
+        validation_results_dir: Path,
+        workflow_type: str,
+        immediate: bool = False,
+        timeout: Optional[int] = None,
+        reasoning_effort: str = "high",
+        progress_callback: Optional[Callable[[str], None]] = None,
+        preview_prompts: bool = False,
+    ) -> WorkflowResult:
+        """
+        Run validation fix workflow to correct validation errors.
+
+        Args:
+            data_dir: Directory containing YAML files with validation errors
+            validation_results_dir: Directory containing validation JSON reports
+            workflow_type: Type of workflow (parameter/test_statistic)
+            immediate: Use Responses API for immediate processing (faster, good for testing)
+            timeout: Maximum seconds to wait for batch completion (uses config default if None)
+            reasoning_effort: Reasoning effort level (low/medium/high, default: high)
+            progress_callback: Optional callback for progress updates
+            preview_prompts: If True, only build and save prompts without sending to API
+
+        Returns:
+            WorkflowResult with execution metadata
+
+        Raises:
+            Exception: If any workflow step fails
+        """
+        start_time = time.time()
+
+        # Create workflow context (no input CSV needed for validation fix)
+        context = WorkflowContext(
+            input_csv=None,  # No CSV input for validation fix
+            workflow_type=workflow_type,
+            immediate=immediate,
+            config=self.config,
+            progress_callback=progress_callback,
+        )
+
+        # Store validation fix metadata
+        context.set_metadata("data_dir", data_dir)
+        context.set_metadata("validation_results_dir", validation_results_dir)
+        context.set_metadata("reasoning_effort", reasoning_effort)
+        context.set_metadata("started_at", datetime.now().isoformat())
+        context.set_metadata("preview_prompts", preview_prompts)
+
+        try:
+            # Get workflow steps for validation fix mode
+            if preview_prompts:
+                # Preview mode: only create batch file
+                steps = [CreateValidationFixBatchStep()]
+            else:
+                steps = self._get_validation_fix_steps(immediate)
+
+            # Execute steps in sequence
+            for step in steps:
+                context = step.execute(context)
+
+            # Success!
+            duration = time.time() - start_time
+            return WorkflowResult(context, duration)
+
+        except Exception as e:
+            # Failure
+            duration = time.time() - start_time
+            return WorkflowResult.from_error(context, e, duration)

@@ -20,19 +20,27 @@ from qsp_llm_workflows.core.hash_utils import compute_definition_hash, generate_
 class ModelDefinitionExporter:
     """Exports parameter and species definitions from SimBiology models."""
 
-    def __init__(self, matlab_model_file: str):
+    def __init__(self, model_file: str, model_type: str = "matlab_script"):
         """
         Initialize the exporter.
 
         Args:
-            matlab_model_file: Path to MATLAB model file (e.g., immune_oncology_model_PDAC.m)
+            model_file: Path to model file (MATLAB script .m or SimBiology project .sbproj)
+            model_type: Type of model file - "matlab_script" or "simbiology_project"
         """
-        self.matlab_model_file = Path(matlab_model_file).resolve()
+        self.model_file = Path(model_file).resolve()
+        self.model_type = model_type
         self.temp_dir = None
 
+        # Validate model type
+        if model_type not in ["matlab_script", "simbiology_project"]:
+            raise ValueError(
+                f"Invalid model_type: {model_type}. Must be 'matlab_script' or 'simbiology_project'"
+            )
+
         # Validate model file exists
-        if not self.matlab_model_file.exists():
-            raise ValueError(f"MATLAB model file does not exist: {matlab_model_file}")
+        if not self.model_file.exists():
+            raise ValueError(f"Model file does not exist: {model_file}")
 
     def export_definitions(self) -> Dict[str, Any]:
         """
@@ -41,7 +49,7 @@ class ModelDefinitionExporter:
         Returns:
             Dict mapping parameter name -> {definition: dict, hash: str, filename: str}
         """
-        print(f"Exporting definitions from {self.matlab_model_file}")
+        print(f"Exporting definitions from {self.model_file}")
 
         # Create temporary directory for MATLAB output
         self.temp_dir = tempfile.mkdtemp(prefix="model_export_")
@@ -67,6 +75,25 @@ class ModelDefinitionExporter:
             if self.temp_dir and Path(self.temp_dir).exists():
                 shutil.rmtree(self.temp_dir)
 
+    def export_to_json(self, output_file: str):
+        """
+        Export parameter definitions to JSON file.
+
+        Args:
+            output_file: Path to output JSON file
+        """
+        definitions = self.export_definitions()
+
+        # Create output directory if needed
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write to JSON
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(definitions, f, indent=2, ensure_ascii=False)
+
+        print(f"Exported {len(definitions)} parameter definitions")
+
     def _run_matlab_export(self):
         """Run MATLAB to export model data."""
         print("Running MATLAB to export model data...")
@@ -79,7 +106,7 @@ class ModelDefinitionExporter:
             raise FileNotFoundError(f"MATLAB export script not found: {export_script}")
 
         # Add model directory and project root to MATLAB path
-        model_dir = self.matlab_model_file.parent
+        model_dir = self.model_file.parent
 
         # Find project root (go up until we find a common project marker or reach 3 levels up)
         project_root = model_dir
@@ -97,7 +124,7 @@ class ModelDefinitionExporter:
             f"addpath('{scripts_dir}'); "
             f"addpath('{model_dir}'); "
             f"addpath(genpath('{project_root}')); "
-            f"export_model_definitions('{self.matlab_model_file}', '{self.temp_dir}')"
+            f"export_model_definitions('{self.model_file}', '{self.temp_dir}', '{self.model_type}')"
         )
 
         # Run MATLAB from project root

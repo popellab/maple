@@ -1,15 +1,8 @@
-You are helping to fix validation errors in a QSP metadata file.
+You are helping to fix validation errors in a quantitative systems pharmacology (QSP) metadata file.
 
-**IMPORTANT:** Header fields (schema_version, cancer_type, tags, context_hash, etc.) are preserved separately and will be added back automatically. You only need to fix the scientific content fields shown below.
-
-**Original Content (headers preserved separately):**
+**Original Content:**
 ```yaml
 {{YAML_CONTENT}}
-```
-
-**Template for Reference (content fields only):**
-```yaml
-{{TEMPLATE_CONTENT}}
 ```
 
 ## Task
@@ -69,21 +62,3 @@ Fix the validation errors listed below, and while doing so:
 ## Validation Errors to Fix
 
 {{VALIDATION_ERRORS}}
-
----
-
-## Output Format
-
-Return the corrected content as JSON inside a code fence. Requirements:
-- **Use JSON format** (the unpacker will convert to YAML and add headers automatically)
-- **Include** a \`\`\`json code fence around your response
-- **Do NOT include** explanations outside the code fence
-- **Do NOT include header fields** (schema_version, cancer_type, tags, context_hash, etc.) - these are preserved from the original and added back automatically
-- **CRITICAL STRUCTURE RULE**: Match the EXACT structure shown in "Original Content" above
-  - If `model_output` is at the root level, keep it at root level
-  - If `test_statistic_definition` is at the root level, keep it at root level
-  - Do NOT nest root-level fields under `model_output`
-  - For test statistics: `model_output` should ONLY contain `code`, all other fields (test_statistic_definition, study_overview, test_statistic_estimates, primary_data_sources, etc.) are separate root-level fields
-- **Fix** only the specific errors mentioned while preserving the original structure
-
-{{EXAMPLE_JSON}}
