@@ -36,7 +36,7 @@ After installation, CLI commands are available system-wide:
 - `qsp-validate` - Validate extracted metadata
 - `qsp-fix` - Fix validation errors
 - `qsp-enrich-csv` - Enrich input CSVs with model context
-- `qsp-export-model` - Export model definitions from MATLAB
+- `qsp-export-model` - Export model definitions from MATLAB scripts or SimBiology projects
 - `qsp-batch-monitor` - Monitor batch job progress
 
 ## Quick Start
