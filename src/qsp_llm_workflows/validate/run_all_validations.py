@@ -10,7 +10,7 @@ Runs:
 5. DOI resolution validation
 6. Value consistency checking (vs legacy and same-context derivations)
 7. Duplicate primary sources check (prevents duplicate extractions)
-8. Manual snippet source verification (interactive)
+8. Automated snippet source verification (via Europe PMC, with manual fallback)
 
 Usage:
     python scripts/validate/run_all_validations.py test_statistics
@@ -32,8 +32,8 @@ from qsp_llm_workflows.validate.check_value_consistency import ValueConsistencyC
 from qsp_llm_workflows.validate.check_duplicate_primary_sources import (
     DuplicatePrimarySourceChecker,
 )
-from qsp_llm_workflows.validate.check_snippet_sources_manual_verify import (
-    SnippetSourceManualVerifier,
+from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+    AutomatedSnippetVerifier,
 )
 from qsp_llm_workflows.validate.tag_validation_results import tag_directory
 
@@ -60,7 +60,7 @@ def get_validators(data_dir: str, model_class):
         DOIValidator(data_dir, rate_limit=1.0),
         ValueConsistencyChecker(data_dir),
         DuplicatePrimarySourceChecker(data_dir),
-        SnippetSourceManualVerifier(data_dir),
+        AutomatedSnippetVerifier(data_dir, rate_limit=0.5, fuzzy_threshold=0.8),
     ]
 
 
