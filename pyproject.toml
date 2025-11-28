@@ -77,6 +77,9 @@ addopts = [
     "-v",
     "--strict-markers",
 ]
+markers = [
+    "integration: marks tests that hit external APIs (deselect with '-m \"not integration\"')",
+]
 # Ignore Pydantic models that start with "Test" (not test classes)
 filterwarnings = [
     "ignore::pytest.PytestCollectionWarning:qsp_llm_workflows.core.pydantic_models",
