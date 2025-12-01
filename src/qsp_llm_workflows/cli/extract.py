@@ -22,10 +22,9 @@ def main():
         description="Run automated extraction workflow",
         epilog="""
 Examples:
-    qsp-extract input.csv --type parameter
-    qsp-extract input.csv --type test_statistic --immediate
-    qsp-extract input.csv --type parameter --timeout 7200
-    qsp-extract input.csv --type parameter --immediate --reasoning-effort medium
+    qsp-extract input.csv --type parameter --output-dir metadata-storage
+    qsp-extract input.csv --type test_statistic --output-dir metadata-storage --immediate
+    qsp-extract input.csv --type parameter --output-dir ../project-repo/metadata --timeout 7200
         """,
     )
 
@@ -36,6 +35,13 @@ Examples:
         required=True,
         choices=["parameter", "test_statistic"],
         help="Type of extraction workflow",
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Output directory for extracted metadata (e.g., metadata-storage)",
     )
 
     parser.add_argument(
@@ -70,21 +76,21 @@ Examples:
         print(f"Error: Input file not found: {args.input_csv}", file=sys.stderr)
         sys.exit(1)
 
-    # Load configuration from environment
+    # Resolve output directory
+    output_dir = args.output_dir.resolve()
+
+    # Validate output directory exists
+    if not output_dir.exists():
+        print(f"Error: Output directory not found: {output_dir}", file=sys.stderr)
+        print("Please create the directory or specify an existing path", file=sys.stderr)
+        sys.exit(1)
+
+    # Load configuration from environment with explicit storage directory
     try:
-        config = WorkflowConfig.from_env()
+        config = WorkflowConfig.from_env(storage_dir=output_dir)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         print("Make sure OPENAI_API_KEY is set in .env file", file=sys.stderr)
-        sys.exit(1)
-
-    # Validate storage directory exists
-    if not config.storage_dir.exists():
-        print(
-            f"Error: Metadata storage directory not found: {config.storage_dir}",
-            file=sys.stderr,
-        )
-        print("Expected qsp-metadata-storage as sibling directory", file=sys.stderr)
         sys.exit(1)
 
     # Create orchestrator

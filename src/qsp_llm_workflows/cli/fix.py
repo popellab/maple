@@ -25,8 +25,8 @@ def main():
         description="Fix validation errors by re-submitting to OpenAI",
         epilog="""
 Examples:
-    qsp-fix parameter_estimates --immediate
-    qsp-fix test_statistics --timeout 7200
+    qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --immediate
+    qsp-fix test_statistics --dir metadata-storage/to-review/test_statistics --timeout 7200
         """,
     )
 
@@ -39,8 +39,8 @@ Examples:
     parser.add_argument(
         "--dir",
         type=str,
-        default=None,
-        help="Custom directory containing files to fix (default: ../qsp-metadata-storage/to-review/{workflow_type})",
+        required=True,
+        help="Directory containing files to fix (e.g., metadata-storage/to-review/parameter_estimates)",
     )
 
     parser.add_argument(
@@ -73,21 +73,19 @@ Examples:
 
     # Determine directories
     base_dir = Path.cwd()
-    storage_dir = base_dir.parent / "qsp-metadata-storage"
-
-    # Determine data directory
-    if args.dir:
-        data_dir = Path(args.dir)
-    else:
-        to_review_subdir = (
-            "test_statistics" if args.workflow_type == "test_statistics" else "parameter_estimates"
-        )
-        data_dir = storage_dir / "to-review" / to_review_subdir
+    data_dir = Path(args.dir).resolve()
 
     # Validate data directory exists
     if not data_dir.exists():
         print(f"Error: Data directory not found: {data_dir}", file=sys.stderr)
         sys.exit(1)
+
+    # Derive storage_dir from data_dir (parent of to-review or the directory itself)
+    # Expected structure: metadata-storage/to-review/{workflow_type}
+    if data_dir.parent.name == "to-review":
+        storage_dir = data_dir.parent.parent
+    else:
+        storage_dir = data_dir.parent
 
     # Determine validation results directory
     if args.validation_results_dir:

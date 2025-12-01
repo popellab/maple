@@ -69,9 +69,8 @@ def main():
         description="Run all validation checks on metadata files",
         epilog="""
 Examples:
-    qsp-validate test_statistics
-    qsp-validate parameter_estimates
-    qsp-validate parameter_estimates --dir /path/to/custom/directory
+    qsp-validate test_statistics --dir metadata-storage/to-review/test_statistics
+    qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
         """,
     )
     parser.add_argument(
@@ -82,22 +81,19 @@ Examples:
     parser.add_argument(
         "--dir",
         type=str,
-        default=None,
-        help="Custom directory to validate (default: ../qsp-metadata-storage/to-review/{workflow_type})",
+        required=True,
+        help="Directory to validate (e.g., metadata-storage/to-review/parameter_estimates)",
     )
 
     args = parser.parse_args()
 
-    # Determine paths and model based on workflow type
+    # Determine model class based on workflow type
     if args.workflow_type == "test_statistics":
         model_class = TestStatistic
-        default_dir = Path("../qsp-metadata-storage/to-review/test_statistics")
     else:  # parameter_estimates
         model_class = ParameterMetadata
-        default_dir = Path("../qsp-metadata-storage/to-review/parameter_estimates")
 
-    # Use custom directory if provided, otherwise use default
-    data_dir = Path(args.dir) if args.dir else default_dir
+    data_dir = Path(args.dir).resolve()
 
     output_dir = Path("output/validation_results")
 

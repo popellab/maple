@@ -33,6 +33,7 @@ class TestCreateBatchStep:
         # Setup
         config = Mock()
         config.base_dir = tmp_path
+        config.storage_dir = tmp_path / "storage"  # Must be a real Path for division
 
         input_csv = tmp_path / "input.csv"
         batch_file = tmp_path / "batch.jsonl"
@@ -56,7 +57,9 @@ class TestCreateBatchStep:
         # Verify
         assert result.batch_file == batch_file
         mock_creator_class.assert_called_once_with(tmp_path)
-        mock_creator.run.assert_called_once_with(None, input_csv)
+        # For parameter workflow, run is called with storage_dir / "parameter_estimates"
+        expected_storage_dir = tmp_path / "storage" / "parameter_estimates"
+        mock_creator.run.assert_called_once_with(None, input_csv, expected_storage_dir)
 
     @patch("qsp_llm_workflows.core.workflow.steps.TestStatisticBatchCreator")
     def test_create_test_statistic_batch(self, mock_creator_class, tmp_path):
@@ -116,6 +119,7 @@ class TestCreateBatchStep:
         # Setup
         config = Mock()
         config.base_dir = tmp_path
+        config.storage_dir = tmp_path / "storage"  # Must be a real Path for division
 
         input_csv = tmp_path / "input.csv"
         batch_file = tmp_path / "batch.jsonl"

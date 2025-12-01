@@ -80,14 +80,16 @@ class WorkflowConfig(BaseModel):
         return self.storage_dir / "to-review"
 
     @classmethod
-    def from_env(cls, env_file: Optional[Path] = None) -> "WorkflowConfig":
+    def from_env(
+        cls, env_file: Optional[Path] = None, storage_dir: Optional[Path] = None
+    ) -> "WorkflowConfig":
         """
         Load configuration from environment variables.
 
         Environment variables:
             OPENAI_API_KEY: OpenAI API key (required)
             QSP_BASE_DIR: Base directory (defaults to current directory)
-            QSP_STORAGE_DIR: Storage directory (defaults to ../qsp-metadata-storage)
+            QSP_STORAGE_DIR: Storage directory (used if storage_dir param not provided)
             QSP_MODEL: OpenAI model (optional)
             QSP_REASONING_EFFORT: Reasoning effort level (optional)
             QSP_BATCH_TIMEOUT: Batch timeout in seconds (optional)
@@ -95,6 +97,7 @@ class WorkflowConfig(BaseModel):
 
         Args:
             env_file: Optional path to .env file (defaults to .env in current directory)
+            storage_dir: Explicit storage directory path (takes precedence over env var)
 
         Returns:
             WorkflowConfig instance
@@ -119,12 +122,16 @@ class WorkflowConfig(BaseModel):
 
             # Load directory settings
             base_dir = os.getenv("QSP_BASE_DIR", ".")
-            storage_dir = os.getenv("QSP_STORAGE_DIR")
 
-            if not storage_dir:
-                # Default to sibling directory (resolve base_dir first)
-                base_path = Path(base_dir).resolve()
-                storage_dir = str(base_path.parent / "qsp-metadata-storage")
+            # Use explicit storage_dir if provided, otherwise check environment
+            if storage_dir is None:
+                storage_dir_str = os.getenv("QSP_STORAGE_DIR")
+                if not storage_dir_str:
+                    raise ConfigurationError(
+                        "Storage directory not specified. "
+                        "Use --output-dir argument or set QSP_STORAGE_DIR environment variable."
+                    )
+                storage_dir = Path(storage_dir_str)
 
             # Load optional settings
             config_dict = {
