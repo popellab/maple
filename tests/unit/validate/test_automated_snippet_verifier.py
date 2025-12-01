@@ -590,9 +590,10 @@ class TestNCBIPMCIntegration:
         doi = "10.1093/jnci/djaa073"
 
         # Get paper text
-        full_text, pmcid = verifier.get_paper_text(doi)
+        full_text, pmcid, status = verifier.get_paper_text(doi)
 
         if full_text:
+            assert status == "success"
             # This text should be in the paper
             found, score = verifier.fuzzy_find_snippet("FoxP3", full_text)
             assert found is True
@@ -606,7 +607,7 @@ class TestNCBIPMCIntegration:
         doi = "10.1093/jnci/djaa073"
 
         # Get paper text
-        full_text, pmcid = verifier.get_paper_text(doi)
+        full_text, pmcid, status = verifier.get_paper_text(doi)
 
         if full_text:
             # This text should NOT be in a PDAC immunotherapy paper
@@ -622,10 +623,12 @@ class TestNCBIPMCIntegration:
         doi = "10.1093/jnci/djaa073"
 
         # First call - should hit API
-        text1, pmcid1 = verifier.get_paper_text(doi)
+        text1, pmcid1, status1 = verifier.get_paper_text(doi)
+        assert status1 == "success"
 
         # Second call - should use cache
-        text2, pmcid2 = verifier.get_paper_text(doi)
+        text2, pmcid2, status2 = verifier.get_paper_text(doi)
+        assert status2 == "cached"
 
         assert text1 == text2
         # Verify cache was used (same normalized DOI in cache)

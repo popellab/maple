@@ -261,7 +261,7 @@ class AutomatedSnippetVerifier(Validator):
 
         return (best_score >= self.fuzzy_threshold, best_score)
 
-    def get_paper_text(self, doi: str) -> tuple[Optional[str], Optional[str]]:
+    def get_paper_text(self, doi: str) -> tuple[Optional[str], Optional[str], str]:
         """
         Get full text for a paper by DOI.
 
@@ -271,28 +271,37 @@ class AutomatedSnippetVerifier(Validator):
             doi: DOI string
 
         Returns:
-            (full_text, pmcid) tuple. full_text is None if not in PMC.
+            (full_text, pmcid, status) tuple.
+            status is one of: "cached", "success", "not_in_pmc", "html_fetch_failed", "no_text_extracted"
         """
         doi_clean = self.normalize_doi(doi)
         if doi_clean in self._paper_text_cache:
             cached = self._paper_text_cache[doi_clean]
-            return (cached, doi_clean if cached else None)
+            if cached:
+                # Need to re-fetch pmcid for cached results
+                pmcid = self.get_pmcid_from_doi(doi_clean)
+                return (cached, pmcid, "cached")
+            return (None, None, "not_in_pmc")
 
         # Get PMCID from Europe PMC search
         pmcid = self.get_pmcid_from_doi(doi_clean)
         if not pmcid:
             self._paper_text_cache[doi_clean] = None
-            return (None, None)
+            return (None, None, "not_in_pmc")
 
         # Fetch HTML from NCBI PMC
         html_content = self.fetch_pmc_html(pmcid)
         if not html_content:
             self._paper_text_cache[doi_clean] = None
-            return (None, pmcid)
+            return (None, pmcid, "html_fetch_failed")
 
         full_text = self.extract_text_from_html(html_content)
+        if not full_text:
+            self._paper_text_cache[doi_clean] = None
+            return (None, pmcid, "no_text_extracted")
+
         self._paper_text_cache[doi_clean] = full_text
-        return (full_text, pmcid)
+        return (full_text, pmcid, "success")
 
     def collect_verification_data(self) -> dict:
         """
@@ -424,27 +433,47 @@ class AutomatedSnippetVerifier(Validator):
             snippets = info["snippets"]
             filenames = sorted(set(inp["filename"] for inp in info["inputs"]))
 
-            print(f"[{idx}/{total_sources}] Checking {source_tag}...", end=" ")
+            print(f"[{idx}/{total_sources}] Checking {source_tag}...")
 
             # Try to get full text
-            full_text, pmcid = self.get_paper_text(doi)
+            full_text, pmcid, status = self.get_paper_text(doi)
 
             if not full_text:
-                print("Not in PMC - queued for manual verification")
+                if status == "not_in_pmc":
+                    print("  ✗ Not indexed in PMC - queued for manual verification")
+                elif status == "html_fetch_failed":
+                    print(f"  ✗ Found PMCID ({pmcid}) but failed to fetch HTML")
+                elif status == "no_text_extracted":
+                    print(f"  ✗ Found PMCID ({pmcid}) but no text could be extracted")
+                else:
+                    print(f"  ✗ Failed to retrieve ({status})")
                 manual_sources[source_tag] = info
                 continue
 
-            print(f"Found in PMC ({pmcid})")
+            # Report success
+            text_len = len(full_text)
+            if status == "cached":
+                print(f"  ✓ Found in PMC ({pmcid}) - using cached text ({text_len:,} chars)")
+            else:
+                print(f"  ✓ Found in PMC ({pmcid}) - fetched {text_len:,} chars")
 
             # Search for each snippet
+            num_snippets = len(snippets)
+            found_count = 0
             for snippet in snippets:
                 found, score = self.fuzzy_find_snippet(snippet, full_text)
                 item_name = f"{', '.join(filenames)} → {source_tag}"
+                snippet_display = snippet if len(snippet) <= 40 else snippet[:37] + "..."
 
                 if found:
+                    found_count += 1
                     automated_results.append((item_name, snippet, True, score))
+                    print(f'    ✓ "{snippet_display}" (score: {score:.2f})')
                 else:
                     automated_results.append((item_name, snippet, False, score))
+                    print(f'    ✗ "{snippet_display}" (best score: {score:.2f})')
+
+            print(f"  Summary: {found_count}/{num_snippets} snippets matched")
 
         print()
 
