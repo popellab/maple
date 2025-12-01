@@ -212,36 +212,81 @@ class AutomatedSnippetVerifier(Validator):
             return ""
         return re.sub(r"\s+", " ", text.lower().strip())
 
-    def fuzzy_find_snippet(self, snippet: str, full_text: str) -> tuple[bool, float]:
+    def normalize_snippet(self, snippet: str) -> str:
+        """
+        Normalize snippet by removing LaTeX formatting and table artifacts.
+
+        Handles:
+        - LaTeX superscripts: ^{+}, ^{-}, ^{2}, etc. -> +, -, 2
+        - LaTeX subscripts: _{2}, _{d}, etc. -> 2, d
+        - Table separators: |
+        - Ellipsis placeholders: ...
+        - Multiple whitespace/newlines
+
+        Args:
+            snippet: Raw snippet text
+
+        Returns:
+            Cleaned snippet suitable for matching
+        """
+        if not snippet:
+            return ""
+
+        text = snippet
+
+        # Remove LaTeX super/subscripts: ^{+} -> +, _{2} -> 2
+        text = re.sub(r"\^{([^}]*)}", r"\1", text)
+        text = re.sub(r"_{([^}]*)}", r"\1", text)
+
+        # Also handle simple ^ and _ without braces: ^+ -> +
+        text = re.sub(r"\^(\S)", r"\1", text)
+        text = re.sub(r"_(\S)", r"\1", text)
+
+        # Remove table separators
+        text = text.replace("|", " ")
+
+        # Remove ellipsis placeholders
+        text = text.replace("...", " ")
+
+        # Collapse whitespace and newlines
+        text = re.sub(r"\s+", " ", text)
+
+        return text.strip()
+
+    def fuzzy_find_snippet(self, snippet: str, full_text: str) -> tuple[bool, float, str]:
         """
         Search for snippet in full text using fuzzy matching.
 
         Strategy:
-        1. Normalize both strings
-        2. Try exact substring match first (fast path)
-        3. If not found, use sliding window with SequenceMatcher
+        1. Normalize snippet (remove LaTeX, table formatting)
+        2. Normalize both strings (lowercase, collapse whitespace)
+        3. Try exact substring match first (fast path)
+        4. If not found, use sliding window with SequenceMatcher
 
         Args:
             snippet: Text snippet to find
             full_text: Full paper text to search in
 
         Returns:
-            (found, best_similarity_score) tuple
+            (found, best_similarity_score, normalized_snippet) tuple
         """
         if not snippet or not full_text:
-            return (False, 0.0)
+            return (False, 0.0, "")
 
-        snippet_norm = self.normalize_text(snippet)
+        # First normalize snippet to remove LaTeX/table formatting
+        snippet_cleaned = self.normalize_snippet(snippet)
+        # Then apply standard text normalization (lowercase, whitespace)
+        snippet_norm = self.normalize_text(snippet_cleaned)
         text_norm = self.normalize_text(full_text)
 
         # Fast path: exact substring match
         if snippet_norm in text_norm:
-            return (True, 1.0)
+            return (True, 1.0, snippet_cleaned)
 
         # Sliding window fuzzy match
         snippet_len = len(snippet_norm)
         if snippet_len > len(text_norm):
-            return (False, 0.0)
+            return (False, 0.0, snippet_cleaned)
 
         best_score = 0.0
         # Use a larger window to account for minor variations
@@ -257,9 +302,9 @@ class AutomatedSnippetVerifier(Validator):
             if score > best_score:
                 best_score = score
                 if score >= self.fuzzy_threshold:
-                    return (True, score)
+                    return (True, score, snippet_cleaned)
 
-        return (best_score >= self.fuzzy_threshold, best_score)
+        return (best_score >= self.fuzzy_threshold, best_score, snippet_cleaned)
 
     def get_paper_text(self, doi: str) -> tuple[Optional[str], Optional[str], str]:
         """
@@ -461,17 +506,31 @@ class AutomatedSnippetVerifier(Validator):
             num_snippets = len(snippets)
             found_count = 0
             for snippet in snippets:
-                found, score = self.fuzzy_find_snippet(snippet, full_text)
+                found, score, normalized = self.fuzzy_find_snippet(snippet, full_text)
                 item_name = f"{', '.join(filenames)} → {source_tag}"
-                snippet_display = snippet if len(snippet) <= 40 else snippet[:37] + "..."
+
+                # Check if normalization changed the snippet
+                was_normalized = normalized != snippet
+
+                # Display truncated versions
+                norm_display = normalized if len(normalized) <= 50 else normalized[:47] + "..."
 
                 if found:
                     found_count += 1
                     automated_results.append((item_name, snippet, True, score))
-                    print(f'    ✓ "{snippet_display}" (score: {score:.2f})')
+                    if was_normalized:
+                        print(f'    ✓ "{norm_display}" (score: {score:.2f})')
+                    else:
+                        print(f'    ✓ "{norm_display}" (score: {score:.2f})')
                 else:
                     automated_results.append((item_name, snippet, False, score))
-                    print(f'    ✗ "{snippet_display}" (best score: {score:.2f})')
+                    if was_normalized:
+                        snippet_display = snippet if len(snippet) <= 40 else snippet[:37] + "..."
+                        print(f'    ✗ "{snippet_display}"')
+                        print(f'      → normalized: "{norm_display}"')
+                        print(f"      → best score: {score:.2f}")
+                    else:
+                        print(f'    ✗ "{norm_display}" (best score: {score:.2f})')
 
             print(f"  Summary: {found_count}/{num_snippets} snippets matched")
 
