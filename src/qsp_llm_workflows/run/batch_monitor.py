@@ -75,65 +75,30 @@ def main():
             # Generate unpacking command based on batch type
             if batch_metadata:
                 batch_type = batch_metadata.get("batch_type", "parameter")
-                source_csv = batch_metadata.get("source_csv", "input_csv")
+                source_csv = batch_metadata.get("source_csv", "<input.csv>")
 
-                # Determine target directory based on batch type
+                # Determine target subdirectory based on batch type
                 if batch_type == "test_stat":
-                    target_dir = "../qsp-metadata-storage/test_statistics"
-                elif batch_type.startswith("checklist") or batch_type.startswith("validate"):
-                    target_dir = "../qsp-metadata-storage/parameter_estimates"
+                    subdir = "test_statistics"
                 else:
-                    target_dir = "../qsp-metadata-storage/parameter_estimates"
+                    subdir = "parameter_estimates"
 
                 # Print next command
-                print(f"\nNext: Unpack results to {target_dir.split('/')[-1]}:")
-                if batch_type == "test_stat":
-                    # Test statistics unpacking
-                    if source_csv:
-                        print(
-                            f"  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv}"
-                        )
-                        print(
-                            "\nThen aggregate test statistics (if using model-specific aggregation):"
-                        )
-                        print(
-                            f"  python ../your-model-repo/metadata/aggregate_test_statistics.py {source_csv} {target_dir} ../qsp-metadata-storage/scratch/"
-                        )
-                    else:
-                        print(
-                            f"  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv"
-                        )
-                        print(
-                            "\nNote: Replace 'input_csv' with path to CSV used to create this batch"
-                        )
-                        print(
-                            "\nThen aggregate test statistics (if using model-specific aggregation):"
-                        )
-                        print(
-                            f"  python ../your-model-repo/metadata/aggregate_test_statistics.py input_csv {target_dir} ../qsp-metadata-storage/scratch/"
-                        )
-                else:
-                    # Other batch types unpacking
-                    if source_csv:
-                        print(
-                            f"  python scripts/process/unpack_results.py {output_file} {target_dir} {source_csv}"
-                        )
-                    else:
-                        print(
-                            f"  python scripts/process/unpack_results.py {output_file} {target_dir} input_csv"
-                        )
-                        print(
-                            "\nNote: Replace 'input_csv' with path to CSV used to create this batch"
-                        )
+                print(f"\nNext: Unpack results to {subdir}:")
+                print(
+                    f"  python scripts/process/unpack_results.py {output_file} <output-dir>/{subdir} {source_csv}"
+                )
+                print(
+                    "\nNote: Replace <output-dir> with your metadata storage directory (e.g., metadata-storage)"
+                )
             else:
                 # Fallback if no metadata found
-                print("\nNext: Unpack results to parameter_estimates:")
+                print("\nNext: Unpack results:")
                 print(
-                    f"  python scripts/process/unpack_results.py {output_file} ../qsp-metadata-storage/parameter_estimates input_csv"
+                    f"  python scripts/process/unpack_results.py {output_file} <output-dir>/parameter_estimates <input.csv>"
                 )
-                print(
-                    "\nNote: input_csv is required for header fields (parameter_name, units, definition, etc.)"
-                )
+                print("\nNote: Replace <output-dir> with your metadata storage directory")
+                print("      and <input.csv> with path to CSV used to create this batch")
 
 
 if __name__ == "__main__":
