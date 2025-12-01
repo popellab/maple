@@ -78,7 +78,15 @@ class ParameterEstimates(BaseModel):
     """Parameter estimates with structured inputs and derivation."""
 
     inputs: List[Input] = Field(description="List of inputs used in derivation")
-    derivation_code: str = Field(description="Python code for derivation (in code fence)")
+    derivation_code: str = Field(
+        description=(
+            "Python code defining a derive_parameter(inputs) function. "
+            "The inputs argument is a list of dicts, each with 'name' and 'value' keys. "
+            "Access values like: float([x for x in inputs if x['name']=='Foo'][0]['value']). "
+            "Must return dict with keys: median_param (float), iqr_param (float), "
+            "ci95_param ([lower, upper])."
+        )
+    )
     median: float = Field(description="Median value")
     iqr: float = Field(description="Interquartile range")
     ci95: List[float] = Field(description="95% confidence interval [lower, upper]")
@@ -229,7 +237,15 @@ class TestStatisticEstimates(BaseModel):
     """Test statistic estimates with structured inputs and derivation."""
 
     inputs: List[Input] = Field(description="List of inputs used in derivation")
-    derivation_code: str = Field(description="Python code for bootstrap derivation (in code fence)")
+    derivation_code: str = Field(
+        description=(
+            "Python code defining a derive_distribution(inputs) function. "
+            "The inputs argument is a list of dicts, each with 'name' and 'value' keys. "
+            "Access values like: float([x for x in inputs if x['name']=='Foo'][0]['value']). "
+            "Must return dict with keys: median_stat (float), iqr_stat (float), "
+            "ci95_stat ([lower, upper])."
+        )
+    )
     median: float = Field(description="Median value")
     iqr: float = Field(description="Interquartile range")
     ci95: List[float] = Field(description="95% confidence interval [lower, upper]")
