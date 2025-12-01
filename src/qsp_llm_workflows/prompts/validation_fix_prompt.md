@@ -32,13 +32,30 @@ Fix the validation errors listed below, and while doing so:
 - The goal is **exact numerical consistency** between code output and reported values
 
 ### Text Snippet Errors
+Text snippets are automatically verified against the full paper text. When fixing snippet errors:
+
+**Core Rules:**
+1. **VERBATIM only**: Copy exact text from the paper. Never paraphrase, summarize, or reconstruct.
+2. **No table reconstruction**: Do NOT create artificial table notation like `CD8^{+} | ... | 17 (9-30)`. Tables are flattened when we extract text, so this format won't match.
+3. **Use continuous text spans**: Find a short, continuous phrase that contains the value. For table data, the snippet should be just the cell value and any immediately adjacent text, e.g., `"17 (9-30)"` not a reconstructed row.
+4. **Include context when helpful**: A few surrounding words help locate the snippet, e.g., `"median survival of 18.2 months"` is better than just `"18.2"`.
+5. **Avoid LaTeX formatting**: Write `CD8+` not `CD8^{+}`. Write subscripts inline: `CO2` not `CO_{2}`.
+6. **Keep snippets short**: 5-50 words is ideal. Long snippets are harder to match exactly.
+
+**Additional guidance:**
 - **Look up the actual source** document (DOI or citation) to find the text
-- Extract text snippets **verbatim** from the source - do not paraphrase or modify
 - For value_snippet: find the exact sentence/phrase containing the numeric value
-- For units_snippet: find the exact text that mentions the units or measurement context
+- For units_snippet: find where units are explicitly stated, e.g., `"expressed as cells per high-power field"`
 - Verify the snippet is from the correct context (right experiment, condition, species)
-- Values may appear in different formats in text (scientific notation, percentages, ranges, etc.)
 - For dimensionless quantities, units_snippet should contain measurement context rather than the word "dimensionless"
+
+**Good snippet examples:**
+- `"median CD8+ density was 17 (IQR 9-30) cells/HPF"` ✓
+- `"n = 137 patients"` ✓
+
+**Bad snippet examples:**
+- `"CD8^{+} | No neoadjuvant | 17 (9-30)"` ✗ (reconstructed table, LaTeX)
+- `"The study found elevated levels"` ✗ (no actual value)
 
 ### Source Reference Errors
 - Ensure every input has a valid source_ref field
