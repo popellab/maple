@@ -3,7 +3,8 @@
 Automated snippet source verification via NCBI PMC HTML scraping.
 
 Fetches full-text articles from NCBI PubMed Central and searches for snippets.
-Falls back to manual verification for papers not available in PMC.
+For papers not in PMC, attempts verification against the abstract.
+Falls back to manual verification only for papers with no available text.
 
 Usage:
     # Called as part of validation suite via run_all_validations.py
@@ -11,6 +12,7 @@ Usage:
 import re
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Optional
 
@@ -27,6 +29,18 @@ from qsp_llm_workflows.validate.check_snippet_sources_manual_verify import (
     extract_inputs_from_yaml,
     get_doi_from_source,
 )
+
+
+@dataclass
+class PaperInfo:
+    """Information about a paper from Europe PMC."""
+
+    pmcid: Optional[str] = None
+    pmid: Optional[str] = None
+    is_open_access: bool = False
+    in_pmc: bool = False
+    abstract: Optional[str] = None
+    title: Optional[str] = None
 
 
 class AutomatedSnippetVerifier(Validator):
@@ -91,18 +105,17 @@ class AutomatedSnippetVerifier(Validator):
         doi_clean = doi_clean.replace("http://doi.org/", "")
         return doi_clean
 
-    def get_pmcid_from_doi(self, doi: str) -> Optional[str]:
+    def get_paper_info_from_doi(self, doi: str) -> Optional[PaperInfo]:
         """
-        Query Europe PMC to get PMCID from DOI.
+        Query Europe PMC to get paper information from DOI.
 
-        Returns PMCID if the article is indexed in PMC (regardless of open access status,
-        since we scrape the HTML which is available for all PMC articles).
+        Returns PaperInfo with PMCID, open access status, and abstract.
 
         Args:
             doi: DOI string (e.g., "10.1056/NEJMoa1200690")
 
         Returns:
-            PMCID (e.g., "PMC1234567") or None if not found in PMC
+            PaperInfo object or None if not found
         """
         doi_clean = self.normalize_doi(doi)
         if not doi_clean:
@@ -132,15 +145,22 @@ class AutomatedSnippetVerifier(Validator):
                 return None
 
             result = results[0]
-            pmcid = result.get("pmcid")
 
-            # Check if article is in PMC (we can scrape HTML for any PMC article)
-            in_pmc = result.get("inPMC") == "Y"
+            # Strip HTML tags from abstract if present
+            abstract = result.get("abstractText", "")
+            if abstract:
+                # Remove HTML tags like <h4>Background</h4>
+                abstract = re.sub(r"<[^>]+>", " ", abstract)
+                abstract = re.sub(r"\s+", " ", abstract).strip()
 
-            if pmcid and in_pmc:
-                return pmcid
-
-            return None
+            return PaperInfo(
+                pmcid=result.get("pmcid"),
+                pmid=result.get("pmid"),
+                is_open_access=result.get("isOpenAccess") == "Y",
+                in_pmc=result.get("inPMC") == "Y",
+                abstract=abstract if abstract else None,
+                title=result.get("title"),
+            )
 
         except (requests.RequestException, ValueError, KeyError):
             return None
@@ -318,47 +338,73 @@ class AutomatedSnippetVerifier(Validator):
 
         return (best_score >= self.fuzzy_threshold, best_score, snippet_cleaned, best_match_text)
 
-    def get_paper_text(self, doi: str) -> tuple[Optional[str], Optional[str], str]:
+    def get_paper_text(self, doi: str) -> tuple[Optional[str], Optional[PaperInfo], str]:
         """
-        Get full text for a paper by DOI.
+        Get text for a paper by DOI.
 
+        Tries full text from PMC first, then falls back to abstract.
         Returns cached result if available.
 
         Args:
             doi: DOI string
 
         Returns:
-            (full_text, pmcid, status) tuple.
-            status is one of: "cached", "success", "not_in_pmc", "html_fetch_failed", "no_text_extracted"
+            (text, paper_info, status) tuple.
+            status is one of:
+                - "full_text_open_access": Full text from open access PMC article
+                - "full_text_restricted": Full text from restricted PMC article
+                - "abstract_only": Only abstract available (not in PMC)
+                - "cached": Using cached result
+                - "html_fetch_failed": PMC article exists but couldn't fetch
+                - "no_text_available": No text could be retrieved
         """
         doi_clean = self.normalize_doi(doi)
-        if doi_clean in self._paper_text_cache:
-            cached = self._paper_text_cache[doi_clean]
-            if cached:
-                # Need to re-fetch pmcid for cached results
-                pmcid = self.get_pmcid_from_doi(doi_clean)
-                return (cached, pmcid, "cached")
-            return (None, None, "not_in_pmc")
 
-        # Get PMCID from Europe PMC search
-        pmcid = self.get_pmcid_from_doi(doi_clean)
-        if not pmcid:
-            self._paper_text_cache[doi_clean] = None
-            return (None, None, "not_in_pmc")
+        # Check cache first
+        cache_key = f"text_{doi_clean}"
+        info_cache_key = f"info_{doi_clean}"
+        if cache_key in self._paper_text_cache:
+            cached_text = self._paper_text_cache[cache_key]
+            cached_info = self._paper_text_cache.get(info_cache_key)
+            if cached_text:
+                return (cached_text, cached_info, "cached")
+            # If cached as None, we already tried and failed
+            return (None, cached_info, "no_text_available")
 
-        # Fetch HTML from NCBI PMC
-        html_content = self.fetch_pmc_html(pmcid)
-        if not html_content:
-            self._paper_text_cache[doi_clean] = None
-            return (None, pmcid, "html_fetch_failed")
+        # Get paper info from Europe PMC
+        paper_info = self.get_paper_info_from_doi(doi_clean)
+        if not paper_info:
+            self._paper_text_cache[cache_key] = None
+            return (None, None, "no_text_available")
 
-        full_text = self.extract_text_from_html(html_content)
-        if not full_text:
-            self._paper_text_cache[doi_clean] = None
-            return (None, pmcid, "no_text_extracted")
+        # Cache the paper info
+        self._paper_text_cache[info_cache_key] = paper_info
 
-        self._paper_text_cache[doi_clean] = full_text
-        return (full_text, pmcid, "success")
+        # Try to get full text from PMC if available
+        if paper_info.in_pmc and paper_info.pmcid:
+            html_content = self.fetch_pmc_html(paper_info.pmcid)
+            if html_content:
+                full_text = self.extract_text_from_html(html_content)
+                if full_text:
+                    self._paper_text_cache[cache_key] = full_text
+                    status = (
+                        "full_text_open_access"
+                        if paper_info.is_open_access
+                        else "full_text_restricted"
+                    )
+                    return (full_text, paper_info, status)
+
+            # PMC fetch failed, but article should be there
+            # Fall through to try abstract
+
+        # Fall back to abstract
+        if paper_info.abstract:
+            self._paper_text_cache[cache_key] = paper_info.abstract
+            return (paper_info.abstract, paper_info, "abstract_only")
+
+        # No text available at all
+        self._paper_text_cache[cache_key] = None
+        return (None, paper_info, "no_text_available")
 
     def collect_verification_data(self) -> dict:
         """
@@ -458,8 +504,8 @@ class AutomatedSnippetVerifier(Validator):
 
         1. Collect all DOIs + snippets from YAML files
         2. For each DOI, try to fetch full text from NCBI PMC
-        3. Search for snippets in available papers
-        4. Fall back to manual verification for papers not in PMC
+        3. If not in PMC, try verification against abstract
+        4. Fall back to manual verification only if no text available
 
         Returns:
             ValidationReport with results
@@ -467,7 +513,7 @@ class AutomatedSnippetVerifier(Validator):
         report = ValidationReport(self.name)
 
         print(f"Verifying snippets in {self.data_dir}...")
-        print("Using NCBI PubMed Central for full-text retrieval")
+        print("Using NCBI PubMed Central for full-text, Europe PMC for abstracts")
         print(f"Fuzzy match threshold: {self.fuzzy_threshold}")
         print()
 
@@ -481,7 +527,7 @@ class AutomatedSnippetVerifier(Validator):
 
         # Track papers needing manual verification
         manual_sources: dict = {}
-        automated_results: list[tuple[str, str, bool, float]] = []
+        automated_results: list[tuple[str, str, bool, float, str]] = []  # Added text_source
 
         # Process each source
         total_sources = len(source_data)
@@ -492,32 +538,42 @@ class AutomatedSnippetVerifier(Validator):
 
             print(f"[{idx}/{total_sources}] Checking {source_tag}...")
 
-            # Try to get full text
-            full_text, pmcid, status = self.get_paper_text(doi)
+            # Try to get text (full text or abstract)
+            text, paper_info, status = self.get_paper_text(doi)
 
-            if not full_text:
-                if status == "not_in_pmc":
-                    print("  ✗ Not indexed in PMC - queued for manual verification")
-                elif status == "html_fetch_failed":
-                    print(f"  ✗ Found PMCID ({pmcid}) but failed to fetch HTML")
-                elif status == "no_text_extracted":
-                    print(f"  ✗ Found PMCID ({pmcid}) but no text could be extracted")
+            if not text:
+                if paper_info:
+                    print("  ✗ No full text or abstract available - queued for manual verification")
                 else:
-                    print(f"  ✗ Failed to retrieve ({status})")
+                    print("  ✗ Paper not found in Europe PMC - queued for manual verification")
                 manual_sources[source_tag] = info
                 continue
 
-            # Report success
-            text_len = len(full_text)
-            if status == "cached":
-                print(f"  ✓ Found in PMC ({pmcid}) - using cached text ({text_len:,} chars)")
+            # Report what we got
+            text_len = len(text)
+            pmcid = paper_info.pmcid if paper_info else None
+
+            if status == "full_text_open_access":
+                print(f"  ✓ Full text from PMC ({pmcid}) - Open Access - {text_len:,} chars")
+                text_source = "full_text"
+            elif status == "full_text_restricted":
+                print(f"  ✓ Full text from PMC ({pmcid}) - Restricted Access - {text_len:,} chars")
+                text_source = "full_text"
+            elif status == "abstract_only":
+                oa_label = "Open Access" if paper_info.is_open_access else "Restricted"
+                print(f"  ⚠ Abstract only ({oa_label}) - {text_len:,} chars - not in PMC")
+                text_source = "abstract"
+            elif status == "cached":
+                print(f"  ✓ Using cached text - {text_len:,} chars")
+                text_source = "cached"
             else:
-                print(f"  ✓ Found in PMC ({pmcid}) - fetched {text_len:,} chars")
+                print(f"  ✓ Retrieved text - {text_len:,} chars")
+                text_source = "unknown"
 
             # Search for each snippet and collect results
             snippet_results: list[tuple[str, str, bool, float, str, Optional[str]]] = []
             for snippet in snippets:
-                found, score, normalized, best_match = self.fuzzy_find_snippet(snippet, full_text)
+                found, score, normalized, best_match = self.fuzzy_find_snippet(snippet, text)
                 snippet_results.append((snippet, normalized, found, score, best_match))
 
             # Sort: failures first (by score ascending), then successes
@@ -542,10 +598,10 @@ class AutomatedSnippetVerifier(Validator):
 
                 if found:
                     found_count += 1
-                    automated_results.append((item_name, snippet, True, score))
+                    automated_results.append((item_name, snippet, True, score, text_source))
                     print(f'{GREEN}    ✓ "{norm_display}" (score: {score:.2f}){RESET}')
                 else:
-                    automated_results.append((item_name, snippet, False, score))
+                    automated_results.append((item_name, snippet, False, score, text_source))
 
                     # Color based on score: yellow for near-miss (0.6-0.8), red for failure
                     is_near_miss = 0.6 <= score < self.fuzzy_threshold
@@ -571,18 +627,30 @@ class AutomatedSnippetVerifier(Validator):
         print()
 
         # Add automated results to report
-        for item_name, snippet, found, score in automated_results:
+        for item_name, snippet, found, score, source_type in automated_results:
             snippet_display = snippet if len(snippet) <= 50 else snippet[:47] + "..."
             if found:
-                report.add_pass(
-                    f'{item_name} → "{snippet_display}"',
-                    f"Found in PMC (score: {score:.2f})",
-                )
+                if source_type == "abstract":
+                    report.add_pass(
+                        f'{item_name} → "{snippet_display}"',
+                        f"Found in abstract (score: {score:.2f})",
+                    )
+                else:
+                    report.add_pass(
+                        f'{item_name} → "{snippet_display}"',
+                        f"Found in full text (score: {score:.2f})",
+                    )
             else:
-                report.add_fail(
-                    f'{item_name} → "{snippet_display}"',
-                    f"Snippet not found in paper text (best score: {score:.2f})",
-                )
+                if source_type == "abstract":
+                    report.add_warning(
+                        f'{item_name} → "{snippet_display}"',
+                        f"Not found in abstract - may be in full text (best score: {score:.2f})",
+                    )
+                else:
+                    report.add_fail(
+                        f'{item_name} → "{snippet_display}"',
+                        f"Snippet not found in full text (best score: {score:.2f})",
+                    )
 
         # Handle manual verification fallback
         if manual_sources:

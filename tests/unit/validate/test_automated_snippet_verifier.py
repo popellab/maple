@@ -621,26 +621,31 @@ class TestNCBIPMCIntegration:
     Skip with: pytest -m "not integration"
     """
 
-    def test_get_pmcid_from_known_pmc_doi(self):
-        """Test getting PMCID from a known PMC DOI."""
+    def test_get_paper_info_from_known_pmc_doi(self):
+        """Test getting paper info from a known PMC DOI."""
         verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
 
         # JNCI paper - in PMC but not necessarily open access
         doi = "10.1093/jnci/djaa073"
-        pmcid = verifier.get_pmcid_from_doi(doi)
+        paper_info = verifier.get_paper_info_from_doi(doi)
 
-        assert pmcid is not None
-        assert pmcid.startswith("PMC")
+        assert paper_info is not None
+        assert paper_info.pmcid is not None
+        assert paper_info.pmcid.startswith("PMC")
+        assert paper_info.in_pmc is True
+        # This particular paper is not open access
+        assert paper_info.is_open_access is False
+        assert paper_info.abstract is not None
 
-    def test_get_pmcid_returns_none_for_non_pmc_doi(self):
-        """Test that non-PMC DOIs return None."""
+    def test_get_paper_info_returns_none_for_nonexistent_doi(self):
+        """Test that non-existent DOIs return None."""
         verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
 
         # Using a made-up DOI that shouldn't exist
         doi = "10.9999/nonexistent.paper.12345"
-        pmcid = verifier.get_pmcid_from_doi(doi)
+        paper_info = verifier.get_paper_info_from_doi(doi)
 
-        assert pmcid is None
+        assert paper_info is None
 
     def test_fetch_pmc_html_from_valid_pmcid(self):
         """Test fetching HTML from a valid PMCID."""
@@ -669,12 +674,15 @@ class TestNCBIPMCIntegration:
         doi = "10.1093/jnci/djaa073"
 
         # Get paper text
-        full_text, pmcid, status = verifier.get_paper_text(doi)
+        text, paper_info, status = verifier.get_paper_text(doi)
 
-        if full_text:
-            assert status == "success"
+        if text:
+            # Should be full text (restricted access)
+            assert status in ("full_text_open_access", "full_text_restricted")
+            assert paper_info is not None
+            assert paper_info.pmcid is not None
             # This text should be in the paper
-            found, score, _, _ = verifier.fuzzy_find_snippet("FoxP3", full_text)
+            found, score, _, _ = verifier.fuzzy_find_snippet("FoxP3", text)
             assert found is True
             assert score >= 0.8
 
@@ -686,12 +694,12 @@ class TestNCBIPMCIntegration:
         doi = "10.1093/jnci/djaa073"
 
         # Get paper text
-        full_text, pmcid, status = verifier.get_paper_text(doi)
+        text, paper_info, status = verifier.get_paper_text(doi)
 
-        if full_text:
+        if text:
             # This text should NOT be in a PDAC immunotherapy paper
             found, score, _, _ = verifier.fuzzy_find_snippet(
-                "quantum entanglement photosynthesis", full_text
+                "quantum entanglement photosynthesis", text
             )
             assert found is False
 
@@ -702,17 +710,32 @@ class TestNCBIPMCIntegration:
         doi = "10.1093/jnci/djaa073"
 
         # First call - should hit API
-        text1, pmcid1, status1 = verifier.get_paper_text(doi)
-        assert status1 == "success"
+        text1, paper_info1, status1 = verifier.get_paper_text(doi)
+        assert status1 in ("full_text_open_access", "full_text_restricted")
 
         # Second call - should use cache
-        text2, pmcid2, status2 = verifier.get_paper_text(doi)
+        text2, paper_info2, status2 = verifier.get_paper_text(doi)
         assert status2 == "cached"
 
         assert text1 == text2
         # Verify cache was used (same normalized DOI in cache)
         normalized = verifier.normalize_doi(doi)
-        assert normalized in verifier._paper_text_cache
+        cache_key = f"text_{normalized}"
+        assert cache_key in verifier._paper_text_cache
+
+    def test_paper_info_includes_abstract(self):
+        """Test that paper info includes abstract for non-PMC papers."""
+        verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
+
+        # JNCI paper - has abstract available
+        doi = "10.1093/jnci/djaa073"
+        paper_info = verifier.get_paper_info_from_doi(doi)
+
+        assert paper_info is not None
+        assert paper_info.abstract is not None
+        assert len(paper_info.abstract) > 100  # Should be substantial
+        # Abstract should contain relevant terms
+        assert "pancreatic" in paper_info.abstract.lower()
 
 
 @pytest.mark.integration
