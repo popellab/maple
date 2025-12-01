@@ -907,14 +907,10 @@ class AutomatedSnippetVerifier(Validator):
 
             # Verify snippets
             snippet_results = self._verify_snippets(snippets, text)
-            found_count = self._print_snippet_results(
-                snippet_results, item_name, text_source, automated_results
-            )
             num_snippets = len(snippet_results)
+            found_count = sum(1 for _, _, found, _, _ in snippet_results if found)
 
-            print(f"  Summary: {found_count}/{num_snippets} snippets matched")
-
-            # If abstract-only with failures, try Unpaywall fallback
+            # If abstract-only with failures, try Unpaywall fallback before printing results
             if text_source == "abstract" and found_count < num_snippets:
                 failed_snippets = [s for s, _, found, _, _ in snippet_results if not found]
 
@@ -930,40 +926,37 @@ class AutomatedSnippetVerifier(Validator):
                         f"{len(unpaywall_text):,} chars"
                     )
 
-                    # Re-verify ONLY the failed snippets against full text
-                    print("  → Re-verifying failed snippets against full text:")
-
-                    # Remove old failed results from automated_results
-                    automated_results[:] = [
-                        r
-                        for r in automated_results
-                        if not (r[0] == item_name and r[1] in failed_snippets)
-                    ]
-
-                    # Re-verify failed snippets
-                    retry_results = self._verify_snippets(set(failed_snippets), unpaywall_text)
-                    retry_found = self._print_snippet_results(
-                        retry_results, item_name, "full_text", automated_results
+                    # Re-verify ALL snippets against full text (not just failed ones)
+                    snippet_results = self._verify_snippets(snippets, unpaywall_text)
+                    found_count = self._print_snippet_results(
+                        snippet_results, item_name, "full_text", automated_results
                     )
-
-                    # Update counts
-                    new_found = found_count + retry_found
-                    print(f"  Summary after Unpaywall: {new_found}/{num_snippets} snippets matched")
+                    print(f"  Summary: {found_count}/{num_snippets} snippets matched")
 
                     # If still failures, track for manual verification
-                    if retry_found < len(failed_snippets):
-                        still_failed = [s for s, _, found, _, _ in retry_results if not found]
+                    if found_count < num_snippets:
+                        still_failed = [s for s, _, found, _, _ in snippet_results if not found]
                         abstract_only_failures[source_tag] = {
                             **info,
                             "failed_snippets": still_failed,
                         }
                 else:
                     print("  ✗ Unpaywall: No OA full text available")
-                    # Track for manual verification
+                    # Print abstract results and track for manual verification
+                    found_count = self._print_snippet_results(
+                        snippet_results, item_name, text_source, automated_results
+                    )
+                    print(f"  Summary: {found_count}/{num_snippets} snippets matched")
                     abstract_only_failures[source_tag] = {
                         **info,
                         "failed_snippets": failed_snippets,
                     }
+            else:
+                # Not abstract-only or all snippets matched - just print results
+                found_count = self._print_snippet_results(
+                    snippet_results, item_name, text_source, automated_results
+                )
+                print(f"  Summary: {found_count}/{num_snippets} snippets matched")
 
         print()
 
