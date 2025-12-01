@@ -738,6 +738,161 @@ class TestNCBIPMCIntegration:
         assert "pancreatic" in paper_info.abstract.lower()
 
 
+class TestManualVerificationPrompts:
+    """Test manual verification prompt methods."""
+
+    def test_print_manual_verification_prompt_with_custom_reason(self, capsys):
+        """Test that manual verification prompt includes custom reason."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        manual_sources = {
+            "test_source": {
+                "doi": "10.1234/test",
+                "snippets": {"test snippet"},
+                "inputs": [{"filename": "test.yaml"}],
+            }
+        }
+
+        verifier.print_manual_verification_prompt(manual_sources, "NO TEXT AVAILABLE")
+        captured = capsys.readouterr()
+
+        assert "NO TEXT AVAILABLE" in captured.out
+        assert "test_source" in captured.out
+        assert "10.1234/test" in captured.out
+
+    def test_print_abstract_only_verification_prompt(self, capsys):
+        """Test abstract-only verification prompt shows failed snippets."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        abstract_failures = {
+            "masugi2019": {
+                "doi": "10.1234/masugi",
+                "snippets": {"all snippets"},
+                "inputs": [{"filename": "test.yaml"}],
+                "failed_snippets": ["snippet1 not found", "snippet2 not found"],
+            }
+        }
+
+        verifier.print_abstract_only_verification_prompt(abstract_failures)
+        captured = capsys.readouterr()
+
+        assert "ABSTRACT ONLY" in captured.out
+        assert "FAILED SNIPPETS" in captured.out
+        assert "masugi2019" in captured.out
+        assert "snippet1 not found" in captured.out
+        assert "snippet2 not found" in captured.out
+        assert "2" in captured.out  # Count of failed snippets
+
+
+class TestAbstractOnlyFailures:
+    """Test handling of abstract-only papers with snippet failures."""
+
+    def test_abstract_only_failure_counts_as_failure(self, tmp_path):
+        """Test that snippets not found in abstract count as failures."""
+        yaml_file = tmp_path / "test.yaml"
+
+        # Create YAML with snippet that won't be in abstract
+        data = {
+            "parameter_estimates": {
+                "inputs": [
+                    {
+                        "name": "detailed_stat",
+                        "value": 42,
+                        "value_snippet": "This very specific phrase won't be in any abstract",
+                        "source_ref": "test_source",
+                    }
+                ]
+            },
+            "primary_data_sources": [
+                {
+                    "source_tag": "test_source",
+                    "doi": "10.1234/fake",
+                    "title": "Test Paper",
+                    "first_author": "Test",
+                    "year": 2024,
+                }
+            ],
+        }
+        with open(yaml_file, "w") as f:
+            yaml.dump(data, f)
+
+        verifier = AutomatedSnippetVerifier(str(tmp_path))
+
+        # Mock get_paper_text to return abstract only
+        def mock_get_paper_text(doi):
+            from qsp_llm_workflows.validate.check_snippet_sources_automated import PaperInfo
+
+            paper_info = PaperInfo(
+                pmcid=None,
+                is_open_access=False,
+                in_pmc=False,
+                abstract="This is a short abstract about pancreatic cancer research.",
+            )
+            return (paper_info.abstract, paper_info, "abstract_only")
+
+        # Mock manual verification to avoid blocking
+        with patch.object(verifier, "get_paper_text", side_effect=mock_get_paper_text):
+            with patch.object(verifier, "get_manual_verification", return_value=True):
+                report = verifier.validate()
+
+        # Should have a failure for the snippet not found in abstract
+        assert len(report.failed) > 0
+        # Check that the failure message mentions abstract
+        assert any("abstract" in f["reason"].lower() for f in report.failed)
+
+    def test_abstract_only_triggers_manual_verification(self, tmp_path, capsys):
+        """Test that abstract-only failures trigger manual verification prompt."""
+        yaml_file = tmp_path / "test.yaml"
+
+        data = {
+            "parameter_estimates": {
+                "inputs": [
+                    {
+                        "name": "stat",
+                        "value": 1,
+                        "value_snippet": "unfindable snippet xyz123",
+                        "source_ref": "src",
+                    }
+                ]
+            },
+            "primary_data_sources": [
+                {
+                    "source_tag": "src",
+                    "doi": "10.1234/test",
+                    "title": "Test",
+                    "first_author": "A",
+                    "year": 2024,
+                }
+            ],
+        }
+        with open(yaml_file, "w") as f:
+            yaml.dump(data, f)
+
+        verifier = AutomatedSnippetVerifier(str(tmp_path))
+
+        def mock_get_paper_text(doi):
+            from qsp_llm_workflows.validate.check_snippet_sources_automated import PaperInfo
+
+            return (
+                "Short abstract text",
+                PaperInfo(abstract="Short abstract text"),
+                "abstract_only",
+            )
+
+        with patch.object(verifier, "get_paper_text", side_effect=mock_get_paper_text):
+            with patch.object(
+                verifier, "get_manual_verification", return_value=True
+            ) as mock_verify:
+                verifier.validate()
+
+        # Manual verification should have been called
+        mock_verify.assert_called()
+
+        # Check that prompt was printed
+        captured = capsys.readouterr()
+        assert "ABSTRACT ONLY" in captured.out or "MANUAL VERIFICATION" in captured.out
+
+
 @pytest.mark.integration
 class TestRealWorldValidation:
     """

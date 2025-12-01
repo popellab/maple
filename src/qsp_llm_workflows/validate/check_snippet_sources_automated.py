@@ -460,11 +460,13 @@ class AutomatedSnippetVerifier(Validator):
 
         return source_data
 
-    def print_manual_verification_prompt(self, manual_sources: dict) -> None:
+    def print_manual_verification_prompt(
+        self, manual_sources: dict, reason: str = "NOT IN PMC"
+    ) -> None:
         """Print sources requiring manual verification."""
         print("\n" + "=" * 70)
-        print("MANUAL VERIFICATION REQUIRED")
-        print("The following papers are not available in PubMed Central.")
+        print(f"MANUAL VERIFICATION REQUIRED ({reason})")
+        print("The following papers require manual verification.")
         print("=" * 70 + "\n")
 
         for source_tag, info in sorted(manual_sources.items()):
@@ -482,6 +484,31 @@ class AutomatedSnippetVerifier(Validator):
             print("-" * 70 + "\n")
 
         print(f"Total sources requiring manual verification: {len(manual_sources)}")
+        print("=" * 70 + "\n")
+
+    def print_abstract_only_verification_prompt(self, abstract_failures: dict) -> None:
+        """Print abstract-only sources with failed snippets requiring manual verification."""
+        print("\n" + "=" * 70)
+        print("MANUAL VERIFICATION REQUIRED (ABSTRACT ONLY - FAILED SNIPPETS)")
+        print("The following papers only have abstracts available.")
+        print("Some snippets could not be verified - please check the full paper.")
+        print("=" * 70 + "\n")
+
+        for source_tag, info in sorted(abstract_failures.items()):
+            doi = info["doi"]
+            failed_snippets = info.get("failed_snippets", [])
+            filenames = sorted(set(inp["filename"] for inp in info["inputs"]))
+
+            print(f"Source: {source_tag}")
+            print(f"DOI: https://doi.org/{self.normalize_doi(doi)}")
+            print(f"YAML file(s): {', '.join(filenames)}")
+            print(f"\nFailed snippets to verify ({len(failed_snippets)}):")
+            for i, snippet in enumerate(failed_snippets, 1):
+                display = snippet if len(snippet) <= 80 else snippet[:77] + "..."
+                print(f'  {i}. "{display}"')
+            print("-" * 70 + "\n")
+
+        print(f"Total sources with failed snippets: {len(abstract_failures)}")
         print("=" * 70 + "\n")
 
     def get_manual_verification(self) -> bool:
@@ -526,7 +553,8 @@ class AutomatedSnippetVerifier(Validator):
             return report
 
         # Track papers needing manual verification
-        manual_sources: dict = {}
+        manual_sources: dict = {}  # Papers with no text available
+        abstract_only_failures: dict = {}  # Abstract-only papers with failed snippets
         automated_results: list[tuple[str, str, bool, float, str]] = []  # Added text_source
 
         # Process each source
@@ -624,6 +652,14 @@ class AutomatedSnippetVerifier(Validator):
 
             print(f"  Summary: {found_count}/{num_snippets} snippets matched")
 
+            # Track abstract-only sources with failures for manual verification
+            if text_source == "abstract" and found_count < num_snippets:
+                failed_snippets = [s for s, _, found, _, _ in snippet_results if not found]
+                abstract_only_failures[source_tag] = {
+                    **info,
+                    "failed_snippets": failed_snippets,
+                }
+
         print()
 
         # Add automated results to report
@@ -652,9 +688,9 @@ class AutomatedSnippetVerifier(Validator):
                         f"Snippet not found in full text (best score: {score:.2f})",
                     )
 
-        # Handle manual verification fallback
+        # Handle manual verification fallback for papers with no text
         if manual_sources:
-            self.print_manual_verification_prompt(manual_sources)
+            self.print_manual_verification_prompt(manual_sources, "NO TEXT AVAILABLE")
             user_verified = self.get_manual_verification()
 
             for source_tag, info in manual_sources.items():
@@ -664,12 +700,30 @@ class AutomatedSnippetVerifier(Validator):
                 if user_verified:
                     report.add_warning(
                         item_name,
-                        "Paper not in PubMed Central, verified manually by user",
+                        "No text available, verified manually by user",
                     )
                 else:
                     report.add_fail(
                         item_name,
-                        "Paper not in PubMed Central, user did not verify",
+                        "No text available, user did not verify",
+                    )
+
+        # Handle manual verification for abstract-only papers with failed snippets
+        if abstract_only_failures:
+            self.print_abstract_only_verification_prompt(abstract_only_failures)
+            user_verified = self.get_manual_verification()
+
+            for source_tag, info in abstract_only_failures.items():
+                filenames = sorted(set(inp["filename"] for inp in info["inputs"]))
+                item_name = f"{', '.join(filenames)} → {source_tag}"
+                failed_count = len(info.get("failed_snippets", []))
+
+                # Note: The failures were already added to report above
+                # Here we just add a note about manual verification status
+                if user_verified:
+                    report.add_warning(
+                        f"{item_name} (manual verification)",
+                        f"{failed_count} snippet(s) not in abstract, verified manually by user",
                     )
 
         return report
