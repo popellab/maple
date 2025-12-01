@@ -893,6 +893,283 @@ class TestAbstractOnlyFailures:
         assert "ABSTRACT ONLY" in captured.out or "MANUAL VERIFICATION" in captured.out
 
 
+class TestUnpaywallIntegration:
+    """Test Unpaywall API integration for OA papers not in PMC."""
+
+    def test_get_unpaywall_info_parses_response(self):
+        """Test parsing Unpaywall API response."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        # Mock a successful Unpaywall response
+        mock_response = {
+            "is_oa": True,
+            "oa_status": "bronze",
+            "best_oa_location": {
+                "url": "https://www.nature.com/articles/s41379-019-0291-z",
+                "url_for_pdf": "https://www.nature.com/articles/s41379-019-0291-z.pdf",
+            },
+        }
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.json.return_value = mock_response
+
+            result = verifier.get_unpaywall_info("10.1038/s41379-019-0291-z")
+
+        assert result is not None
+        assert result["is_oa"] is True
+        assert result["oa_status"] == "bronze"
+        assert "nature.com" in result["oa_url"]
+
+    def test_get_unpaywall_info_returns_none_for_closed_access(self):
+        """Test that closed access papers return None."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        mock_response = {
+            "is_oa": False,
+            "oa_status": "closed",
+            "best_oa_location": None,
+        }
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.json.return_value = mock_response
+
+            result = verifier.get_unpaywall_info("10.1234/closed-paper")
+
+        assert result is None
+
+    def test_get_unpaywall_info_handles_api_error(self):
+        """Test graceful handling of API errors."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.status_code = 404
+
+            result = verifier.get_unpaywall_info("10.1234/nonexistent")
+
+        assert result is None
+
+    def test_fetch_publisher_html_success(self):
+        """Test fetching HTML from publisher site."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        mock_html = "<html><body><article>Full article content here</article></body></html>"
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.headers = {"Content-Type": "text/html"}
+            mock_get.return_value.text = mock_html
+
+            result = verifier.fetch_publisher_html("https://example.com/article")
+
+        assert result == mock_html
+
+    def test_fetch_publisher_html_rejects_pdf(self):
+        """Test that PDF responses are rejected."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.headers = {"Content-Type": "application/pdf"}
+            mock_get.return_value.text = "%PDF-1.4..."
+
+            result = verifier.fetch_publisher_html("https://example.com/article.pdf")
+
+        assert result is None
+
+    def test_extract_text_from_publisher_html_nature(self):
+        """Test extracting text from Nature-style HTML."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        html = """
+        <html>
+        <body>
+            <nav>Skip this navigation</nav>
+            <article class="c-article-body">
+                <h1>Article Title</h1>
+                <p>The tumor infiltrating lymphocytes were counted using CD8 staining.</p>
+                <p>Results showed 17 (9-30) cells per high-power field.</p>
+            </article>
+            <footer>Skip this footer</footer>
+        </body>
+        </html>
+        """
+
+        text = verifier.extract_text_from_publisher_html(html)
+
+        assert "tumor infiltrating lymphocytes" in text.lower()
+        assert "17 (9-30)" in text
+        # Should not include nav/footer
+        assert "skip this navigation" not in text.lower()
+        assert "skip this footer" not in text.lower()
+
+    def test_extract_text_from_publisher_html_generic(self):
+        """Test extracting text from generic HTML structure."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        html = """
+        <html>
+        <body>
+            <main>
+                <div class="content">
+                    <p>Important research findings about pancreatic cancer.</p>
+                </div>
+            </main>
+        </body>
+        </html>
+        """
+
+        text = verifier.extract_text_from_publisher_html(html)
+        assert "pancreatic cancer" in text.lower()
+
+    def test_get_paper_text_tries_unpaywall_when_not_in_pmc(self):
+        """Test that get_paper_text tries Unpaywall for non-PMC papers."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        # Mock Unpaywall returning OA URL
+        mock_unpaywall = {
+            "is_oa": True,
+            "oa_status": "bronze",
+            "oa_url": "https://publisher.com/article",
+            "oa_pdf_url": None,
+        }
+
+        # Mock publisher HTML - needs sufficient content (>1000 chars)
+        mock_html = (
+            "<html><body><article>"
+            + "Full text with specific content xyz123. " * 50
+            + "</article></body></html>"
+        )
+
+        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+            PaperInfo,
+        )
+
+        with patch.object(verifier, "get_paper_info_from_doi") as mock_info:
+            mock_info.return_value = PaperInfo(
+                pmcid=None,
+                pmid="12345",
+                is_open_access=False,
+                in_pmc=False,
+                abstract="Short abstract",
+            )
+
+            with patch.object(verifier, "get_unpaywall_info", return_value=mock_unpaywall):
+                with patch.object(verifier, "fetch_publisher_html", return_value=mock_html):
+                    text, paper_info, status = verifier.get_paper_text("10.1234/test")
+
+        assert status == "full_text_publisher"
+        assert "specific content xyz123" in text.lower()
+        assert paper_info.oa_status == "bronze"
+
+    def test_get_paper_text_falls_back_to_abstract(self):
+        """Test fallback to abstract when Unpaywall fails."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        with patch.object(verifier, "get_paper_info_from_doi") as mock_info:
+            from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+                PaperInfo,
+            )
+
+            mock_info.return_value = PaperInfo(
+                pmcid=None,
+                pmid="12345",
+                is_open_access=False,
+                in_pmc=False,
+                abstract="This is the abstract text",
+            )
+
+            with patch.object(verifier, "get_unpaywall_info", return_value=None):
+                text, paper_info, status = verifier.get_paper_text("10.1234/test")
+
+        assert status == "abstract_only"
+        assert text == "This is the abstract text"
+
+    def test_validate_logs_full_text_publisher_status(self, tmp_path, capsys):
+        """Test that validation logs full_text_publisher status correctly."""
+        yaml_file = tmp_path / "test.yaml"
+
+        data = {
+            "parameter_estimates": {
+                "inputs": [
+                    {
+                        "name": "stat",
+                        "value": 1,
+                        "value_snippet": "findable snippet",
+                        "source_ref": "src",
+                    }
+                ]
+            },
+            "primary_data_sources": [
+                {
+                    "source_tag": "src",
+                    "doi": "10.1234/test",
+                    "title": "Test",
+                    "first_author": "A",
+                    "year": 2024,
+                }
+            ],
+        }
+        with open(yaml_file, "w") as f:
+            yaml.dump(data, f)
+
+        verifier = AutomatedSnippetVerifier(str(tmp_path))
+
+        def mock_get_paper_text(doi):
+            from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+                PaperInfo,
+            )
+
+            paper_info = PaperInfo(
+                pmcid=None, is_open_access=True, in_pmc=False, oa_status="bronze"
+            )
+            return ("Full text with findable snippet inside", paper_info, "full_text_publisher")
+
+        with patch.object(verifier, "get_paper_text", side_effect=mock_get_paper_text):
+            verifier.validate()
+
+        captured = capsys.readouterr()
+        assert "Unpaywall" in captured.out
+        assert "bronze" in captured.out.lower()
+
+
+@pytest.mark.integration
+class TestUnpaywallRealAPI:
+    """
+    Integration tests that hit the real Unpaywall API.
+
+    Run with: pytest -m integration
+    """
+
+    def test_get_unpaywall_info_real_oa_paper(self):
+        """Test Unpaywall with a known OA paper (Modern Pathology)."""
+        verifier = AutomatedSnippetVerifier("/tmp", rate_limit=1.0)
+
+        # Modern Pathology paper - known to be bronze OA
+        doi = "10.1038/s41379-019-0291-z"
+        result = verifier.get_unpaywall_info(doi)
+
+        assert result is not None
+        assert result["is_oa"] is True
+        assert result["oa_status"] in ("bronze", "gold", "green", "hybrid")
+        assert result["oa_url"] is not None
+
+    def test_get_unpaywall_info_real_closed_paper(self):
+        """Test Unpaywall with a known closed-access paper."""
+        verifier = AutomatedSnippetVerifier("/tmp", rate_limit=1.0)
+
+        # This paper might be closed access (check current status)
+        # Using a common paywalled journal
+        doi = "10.1056/NEJMoa2034577"
+        result = verifier.get_unpaywall_info(doi)
+
+        # Result depends on current OA status - just check we get a response
+        # without errors
+        # (Paper may have become OA since test was written)
+        assert result is None or isinstance(result, dict)
+
+
 @pytest.mark.integration
 class TestRealWorldValidation:
     """

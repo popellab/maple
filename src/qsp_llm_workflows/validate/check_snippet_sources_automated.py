@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-Automated snippet source verification via NCBI PMC HTML scraping.
+Automated snippet source verification via multiple text sources.
 
-Fetches full-text articles from NCBI PubMed Central and searches for snippets.
-For papers not in PMC, attempts verification against the abstract.
+Fetches full-text articles from:
+1. NCBI PubMed Central (for papers with PMCID)
+2. Publisher websites via Unpaywall (for OA papers not in PMC)
+3. Abstracts via Europe PMC (fallback)
+
 Falls back to manual verification only for papers with no available text.
 
 Usage:
@@ -33,7 +36,7 @@ from qsp_llm_workflows.validate.check_snippet_sources_manual_verify import (
 
 @dataclass
 class PaperInfo:
-    """Information about a paper from Europe PMC."""
+    """Information about a paper from Europe PMC and Unpaywall."""
 
     pmcid: Optional[str] = None
     pmid: Optional[str] = None
@@ -41,26 +44,37 @@ class PaperInfo:
     in_pmc: bool = False
     abstract: Optional[str] = None
     title: Optional[str] = None
+    # Unpaywall data
+    oa_url: Optional[str] = None  # URL to OA full text (HTML or PDF)
+    oa_pdf_url: Optional[str] = None  # Direct PDF URL if available
+    oa_status: Optional[str] = None  # gold, green, bronze, hybrid, closed
 
 
 class AutomatedSnippetVerifier(Validator):
     """
-    Automated snippet verification via NCBI PMC HTML scraping.
+    Automated snippet verification via multiple text sources.
 
-    Fetches full-text HTML from NCBI PubMed Central for papers with DOIs,
-    extracts text with BeautifulSoup, and fuzzy-searches for each snippet.
+    Text source priority:
+    1. NCBI PubMed Central (full text for papers with PMCID)
+    2. Publisher websites via Unpaywall (full text for OA papers not in PMC)
+    3. Abstracts via Europe PMC (fallback)
 
-    Falls back to manual verification for papers not in PMC.
+    Extracts text with BeautifulSoup and fuzzy-searches for each snippet.
+    Falls back to manual verification only when no text is available.
     """
 
     EUROPE_PMC_SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
     NCBI_PMC_ARTICLE_URL = "https://pmc.ncbi.nlm.nih.gov/articles"
+    UNPAYWALL_API_URL = "https://api.unpaywall.org/v2"
 
-    # User agent required for NCBI PMC access
+    # User agent required for NCBI PMC and publisher access
     USER_AGENT = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
+
+    # Email for Unpaywall API (required, but can be generic for research tools)
+    UNPAYWALL_EMAIL = "qsp-llm-workflows@research.edu"
 
     def __init__(
         self,
@@ -165,6 +179,56 @@ class AutomatedSnippetVerifier(Validator):
         except (requests.RequestException, ValueError, KeyError):
             return None
 
+    def get_unpaywall_info(self, doi: str) -> Optional[dict]:
+        """
+        Query Unpaywall API for open access information.
+
+        Unpaywall provides OA status and direct URLs to full text even for
+        papers not in PMC (e.g., bronze OA on publisher sites).
+
+        Args:
+            doi: DOI string (e.g., "10.1038/s41379-019-0291-z")
+
+        Returns:
+            Dict with oa_url, oa_pdf_url, oa_status, is_oa, or None if not found
+        """
+        doi_clean = self.normalize_doi(doi)
+        if not doi_clean:
+            return None
+
+        self.rate_limit_wait()
+
+        try:
+            url = f"{self.UNPAYWALL_API_URL}/{doi_clean}"
+            params = {"email": self.UNPAYWALL_EMAIL}
+            response = requests.get(url, params=params, timeout=15)
+
+            if response.status_code != 200:
+                return None
+
+            data = response.json()
+
+            # Get best OA location
+            best_oa = data.get("best_oa_location")
+            if not best_oa and not data.get("is_oa"):
+                return None
+
+            result = {
+                "is_oa": data.get("is_oa", False),
+                "oa_status": data.get("oa_status"),  # gold, green, bronze, hybrid
+                "oa_url": None,
+                "oa_pdf_url": None,
+            }
+
+            if best_oa:
+                result["oa_url"] = best_oa.get("url")
+                result["oa_pdf_url"] = best_oa.get("url_for_pdf")
+
+            return result
+
+        except (requests.RequestException, ValueError, KeyError):
+            return None
+
     def fetch_pmc_html(self, pmcid: str) -> Optional[str]:
         """
         Fetch full-text HTML from NCBI PMC.
@@ -192,6 +256,101 @@ class AutomatedSnippetVerifier(Validator):
 
         except requests.RequestException:
             return None
+
+    def fetch_publisher_html(self, url: str) -> Optional[str]:
+        """
+        Fetch HTML from publisher website.
+
+        Works for many open access publishers like Nature, Springer, etc.
+
+        Args:
+            url: URL to the article page
+
+        Returns:
+            HTML string or None if not available
+        """
+        if not url:
+            return None
+
+        self.rate_limit_wait()
+
+        try:
+            headers = {"User-Agent": self.USER_AGENT}
+            response = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+
+            if response.status_code != 200:
+                return None
+
+            # Check if we got HTML (not PDF or other binary)
+            content_type = response.headers.get("Content-Type", "")
+            if "text/html" not in content_type and "application/xhtml" not in content_type:
+                return None
+
+            return response.text
+
+        except requests.RequestException:
+            return None
+
+    def extract_text_from_publisher_html(self, html_content: str) -> str:
+        """
+        Extract article text from publisher HTML.
+
+        Different publishers have different HTML structures. This method
+        tries common patterns for article content extraction.
+
+        Args:
+            html_content: Raw HTML string from publisher
+
+        Returns:
+            Plain text string suitable for searching
+        """
+        if not html_content:
+            return ""
+
+        try:
+            soup = BeautifulSoup(html_content, "lxml")
+
+            # Remove scripts, styles, nav, header, footer, and common non-content elements
+            for element in soup(
+                ["script", "style", "nav", "header", "footer", "aside", "figure", "figcaption"]
+            ):
+                element.decompose()
+
+            # Try to find article content using common publisher patterns
+            article_text = ""
+
+            # Pattern 1: Look for article or main content containers
+            content_selectors = [
+                "article",
+                '[role="main"]',
+                ".c-article-body",  # Nature/Springer
+                ".article-body",
+                ".article__body",
+                ".fulltext",
+                "#article-body",
+                ".content-article",
+                "main",
+            ]
+
+            for selector in content_selectors:
+                content = soup.select_one(selector)
+                if content:
+                    article_text = content.get_text(separator=" ", strip=True)
+                    if len(article_text) > 1000:  # Likely found real content
+                        break
+
+            # Fallback: get all body text if no article container found
+            if not article_text or len(article_text) < 1000:
+                body = soup.find("body")
+                if body:
+                    article_text = body.get_text(separator=" ", strip=True)
+
+            # Normalize whitespace
+            article_text = re.sub(r"\s+", " ", article_text)
+            return article_text.strip()
+
+        except Exception:
+            return ""
 
     def extract_text_from_html(self, html_content: str) -> str:
         """
@@ -342,8 +501,10 @@ class AutomatedSnippetVerifier(Validator):
         """
         Get text for a paper by DOI.
 
-        Tries full text from PMC first, then falls back to abstract.
-        Returns cached result if available.
+        Tries sources in order:
+        1. Full text from PMC (if available)
+        2. Full text from publisher via Unpaywall (if OA)
+        3. Abstract only
 
         Args:
             doi: DOI string
@@ -353,9 +514,9 @@ class AutomatedSnippetVerifier(Validator):
             status is one of:
                 - "full_text_open_access": Full text from open access PMC article
                 - "full_text_restricted": Full text from restricted PMC article
-                - "abstract_only": Only abstract available (not in PMC)
+                - "full_text_publisher": Full text from publisher via Unpaywall
+                - "abstract_only": Only abstract available
                 - "cached": Using cached result
-                - "html_fetch_failed": PMC article exists but couldn't fetch
                 - "no_text_available": No text could be retrieved
         """
         doi_clean = self.normalize_doi(doi)
@@ -374,8 +535,8 @@ class AutomatedSnippetVerifier(Validator):
         # Get paper info from Europe PMC
         paper_info = self.get_paper_info_from_doi(doi_clean)
         if not paper_info:
-            self._paper_text_cache[cache_key] = None
-            return (None, None, "no_text_available")
+            # Create minimal paper_info so we can still check Unpaywall
+            paper_info = PaperInfo()
 
         # Cache the paper info
         self._paper_text_cache[info_cache_key] = paper_info
@@ -394,8 +555,24 @@ class AutomatedSnippetVerifier(Validator):
                     )
                     return (full_text, paper_info, status)
 
-            # PMC fetch failed, but article should be there
-            # Fall through to try abstract
+        # Try Unpaywall for OA papers not in PMC
+        unpaywall_info = self.get_unpaywall_info(doi_clean)
+        if unpaywall_info and unpaywall_info.get("is_oa"):
+            # Update paper_info with Unpaywall data
+            paper_info.is_open_access = True
+            paper_info.oa_status = unpaywall_info.get("oa_status")
+            paper_info.oa_url = unpaywall_info.get("oa_url")
+            paper_info.oa_pdf_url = unpaywall_info.get("oa_pdf_url")
+
+            # Try to fetch from publisher URL (prefer HTML URL over PDF)
+            oa_url = paper_info.oa_url
+            if oa_url and not oa_url.endswith(".pdf"):
+                html_content = self.fetch_publisher_html(oa_url)
+                if html_content:
+                    full_text = self.extract_text_from_publisher_html(html_content)
+                    if full_text and len(full_text) > 1000:
+                        self._paper_text_cache[cache_key] = full_text
+                        return (full_text, paper_info, "full_text_publisher")
 
         # Fall back to abstract
         if paper_info.abstract:
@@ -586,6 +763,12 @@ class AutomatedSnippetVerifier(Validator):
                 text_source = "full_text"
             elif status == "full_text_restricted":
                 print(f"  ✓ Full text from PMC ({pmcid}) - Restricted Access - {text_len:,} chars")
+                text_source = "full_text"
+            elif status == "full_text_publisher":
+                oa_status = paper_info.oa_status if paper_info else "unknown"
+                print(
+                    f"  ✓ Full text from publisher via Unpaywall ({oa_status} OA) - {text_len:,} chars"
+                )
                 text_source = "full_text"
             elif status == "abstract_only":
                 oa_label = "Open Access" if paper_info.is_open_access else "Restricted"
