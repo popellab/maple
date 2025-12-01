@@ -253,7 +253,9 @@ class AutomatedSnippetVerifier(Validator):
 
         return text.strip()
 
-    def fuzzy_find_snippet(self, snippet: str, full_text: str) -> tuple[bool, float, str]:
+    def fuzzy_find_snippet(
+        self, snippet: str, full_text: str
+    ) -> tuple[bool, float, str, Optional[str]]:
         """
         Search for snippet in full text using fuzzy matching.
 
@@ -268,10 +270,11 @@ class AutomatedSnippetVerifier(Validator):
             full_text: Full paper text to search in
 
         Returns:
-            (found, best_similarity_score, normalized_snippet) tuple
+            (found, best_similarity_score, normalized_snippet, best_match_text) tuple
+            best_match_text is the text from the paper that best matched (for near-misses)
         """
         if not snippet or not full_text:
-            return (False, 0.0, "")
+            return (False, 0.0, "", None)
 
         # First normalize snippet to remove LaTeX/table formatting
         snippet_cleaned = self.normalize_snippet(snippet)
@@ -281,14 +284,15 @@ class AutomatedSnippetVerifier(Validator):
 
         # Fast path: exact substring match
         if snippet_norm in text_norm:
-            return (True, 1.0, snippet_cleaned)
+            return (True, 1.0, snippet_cleaned, None)
 
         # Sliding window fuzzy match
         snippet_len = len(snippet_norm)
         if snippet_len > len(text_norm):
-            return (False, 0.0, snippet_cleaned)
+            return (False, 0.0, snippet_cleaned, None)
 
         best_score = 0.0
+        best_match_pos = 0
         # Use a larger window to account for minor variations
         window_size = int(snippet_len * 1.2)
 
@@ -301,10 +305,18 @@ class AutomatedSnippetVerifier(Validator):
             score = SequenceMatcher(None, snippet_norm, window).ratio()
             if score > best_score:
                 best_score = score
+                best_match_pos = i
                 if score >= self.fuzzy_threshold:
-                    return (True, score, snippet_cleaned)
+                    return (True, score, snippet_cleaned, None)
 
-        return (best_score >= self.fuzzy_threshold, best_score, snippet_cleaned)
+        # Extract best matching text for near-misses (score >= 0.5)
+        best_match_text = None
+        if best_score >= 0.5:
+            # Get the matching window from the original (non-normalized) text
+            # We need to approximate the position in the original text
+            best_match_text = text_norm[best_match_pos : best_match_pos + window_size]
+
+        return (best_score >= self.fuzzy_threshold, best_score, snippet_cleaned, best_match_text)
 
     def get_paper_text(self, doi: str) -> tuple[Optional[str], Optional[str], str]:
         """
@@ -502,13 +514,26 @@ class AutomatedSnippetVerifier(Validator):
             else:
                 print(f"  ✓ Found in PMC ({pmcid}) - fetched {text_len:,} chars")
 
-            # Search for each snippet
-            num_snippets = len(snippets)
-            found_count = 0
+            # Search for each snippet and collect results
+            snippet_results: list[tuple[str, str, bool, float, str, Optional[str]]] = []
             for snippet in snippets:
-                found, score, normalized = self.fuzzy_find_snippet(snippet, full_text)
-                item_name = f"{', '.join(filenames)} → {source_tag}"
+                found, score, normalized, best_match = self.fuzzy_find_snippet(snippet, full_text)
+                snippet_results.append((snippet, normalized, found, score, best_match))
 
+            # Sort: failures first (by score ascending), then successes
+            snippet_results.sort(key=lambda x: (x[2], x[3]))  # (found, score)
+
+            # ANSI color codes
+            GREEN = "\033[92m"
+            YELLOW = "\033[93m"
+            RED = "\033[91m"
+            RESET = "\033[0m"
+
+            num_snippets = len(snippet_results)
+            found_count = 0
+            item_name = f"{', '.join(filenames)} → {source_tag}"
+
+            for snippet, normalized, found, score, best_match in snippet_results:
                 # Check if normalization changed the snippet
                 was_normalized = normalized != snippet
 
@@ -518,19 +543,28 @@ class AutomatedSnippetVerifier(Validator):
                 if found:
                     found_count += 1
                     automated_results.append((item_name, snippet, True, score))
-                    if was_normalized:
-                        print(f'    ✓ "{norm_display}" (score: {score:.2f})')
-                    else:
-                        print(f'    ✓ "{norm_display}" (score: {score:.2f})')
+                    print(f'{GREEN}    ✓ "{norm_display}" (score: {score:.2f}){RESET}')
                 else:
                     automated_results.append((item_name, snippet, False, score))
+
+                    # Color based on score: yellow for near-miss (0.6-0.8), red for failure
+                    is_near_miss = 0.6 <= score < self.fuzzy_threshold
+                    color = YELLOW if is_near_miss else RED
+
                     if was_normalized:
                         snippet_display = snippet if len(snippet) <= 40 else snippet[:37] + "..."
-                        print(f'    ✗ "{snippet_display}"')
-                        print(f'      → normalized: "{norm_display}"')
-                        print(f"      → best score: {score:.2f}")
+                        print(f'{color}    ✗ "{snippet_display}"{RESET}')
+                        print(f'{color}      → normalized: "{norm_display}"{RESET}')
+                        print(f"{color}      → best score: {score:.2f}{RESET}")
                     else:
-                        print(f'    ✗ "{norm_display}" (best score: {score:.2f})')
+                        print(f'{color}    ✗ "{norm_display}" (best score: {score:.2f}){RESET}')
+
+                    # Show best matching text for near-misses
+                    if is_near_miss and best_match:
+                        match_display = (
+                            best_match if len(best_match) <= 50 else best_match[:47] + "..."
+                        )
+                        print(f'{YELLOW}      → closest match: "{match_display}"{RESET}')
 
             print(f"  Summary: {found_count}/{num_snippets} snippets matched")
 

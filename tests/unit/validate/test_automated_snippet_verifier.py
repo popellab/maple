@@ -327,17 +327,18 @@ class TestFuzzyMatching:
     def test_finds_exact_match(self):
         """Test finding exact substring match."""
         verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
-        found, score, normalized = verifier.fuzzy_find_snippet(
+        found, score, normalized, best_match = verifier.fuzzy_find_snippet(
             "tumor growth", "The tumor growth rate was measured."
         )
         assert found is True
         assert score == 1.0
         assert normalized == "tumor growth"
+        assert best_match is None  # No best_match for exact matches
 
     def test_finds_case_insensitive_match(self):
         """Test case-insensitive matching."""
         verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
-        found, score, _ = verifier.fuzzy_find_snippet("Tumor Growth", "the tumor growth rate")
+        found, score, _, _ = verifier.fuzzy_find_snippet("Tumor Growth", "the tumor growth rate")
         assert found is True
         assert score == 1.0
 
@@ -345,14 +346,14 @@ class TestFuzzyMatching:
         """Test finding fuzzy match above threshold."""
         verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
         # Minor difference should still match
-        found, score, _ = verifier.fuzzy_find_snippet("tumor growth rate", "tumor growth rates")
+        found, score, _, _ = verifier.fuzzy_find_snippet("tumor growth rate", "tumor growth rates")
         assert found is True
         assert score >= 0.8
 
     def test_rejects_below_threshold(self):
         """Test rejecting match below threshold."""
         verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
-        found, score, _ = verifier.fuzzy_find_snippet(
+        found, score, _, _ = verifier.fuzzy_find_snippet(
             "completely different text", "tumor growth rate was measured"
         )
         assert found is False
@@ -361,15 +362,16 @@ class TestFuzzyMatching:
     def test_handles_empty_snippet(self):
         """Test handling empty snippet."""
         verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
-        found, score, normalized = verifier.fuzzy_find_snippet("", "some text")
+        found, score, normalized, best_match = verifier.fuzzy_find_snippet("", "some text")
         assert found is False
         assert score == 0.0
         assert normalized == ""
+        assert best_match is None
 
     def test_handles_empty_full_text(self):
         """Test handling empty full text."""
         verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
-        found, score, _ = verifier.fuzzy_find_snippet("snippet", "")
+        found, score, _, _ = verifier.fuzzy_find_snippet("snippet", "")
         assert found is False
         assert score == 0.0
 
@@ -378,13 +380,25 @@ class TestFuzzyMatching:
         # With high threshold, partial match should fail
         # "tumor growth" vs "tumor expansion" has ~0.6 similarity
         verifier_strict = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.95)
-        found, _, _ = verifier_strict.fuzzy_find_snippet("tumor growth", "tumor expansion")
+        found, _, _, _ = verifier_strict.fuzzy_find_snippet("tumor growth", "tumor expansion")
         assert found is False
 
         # With lower threshold, same match should pass
         verifier_lenient = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.5)
-        found, _, _ = verifier_lenient.fuzzy_find_snippet("tumor growth", "tumor expansion")
+        found, _, _, _ = verifier_lenient.fuzzy_find_snippet("tumor growth", "tumor expansion")
         assert found is True
+
+    def test_returns_best_match_for_near_miss(self):
+        """Test that near-misses return the best matching text."""
+        verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
+        # "tumor growth" vs "tumor expansion" should be a near-miss (score ~0.6)
+        found, score, _, best_match = verifier.fuzzy_find_snippet(
+            "tumor growth", "The tumor expansion was observed in all patients."
+        )
+        assert found is False
+        assert score >= 0.5  # Should be a near-miss
+        assert best_match is not None  # Should have best match text
+        assert "tumor" in best_match.lower()
 
 
 class TestSnippetNormalization:
@@ -434,7 +448,7 @@ class TestSnippetNormalization:
         """Test that LaTeX snippets match plain text in papers."""
         verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
         # Snippet has LaTeX, paper text has plain
-        found, score, normalized = verifier.fuzzy_find_snippet(
+        found, score, normalized, _ = verifier.fuzzy_find_snippet(
             "CD8^{+} T cells", "The CD8+ T cells were counted"
         )
         assert found is True
@@ -443,7 +457,7 @@ class TestSnippetNormalization:
     def test_fuzzy_match_with_table_snippet(self):
         """Test that table-formatted snippets match plain text."""
         verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
-        found, score, normalized = verifier.fuzzy_find_snippet(
+        found, score, normalized, _ = verifier.fuzzy_find_snippet(
             "CD8+ | 17 (9-30)", "CD8+ 17 (9-30) cells per HPF"
         )
         assert found is True
@@ -660,7 +674,7 @@ class TestNCBIPMCIntegration:
         if full_text:
             assert status == "success"
             # This text should be in the paper
-            found, score, _ = verifier.fuzzy_find_snippet("FoxP3", full_text)
+            found, score, _, _ = verifier.fuzzy_find_snippet("FoxP3", full_text)
             assert found is True
             assert score >= 0.8
 
@@ -676,7 +690,7 @@ class TestNCBIPMCIntegration:
 
         if full_text:
             # This text should NOT be in a PDAC immunotherapy paper
-            found, score, _ = verifier.fuzzy_find_snippet(
+            found, score, _, _ = verifier.fuzzy_find_snippet(
                 "quantum entanglement photosynthesis", full_text
             )
             assert found is False
