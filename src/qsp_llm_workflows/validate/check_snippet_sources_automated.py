@@ -642,9 +642,9 @@ class AutomatedSnippetVerifier(Validator):
                     )
             else:
                 if source_type == "abstract":
-                    report.add_warning(
+                    report.add_fail(
                         f'{item_name} → "{snippet_display}"',
-                        f"Not found in abstract - may be in full text (best score: {score:.2f})",
+                        f"Not found in abstract (best score: {score:.2f}) - full text not available",
                     )
                 else:
                     report.add_fail(
