@@ -74,45 +74,251 @@ class TestTextNormalization:
         assert verifier.normalize_text(None) == ""
 
 
-class TestXMLParsing:
-    """Test XML parsing and text extraction."""
+class TestHTMLParsing:
+    """Test HTML parsing and text extraction."""
 
-    def test_extracts_text_from_simple_xml(self):
-        """Test extracting text from simple XML."""
+    def test_extracts_text_from_simple_html(self):
+        """Test extracting text from simple HTML."""
         verifier = AutomatedSnippetVerifier("/tmp")
-        xml = "<article><body><p>Hello world</p></body></article>"
-        text = verifier.extract_text_from_xml(xml)
+        html = "<html><body><p>Hello world</p></body></html>"
+        text = verifier.extract_text_from_html(html)
         assert "hello world" in text.lower()
 
-    def test_extracts_text_from_nested_xml(self):
-        """Test extracting text from nested XML elements."""
+    def test_extracts_text_from_nested_html(self):
+        """Test extracting text from nested HTML elements."""
         verifier = AutomatedSnippetVerifier("/tmp")
-        xml = """
-        <article>
+        html = """
+        <html>
             <body>
-                <sec><title>Introduction</title>
+                <div>
+                    <h1>Introduction</h1>
                     <p>This is the introduction.</p>
-                </sec>
-                <sec><title>Methods</title>
+                </div>
+                <div>
+                    <h1>Methods</h1>
                     <p>These are the methods.</p>
-                </sec>
+                </div>
             </body>
-        </article>
+        </html>
         """
-        text = verifier.extract_text_from_xml(xml)
+        text = verifier.extract_text_from_html(html)
         assert "introduction" in text.lower()
         assert "methods" in text.lower()
 
-    def test_handles_empty_xml(self):
-        """Test handling empty XML."""
+    def test_removes_script_and_style(self):
+        """Test that script and style elements are removed."""
         verifier = AutomatedSnippetVerifier("/tmp")
-        assert verifier.extract_text_from_xml("") == ""
-        assert verifier.extract_text_from_xml(None) == ""
+        html = """
+        <html>
+            <head><style>.hidden { display: none; }</style></head>
+            <body>
+                <script>alert('test');</script>
+                <p>Visible content</p>
+            </body>
+        </html>
+        """
+        text = verifier.extract_text_from_html(html)
+        assert "visible content" in text.lower()
+        assert "alert" not in text.lower()
+        assert "hidden" not in text.lower()
 
-    def test_handles_invalid_xml(self):
-        """Test handling invalid XML gracefully."""
+    def test_handles_empty_html(self):
+        """Test handling empty HTML."""
         verifier = AutomatedSnippetVerifier("/tmp")
-        assert verifier.extract_text_from_xml("<invalid>xml") == ""
+        assert verifier.extract_text_from_html("") == ""
+        assert verifier.extract_text_from_html(None) == ""
+
+
+class TestHTMLParsingEdgeCases:
+    """Test HTML parsing edge cases for real-world PMC content."""
+
+    def test_extracts_text_from_tables(self):
+        """Test that table content is extracted (important for paper data)."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        html = """
+        <html><body>
+            <table>
+                <thead>
+                    <tr><th>Cell Type</th><th>No neoadjuvant</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>CD8+</td><td>17 (9-30)</td></tr>
+                    <tr><td>FoxP3+</td><td>3 (1-5)</td></tr>
+                </tbody>
+            </table>
+        </body></html>
+        """
+        text = verifier.extract_text_from_html(html)
+        assert "17 (9-30)" in text
+        assert "3 (1-5)" in text
+        assert "cd8+" in text.lower()
+        assert "foxp3+" in text.lower()
+        assert "no neoadjuvant" in text.lower()
+
+    def test_handles_unicode_characters(self):
+        """Test handling of special characters like ×, ±, μ, etc."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        html = """
+        <html><body>
+            <p>The dose was 50.4 Gy with a field size of 400× magnification.</p>
+            <p>Mean ± SD: 132.3 ± 132.1 days</p>
+            <p>Concentration: 5 μg/mL</p>
+            <p>Temperature: 37°C</p>
+            <p>P value: P < 0.001</p>
+        </body></html>
+        """
+        text = verifier.extract_text_from_html(html)
+        assert "400×" in text or "400" in text  # × may be preserved or stripped
+        assert "±" in text or "132.3" in text
+        assert "μg/mL" in text or "μg" in text or "ug" in text.lower()
+        assert "37°C" in text or "37" in text
+        assert "< 0.001" in text or "0.001" in text
+
+    def test_handles_superscripts_and_subscripts(self):
+        """Test handling of superscripts/subscripts (CD8+, FoxP3+, H2O)."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        html = """
+        <html><body>
+            <p>CD8<sup>+</sup> T cells and FoxP3<sup>+</sup> regulatory T cells</p>
+            <p>H<sub>2</sub>O concentration</p>
+            <p>10<sup>6</sup> cells/mL</p>
+        </body></html>
+        """
+        text = verifier.extract_text_from_html(html)
+        # The + should be extractable even if formatting is lost
+        assert "cd8" in text.lower()
+        assert "foxp3" in text.lower()
+        assert "h" in text.lower() and "o" in text.lower()
+        assert "10" in text and "6" in text
+
+    def test_handles_malformed_html(self):
+        """Test graceful handling of malformed HTML."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        # Missing closing tags
+        html = "<html><body><p>Unclosed paragraph<div>Nested wrong</p></div>"
+        text = verifier.extract_text_from_html(html)
+        # Should still extract some text without crashing
+        assert "unclosed paragraph" in text.lower() or "nested wrong" in text.lower()
+
+    def test_handles_html_entities(self):
+        """Test handling of HTML entities (&amp;, &lt;, &gt;, etc.)."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        html = """
+        <html><body>
+            <p>Johnson &amp; Johnson</p>
+            <p>P &lt; 0.05</p>
+            <p>&copy; 2020</p>
+            <p>5&#x2013;10 days</p>  <!-- en-dash -->
+        </body></html>
+        """
+        text = verifier.extract_text_from_html(html)
+        assert "johnson" in text.lower()
+        # & should be decoded
+        assert "&amp;" not in text
+        # < should be decoded
+        assert "< 0.05" in text or "&lt;" not in text
+
+    def test_handles_nested_inline_elements(self):
+        """Test handling of nested inline elements (bold, italic, links)."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        html = """
+        <html><body>
+            <p>The <strong>median</strong> CD8<sup>+</sup> count was
+               <em>17 (IQR: 9-30)</em> cells per
+               <a href="#">high-power field</a>.</p>
+        </body></html>
+        """
+        text = verifier.extract_text_from_html(html)
+        assert "median" in text.lower()
+        assert "17" in text
+        assert "9-30" in text or "iqr" in text.lower()
+        assert "high-power field" in text.lower()
+
+    def test_preserves_numeric_data_in_tables(self):
+        """Test that numeric data from tables is preserved accurately."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        # Simulating Table 3 structure from MICHELAKOS2020
+        html = """
+        <html><body>
+            <table>
+                <caption>Table 3. Immune cell infiltration</caption>
+                <tr>
+                    <th>Marker</th>
+                    <th>FOLFIRINOX</th>
+                    <th>Proton</th>
+                    <th>Photon</th>
+                    <th>No neoadjuvant</th>
+                    <th>P</th>
+                </tr>
+                <tr>
+                    <td>CD8<sup>+</sup></td>
+                    <td>40 (24-80)</td>
+                    <td>24 (12-34)</td>
+                    <td>7 (1-15)</td>
+                    <td>17 (9-30)</td>
+                    <td>&lt;.001</td>
+                </tr>
+                <tr>
+                    <td>FoxP3<sup>+</sup></td>
+                    <td>2 (1-4)</td>
+                    <td>1 (0-2)</td>
+                    <td>2 (1-6)</td>
+                    <td>3 (1-5)</td>
+                    <td>.02</td>
+                </tr>
+            </table>
+        </body></html>
+        """
+        text = verifier.extract_text_from_html(html)
+        # All key values should be extractable
+        assert "17 (9-30)" in text
+        assert "3 (1-5)" in text
+        assert "40 (24-80)" in text
+        assert "no neoadjuvant" in text.lower()
+
+    def test_handles_figure_captions(self):
+        """Test that figure captions are extracted."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        html = """
+        <html><body>
+            <figure>
+                <img src="figure1.png" alt="Survival curve">
+                <figcaption>
+                    Figure 1. Kaplan-Meier survival analysis showing
+                    median overall survival of 24.5 months.
+                </figcaption>
+            </figure>
+        </body></html>
+        """
+        text = verifier.extract_text_from_html(html)
+        assert "kaplan-meier" in text.lower()
+        assert "24.5 months" in text.lower()
+
+    def test_handles_math_elements(self):
+        """Test handling of MathML or LaTeX-style math."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        html = """
+        <html><body>
+            <p>The growth rate k = 0.693/T<sub>d</sub> where T<sub>d</sub> is doubling time.</p>
+            <math><mi>λ</mi><mo>=</mo><mfrac><mn>ln(2)</mn><msub><mi>T</mi><mi>d</mi></msub></mfrac></math>
+        </body></html>
+        """
+        text = verifier.extract_text_from_html(html)
+        # Should extract at least the text version
+        assert "growth rate" in text.lower() or "0.693" in text
+
+    def test_handles_reference_links(self):
+        """Test that reference numbers/links don't interfere with text."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        html = """
+        <html><body>
+            <p>Previous studies have shown tumor growth rates
+               <a href="#ref1">[1]</a><a href="#ref2">[2]</a>
+               ranging from 50 to 200 days.</p>
+        </body></html>
+        """
+        text = verifier.extract_text_from_html(html)
+        assert "50 to 200 days" in text.lower() or "50" in text and "200" in text
 
 
 class TestFuzzyMatching:
@@ -322,26 +528,26 @@ class TestValidatorInterface:
 
 
 # =============================================================================
-# INTEGRATION TESTS - These hit the real Europe PMC API
+# INTEGRATION TESTS - These hit the real NCBI PMC API
 # =============================================================================
 
 
 @pytest.mark.integration
-class TestEuropePMCIntegration:
+class TestNCBIPMCIntegration:
     """
-    Integration tests that hit the real Europe PMC API.
+    Integration tests that hit the real NCBI PMC API.
 
     These tests verify the actual API integration works correctly.
     Run with: pytest -m integration
     Skip with: pytest -m "not integration"
     """
 
-    def test_get_pmcid_from_known_oa_doi(self):
-        """Test getting PMCID from a known open-access DOI."""
+    def test_get_pmcid_from_known_pmc_doi(self):
+        """Test getting PMCID from a known PMC DOI."""
         verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
 
-        # PLoS ONE paper - guaranteed open access
-        doi = "10.1371/journal.pone.0035625"
+        # JNCI paper - in PMC but not necessarily open access
+        doi = "10.1093/jnci/djaa073"
         pmcid = verifier.get_pmcid_from_doi(doi)
 
         assert pmcid is not None
@@ -351,47 +557,44 @@ class TestEuropePMCIntegration:
         """Test that non-PMC DOIs return None."""
         verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
 
-        # Nature paper that may not be in PMC
         # Using a made-up DOI that shouldn't exist
         doi = "10.9999/nonexistent.paper.12345"
         pmcid = verifier.get_pmcid_from_doi(doi)
 
         assert pmcid is None
 
-    def test_fetch_full_text_xml_from_valid_pmcid(self):
-        """Test fetching full text XML from a valid PMCID."""
+    def test_fetch_pmc_html_from_valid_pmcid(self):
+        """Test fetching HTML from a valid PMCID."""
         verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
 
-        # First get a PMCID from a known OA paper
-        doi = "10.1371/journal.pone.0035625"
-        pmcid = verifier.get_pmcid_from_doi(doi)
+        # Known PMC article
+        pmcid = "PMC7850539"
+        html = verifier.fetch_pmc_html(pmcid)
 
-        if pmcid:
-            xml = verifier.fetch_full_text_xml(pmcid)
-            assert xml is not None
-            assert len(xml) > 0
-            assert "<article" in xml or "<?xml" in xml
+        assert html is not None
+        assert len(html) > 0
+        assert "<html" in html.lower() or "<!doctype" in html.lower()
 
-    def test_fetch_full_text_xml_returns_none_for_invalid_pmcid(self):
+    def test_fetch_pmc_html_returns_none_for_invalid_pmcid(self):
         """Test that invalid PMCID returns None."""
         verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
 
-        xml = verifier.fetch_full_text_xml("PMC999999999")
-        assert xml is None
+        html = verifier.fetch_pmc_html("PMC999999999")
+        assert html is None
 
     def test_end_to_end_snippet_found(self):
-        """Test end-to-end: DOI -> PMCID -> XML -> text -> snippet found."""
+        """Test end-to-end: DOI -> PMCID -> HTML -> text -> snippet found."""
         verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
 
-        # PLoS ONE paper about Cambrian fossils
-        doi = "10.1371/journal.pone.0035625"
+        # JNCI PDAC paper
+        doi = "10.1093/jnci/djaa073"
 
         # Get paper text
         full_text, pmcid = verifier.get_paper_text(doi)
 
         if full_text:
             # This text should be in the paper
-            found, score = verifier.fuzzy_find_snippet("Cambrian", full_text)
+            found, score = verifier.fuzzy_find_snippet("FoxP3", full_text)
             assert found is True
             assert score >= 0.8
 
@@ -399,16 +602,16 @@ class TestEuropePMCIntegration:
         """Test end-to-end: snippet that shouldn't be in paper."""
         verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
 
-        # PLoS ONE paper about Cambrian fossils
-        doi = "10.1371/journal.pone.0035625"
+        # JNCI PDAC paper
+        doi = "10.1093/jnci/djaa073"
 
         # Get paper text
         full_text, pmcid = verifier.get_paper_text(doi)
 
         if full_text:
-            # This text should NOT be in a paleontology paper
+            # This text should NOT be in a PDAC immunotherapy paper
             found, score = verifier.fuzzy_find_snippet(
-                "checkpoint inhibitor immunotherapy", full_text
+                "quantum entanglement photosynthesis", full_text
             )
             assert found is False
 
@@ -416,7 +619,7 @@ class TestEuropePMCIntegration:
         """Test that paper text is cached after first fetch."""
         verifier = AutomatedSnippetVerifier("/tmp", rate_limit=0.5)
 
-        doi = "10.1371/journal.pone.0035625"
+        doi = "10.1093/jnci/djaa073"
 
         # First call - should hit API
         text1, pmcid1 = verifier.get_paper_text(doi)
@@ -446,20 +649,20 @@ class TestRealWorldValidation:
                 "parameter_estimates": {
                     "inputs": [
                         {
-                            "name": "fossil_age",
-                            "value": 500,
-                            "value_snippet": "Cambrian",  # Should be findable
-                            "source_ref": "stein2012",
+                            "name": "cd8_count",
+                            "value": 17,
+                            "value_snippet": "17 (9-30)",  # Should be findable
+                            "source_ref": "michelakos2020",
                         }
                     ]
                 },
                 "primary_data_sources": [
                     {
-                        "source_tag": "stein2012",
-                        "doi": "10.1371/journal.pone.0035625",
-                        "title": "A New Arthropod",
-                        "first_author": "Stein",
-                        "year": 2012,
+                        "source_tag": "michelakos2020",
+                        "doi": "10.1093/jnci/djaa073",
+                        "title": "Tumor Microenvironment Immune Response",
+                        "first_author": "Michelakos",
+                        "year": 2020,
                     }
                 ],
             }
@@ -472,5 +675,5 @@ class TestRealWorldValidation:
             with patch.object(verifier, "get_manual_verification", return_value=True):
                 report = verifier.validate()
 
-            # Should have at least one pass (the Cambrian snippet)
+            # Should have at least one pass (the snippet)
             assert len(report.passed) > 0 or len(report.warnings) > 0

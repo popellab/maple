@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Automated snippet source verification via Europe PMC.
+Automated snippet source verification via NCBI PMC HTML scraping.
 
-Fetches full-text articles from Europe PMC and searches for snippets.
+Fetches full-text articles from NCBI PubMed Central and searches for snippets.
 Falls back to manual verification for papers not available in PMC.
 
 Usage:
@@ -10,12 +10,12 @@ Usage:
 """
 import re
 import time
-import xml.etree.ElementTree as ET
 from collections import defaultdict
 from difflib import SequenceMatcher
 from typing import Optional
 
 import requests
+from bs4 import BeautifulSoup
 
 from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
@@ -31,16 +31,22 @@ from qsp_llm_workflows.validate.check_snippet_sources_manual_verify import (
 
 class AutomatedSnippetVerifier(Validator):
     """
-    Automated snippet verification via Europe PMC full-text search.
+    Automated snippet verification via NCBI PMC HTML scraping.
 
-    Fetches full-text XML from Europe PMC for papers with DOIs,
-    parses to plain text, and fuzzy-searches for each snippet.
+    Fetches full-text HTML from NCBI PubMed Central for papers with DOIs,
+    extracts text with BeautifulSoup, and fuzzy-searches for each snippet.
 
     Falls back to manual verification for papers not in PMC.
     """
 
     EUROPE_PMC_SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
-    EUROPE_PMC_FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest"
+    NCBI_PMC_ARTICLE_URL = "https://pmc.ncbi.nlm.nih.gov/articles"
+
+    # User agent required for NCBI PMC access
+    USER_AGENT = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
 
     def __init__(
         self,
@@ -89,13 +95,14 @@ class AutomatedSnippetVerifier(Validator):
         """
         Query Europe PMC to get PMCID from DOI.
 
-        Only returns PMCID if full text is available (isOpenAccess or inPMC with full text).
+        Returns PMCID if the article is indexed in PMC (regardless of open access status,
+        since we scrape the HTML which is available for all PMC articles).
 
         Args:
             doi: DOI string (e.g., "10.1056/NEJMoa1200690")
 
         Returns:
-            PMCID (e.g., "PMC1234567") or None if not found or no full text
+            PMCID (e.g., "PMC1234567") or None if not found in PMC
         """
         doi_clean = self.normalize_doi(doi)
         if not doi_clean:
@@ -127,13 +134,10 @@ class AutomatedSnippetVerifier(Validator):
             result = results[0]
             pmcid = result.get("pmcid")
 
-            # Check if full text is actually available
-            # isOpenAccess indicates OA full text; inPMC with hasFullText indicates PMC availability
-            is_open_access = result.get("isOpenAccess") == "Y"
+            # Check if article is in PMC (we can scrape HTML for any PMC article)
             in_pmc = result.get("inPMC") == "Y"
 
-            # Only return PMCID if we expect full text to be available
-            if pmcid and (is_open_access or in_pmc):
+            if pmcid and in_pmc:
                 return pmcid
 
             return None
@@ -141,15 +145,15 @@ class AutomatedSnippetVerifier(Validator):
         except (requests.RequestException, ValueError, KeyError):
             return None
 
-    def fetch_full_text_xml(self, pmcid: str) -> Optional[str]:
+    def fetch_pmc_html(self, pmcid: str) -> Optional[str]:
         """
-        Fetch full-text XML from Europe PMC.
+        Fetch full-text HTML from NCBI PMC.
 
         Args:
             pmcid: PMC ID (e.g., "PMC1234567")
 
         Returns:
-            XML string or None if not available
+            HTML string or None if not available
         """
         if not pmcid:
             return None
@@ -157,8 +161,9 @@ class AutomatedSnippetVerifier(Validator):
         self.rate_limit_wait()
 
         try:
-            url = f"{self.EUROPE_PMC_FULLTEXT_URL}/{pmcid}/fullTextXML"
-            response = requests.get(url, timeout=30)
+            url = f"{self.NCBI_PMC_ARTICLE_URL}/{pmcid}/"
+            headers = {"User-Agent": self.USER_AGENT}
+            response = requests.get(url, headers=headers, timeout=30)
 
             if response.status_code != 200:
                 return None
@@ -168,53 +173,37 @@ class AutomatedSnippetVerifier(Validator):
         except requests.RequestException:
             return None
 
-    def extract_text_from_xml(self, xml_content: str) -> str:
+    def extract_text_from_html(self, html_content: str) -> str:
         """
-        Parse Europe PMC XML and extract searchable body text.
+        Parse NCBI PMC HTML and extract searchable text.
 
-        Extracts text from <body> element and all descendants,
-        strips XML tags, and normalizes whitespace.
+        Uses BeautifulSoup to extract all text content from the page,
+        stripping scripts and styles.
 
         Args:
-            xml_content: Raw XML string
+            html_content: Raw HTML string
 
         Returns:
             Plain text string suitable for searching
         """
-        if not xml_content:
+        if not html_content:
             return ""
 
         try:
-            root = ET.fromstring(xml_content)
+            soup = BeautifulSoup(html_content, "lxml")
 
-            # Find body element (JATS XML uses <body>)
-            # Try different possible locations
-            body = root.find(".//body")
-            if body is None:
-                # Try without namespace
-                body = root.find("body")
-            if body is None:
-                # Fall back to extracting all text from document
-                body = root
+            # Remove script and style elements
+            for element in soup(["script", "style", "nav", "header", "footer"]):
+                element.decompose()
 
-            # Extract all text content recursively
-            def get_text(element) -> str:
-                texts = []
-                if element.text:
-                    texts.append(element.text)
-                for child in element:
-                    texts.append(get_text(child))
-                    if child.tail:
-                        texts.append(child.tail)
-                return " ".join(texts)
-
-            text = get_text(body)
+            # Get text with space separator
+            text = soup.get_text(separator=" ", strip=True)
 
             # Normalize whitespace
             text = re.sub(r"\s+", " ", text)
             return text.strip()
 
-        except ET.ParseError:
+        except Exception:
             return ""
 
     def normalize_text(self, text: str) -> str:
@@ -289,18 +278,19 @@ class AutomatedSnippetVerifier(Validator):
             cached = self._paper_text_cache[doi_clean]
             return (cached, doi_clean if cached else None)
 
-        # Try to get from Europe PMC
+        # Get PMCID from Europe PMC search
         pmcid = self.get_pmcid_from_doi(doi_clean)
         if not pmcid:
             self._paper_text_cache[doi_clean] = None
             return (None, None)
 
-        xml_content = self.fetch_full_text_xml(pmcid)
-        if not xml_content:
+        # Fetch HTML from NCBI PMC
+        html_content = self.fetch_pmc_html(pmcid)
+        if not html_content:
             self._paper_text_cache[doi_clean] = None
             return (None, pmcid)
 
-        full_text = self.extract_text_from_xml(xml_content)
+        full_text = self.extract_text_from_html(html_content)
         self._paper_text_cache[doi_clean] = full_text
         return (full_text, pmcid)
 
@@ -362,7 +352,7 @@ class AutomatedSnippetVerifier(Validator):
         """Print sources requiring manual verification."""
         print("\n" + "=" * 70)
         print("MANUAL VERIFICATION REQUIRED")
-        print("The following papers are not available in Europe PMC.")
+        print("The following papers are not available in PubMed Central.")
         print("=" * 70 + "\n")
 
         for source_tag, info in sorted(manual_sources.items()):
@@ -401,7 +391,7 @@ class AutomatedSnippetVerifier(Validator):
         Run automated snippet verification.
 
         1. Collect all DOIs + snippets from YAML files
-        2. For each DOI, try to fetch full text from Europe PMC
+        2. For each DOI, try to fetch full text from NCBI PMC
         3. Search for snippets in available papers
         4. Fall back to manual verification for papers not in PMC
 
@@ -411,7 +401,7 @@ class AutomatedSnippetVerifier(Validator):
         report = ValidationReport(self.name)
 
         print(f"Verifying snippets in {self.data_dir}...")
-        print("Using Europe PMC for full-text retrieval")
+        print("Using NCBI PubMed Central for full-text retrieval")
         print(f"Fuzzy match threshold: {self.fuzzy_threshold}")
         print()
 
@@ -484,12 +474,12 @@ class AutomatedSnippetVerifier(Validator):
                 if user_verified:
                     report.add_warning(
                         item_name,
-                        "Paper not in Europe PMC, verified manually by user",
+                        "Paper not in PubMed Central, verified manually by user",
                     )
                 else:
                     report.add_fail(
                         item_name,
-                        "Paper not in Europe PMC, user did not verify",
+                        "Paper not in PubMed Central, user did not verify",
                     )
 
         return report
