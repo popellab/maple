@@ -29,8 +29,8 @@ This workflow automates LLM-based parameter extraction from scientific papers. I
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  You run ONE command:                                       │
-│  qsp-extract input.csv --type parameter                     │
-│                                                              │
+│  qsp-extract input.csv --type parameter \                   │
+│              --output-dir metadata-storage                  │
 └─────────────────────────────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -38,21 +38,18 @@ This workflow automates LLM-based parameter extraction from scientific papers. I
 │  1. Creates batch requests and uploads to OpenAI           │
 │  2. Monitors progress (shows you updates)                   │
 │  3. Downloads results when complete                         │
-│  4. Unpacks files to to-review/ directory                   │
-│  5. Creates git branch and pushes for review                │
+│  4. Unpacks files to metadata-storage/to-review/            │
 └─────────────────────────────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  You run validation manually:                               │
-│  cd ../qsp-metadata-storage                                 │
-│  git checkout review/batch-parameter-2025-10-27-abc123      │
-│  qsp-validate parameter_estimates                           │
-│                                                              │
+│  qsp-validate parameter_estimates \                         │
+│              --dir metadata-storage/to-review/param...      │
 └─────────────────────────────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  Review validation reports and approve/reject files         │
-│  Check output/validation/ for detailed reports              │
+│  Check output/validation_results/ for detailed reports      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -125,9 +122,9 @@ ssh -T git@github.com
 
 You should see: `Hi username! You've successfully authenticated...`
 
-### Step 3: Clone the Repositories
+### Step 3: Clone the Repository
 
-You need **two** repositories as sibling directories:
+Clone the workflows repository:
 
 ```bash
 # Navigate to where you want your projects (e.g., Documents or Projects)
@@ -135,17 +132,9 @@ cd ~/Projects  # or wherever you keep code
 
 # Clone the workflows repository
 git clone git@github.com:popellab/qsp-llm-workflows.git
-
-# Clone the metadata storage repository
-git clone git@github.com:popellab/qsp-metadata-storage.git
-
-# Your directory structure should now be:
-# Projects/
-# ├── qsp-llm-workflows/
-# └── qsp-metadata-storage/
 ```
 
-**Important:** These repos must be **siblings** (in the same parent directory) for the workflow to work.
+**Note:** Metadata storage is now specified per-project via the `--output-dir` argument. You'll create a `metadata-storage/` directory within your project repository (e.g., `your-model-repo/metadata-storage/`).
 
 ### Step 4: Set Up Python Virtual Environment
 
@@ -542,15 +531,13 @@ WORKFLOW SUMMARY
 ✓ Pushed to origin/review/batch-parameter-2025-10-27-abc123
 
 Next steps:
-  1. cd ../qsp-metadata-storage
-  2. git checkout review/batch-parameter-2025-10-27-abc123
-  3. Manual high-level review: Open a few YAMLs, check derivation_explanation and assumptions
-  4. Run validation: qsp-validate parameter_estimates
-  5. Manual snippet verification: Click DOI links, verify snippets with Ctrl+F
-  6. Review detailed validation reports in output/validation/
-  7. Move approved files to appropriate directories (reject bad ones)
-  8. Commit changes and open a pull request on GitHub
-  9. Merge PR after team review
+  1. Manual high-level review: Open a few YAMLs, check derivation_explanation and assumptions
+  2. Run validation: qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
+  3. Manual snippet verification: Click DOI links, verify snippets with Ctrl+F
+  4. Review detailed validation reports in output/validation_results/
+  5. Move approved files to appropriate directories (reject bad ones)
+  6. Commit changes and open a pull request on GitHub
+  7. Merge PR after team review
 ======================================================================
 ```
 
@@ -565,14 +552,7 @@ After the workflow completes, review and validate the extracted files. **Recomme
 5. Approve/reject files
 6. Commit and open PR
 
-### 1. Checkout Review Branch
-
-```bash
-cd ../qsp-metadata-storage
-git checkout review/batch-parameter-2025-10-27-abc123
-```
-
-### 2. Manual High-Level Review (Do This First!)
+### 1. Manual High-Level Review (Do This First!)
 
 **Before running automated validation**, do a quick manual review to catch obvious issues:
 
@@ -596,19 +576,19 @@ See `scripts/validate/MANUAL_REVIEW_CHECKLIST.md` for the complete checklist.
 - Consider discarding the results and re-running the extraction with improved prompts
 - Or use the validation fix workflow: `qsp-fix <workflow_type>`
 
-### 3. Run Automated Validation Suite
+### 2. Run Automated Validation Suite
 
 After the manual review, run the automated validators:
 
 ```bash
 # For parameter estimates
-qsp-validate parameter_estimates
+qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
 
 # For test statistics
-qsp-validate test_statistics
+qsp-validate test_statistics --dir metadata-storage/to-review/test_statistics
 ```
 
-The validation suite will run all 8 validators and generate detailed reports in `output/validation/`.
+The validation suite will run all 8 validators and generate detailed reports in `output/validation_results/`.
 
 **The automated validation includes:**
 1. Schema compliance (YAML structure)
@@ -620,7 +600,7 @@ The validation suite will run all 8 validators and generate detailed reports in 
 7. Duplicate primary sources (checks for already-used primary data sources)
 8. Manual snippet source verification (interactive paper verification)
 
-### 4. Manual Snippet Source Verification
+### 3. Manual Snippet Source Verification
 
 **Important:** The final validator prompts you to **manually verify snippets in papers**.
 
@@ -637,14 +617,14 @@ When you run `run_all_validations.py`, the last step will:
 
 If verified, the validator will tag all files with `manual_snippet_source_verification`.
 
-### 5. Review Detailed Validation Reports
+### 4. Review Detailed Validation Reports
 
 Check files in `to-review/`:
 - Verify citations are real and accessible
 - Confirm extracted values match sources
 - Validate derivation logic and assumptions
 - Check unit consistency
-- Review validation reports in `output/validation/`
+- Review validation reports in `output/validation_results/`
   - `schema_compliance.json` - Template compliance results
   - `source_references.json` - Source reference validation
   - `text_snippets.json` - Text snippet verification
@@ -654,7 +634,7 @@ Check files in `to-review/`:
   - `duplicate_primary_sources.json` - Duplicate primary source checks
   - `snippet_sources.json` - Manual snippet source verification results
 
-### 6. Approve/Reject Files
+### 5. Approve/Reject Files
 
 After reviewing both manual and automated validation results, approve or reject each file.
 
@@ -688,7 +668,7 @@ git push
 
 # Open a pull request on GitHub
 # Option 1: Using GitHub web interface
-#   Go to: https://github.com/popellab/qsp-metadata-storage/pulls
+#   Go to your project repository's pull requests page
 #   Click "New pull request"
 #   Select your review branch (e.g., review/batch-parameter-2025-10-27-abc123)
 #   Add description of what was reviewed and approved
@@ -814,25 +794,21 @@ cat .env
 - **JHU users:** Follow the [JHU API Key Provisioning Guide](https://support.cmts.jhu.edu/hc/en-us/articles/38383798293133-Guide-to-Managing-API-Keys-and-Usage-Limits-on-platform-openai-com)
 - **Other institutions:** Check with your institution's IT support for OpenAI API key provisioning
 
-#### "qsp-metadata-storage not found"
+#### "Output directory not found"
 
-**Problem:** The metadata storage repository doesn't exist or is in the wrong location.
+**Problem:** The specified output directory doesn't exist.
 
 **Solution:**
 ```bash
-# Check your directory structure
-cd ~/Projects  # Or wherever you cloned repos
-ls -la
+# The --output-dir you specified must exist
+# Create it if needed:
+mkdir -p metadata-storage
 
-# You should see both:
-# qsp-llm-workflows/
-# qsp-metadata-storage/
-
-# If qsp-metadata-storage is missing, clone it:
-git clone git@github.com:popellab/qsp-metadata-storage.git
+# Then run the command again with the correct path:
+qsp-extract input.csv --type parameter --output-dir metadata-storage
 ```
 
-Both repos **must** be siblings (in the same parent directory).
+The output directory must be created before running the workflow.
 
 #### "Permission denied (publickey)" when pushing to GitHub
 
@@ -875,6 +851,7 @@ ls -la  # Should see: scripts/, templates/, batch_jobs/, etc.
 # Process via Responses API (faster, but more expensive)
 qsp-extract input.csv \
   --type parameter \
+  --output-dir metadata-storage \
   --immediate
 ```
 
@@ -885,6 +862,7 @@ The `--immediate` flag bypasses the batch API and processes requests immediately
 # Increase timeout to 2 hours (7200 seconds)
 qsp-extract input.csv \
   --type parameter \
+  --output-dir metadata-storage \
   --timeout 7200
 
 # For very large batches, try 4 hours
@@ -932,22 +910,13 @@ source venv/bin/activate
 # Check if a file exists
 ls parameter_input.csv
 
-# Run parameter extraction
+# Run parameter extraction (specify your output directory)
 qsp-extract \
   batch_jobs/input_data/parameter_input.csv \
-  --type parameter
-
-# Check git status
-git status
-
-# Switch to metadata storage and checkout review branch
-cd ../qsp-metadata-storage
-git checkout review/batch-parameter-2025-10-27-abc123
+  --type parameter \
+  --output-dir metadata-storage
 
 # List files in to-review/
-ls to-review/
-
-# Go back to workflows directory
-cd ../qsp-llm-workflows
+ls metadata-storage/to-review/
 ```
 

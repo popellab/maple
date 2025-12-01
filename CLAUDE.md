@@ -14,7 +14,7 @@ This repository contains LLM workflow automation tools for extracting and valida
 - **Parameter extraction**: Extract parameter values, ranges, and statistical distributions with detailed literature tracking
 - **Test statistics**: Create validation constraints from experimental data with uncertainty quantification
 
-All extracted metadata is stored in the central `qsp-metadata-storage` repository with flat file structures for easy access.
+All extracted metadata is stored in a user-specified output directory (e.g., `metadata-storage/`) with flat file structures for easy access.
 
 ## Repository Organization
 
@@ -132,38 +132,32 @@ This creates an enriched CSV with:
 
 ### Automated Workflow (Step 2)
 
-**Single-command automated extraction** - Handles batch creation, upload, monitoring, unpacking, and git operations:
+**Single-command automated extraction** - Handles batch creation, upload, monitoring, and unpacking:
 
 ```bash
 # Parameter extraction (complete pipeline)
-qsp-extract input.csv --type parameter
+qsp-extract input.csv --type parameter --output-dir metadata-storage
 
 # Test statistics
-qsp-extract test_stats.csv --type test_statistic
+qsp-extract test_stats.csv --type test_statistic --output-dir metadata-storage
 
 # With custom timeout (default: 3600s)
-qsp-extract input.csv --type parameter --timeout 7200
+qsp-extract input.csv --type parameter --output-dir metadata-storage --timeout 7200
 
 # Use immediate mode for faster processing (via Responses API)
-qsp-extract input.csv --type parameter --immediate
-
-# Create branch locally without pushing
-qsp-extract input.csv --type parameter --no-push
+qsp-extract input.csv --type parameter --output-dir metadata-storage --immediate
 ```
 
 **What the automated workflow does:**
 1. Creates batch requests
 2. Uploads to OpenAI API
 3. Polls until completion (shows progress)
-4. Unpacks results to `../qsp-metadata-storage/to-review/`
-5. Creates review branch and pushes to remote
-6. Prints summary with next steps
+4. Unpacks results to `<output-dir>/to-review/`
+5. Prints summary with next steps
 
 **After workflow completes, manually run validation:**
 ```bash
-cd ../qsp-metadata-storage
-git checkout review/batch-parameter-2025-10-27-abc123
-qsp-validate parameter_estimates
+qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
 ```
 
 See `docs/automated_workflow.md` for complete documentation.
@@ -174,17 +168,17 @@ See `docs/automated_workflow.md` for complete documentation.
 
 ```bash
 # Run validation first
-qsp-validate test_statistics
+qsp-validate test_statistics --dir metadata-storage/to-review/test_statistics
 
 # If failures detected, run fix workflow
-qsp-fix test_statistics --immediate
+qsp-fix test_statistics --dir metadata-storage/to-review/test_statistics --immediate
 
 # For parameter estimates
-qsp-validate parameter_estimates
-qsp-fix parameter_estimates --immediate
+qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
+qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --immediate
 
 # With custom timeout for Batch API (default: 3600s)
-qsp-fix test_statistics --timeout 7200
+qsp-fix test_statistics --dir metadata-storage/to-review/test_statistics --timeout 7200
 ```
 
 **What the validation fix workflow does:**
@@ -258,7 +252,7 @@ qsp-export-model --matlab-model model.m --output defs.json
 qsp-export-model --simbiology-project model.sbproj --output defs.json
 
 # Custom validation results directory for qsp-fix (useful for testing)
-qsp-fix parameter_estimates --validation-results-dir custom/path/validation_results
+qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --validation-results-dir custom/path/validation_results
 ```
 
 ## Package Structure
@@ -350,14 +344,14 @@ The package uses a generalized prompt assembly system that builds prompts from m
 1. **CSV Enrichment**: Simple CSV (parameter names) + model definitions JSON → enriched CSV
 2. **Batch Creation**: System generates batch requests with prompts and context
 3. **LLM Processing**: OpenAI API processes requests and creates structured YAML outputs
-4. **Unpacking**: Results unpacked to `../qsp-metadata-storage/parameter_estimates/`
+4. **Unpacking**: Results unpacked to `<output-dir>/to-review/parameter_estimates/`
 5. **Validation**: Automated validation suite checks quality and completeness
 
 **Test Statistics Workflow:**
 1. **CSV Enrichment**: Partial CSV + model context + scenario YAML → enriched CSV
 2. **Batch Creation**: System generates prompts with full context
 3. **LLM Processing**: LLM creates test statistic definitions with R bootstrap code
-4. **Unpacking**: Results unpacked to `../qsp-metadata-storage/test_statistics/`
+4. **Unpacking**: Results unpacked to `<output-dir>/to-review/test_statistics/`
 5. **Aggregation**: Distributions pooled using inverse-variance weighting
 
 ### Key Design Principles
@@ -378,12 +372,12 @@ The package uses a generalized prompt assembly system that builds prompts from m
 
 ### Integration with Metadata Storage
 
-This package integrates with the central metadata storage system:
+This package integrates with a user-specified metadata storage directory:
 - Reads API key from `.env` file (current directory)
-- Writes extracted metadata to `../qsp-metadata-storage/` directories:
-  - **Parameter estimates**: `parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
-  - **Test statistics**: `test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
-- Assumes `qsp-metadata-storage` repository exists as sibling directory
+- Writes extracted metadata to `<output-dir>/` directories (specified via `--output-dir`):
+  - **Parameter estimates**: `to-review/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
+  - **Test statistics**: `to-review/test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
+- Output directory must exist (typically within your project repository, e.g., `metadata-storage/`)
 - Hash-based filenames enable multiple extractions per parameter
 
 ## Development
