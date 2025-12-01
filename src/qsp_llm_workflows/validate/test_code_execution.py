@@ -12,7 +12,7 @@ Works for both parameter estimates (v3 schema) and test statistics (v2 schema).
 
 Usage:
     python scripts/validate/test_code_execution.py \\
-        ../qsp-metadata-storage/parameter_estimates \\
+        metadata-storage/parameter_estimates \\
         output/code_execution_report.json \\
         --threshold 5.0
 """

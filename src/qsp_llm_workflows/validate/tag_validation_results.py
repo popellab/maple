@@ -7,7 +7,7 @@ validation checks that passed.
 
 Usage:
     python scripts/validate/tag_validation_results.py \
-        ../qsp-metadata-storage/parameter_estimates \
+        metadata-storage/parameter_estimates \
         schema_compliance code_execution text_snippets
 """
 import argparse

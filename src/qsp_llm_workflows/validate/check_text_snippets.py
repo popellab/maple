@@ -15,7 +15,7 @@ Works for both parameter estimates and test statistics.
 
 Usage:
     python scripts/validate/check_text_snippets.py \\
-        ../qsp-metadata-storage/parameter_estimates \\
+        metadata-storage/parameter_estimates \\
         output/text_snippet_validation.json
 """
 import re

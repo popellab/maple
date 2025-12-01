@@ -12,7 +12,7 @@ Works for both parameter estimates and test statistics.
 
 Usage:
     python scripts/validate/check_doi_validity.py \\
-        ../qsp-metadata-storage/parameter_estimates \\
+        metadata-storage/parameter_estimates \\
         output/doi_validation.json
 """
 import time

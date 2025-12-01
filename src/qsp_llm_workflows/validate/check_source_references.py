@@ -11,7 +11,7 @@ Works for both parameter estimates and test statistics.
 
 Usage:
     python scripts/validate/check_source_references.py \\
-        ../qsp-metadata-storage/parameter_estimates \\
+        metadata-storage/parameter_estimates \\
         output/source_reference_validation.json
 """
 

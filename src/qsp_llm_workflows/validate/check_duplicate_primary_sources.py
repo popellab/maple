@@ -13,11 +13,11 @@ Works for both parameter estimates and test statistics.
 
 Usage:
     python scripts/validate/check_duplicate_primary_sources.py \\
-        ../qsp-metadata-storage/to-review/test_statistics \\
+        metadata-storage/to-review/test_statistics \\
         output/duplicate_primary_sources.json
 
     python scripts/validate/check_duplicate_primary_sources.py \\
-        ../qsp-metadata-storage/to-review/parameter_estimates \\
+        metadata-storage/to-review/parameter_estimates \\
         output/duplicate_primary_sources.json
 """
 from pathlib import Path
@@ -46,8 +46,8 @@ class DuplicatePrimarySourceChecker(Validator):
         """
         Determine main storage directory if running on to-review directory.
 
-        If data_dir is qsp-metadata-storage/to-review/test_statistics/,
-        returns qsp-metadata-storage/test_statistics/
+        If data_dir is metadata-storage/to-review/test_statistics/,
+        returns metadata-storage/test_statistics/
         """
         # Check if we're in a to-review directory
         if "to-review" not in str(self.data_dir):

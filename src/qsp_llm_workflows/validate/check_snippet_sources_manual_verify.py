@@ -7,7 +7,7 @@ Waits for user to verify snippets in papers, then writes validation report.
 
 Usage:
     python scripts/validate/check_snippet_sources_manual_verify.py \
-        ../qsp-metadata-storage/parameter_estimates \
+        metadata-storage/parameter_estimates \
         output/snippet_sources.json
 """
 from collections import defaultdict
