@@ -71,50 +71,37 @@ class CodeExecutionValidator(Validator):
 
         return code.strip()
 
-    def extract_inputs(self, data: dict) -> dict:
+    def extract_inputs(self, data: dict) -> list:
         """
         Extract inputs from parameter_estimates or test_statistic_estimates.
-        Convert to dict format for passing to derive function.
+
+        Returns the raw list of input dicts as expected by the derivation functions.
+        Each input dict has keys: name, value, units, description, source_ref, etc.
+
+        The derivation code accesses inputs like:
+            float([x for x in inputs if x['name']=='Foo'][0]['value'])
 
         Returns:
-            Dict of inputs keyed by name
+            List of input dicts, or None if no inputs found
         """
         # Try parameter_estimates first
         if "parameter_estimates" in data:
             estimates = data["parameter_estimates"]
-            if "inputs" in estimates:
-                return self._convert_inputs_list_to_dict(estimates["inputs"])
+            if "inputs" in estimates and isinstance(estimates["inputs"], list):
+                return estimates["inputs"]
 
         # Try test_statistic_estimates
         if "test_statistic_estimates" in data:
             estimates = data["test_statistic_estimates"]
-            if "inputs" in estimates:
-                return self._convert_inputs_list_to_dict(estimates["inputs"])
+            if "inputs" in estimates and isinstance(estimates["inputs"], list):
+                return estimates["inputs"]
 
         return None
-
-    def _convert_inputs_list_to_dict(self, inputs_list: list) -> dict:
-        """Convert list of inputs to dict keyed by name."""
-        if not isinstance(inputs_list, list):
-            return None
-
-        inputs_dict = {}
-        for inp in inputs_list:
-            if not isinstance(inp, dict) or "name" not in inp:
-                continue
-            inputs_dict[inp["name"]] = {
-                "value": inp.get("value"),
-                "units": inp.get("units"),
-                "description": inp.get("description"),
-                "source_ref": inp.get("source_ref"),
-            }
-
-        return inputs_dict
 
     def execute_python_code(
         self,
         code: str,
-        inputs: dict,
+        inputs: list,
         code_type: str,
         expected_mean: float = None,
         expected_variance: float = None,
@@ -126,10 +113,11 @@ class CodeExecutionValidator(Validator):
 
         Args:
             code: Python code to execute
-            inputs: Dict of inputs to pass to derive function
+            inputs: List of input dicts to pass to derive function.
+                    Each dict has 'name', 'value', 'units', etc.
             code_type: "parameter" or "test_statistic"
-            expected_mean: Expected mean value
-            expected_variance: Expected variance value
+            expected_mean: Expected mean/median value
+            expected_variance: Expected variance/iqr value
             expected_ci95: Expected CI95 [lower, upper]
 
         Returns:
@@ -352,17 +340,68 @@ class CodeExecutionValidator(Validator):
         """Validate Python code in all YAML files."""
         report = ValidationReport(self.name)
 
-        print(f"Testing Python code execution in {self.data_dir}...")
-        files = load_yaml_directory(self.data_dir)
+        # ANSI color codes
+        GREEN = "\033[92m"
+        RED = "\033[91m"
+        YELLOW = "\033[93m"
+        RESET = "\033[0m"
 
-        for file_info in files:
+        print(f"Testing Python code execution in {self.data_dir}...")
+        print(f"Value match threshold: {self.threshold_pct}%")
+        print()
+
+        files = load_yaml_directory(self.data_dir)
+        total_files = len(files)
+        passed = 0
+        failed = 0
+        skipped = 0
+
+        for idx, file_info in enumerate(files, 1):
             filename = file_info["filename"]
+
+            # Show progress
+            print(f"[{idx}/{total_files}] {filename}")
 
             is_valid, message = self.validate_file(file_info)
 
-            if is_valid:
+            if "skipped" in message.lower():
+                print(f"{YELLOW}  ⊘ No Python code found (skipped){RESET}")
+                skipped += 1
+                report.add_pass(filename, message)
+            elif is_valid:
+                # Print the comparison results (message contains the formatted comparisons)
+                if message.startswith("\n"):
+                    # Multi-line message with comparisons - print each line
+                    for line in message.strip().split("\n"):
+                        if "✓" in line:
+                            print(f"{GREEN}  {line.strip()}{RESET}")
+                        elif "✗" in line:
+                            print(f"{RED}  {line.strip()}{RESET}")
+                        else:
+                            print(f"  {line.strip()}")
+                    print(f"{GREEN}  ✓ All values match{RESET}")
+                else:
+                    print(f"{GREEN}  ✓ {message}{RESET}")
+                passed += 1
                 report.add_pass(filename, message)
             else:
+                # Print the error/comparison results
+                if message.startswith("\n"):
+                    for line in message.strip().split("\n"):
+                        if "✓" in line:
+                            print(f"{GREEN}  {line.strip()}{RESET}")
+                        elif "✗" in line:
+                            print(f"{RED}  {line.strip()}{RESET}")
+                        else:
+                            print(f"  {line.strip()}")
+                    print(f"{RED}  ✗ Value mismatch detected{RESET}")
+                else:
+                    print(f"{RED}  ✗ {message}{RESET}")
+                failed += 1
                 report.add_fail(filename, message)
+
+        # Print summary
+        print()
+        print(f"Summary: {passed} passed, {failed} failed, {skipped} skipped")
 
         return report
