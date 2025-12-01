@@ -598,10 +598,29 @@ class AutomatedSnippetVerifier(Validator):
         paper_info.oa_url = unpaywall_info.get("oa_url")
         paper_info.oa_pdf_url = unpaywall_info.get("oa_pdf_url")
 
-        # Try to fetch from publisher URL (prefer HTML URL over PDF)
+        # Build list of URLs to try
+        urls_to_try = []
         oa_url = paper_info.oa_url
-        if oa_url and not oa_url.endswith(".pdf"):
-            html_content = self.fetch_publisher_html(oa_url)
+
+        if oa_url:
+            if oa_url.endswith(".pdf"):
+                # Try removing .pdf extension to get HTML page
+                html_url = oa_url[:-4]  # Remove ".pdf"
+                urls_to_try.append(html_url)
+            else:
+                urls_to_try.append(oa_url)
+
+        # Also try constructing URL from DOI for common publishers
+        # Nature/Springer: https://www.nature.com/articles/{doi_suffix}
+        # Elsevier: https://www.sciencedirect.com/science/article/pii/{pii}
+        if doi_clean.startswith("10.1038/"):
+            # Nature journal
+            doi_suffix = doi_clean.replace("10.1038/", "")
+            urls_to_try.append(f"https://www.nature.com/articles/{doi_suffix}")
+
+        # Try each URL until we get valid content
+        for url in urls_to_try:
+            html_content = self.fetch_publisher_html(url)
             if html_content:
                 full_text = self.extract_text_from_publisher_html(html_content)
                 if full_text and len(full_text) > 1000:

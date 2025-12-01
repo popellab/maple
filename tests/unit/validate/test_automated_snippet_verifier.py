@@ -1165,6 +1165,47 @@ class TestUnpaywallIntegration:
         assert status == "unpaywall_failed"
         assert text is None
 
+    def test_try_unpaywall_fallback_converts_pdf_url_to_html(self):
+        """Test that PDF URLs are converted to HTML URLs."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+            PaperInfo,
+        )
+
+        # Mock Unpaywall returning PDF URL (common for Nature papers)
+        mock_unpaywall = {
+            "is_oa": True,
+            "oa_status": "bronze",
+            "oa_url": "https://www.nature.com/articles/s41379-019-0291-z.pdf",
+            "oa_pdf_url": "https://www.nature.com/articles/s41379-019-0291-z.pdf",
+        }
+
+        # Mock publisher HTML
+        mock_html = (
+            "<html><body><article>"
+            + "Full text with specific content from Nature article. " * 50
+            + "</article></body></html>"
+        )
+
+        paper_info = PaperInfo()
+
+        with patch.object(verifier, "get_unpaywall_info", return_value=mock_unpaywall):
+            with patch.object(
+                verifier, "fetch_publisher_html", return_value=mock_html
+            ) as mock_fetch:
+                text, updated_info, status = verifier.try_unpaywall_fallback(
+                    "10.1038/s41379-019-0291-z", paper_info
+                )
+
+        assert status == "full_text_publisher"
+        # Should have tried the HTML URL (without .pdf)
+        mock_fetch.assert_called()
+        # The first call should be the URL without .pdf
+        first_call_url = mock_fetch.call_args_list[0][0][0]
+        assert first_call_url == "https://www.nature.com/articles/s41379-019-0291-z"
+        assert not first_call_url.endswith(".pdf")
+
 
 @pytest.mark.integration
 class TestUnpaywallRealAPI:
