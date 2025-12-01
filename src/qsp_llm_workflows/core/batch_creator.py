@@ -256,14 +256,14 @@ class ParameterBatchCreator(BatchCreator):
 
         return "\n".join(output) if output else "No model context available."
 
-    def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
+    def process(self, input_csv: Path, parameter_storage_dir: Path) -> List[Dict[str, Any]]:
         """
         Process parameter extraction inputs and generate batch requests.
 
         Args:
             input_csv: CSV file with columns: cancer_type, parameter_name, parameter_units,
                       parameter_description, model_context (JSON), definition_hash
-            parameter_storage_dir: Optional path to parameter storage directory for existing studies
+            parameter_storage_dir: Path to parameter storage directory for checking existing studies
 
         Returns:
             List of batch request dictionaries
@@ -294,10 +294,6 @@ class ParameterBatchCreator(BatchCreator):
 
                 # Collect existing studies to avoid re-extracting from same sources
                 # Use definition_hash from CSV (same as context_hash in model_context)
-                if parameter_storage_dir is None:
-                    parameter_storage_dir = (
-                        self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
-                    )
                 existing_studies = collect_existing_studies(
                     cancer_type, parameter_name, parameter_storage_dir, definition_hash
                 )
