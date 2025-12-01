@@ -95,7 +95,7 @@ Examples:
 
     data_dir = Path(args.dir).resolve()
 
-    output_dir = Path("output/validation_results")
+    output_dir = Path("validation-outputs")
 
     # Validate paths exist
     if not data_dir.exists():

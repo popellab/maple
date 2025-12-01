@@ -49,7 +49,7 @@ This workflow automates LLM-based parameter extraction from scientific papers. I
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  Review validation reports and approve/reject files         │
-│  Check output/validation_results/ for detailed reports      │
+│  Check validation-outputs/ for detailed reports      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -534,7 +534,7 @@ Next steps:
   1. Manual high-level review: Open a few YAMLs, check derivation_explanation and assumptions
   2. Run validation: qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
   3. Manual snippet verification: Click DOI links, verify snippets with Ctrl+F
-  4. Review detailed validation reports in output/validation_results/
+  4. Review detailed validation reports in validation-outputs/
   5. Move approved files to appropriate directories (reject bad ones)
   6. Commit changes and open a pull request on GitHub
   7. Merge PR after team review
@@ -588,7 +588,7 @@ qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_esti
 qsp-validate test_statistics --dir metadata-storage/to-review/test_statistics
 ```
 
-The validation suite will run all 8 validators and generate detailed reports in `output/validation_results/`.
+The validation suite will run all 8 validators and generate detailed reports in `validation-outputs/`.
 
 **The automated validation includes:**
 1. Schema compliance (YAML structure)
@@ -624,7 +624,7 @@ Check files in `to-review/`:
 - Confirm extracted values match sources
 - Validate derivation logic and assumptions
 - Check unit consistency
-- Review validation reports in `output/validation_results/`
+- Review validation reports in `validation-outputs/`
   - `schema_compliance.json` - Template compliance results
   - `source_references.json` - Source reference validation
   - `text_snippets.json` - Text snippet verification
@@ -722,7 +722,7 @@ Workflow creates/uses these files in `batch_jobs/`:
 - `parameter_requests.batch_id` - Batch metadata (ID, type, CSV)
 - `batch_ABC123_results.jsonl` - Raw extraction results
 
-Validation reports are written to `output/validation/`:
+Validation reports are written to `validation-outputs/`:
 - `schema_compliance.json`
 - `source_references.json`
 - `text_snippets.json`
@@ -878,7 +878,7 @@ qsp-extract input.csv \
 **Problem:** You ran validation and found errors in the extracted files.
 
 **Solution:**
-1. Review the validation reports in `output/validation/` to understand what failed
+1. Review the validation reports in `validation-outputs/` to understand what failed
 2. For files with errors, you can either:
    - Fix them manually
    - Use the validation fix workflow: `qsp-fix <workflow_type>`

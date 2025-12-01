@@ -66,7 +66,7 @@ Examples:
         "--validation-results-dir",
         type=str,
         default=None,
-        help="Custom validation results directory (default: output/validation_results)",
+        help="Custom validation results directory (default: validation-outputs)",
     )
 
     args = parser.parse_args()
@@ -91,7 +91,7 @@ Examples:
     if args.validation_results_dir:
         validation_results_dir = Path(args.validation_results_dir)
     else:
-        validation_results_dir = Path("output/validation_results")
+        validation_results_dir = Path("validation-outputs")
 
     if not validation_results_dir.exists():
         print("Error: Validation results directory not found", file=sys.stderr)
