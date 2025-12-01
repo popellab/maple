@@ -1023,8 +1023,8 @@ class TestUnpaywallIntegration:
         text = verifier.extract_text_from_publisher_html(html)
         assert "pancreatic cancer" in text.lower()
 
-    def test_get_paper_text_tries_unpaywall_when_not_in_pmc(self):
-        """Test that get_paper_text tries Unpaywall for non-PMC papers."""
+    def test_try_unpaywall_fallback_success(self):
+        """Test that try_unpaywall_fallback fetches publisher full text."""
         verifier = AutomatedSnippetVerifier("/tmp")
 
         # Mock Unpaywall returning OA URL
@@ -1046,32 +1046,33 @@ class TestUnpaywallIntegration:
             PaperInfo,
         )
 
-        with patch.object(verifier, "get_paper_info_from_doi") as mock_info:
-            mock_info.return_value = PaperInfo(
-                pmcid=None,
-                pmid="12345",
-                is_open_access=False,
-                in_pmc=False,
-                abstract="Short abstract",
-            )
+        paper_info = PaperInfo(
+            pmcid=None,
+            pmid="12345",
+            is_open_access=False,
+            in_pmc=False,
+            abstract="Short abstract",
+        )
 
-            with patch.object(verifier, "get_unpaywall_info", return_value=mock_unpaywall):
-                with patch.object(verifier, "fetch_publisher_html", return_value=mock_html):
-                    text, paper_info, status = verifier.get_paper_text("10.1234/test")
+        with patch.object(verifier, "get_unpaywall_info", return_value=mock_unpaywall):
+            with patch.object(verifier, "fetch_publisher_html", return_value=mock_html):
+                text, updated_info, status = verifier.try_unpaywall_fallback(
+                    "10.1234/test", paper_info
+                )
 
         assert status == "full_text_publisher"
         assert "specific content xyz123" in text.lower()
-        assert paper_info.oa_status == "bronze"
+        assert updated_info.oa_status == "bronze"
 
-    def test_get_paper_text_falls_back_to_abstract(self):
-        """Test fallback to abstract when Unpaywall fails."""
+    def test_get_paper_text_returns_abstract_not_unpaywall(self):
+        """Test that get_paper_text returns abstract (Unpaywall called separately)."""
         verifier = AutomatedSnippetVerifier("/tmp")
 
-        with patch.object(verifier, "get_paper_info_from_doi") as mock_info:
-            from qsp_llm_workflows.validate.check_snippet_sources_automated import (
-                PaperInfo,
-            )
+        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+            PaperInfo,
+        )
 
+        with patch.object(verifier, "get_paper_info_from_doi") as mock_info:
             mock_info.return_value = PaperInfo(
                 pmcid=None,
                 pmid="12345",
@@ -1080,14 +1081,15 @@ class TestUnpaywallIntegration:
                 abstract="This is the abstract text",
             )
 
-            with patch.object(verifier, "get_unpaywall_info", return_value=None):
-                text, paper_info, status = verifier.get_paper_text("10.1234/test")
+            # get_paper_text should NOT call Unpaywall anymore
+            text, paper_info, status = verifier.get_paper_text("10.1234/test")
 
+        # Should return abstract, Unpaywall is called via try_unpaywall_fallback
         assert status == "abstract_only"
         assert text == "This is the abstract text"
 
-    def test_validate_logs_full_text_publisher_status(self, tmp_path, capsys):
-        """Test that validation logs full_text_publisher status correctly."""
+    def test_validate_tries_unpaywall_on_abstract_failure(self, tmp_path, capsys):
+        """Test that validation tries Unpaywall when abstract verification fails."""
         yaml_file = tmp_path / "test.yaml"
 
         data = {
@@ -1096,7 +1098,7 @@ class TestUnpaywallIntegration:
                     {
                         "name": "stat",
                         "value": 1,
-                        "value_snippet": "findable snippet",
+                        "value_snippet": "detailed table data not in abstract",
                         "source_ref": "src",
                     }
                 ]
@@ -1116,22 +1118,52 @@ class TestUnpaywallIntegration:
 
         verifier = AutomatedSnippetVerifier(str(tmp_path))
 
-        def mock_get_paper_text(doi):
-            from qsp_llm_workflows.validate.check_snippet_sources_automated import (
-                PaperInfo,
-            )
+        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+            PaperInfo,
+        )
 
+        # Mock get_paper_text to return abstract only (snippet not findable there)
+        def mock_get_paper_text(_doi):
             paper_info = PaperInfo(
-                pmcid=None, is_open_access=True, in_pmc=False, oa_status="bronze"
+                pmcid=None, is_open_access=True, in_pmc=False, abstract="Short abstract"
             )
-            return ("Full text with findable snippet inside", paper_info, "full_text_publisher")
+            return ("Short abstract", paper_info, "abstract_only")
+
+        # Mock Unpaywall to return full text with the snippet
+        full_text = "Full text with detailed table data not in abstract included here"
+
+        def mock_unpaywall_fallback(_doi, paper_info):
+            paper_info.oa_status = "bronze"
+            return (full_text, paper_info, "full_text_publisher")
 
         with patch.object(verifier, "get_paper_text", side_effect=mock_get_paper_text):
-            verifier.validate()
+            with patch.object(
+                verifier, "try_unpaywall_fallback", side_effect=mock_unpaywall_fallback
+            ):
+                with patch.object(verifier, "get_manual_verification", return_value=True):
+                    verifier.validate()
 
         captured = capsys.readouterr()
-        assert "Unpaywall" in captured.out
+        # Should show Unpaywall being tried
+        assert "Trying Unpaywall" in captured.out
         assert "bronze" in captured.out.lower()
+
+    def test_try_unpaywall_fallback_returns_failed_when_not_oa(self):
+        """Test that try_unpaywall_fallback returns failed status for non-OA papers."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+            PaperInfo,
+        )
+
+        paper_info = PaperInfo(abstract="Some abstract")
+
+        # Mock Unpaywall returning None (not OA)
+        with patch.object(verifier, "get_unpaywall_info", return_value=None):
+            text, updated_info, status = verifier.try_unpaywall_fallback("10.1234/test", paper_info)
+
+        assert status == "unpaywall_failed"
+        assert text is None
 
 
 @pytest.mark.integration

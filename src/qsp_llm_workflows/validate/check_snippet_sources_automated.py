@@ -503,8 +503,10 @@ class AutomatedSnippetVerifier(Validator):
 
         Tries sources in order:
         1. Full text from PMC (if available)
-        2. Full text from publisher via Unpaywall (if OA)
-        3. Abstract only
+        2. Abstract only (fast, already fetched from Europe PMC)
+
+        Note: Unpaywall is NOT called here. It's called separately via
+        try_unpaywall_fallback() only when abstract verification fails.
 
         Args:
             doi: DOI string
@@ -514,7 +516,6 @@ class AutomatedSnippetVerifier(Validator):
             status is one of:
                 - "full_text_open_access": Full text from open access PMC article
                 - "full_text_restricted": Full text from restricted PMC article
-                - "full_text_publisher": Full text from publisher via Unpaywall
                 - "abstract_only": Only abstract available
                 - "cached": Using cached result
                 - "no_text_available": No text could be retrieved
@@ -555,33 +556,61 @@ class AutomatedSnippetVerifier(Validator):
                     )
                     return (full_text, paper_info, status)
 
-        # Try Unpaywall for OA papers not in PMC
-        unpaywall_info = self.get_unpaywall_info(doi_clean)
-        if unpaywall_info and unpaywall_info.get("is_oa"):
-            # Update paper_info with Unpaywall data
-            paper_info.is_open_access = True
-            paper_info.oa_status = unpaywall_info.get("oa_status")
-            paper_info.oa_url = unpaywall_info.get("oa_url")
-            paper_info.oa_pdf_url = unpaywall_info.get("oa_pdf_url")
-
-            # Try to fetch from publisher URL (prefer HTML URL over PDF)
-            oa_url = paper_info.oa_url
-            if oa_url and not oa_url.endswith(".pdf"):
-                html_content = self.fetch_publisher_html(oa_url)
-                if html_content:
-                    full_text = self.extract_text_from_publisher_html(html_content)
-                    if full_text and len(full_text) > 1000:
-                        self._paper_text_cache[cache_key] = full_text
-                        return (full_text, paper_info, "full_text_publisher")
-
-        # Fall back to abstract
+        # Fall back to abstract (don't cache yet - may retry with Unpaywall)
         if paper_info.abstract:
-            self._paper_text_cache[cache_key] = paper_info.abstract
             return (paper_info.abstract, paper_info, "abstract_only")
 
         # No text available at all
         self._paper_text_cache[cache_key] = None
         return (None, paper_info, "no_text_available")
+
+    def try_unpaywall_fallback(
+        self, doi: str, paper_info: Optional[PaperInfo] = None
+    ) -> tuple[Optional[str], Optional[PaperInfo], str]:
+        """
+        Try to get full text from publisher via Unpaywall API.
+
+        Called as a fallback when abstract verification has failures.
+        This avoids unnecessary API calls for papers where abstract
+        verification is sufficient.
+
+        Args:
+            doi: DOI string
+            paper_info: Optional existing PaperInfo to update
+
+        Returns:
+            (text, paper_info, status) tuple.
+            status is "full_text_publisher" on success, "unpaywall_failed" otherwise.
+        """
+        doi_clean = self.normalize_doi(doi)
+
+        if paper_info is None:
+            paper_info = PaperInfo()
+
+        # Query Unpaywall for OA information
+        unpaywall_info = self.get_unpaywall_info(doi_clean)
+        if not unpaywall_info or not unpaywall_info.get("is_oa"):
+            return (None, paper_info, "unpaywall_failed")
+
+        # Update paper_info with Unpaywall data
+        paper_info.is_open_access = True
+        paper_info.oa_status = unpaywall_info.get("oa_status")
+        paper_info.oa_url = unpaywall_info.get("oa_url")
+        paper_info.oa_pdf_url = unpaywall_info.get("oa_pdf_url")
+
+        # Try to fetch from publisher URL (prefer HTML URL over PDF)
+        oa_url = paper_info.oa_url
+        if oa_url and not oa_url.endswith(".pdf"):
+            html_content = self.fetch_publisher_html(oa_url)
+            if html_content:
+                full_text = self.extract_text_from_publisher_html(html_content)
+                if full_text and len(full_text) > 1000:
+                    # Cache the successful result
+                    cache_key = f"text_{doi_clean}"
+                    self._paper_text_cache[cache_key] = full_text
+                    return (full_text, paper_info, "full_text_publisher")
+
+        return (None, paper_info, "unpaywall_failed")
 
     def collect_verification_data(self) -> dict:
         """
@@ -702,14 +731,92 @@ class AutomatedSnippetVerifier(Validator):
             else:
                 print("Please enter 'y' or 'n'")
 
+    def _verify_snippets(
+        self, snippets: set, text: str
+    ) -> list[tuple[str, str, bool, float, Optional[str]]]:
+        """
+        Verify snippets against text and return results.
+
+        Args:
+            snippets: Set of snippet strings to verify
+            text: Text to search in
+
+        Returns:
+            List of (snippet, normalized, found, score, best_match) tuples
+        """
+        results = []
+        for snippet in snippets:
+            found, score, normalized, best_match = self.fuzzy_find_snippet(snippet, text)
+            results.append((snippet, normalized, found, score, best_match))
+        return results
+
+    def _print_snippet_results(
+        self,
+        snippet_results: list[tuple[str, str, bool, float, Optional[str]]],
+        item_name: str,
+        text_source: str,
+        automated_results: list,
+    ) -> int:
+        """
+        Print snippet verification results with color coding.
+
+        Args:
+            snippet_results: List of (snippet, normalized, found, score, best_match) tuples
+            item_name: Display name for the item being verified
+            text_source: Source of text ("full_text", "abstract", etc.)
+            automated_results: List to append results to for report generation
+
+        Returns:
+            Count of snippets found
+        """
+        # Sort: failures first (by score ascending), then successes
+        snippet_results = sorted(snippet_results, key=lambda x: (x[2], x[3]))
+
+        # ANSI color codes
+        GREEN = "\033[92m"
+        YELLOW = "\033[93m"
+        RED = "\033[91m"
+        RESET = "\033[0m"
+
+        found_count = 0
+
+        for snippet, normalized, found, score, best_match in snippet_results:
+            was_normalized = normalized != snippet
+            norm_display = normalized if len(normalized) <= 50 else normalized[:47] + "..."
+
+            if found:
+                found_count += 1
+                automated_results.append((item_name, snippet, True, score, text_source))
+                print(f'{GREEN}    ✓ "{norm_display}" (score: {score:.2f}){RESET}')
+            else:
+                automated_results.append((item_name, snippet, False, score, text_source))
+
+                is_near_miss = 0.6 <= score < self.fuzzy_threshold
+                color = YELLOW if is_near_miss else RED
+
+                if was_normalized:
+                    snippet_display = snippet if len(snippet) <= 40 else snippet[:37] + "..."
+                    print(f'{color}    ✗ "{snippet_display}"{RESET}')
+                    print(f'{color}      → normalized: "{norm_display}"{RESET}')
+                    print(f"{color}      → best score: {score:.2f}{RESET}")
+                else:
+                    print(f'{color}    ✗ "{norm_display}" (best score: {score:.2f}){RESET}')
+
+                if is_near_miss and best_match:
+                    match_display = best_match if len(best_match) <= 50 else best_match[:47] + "..."
+                    print(f'{YELLOW}      → closest match: "{match_display}"{RESET}')
+
+        return found_count
+
     def validate(self) -> ValidationReport:
         """
         Run automated snippet verification.
 
-        1. Collect all DOIs + snippets from YAML files
-        2. For each DOI, try to fetch full text from NCBI PMC
-        3. If not in PMC, try verification against abstract
-        4. Fall back to manual verification only if no text available
+        Workflow for each source:
+        1. Try full text from PMC (if available)
+        2. Try abstract (fast, already fetched from Europe PMC)
+        3. If abstract has failures, try Unpaywall for publisher full text
+        4. Fall back to manual verification only if all automated methods fail
 
         Returns:
             ValidationReport with results
@@ -718,6 +825,7 @@ class AutomatedSnippetVerifier(Validator):
 
         print(f"Verifying snippets in {self.data_dir}...")
         print("Using NCBI PubMed Central for full-text, Europe PMC for abstracts")
+        print("Unpaywall fallback for OA papers when abstract verification fails")
         print(f"Fuzzy match threshold: {self.fuzzy_threshold}")
         print()
 
@@ -731,8 +839,10 @@ class AutomatedSnippetVerifier(Validator):
 
         # Track papers needing manual verification
         manual_sources: dict = {}  # Papers with no text available
-        abstract_only_failures: dict = {}  # Abstract-only papers with failed snippets
-        automated_results: list[tuple[str, str, bool, float, str]] = []  # Added text_source
+        abstract_only_failures: dict = (
+            {}
+        )  # Abstract-only papers with failed snippets (after Unpaywall)
+        automated_results: list[tuple[str, str, bool, float, str]] = []
 
         # Process each source
         total_sources = len(source_data)
@@ -740,10 +850,11 @@ class AutomatedSnippetVerifier(Validator):
             doi = info["doi"]
             snippets = info["snippets"]
             filenames = sorted(set(inp["filename"] for inp in info["inputs"]))
+            item_name = f"{', '.join(filenames)} → {source_tag}"
 
             print(f"[{idx}/{total_sources}] Checking {source_tag}...")
 
-            # Try to get text (full text or abstract)
+            # Try to get text (full text from PMC, or abstract)
             text, paper_info, status = self.get_paper_text(doi)
 
             if not text:
@@ -764,12 +875,6 @@ class AutomatedSnippetVerifier(Validator):
             elif status == "full_text_restricted":
                 print(f"  ✓ Full text from PMC ({pmcid}) - Restricted Access - {text_len:,} chars")
                 text_source = "full_text"
-            elif status == "full_text_publisher":
-                oa_status = paper_info.oa_status if paper_info else "unknown"
-                print(
-                    f"  ✓ Full text from publisher via Unpaywall ({oa_status} OA) - {text_len:,} chars"
-                )
-                text_source = "full_text"
             elif status == "abstract_only":
                 oa_label = "Open Access" if paper_info.is_open_access else "Restricted"
                 print(f"  ⚠ Abstract only ({oa_label}) - {text_len:,} chars - not in PMC")
@@ -781,67 +886,65 @@ class AutomatedSnippetVerifier(Validator):
                 print(f"  ✓ Retrieved text - {text_len:,} chars")
                 text_source = "unknown"
 
-            # Search for each snippet and collect results
-            snippet_results: list[tuple[str, str, bool, float, str, Optional[str]]] = []
-            for snippet in snippets:
-                found, score, normalized, best_match = self.fuzzy_find_snippet(snippet, text)
-                snippet_results.append((snippet, normalized, found, score, best_match))
-
-            # Sort: failures first (by score ascending), then successes
-            snippet_results.sort(key=lambda x: (x[2], x[3]))  # (found, score)
-
-            # ANSI color codes
-            GREEN = "\033[92m"
-            YELLOW = "\033[93m"
-            RED = "\033[91m"
-            RESET = "\033[0m"
-
+            # Verify snippets
+            snippet_results = self._verify_snippets(snippets, text)
+            found_count = self._print_snippet_results(
+                snippet_results, item_name, text_source, automated_results
+            )
             num_snippets = len(snippet_results)
-            found_count = 0
-            item_name = f"{', '.join(filenames)} → {source_tag}"
-
-            for snippet, normalized, found, score, best_match in snippet_results:
-                # Check if normalization changed the snippet
-                was_normalized = normalized != snippet
-
-                # Display truncated versions
-                norm_display = normalized if len(normalized) <= 50 else normalized[:47] + "..."
-
-                if found:
-                    found_count += 1
-                    automated_results.append((item_name, snippet, True, score, text_source))
-                    print(f'{GREEN}    ✓ "{norm_display}" (score: {score:.2f}){RESET}')
-                else:
-                    automated_results.append((item_name, snippet, False, score, text_source))
-
-                    # Color based on score: yellow for near-miss (0.6-0.8), red for failure
-                    is_near_miss = 0.6 <= score < self.fuzzy_threshold
-                    color = YELLOW if is_near_miss else RED
-
-                    if was_normalized:
-                        snippet_display = snippet if len(snippet) <= 40 else snippet[:37] + "..."
-                        print(f'{color}    ✗ "{snippet_display}"{RESET}')
-                        print(f'{color}      → normalized: "{norm_display}"{RESET}')
-                        print(f"{color}      → best score: {score:.2f}{RESET}")
-                    else:
-                        print(f'{color}    ✗ "{norm_display}" (best score: {score:.2f}){RESET}')
-
-                    # Show best matching text for near-misses
-                    if is_near_miss and best_match:
-                        match_display = (
-                            best_match if len(best_match) <= 50 else best_match[:47] + "..."
-                        )
-                        print(f'{YELLOW}      → closest match: "{match_display}"{RESET}')
 
             print(f"  Summary: {found_count}/{num_snippets} snippets matched")
 
-            # Track abstract-only sources with failures for manual verification
+            # If abstract-only with failures, try Unpaywall fallback
             if text_source == "abstract" and found_count < num_snippets:
                 failed_snippets = [s for s, _, found, _, _ in snippet_results if not found]
-                abstract_only_failures[source_tag] = {
-                    **info,
-                    "failed_snippets": failed_snippets,
-                }
+
+                print("  → Trying Unpaywall for publisher full text...")
+                unpaywall_text, updated_info, unpaywall_status = self.try_unpaywall_fallback(
+                    doi, paper_info
+                )
+
+                if unpaywall_status == "full_text_publisher" and unpaywall_text:
+                    oa_status = updated_info.oa_status if updated_info else "unknown"
+                    print(
+                        f"  ✓ Full text from publisher via Unpaywall ({oa_status} OA) - "
+                        f"{len(unpaywall_text):,} chars"
+                    )
+
+                    # Re-verify ONLY the failed snippets against full text
+                    print("  → Re-verifying failed snippets against full text:")
+
+                    # Remove old failed results from automated_results
+                    automated_results[:] = [
+                        r
+                        for r in automated_results
+                        if not (r[0] == item_name and r[1] in failed_snippets)
+                    ]
+
+                    # Re-verify failed snippets
+                    retry_results = self._verify_snippets(set(failed_snippets), unpaywall_text)
+                    retry_found = self._print_snippet_results(
+                        retry_results, item_name, "full_text", automated_results
+                    )
+
+                    # Update counts
+                    new_found = found_count + retry_found
+                    print(f"  Summary after Unpaywall: {new_found}/{num_snippets} snippets matched")
+
+                    # If still failures, track for manual verification
+                    if retry_found < len(failed_snippets):
+                        still_failed = [s for s, _, found, _, _ in retry_results if not found]
+                        abstract_only_failures[source_tag] = {
+                            **info,
+                            "failed_snippets": still_failed,
+                        }
+                else:
+                    print("  ✗ Unpaywall: No OA full text available")
+                    # Track for manual verification
+                    abstract_only_failures[source_tag] = {
+                        **info,
+                        "failed_snippets": failed_snippets,
+                    }
 
         print()
 
@@ -906,7 +1009,7 @@ class AutomatedSnippetVerifier(Validator):
                 if user_verified:
                     report.add_warning(
                         f"{item_name} (manual verification)",
-                        f"{failed_count} snippet(s) not in abstract, verified manually by user",
+                        f"{failed_count} snippet(s) not in abstract/full text, verified manually by user",
                     )
 
         return report
