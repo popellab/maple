@@ -88,6 +88,59 @@ When searching for measurements, prefer sources in this order:
 - Mouse data without explicit species scaling factors
 - Pure assumptions without any literature anchor
 
+## Cytokine/Chemokine Data Sources
+
+For tumor cytokine measurements (V_T.IL6, V_T.IL10, V_T.IFNg, V_T.TGFb, V_T.CCL2, V_T.CXCL12, V_T.IL12, V_T.PDGF, etc.), prefer sources in this order:
+
+**Tier 1 (Best):** Tumor interstitial fluid (TIF) - direct TME measurement
+- Obtained by centrifugation or microdialysis of resected tumors
+- Units: pg/mL - directly comparable to model (after nM→pg/mL conversion)
+
+**Tier 2 (Good):** Tumor tissue homogenate/lysate
+- Common in literature, reported as pg/mg protein or pg/mg tissue
+- Requires unit conversion (see below)
+- Includes both extracellular and some intracellular cytokine pools
+
+**Tier 3 (Acceptable with caveats):** Tumor interstitial fluid from related indications
+- Example: Breast or ovarian TIF data for PDAC (with indication_match penalty)
+- Requires biological justification for cross-indication transfer
+
+**Tier 4 (Last resort for cytokines):** Serum/plasma
+- Reflects systemic levels, NOT tumor microenvironment concentrations
+- Tumor:serum ratios vary widely (10-1000×) depending on cytokine
+- Only use if no tumor tissue data exists
+
+**Confidence score adjustments for cytokine data tiers:**
+
+| Data Tier | `system_match` | `overall_confidence` penalty |
+|-----------|----------------|------------------------------|
+| Tier 1 (TIF) | 1.0 | None |
+| Tier 2 (Homogenate) | 0.85-0.9 | -0.05 to -0.1 (for unit conversion uncertainty) |
+| Tier 3 (Cross-indication TIF) | 0.8-0.9 | -0.1 to -0.15 (also reduce `indication_match`) |
+| Tier 4 (Serum/plasma) | ≤0.5 | -0.2 to -0.3 (compartment mismatch) |
+
+**Unit conversion for tissue homogenate data:**
+
+To convert pg/mg protein → pg/mL (model-compatible):
+```
+pg/mL ≈ pg/mg protein × [mg protein / mL tumor volume]
+```
+
+Typical conversion factor: **~100 mg protein/mL** for dense tumors like PDAC (range: 50-150).
+
+Example: If literature reports IL-6 = 50 pg/mg protein:
+- Point estimate: 50 × 100 = 5,000 pg/mL
+- Propagate uncertainty: assume lognormal with σ ≈ 0.4 (reflecting 2-3× uncertainty in protein content)
+
+```python
+# Example derivation code for tissue homogenate conversion
+protein_content = rng.lognormal(np.log(100), 0.4, size=N)  # mg protein/mL, ~2-3x uncertainty
+cytokine_pg_per_mg = 50  # from literature
+cytokine_pg_per_mL = cytokine_pg_per_mg * protein_content
+```
+
+Document this conversion in `key_assumptions` and note the additional uncertainty in `key_study_limitations`.
+
 ---
 
 # Scientific Soundness Checklist
