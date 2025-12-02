@@ -17,6 +17,8 @@ Usage:
         --threshold 5.0
 """
 import re
+from pathlib import Path
+
 import numpy as np
 
 from qsp_llm_workflows.validate.validator import Validator
@@ -29,9 +31,19 @@ class CodeExecutionValidator(Validator):
     Works for both parameters (v3) and test statistics (v2).
     """
 
-    def __init__(self, data_dir: str, threshold_pct: float = 5.0, **kwargs):
+    def __init__(
+        self,
+        data_dir: str,
+        threshold_pct: float = 5.0,
+        interactive: bool = True,
+        **kwargs,
+    ):
         super().__init__(data_dir, **kwargs)
         self.threshold_pct = threshold_pct
+        self.interactive = interactive
+        # Store computed values for all files with executable code
+        # Key: filepath, Value: dict with code_type and computed_values
+        self.executable_files: dict[str, dict] = {}
 
     @property
     def name(self) -> str:
@@ -294,7 +306,9 @@ class CodeExecutionValidator(Validator):
         Validate code execution in a single YAML file.
 
         Returns:
-            (is_valid, error_msg) tuple
+            (is_valid, error_msg, code_type, computed_values) tuple
+            - code_type: "parameter" or "test_statistic" or None
+            - computed_values: dict with median, iqr, ci95 or empty dict
         """
         data = file_info["data"]
         file_info["filename"]
@@ -303,13 +317,13 @@ class CodeExecutionValidator(Validator):
         python_code, code_type = self.extract_python_code(data)
 
         if not python_code:
-            return (True, "No Python code found (skipped)")
+            return (True, "No Python code found (skipped)", None, {})
 
         # Extract inputs
         inputs = self.extract_inputs(data)
 
         if not inputs:
-            return (False, "No inputs defined")
+            return (False, "No inputs defined", code_type, {})
 
         # Extract expected values from YAML
         expected_mean = None
@@ -334,7 +348,17 @@ class CodeExecutionValidator(Validator):
             python_code, inputs, code_type, expected_mean, expected_variance, expected_ci95
         )
 
-        return (success, message)
+        # Extract computed values in a format suitable for YAML update
+        computed_values = {}
+        if results.get("computed_values"):
+            cv = results["computed_values"]
+            computed_values = {
+                "median": cv["central"],
+                "iqr": cv["spread"],
+                "ci95": [cv["ci95_lower"], cv["ci95_upper"]],
+            }
+
+        return (success, message, code_type, computed_values)
 
     def validate(self) -> ValidationReport:
         """Validate Python code in all YAML files."""
@@ -356,13 +380,26 @@ class CodeExecutionValidator(Validator):
         failed = 0
         skipped = 0
 
+        # Clear executable_files from any previous run
+        self.executable_files = {}
+
         for idx, file_info in enumerate(files, 1):
             filename = file_info["filename"]
+            filepath = file_info["filepath"]
 
             # Show progress
             print(f"[{idx}/{total_files}] {filename}")
 
-            is_valid, message = self.validate_file(file_info)
+            is_valid, message, code_type, computed_values = self.validate_file(file_info)
+
+            # Store computed values for all files with executable code
+            if code_type and computed_values:
+                self.executable_files[filepath] = {
+                    "filename": filename,
+                    "code_type": code_type,
+                    "computed_values": computed_values,
+                    "is_valid": is_valid,
+                }
 
             if "skipped" in message.lower():
                 print(f"{YELLOW}  ⊘ No Python code found (skipped){RESET}")
@@ -404,4 +441,180 @@ class CodeExecutionValidator(Validator):
         print()
         print(f"Summary: {passed} passed, {failed} failed, {skipped} skipped")
 
+        # Prompt user if there are files with executable code (unless interactive=False)
+        if self.interactive and self.executable_files:
+            self._prompt_apply_computed_values()
+
         return report
+
+    def _prompt_apply_computed_values(self) -> None:
+        """
+        Interactively prompt user to overwrite YAML values with computed values.
+        Goes through each file with executable code one by one.
+        """
+        # ANSI color codes
+        CYAN = "\033[96m"
+        GREEN = "\033[92m"
+        YELLOW = "\033[93m"
+        RESET = "\033[0m"
+
+        print()
+        print("=" * 60)
+        print("APPLY COMPUTED VALUES")
+        print("=" * 60)
+        print()
+        print(f"Found {len(self.executable_files)} files with executable code.")
+        print("You can choose to overwrite YAML values with computed values for each file.")
+        print()
+
+        updated_count = 0
+        skipped_count = 0
+
+        for filepath, info in self.executable_files.items():
+            filename = info["filename"]
+            code_type = info["code_type"]
+            computed = info["computed_values"]
+            is_valid = info["is_valid"]
+
+            # Show file info
+            status = f"{GREEN}✓ MATCH{RESET}" if is_valid else f"{YELLOW}✗ MISMATCH{RESET}"
+            print(f"{CYAN}File: {filename}{RESET} [{status}]")
+            print(f"  Computed values:")
+            print(f"    median: {computed['median']:.6e}")
+            print(f"    iqr:    {computed['iqr']:.6e}")
+            print(f"    ci95:   [{computed['ci95'][0]:.6e}, {computed['ci95'][1]:.6e}]")
+            print()
+
+            # Prompt user
+            while True:
+                response = input("  Overwrite YAML with computed values? [y/n/q(uit)]: ").strip().lower()
+                if response in ("y", "yes"):
+                    success = self._update_yaml_values(filepath, code_type, computed)
+                    if success:
+                        print(f"  {GREEN}✓ Updated{RESET}")
+                        updated_count += 1
+                    else:
+                        print(f"  {YELLOW}✗ Failed to update{RESET}")
+                    break
+                elif response in ("n", "no"):
+                    print("  Skipped")
+                    skipped_count += 1
+                    break
+                elif response in ("q", "quit"):
+                    print()
+                    print(f"Stopped. Updated {updated_count} files, skipped {skipped_count} files.")
+                    return
+                else:
+                    print("  Please enter 'y', 'n', or 'q'")
+
+            print()
+
+        print(f"Done. Updated {updated_count} files, skipped {skipped_count} files.")
+
+    def _update_yaml_values(self, filepath: str, code_type: str, computed_values: dict) -> bool:
+        """
+        Update median, iqr, and ci95 values in a YAML file.
+
+        Args:
+            filepath: Path to the YAML file
+            code_type: "parameter" or "test_statistic"
+            computed_values: dict with median, iqr, ci95 keys
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Read the file content
+            with open(filepath, "r") as f:
+                content = f.read()
+
+            # Determine the estimates section key
+            if code_type == "parameter":
+                section_key = "parameter_estimates"
+            else:
+                section_key = "test_statistic_estimates"
+
+            # Use regex to find and replace values within the estimates section
+            # This preserves formatting better than loading/dumping YAML
+
+            # Find the section start
+            section_pattern = rf"^{section_key}:\s*$"
+            section_match = re.search(section_pattern, content, re.MULTILINE)
+            if not section_match:
+                print(f"    Warning: Could not find {section_key} section")
+                return False
+
+            section_start = section_match.end()
+
+            # Find the next top-level key (or end of file)
+            next_section = re.search(r"^\w+:", content[section_start:], re.MULTILINE)
+            if next_section:
+                section_end = section_start + next_section.start()
+            else:
+                section_end = len(content)
+
+            section_content = content[section_start:section_end]
+
+            # Replace median value
+            median_pattern = r"(^\s+median:\s*)[\d.eE+-]+"
+            section_content = re.sub(
+                median_pattern,
+                rf"\g<1>{computed_values['median']:.10g}",
+                section_content,
+                flags=re.MULTILINE,
+            )
+
+            # Replace iqr value
+            iqr_pattern = r"(^\s+iqr:\s*)[\d.eE+-]+"
+            section_content = re.sub(
+                iqr_pattern,
+                rf"\g<1>{computed_values['iqr']:.10g}",
+                section_content,
+                flags=re.MULTILINE,
+            )
+
+            # Replace ci95 value - handle both inline [a, b] and multi-line formats
+            ci95_lower = computed_values["ci95"][0]
+            ci95_upper = computed_values["ci95"][1]
+
+            # Try inline format first: ci95: [1.23, 4.56]
+            ci95_inline_pattern = r"(^\s+ci95:\s*)\[[\d.eE+\-,\s]+\]"
+            new_ci95 = f"[{ci95_lower:.10g}, {ci95_upper:.10g}]"
+            section_content, n_subs = re.subn(
+                ci95_inline_pattern,
+                rf"\g<1>{new_ci95}",
+                section_content,
+                flags=re.MULTILINE,
+            )
+
+            # If no inline match, try multi-line format
+            if n_subs == 0:
+                # Multi-line format:
+                # ci95:
+                #   - 1.23
+                #   - 4.56
+                ci95_multiline_pattern = (
+                    r"(^\s+ci95:\s*\n)"
+                    r"(\s+- )[\d.eE+-]+\n"
+                    r"(\s+- )[\d.eE+-]+"
+                )
+                replacement = rf"\g<1>\g<2>{ci95_lower:.10g}\n\g<3>{ci95_upper:.10g}"
+                section_content = re.sub(
+                    ci95_multiline_pattern,
+                    replacement,
+                    section_content,
+                    flags=re.MULTILINE,
+                )
+
+            # Reconstruct the file
+            new_content = content[:section_start] + section_content + content[section_end:]
+
+            # Write back
+            with open(filepath, "w") as f:
+                f.write(new_content)
+
+            return True
+
+        except Exception as e:
+            print(f"    Error updating file: {e}")
+            return False
