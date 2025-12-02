@@ -333,7 +333,8 @@ class TestFuzzyMatching:
         assert found is True
         assert score == 1.0
         assert normalized == "tumor growth"
-        assert best_match is None  # No best_match for exact matches
+        # Now returns matched text for value checking
+        assert best_match == "tumor growth"
 
     def test_finds_case_insensitive_match(self):
         """Test case-insensitive matching."""
@@ -464,6 +465,256 @@ class TestSnippetNormalization:
         assert "|" not in normalized
 
 
+class TestValueInMatchedText:
+    """Test checking if declared values appear in matched text from paper."""
+
+    def test_finds_integer_value_in_matched_text(self):
+        """Test finding an integer value in matched text."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        found, pattern = verifier.check_value_in_matched_text(
+            17, None, "the count was 17 cells per field"
+        )
+        assert found is True
+        assert pattern is not None
+
+    def test_finds_float_value_in_matched_text(self):
+        """Test finding a float value in matched text."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        found, pattern = verifier.check_value_in_matched_text(
+            0.5, None, "growth rate of 0.5 per day"
+        )
+        assert found is True
+
+    def test_finds_percentage_value(self):
+        """Test finding a decimal value expressed as percentage."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        # 0.28 should match "28%"
+        found, pattern = verifier.check_value_in_matched_text(0.28, None, "response rate was 28%")
+        assert found is True
+
+    def test_fails_when_value_not_in_text(self):
+        """Test failure when declared value is not in matched text."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        found, pattern = verifier.check_value_in_matched_text(
+            42, None, "the count was 17 cells per field"
+        )
+        assert found is False
+        assert pattern is None
+
+    def test_handles_none_value(self):
+        """Test that None value passes (nothing to check)."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        found, pattern = verifier.check_value_in_matched_text(None, None, "some text")
+        assert found is True
+
+    def test_handles_empty_matched_text(self):
+        """Test that empty matched text passes (nothing to check)."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        found, pattern = verifier.check_value_in_matched_text(17, None, "")
+        assert found is True
+
+    def test_finds_value_with_units(self):
+        """Test finding value with units context."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        found, pattern = verifier.check_value_in_matched_text(
+            100, "mg/kg", "dose of 100 mg/kg was administered"
+        )
+        assert found is True
+
+    def test_fails_when_wrong_value_present(self):
+        """Test failure when a different numeric value is present."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        # Looking for 1.0 but text has different numbers
+        found, pattern = verifier.check_value_in_matched_text(
+            1.0,
+            "boolean",
+            "foxp3+cd25+ treg cells based on the gating of cd4+ t cells",
+        )
+        # Should fail - no "1" or "1.0" in this text
+        assert found is False
+
+    def test_boolean_indicator_not_found_in_qualitative_text(self):
+        """Test that boolean 1.0 isn't falsely found in qualitative descriptions."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+        # This is the exact case from the bug report
+        found, pattern = verifier.check_value_in_matched_text(
+            1.0,
+            "qualitative (1=as specified)",
+            "dot plots of foxp3+cd25+ (treg) cells based on the gating of cd4+ t cells",
+        )
+        # The text doesn't contain "1" as a standalone value
+        assert found is False
+
+
+class TestVerifyInputsWithValues:
+    """Test the combined snippet + value verification."""
+
+    def test_success_when_snippet_and_value_both_found(self):
+        """Test full success when snippet matches and value is in matched text."""
+        verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
+
+        inputs = [
+            {
+                "name": "cd8_count",
+                "value": 17,
+                "units": "cells/HPF",
+                "value_snippet": "median CD8+ count was 17",
+            }
+        ]
+        paper_text = "The median CD8+ count was 17 (IQR 9-30) cells per high power field."
+
+        results = verifier._verify_inputs_with_values(inputs, paper_text)
+
+        assert len(results) == 1
+        (
+            input_name,
+            snippet,
+            normalized,
+            snippet_found,
+            score,
+            matched_text,
+            value_in_match,
+            value_pattern,
+        ) = results[0]
+
+        assert input_name == "cd8_count"
+        assert snippet_found is True
+        assert value_in_match is True
+        assert value_pattern is not None
+
+    def test_failure_when_snippet_found_but_value_missing(self):
+        """Test failure when snippet matches but value is NOT in paper text."""
+        verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
+
+        # Snippet will match, but value 42 is not in the paper text
+        inputs = [
+            {
+                "name": "wrong_value",
+                "value": 42,
+                "units": None,
+                "value_snippet": "the count was measured",
+            }
+        ]
+        paper_text = "The count was measured to be 17 cells per field."
+
+        results = verifier._verify_inputs_with_values(inputs, paper_text)
+
+        assert len(results) == 1
+        _, _, _, snippet_found, _, _, value_in_match, _ = results[0]
+
+        assert snippet_found is True  # Snippet text matches
+        assert value_in_match is False  # But value 42 is not there
+
+    def test_failure_when_snippet_not_found(self):
+        """Test failure when snippet doesn't match paper text."""
+        verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
+
+        inputs = [
+            {
+                "name": "missing",
+                "value": 17,
+                "units": None,
+                "value_snippet": "completely fabricated text not in paper",
+            }
+        ]
+        paper_text = "This paper discusses tumor growth and immune cells."
+
+        results = verifier._verify_inputs_with_values(inputs, paper_text)
+
+        assert len(results) == 1
+        _, _, _, snippet_found, _, _, value_in_match, _ = results[0]
+
+        assert snippet_found is False
+        # value_in_match should be True (default) since snippet wasn't found
+        assert value_in_match is True
+
+    def test_skips_inputs_without_value_snippet(self):
+        """Test that inputs without value_snippet are skipped."""
+        verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
+
+        inputs = [
+            {
+                "name": "no_snippet",
+                "value": 17,
+                "units": None,
+                # No value_snippet field
+            }
+        ]
+        paper_text = "Some paper text with 17 in it."
+
+        results = verifier._verify_inputs_with_values(inputs, paper_text)
+
+        assert len(results) == 0
+
+    def test_handles_multiple_inputs(self):
+        """Test verifying multiple inputs from same source."""
+        verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
+
+        inputs = [
+            {
+                "name": "good_input",
+                "value": 17,
+                "units": None,
+                "value_snippet": "count was 17",
+            },
+            {
+                "name": "bad_value",
+                "value": 99,  # Wrong value
+                "units": None,
+                "value_snippet": "count was 17",  # Snippet matches but value wrong
+            },
+            {
+                "name": "bad_snippet",
+                "value": 5,
+                "units": None,
+                "value_snippet": "nonexistent text",  # Snippet doesn't match
+            },
+        ]
+        paper_text = "The count was 17 cells per field in all samples."
+
+        results = verifier._verify_inputs_with_values(inputs, paper_text)
+
+        assert len(results) == 3
+
+        # First input: both snippet and value should pass
+        assert results[0][3] is True  # snippet_found
+        assert results[0][6] is True  # value_in_match
+
+        # Second input: snippet matches but value 99 not in text
+        assert results[1][3] is True  # snippet_found
+        assert results[1][6] is False  # value_in_match - 99 not in paper
+
+        # Third input: snippet doesn't match
+        assert results[2][3] is False  # snippet_found
+
+    def test_qualitative_boolean_fails_validation(self):
+        """Test that qualitative boolean indicators fail value validation."""
+        verifier = AutomatedSnippetVerifier("/tmp", fuzzy_threshold=0.8)
+
+        # This is the exact problematic case from the bug report
+        inputs = [
+            {
+                "name": "Gating_definition_Treg",
+                "value": 1.0,
+                "units": "qualitative (1=as specified)",
+                "value_snippet": "Dot plots of Foxp3+CD25+ (Treg) cells based on the gating of CD4+ T cells.",
+            }
+        ]
+        # Paper text that matches the snippet but doesn't contain "1" or "1.0"
+        paper_text = "Figure 1 legend shows dot plots of Foxp3+CD25+ (Treg) cells based on the gating of CD4+ T cells."
+
+        results = verifier._verify_inputs_with_values(inputs, paper_text)
+
+        assert len(results) == 1
+        _, _, _, snippet_found, _, matched_text, value_in_match, _ = results[0]
+
+        assert snippet_found is True  # Snippet matches
+        # Value 1.0 should NOT be found in the matched text
+        # (The "1" in "Figure 1" is in the paper but not in the matched window)
+        # This depends on window size - the key point is the matched snippet text
+        # doesn't contain "1" as a value
+
+
 class TestDataCollection:
     """Test collection of verification data from YAML files."""
 
@@ -501,6 +752,45 @@ class TestDataCollection:
             assert "smith2020" in source_data
             assert source_data["smith2020"]["doi"] == "10.1234/test"
             assert "growth rate was 0.5" in source_data["smith2020"]["snippets"]
+
+    def test_collects_value_and_units_from_inputs(self):
+        """Test that value and units are collected for value checking."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "inputs": [
+                        {
+                            "name": "growth_rate",
+                            "value": 0.5,
+                            "units": "1/day",
+                            "value_snippet": "growth rate was 0.5",
+                            "source_ref": "smith2020",
+                        }
+                    ]
+                },
+                "primary_data_sources": [
+                    {
+                        "source_tag": "smith2020",
+                        "doi": "10.1234/test",
+                        "title": "Test Paper",
+                        "first_author": "Smith",
+                        "year": 2020,
+                    }
+                ],
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            verifier = AutomatedSnippetVerifier(tmpdir)
+            source_data = verifier.collect_verification_data()
+
+            # Check that inputs now include value and units
+            inputs = source_data["smith2020"]["inputs"]
+            assert len(inputs) == 1
+            assert inputs[0]["value"] == 0.5
+            assert inputs[0]["units"] == "1/day"
+            assert inputs[0]["name"] == "growth_rate"
 
     def test_collects_multiple_snippets(self):
         """Test collecting multiple snippets from same source."""

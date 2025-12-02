@@ -33,6 +33,9 @@ from qsp_llm_workflows.validate.check_snippet_sources_manual_verify import (
     get_doi_from_source,
 )
 
+# Reuse value checking logic from text snippet validator
+from qsp_llm_workflows.validate.check_text_snippets import TextSnippetValidator
+
 
 @dataclass
 class PaperInfo:
@@ -97,6 +100,8 @@ class AutomatedSnippetVerifier(Validator):
         self.fuzzy_threshold = fuzzy_threshold
         self.last_request_time = 0
         self._paper_text_cache: dict[str, Optional[str]] = {}
+        # Create a TextSnippetValidator instance for value checking
+        self._value_checker = TextSnippetValidator(data_dir)
 
     @property
     def name(self) -> str:
@@ -391,6 +396,30 @@ class AutomatedSnippetVerifier(Validator):
             return ""
         return re.sub(r"\s+", " ", text.lower().strip())
 
+    def check_value_in_matched_text(
+        self, value, units: Optional[str], matched_text: str
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Check if the declared numeric value appears in the matched text from the paper.
+
+        This ensures the specific text location that matched the snippet also
+        contains the claimed numeric value, catching cases where the LLM fabricated
+        a plausible-looking snippet that doesn't actually contain the value.
+
+        Args:
+            value: The declared value (numeric or list of numerics)
+            units: Optional units string
+            matched_text: The text from the paper that matched the snippet
+
+        Returns:
+            (found, matched_pattern) tuple
+        """
+        if value is None or not matched_text:
+            return (True, None)  # No value to check, pass by default
+
+        # Use the TextSnippetValidator's check method
+        return self._value_checker.check_snippet_contains_value(matched_text, value, units)
+
     def normalize_snippet(self, snippet: str) -> str:
         """
         Normalize snippet by removing LaTeX formatting and table artifacts.
@@ -463,7 +492,10 @@ class AutomatedSnippetVerifier(Validator):
 
         # Fast path: exact substring match
         if snippet_norm in text_norm:
-            return (True, 1.0, snippet_cleaned, None)
+            # Find the position and extract the matched text
+            match_pos = text_norm.find(snippet_norm)
+            matched_text = text_norm[match_pos : match_pos + len(snippet_norm)]
+            return (True, 1.0, snippet_cleaned, matched_text)
 
         # Sliding window fuzzy match
         snippet_len = len(snippet_norm)
@@ -486,7 +518,9 @@ class AutomatedSnippetVerifier(Validator):
                 best_score = score
                 best_match_pos = i
                 if score >= self.fuzzy_threshold:
-                    return (True, score, snippet_cleaned, None)
+                    # Return the matched text from the paper
+                    matched_text = text_norm[i : i + window_size]
+                    return (True, score, snippet_cleaned, matched_text)
 
         # Extract best matching text for near-misses (score >= 0.5)
         best_match_text = None
@@ -678,6 +712,8 @@ class AutomatedSnippetVerifier(Validator):
                     {
                         "name": input_name,
                         "filename": filename,
+                        "value": inp.get("value"),
+                        "units": inp.get("units"),
                         "value_snippet": value_snippet,
                         "units_snippet": units_snippet,
                     }
@@ -769,6 +805,67 @@ class AutomatedSnippetVerifier(Validator):
             results.append((snippet, normalized, found, score, best_match))
         return results
 
+    def _verify_inputs_with_values(
+        self, inputs: list, text: str
+    ) -> list[tuple[str, str, str, bool, float, Optional[str], bool, Optional[str]]]:
+        """
+        Verify input value_snippets against text AND check that values are in matched text.
+
+        For each input's value_snippet:
+        1. Check if snippet appears in paper text (fuzzy match)
+        2. If found, check if the declared value appears in the matched text from the paper
+
+        Args:
+            inputs: List of input dicts with name, value, units, value_snippet, units_snippet
+            text: Text to search in
+
+        Returns:
+            List of tuples:
+            (input_name, snippet, normalized, snippet_found, score, best_match,
+             value_in_match, value_pattern)
+
+            - snippet_found: True if snippet was found in paper text
+            - value_in_match: True if declared value was found in matched text (or no value to check)
+            - value_pattern: The pattern that matched the value, or None
+        """
+        results = []
+        for inp in inputs:
+            input_name = inp.get("name", "unnamed")
+            value = inp.get("value")
+            units = inp.get("units")
+            value_snippet = inp.get("value_snippet")
+
+            if not value_snippet:
+                continue
+
+            # Step 1: Check if snippet appears in paper text
+            snippet_found, score, normalized, matched_text = self.fuzzy_find_snippet(
+                value_snippet, text
+            )
+
+            # Step 2: If snippet found, check if value is in the matched text
+            value_in_match = True
+            value_pattern = None
+            if snippet_found and matched_text and value is not None:
+                value_in_match, value_pattern = self.check_value_in_matched_text(
+                    value, units, matched_text
+                )
+
+            results.append(
+                (
+                    input_name,
+                    value_snippet,
+                    normalized,
+                    snippet_found,
+                    score,
+                    matched_text,
+                    value_in_match,
+                    value_pattern,
+                )
+            )
+
+        return results
+
     def _print_snippet_results(
         self,
         snippet_results: list[tuple[str, str, bool, float, Optional[str]]],
@@ -827,6 +924,93 @@ class AutomatedSnippetVerifier(Validator):
 
         return found_count
 
+    def _print_input_value_results(
+        self,
+        input_results: list[tuple[str, str, str, bool, float, Optional[str], bool, Optional[str]]],
+        item_name: str,
+        text_source: str,
+        automated_results: list,
+    ) -> tuple[int, int]:
+        """
+        Print input verification results including value presence checking.
+
+        Args:
+            input_results: List of tuples from _verify_inputs_with_values
+            item_name: Display name for the item being verified
+            text_source: Source of text ("full_text", "abstract", etc.)
+            automated_results: List to append results to for report generation
+
+        Returns:
+            (snippets_found_count, values_found_count) tuple
+        """
+        # Sort: failures first (snippet not found, then value not found), then successes
+        # Key: (snippet_found, value_in_match, score)
+        input_results = sorted(input_results, key=lambda x: (x[3], x[6], x[4]))
+
+        # ANSI color codes
+        GREEN = "\033[92m"
+        YELLOW = "\033[93m"
+        RED = "\033[91m"
+        RESET = "\033[0m"
+
+        snippets_found = 0
+        values_found = 0
+
+        for (
+            input_name,
+            snippet,
+            normalized,
+            snippet_found,
+            score,
+            matched_text,
+            value_in_match,
+            value_pattern,
+        ) in input_results:
+            norm_display = normalized if len(normalized) <= 50 else normalized[:47] + "..."
+
+            if snippet_found and value_in_match:
+                # Full success: snippet found AND value in matched text
+                snippets_found += 1
+                values_found += 1
+                automated_results.append((item_name, snippet, True, score, text_source, None))
+                value_info = f", value: {value_pattern}" if value_pattern else ""
+                print(
+                    f'{GREEN}    ✓ [{input_name}] "{norm_display}" '
+                    f"(score: {score:.2f}{value_info}){RESET}"
+                )
+            elif snippet_found and not value_in_match:
+                # Snippet found but value NOT in matched text from paper
+                snippets_found += 1
+                automated_results.append(
+                    (item_name, snippet, False, score, text_source, "value_not_in_paper")
+                )
+                print(
+                    f'{RED}    ✗ [{input_name}] "{norm_display}" '
+                    f"(snippet found, but VALUE NOT IN PAPER TEXT){RESET}"
+                )
+                if matched_text:
+                    match_display = (
+                        matched_text if len(matched_text) <= 60 else matched_text[:57] + "..."
+                    )
+                    print(f'{RED}      → paper text: "{match_display}"{RESET}')
+            else:
+                # Snippet not found
+                automated_results.append((item_name, snippet, False, score, text_source, None))
+                is_near_miss = 0.6 <= score < self.fuzzy_threshold
+                color = YELLOW if is_near_miss else RED
+
+                print(
+                    f'{color}    ✗ [{input_name}] "{norm_display}" '
+                    f"(best score: {score:.2f}){RESET}"
+                )
+                if is_near_miss and matched_text:
+                    match_display = (
+                        matched_text if len(matched_text) <= 50 else matched_text[:47] + "..."
+                    )
+                    print(f'{YELLOW}      → closest match: "{match_display}"{RESET}')
+
+        return (snippets_found, values_found)
+
     def validate(self) -> ValidationReport:
         """
         Run automated snippet verification.
@@ -861,13 +1045,13 @@ class AutomatedSnippetVerifier(Validator):
         abstract_only_failures: dict = (
             {}
         )  # Abstract-only papers with failed snippets (after Unpaywall)
-        automated_results: list[tuple[str, str, bool, float, str]] = []
+        # Tuple: (item_name, snippet, found, score, source_type, failure_reason)
+        automated_results: list[tuple[str, str, bool, float, str, Optional[str]]] = []
 
         # Process each source
         total_sources = len(source_data)
         for idx, (source_tag, info) in enumerate(sorted(source_data.items()), 1):
             doi = info["doi"]
-            snippets = info["snippets"]
             filenames = sorted(set(inp["filename"] for inp in info["inputs"]))
             item_name = f"{', '.join(filenames)} → {source_tag}"
 
@@ -905,14 +1089,21 @@ class AutomatedSnippetVerifier(Validator):
                 print(f"  ✓ Retrieved text - {text_len:,} chars")
                 text_source = "unknown"
 
-            # Verify snippets
-            snippet_results = self._verify_snippets(snippets, text)
-            num_snippets = len(snippet_results)
-            found_count = sum(1 for _, _, found, _, _ in snippet_results if found)
+            # Verify value_snippets with value presence checking
+            inputs = info["inputs"]
+            input_results = self._verify_inputs_with_values(inputs, text)
+            num_inputs = len(input_results)
+
+            # Count successes (snippet found AND value in matched text)
+            full_success_count = sum(
+                1 for r in input_results if r[3] and r[6]  # snippet_found and value_in_match
+            )
 
             # If abstract-only with failures, try Unpaywall fallback before printing results
-            if text_source == "abstract" and found_count < num_snippets:
-                failed_snippets = [s for s, _, found, _, _ in snippet_results if not found]
+            if text_source == "abstract" and full_success_count < num_inputs:
+                failed_inputs = [
+                    r for r in input_results if not r[3] or not r[6]
+                ]  # snippet or value failed
 
                 print("  → Trying Unpaywall for publisher full text...")
                 unpaywall_text, updated_info, unpaywall_status = self.try_unpaywall_fallback(
@@ -926,16 +1117,19 @@ class AutomatedSnippetVerifier(Validator):
                         f"{len(unpaywall_text):,} chars"
                     )
 
-                    # Re-verify ALL snippets against full text (not just failed ones)
-                    snippet_results = self._verify_snippets(snippets, unpaywall_text)
-                    found_count = self._print_snippet_results(
-                        snippet_results, item_name, "full_text", automated_results
+                    # Re-verify ALL inputs against full text (not just failed ones)
+                    input_results = self._verify_inputs_with_values(inputs, unpaywall_text)
+                    snippets_found, values_found = self._print_input_value_results(
+                        input_results, item_name, "full_text", automated_results
                     )
-                    print(f"  Summary: {found_count}/{num_snippets} snippets matched")
+                    print(
+                        f"  Summary: {snippets_found}/{num_inputs} snippets matched, "
+                        f"{values_found}/{num_inputs} values verified"
+                    )
 
                     # If still failures, track for manual verification
-                    if found_count < num_snippets:
-                        still_failed = [s for s, _, found, _, _ in snippet_results if not found]
+                    if values_found < num_inputs:
+                        still_failed = [r[1] for r in input_results if not r[3] or not r[6]]
                         abstract_only_failures[source_tag] = {
                             **info,
                             "failed_snippets": still_failed,
@@ -943,25 +1137,33 @@ class AutomatedSnippetVerifier(Validator):
                 else:
                     print("  ✗ Unpaywall: No OA full text available")
                     # Print abstract results and track for manual verification
-                    found_count = self._print_snippet_results(
-                        snippet_results, item_name, text_source, automated_results
+                    snippets_found, values_found = self._print_input_value_results(
+                        input_results, item_name, text_source, automated_results
                     )
-                    print(f"  Summary: {found_count}/{num_snippets} snippets matched")
+                    print(
+                        f"  Summary: {snippets_found}/{num_inputs} snippets matched, "
+                        f"{values_found}/{num_inputs} values verified"
+                    )
                     abstract_only_failures[source_tag] = {
                         **info,
-                        "failed_snippets": failed_snippets,
+                        "failed_snippets": [r[1] for r in failed_inputs],
                     }
             else:
-                # Not abstract-only or all snippets matched - just print results
-                found_count = self._print_snippet_results(
-                    snippet_results, item_name, text_source, automated_results
+                # Not abstract-only or all inputs verified - just print results
+                snippets_found, values_found = self._print_input_value_results(
+                    input_results, item_name, text_source, automated_results
                 )
-                print(f"  Summary: {found_count}/{num_snippets} snippets matched")
+                print(
+                    f"  Summary: {snippets_found}/{num_inputs} snippets matched, "
+                    f"{values_found}/{num_inputs} values verified"
+                )
 
         print()
 
         # Add automated results to report
-        for item_name, snippet, found, score, source_type in automated_results:
+        # Tuple format: (item_name, snippet, found, score, source_type, failure_reason)
+        for result in automated_results:
+            item_name, snippet, found, score, source_type, failure_reason = result
             snippet_display = snippet if len(snippet) <= 50 else snippet[:47] + "..."
             if found:
                 if source_type == "abstract":
@@ -975,7 +1177,12 @@ class AutomatedSnippetVerifier(Validator):
                         f"Found in full text (score: {score:.2f})",
                     )
             else:
-                if source_type == "abstract":
+                if failure_reason == "value_not_in_paper":
+                    report.add_fail(
+                        f'{item_name} → "{snippet_display}"',
+                        f"Snippet found but VALUE NOT IN PAPER TEXT (score: {score:.2f})",
+                    )
+                elif source_type == "abstract":
                     report.add_fail(
                         f'{item_name} → "{snippet_display}"',
                         f"Not found in abstract (best score: {score:.2f}) - full text not available",
