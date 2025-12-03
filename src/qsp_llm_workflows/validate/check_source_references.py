@@ -69,23 +69,6 @@ class SourceReferenceValidator(Validator):
                         "definition": source if isinstance(source, dict) else {"source_tag": tag},
                     }
 
-        # Collect from methodological_sources
-        if "methodological_sources" in data:
-            ms = data["methodological_sources"]
-            if isinstance(ms, list):
-                for source in ms:
-                    if isinstance(source, dict) and "source_tag" in source:
-                        sources[source["source_tag"]] = {
-                            "type": "methodological",
-                            "definition": source,
-                        }
-            elif isinstance(ms, dict):
-                for tag, source in ms.items():
-                    sources[tag] = {
-                        "type": "methodological",
-                        "definition": source if isinstance(source, dict) else {"source_tag": tag},
-                    }
-
         return sources
 
     def extract_inputs_from_yaml(self, data: dict) -> list:
@@ -150,11 +133,11 @@ class SourceReferenceValidator(Validator):
                 errors.append(f"Source '{source_tag}': missing required field '{field}'")
 
         # Check DOI field based on source type
-        # Primary sources use 'doi', secondary/methodological use 'doi_or_url'
+        # Primary sources use 'doi', secondary sources use 'doi_or_url'
         if source_type == "primary":
             if "doi" not in definition or not definition["doi"]:
                 errors.append(f"Source '{source_tag}': missing required field 'doi'")
-        else:  # secondary or methodological
+        else:  # secondary
             if "doi_or_url" not in definition or not definition["doi_or_url"]:
                 errors.append(f"Source '{source_tag}': missing required field 'doi_or_url'")
 

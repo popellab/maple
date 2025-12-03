@@ -62,7 +62,7 @@ For this parameter, you must:
 - `derivation_explanation`: Step-by-step with "ASSUMPTION N: ..." references
 
 **Sources:**
-- Separate primary/secondary/methodological sources
+- Separate primary and secondary sources
 - All values/locations in inputs, not sources
 - Text/table extraction only (no digitization)
 

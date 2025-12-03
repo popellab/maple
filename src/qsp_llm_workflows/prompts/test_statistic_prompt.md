@@ -265,8 +265,7 @@ Confidence interval reasonableness:
 7. **key_study_limitations** - Critical limitations affecting reliability
 8. **primary_data_sources** - Papers with data (real DOIs required)
 9. **secondary_data_sources** - Reference values (doi_or_url field)
-10. **methodological_sources** - Formulas/methods (doi_or_url field)
-11. **validation_weights** - Quality scores for 7 dimensions (see rubrics below)
+10. **validation_weights** - Quality scores for 7 dimensions (see rubrics below)
 
 ---
 

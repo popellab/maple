@@ -349,9 +349,6 @@ def collect_existing_studies(
             if "data_sources" in study_data and study_data["data_sources"]:
                 all_sources.append(("data_sources", study_data["data_sources"]))
 
-            if "methodological_sources" in study_data and study_data["methodological_sources"]:
-                all_sources.append(("methodological_sources", study_data["methodological_sources"]))
-
             # Check v1 schema: sources (fallback)
             if "sources" in study_data and study_data["sources"]:
                 all_sources.append(("sources", study_data["sources"]))

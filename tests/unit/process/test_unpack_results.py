@@ -50,7 +50,6 @@ class TestUnpackResults:
                         "key_study_limitations": "Test limitations",
                         "primary_data_sources": [],
                         "secondary_data_sources": [],
-                        "methodological_sources": [],
                         "biological_relevance": {
                             "species_match": {"value": 1.0, "justification": "Test"},
                             "system_match": {"value": 1.0, "justification": "Test"},
@@ -102,7 +101,6 @@ class TestUnpackResults:
                     "key_study_limitations": "Test limitations",
                     "primary_data_sources": [],
                     "secondary_data_sources": [],
-                    "methodological_sources": [],
                     "biological_relevance": {
                         "species_match": {"value": 1.0, "justification": "Test"},
                         "system_match": {"value": 1.0, "justification": "Test"},
@@ -154,7 +152,6 @@ derivation_explanation: Old explanation
 key_study_limitations: Old limitations
 primary_data_sources: []
 secondary_data_sources: []
-methodological_sources: []
 biological_relevance:
   species_match:
     value: 0.8

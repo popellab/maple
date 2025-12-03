@@ -50,18 +50,6 @@ class SecondarySource(BaseModel):
     doi_or_url: Optional[str] = Field(None, description="DOI or URL (or null)")
 
 
-class MethodologicalSource(BaseModel):
-    """A methodological source (formulas, conversion factors)."""
-
-    source_tag: str = Field(description="Unique tag for referencing")
-    title: str = Field(description="Full title")
-    first_author: str = Field(description="First author last name")
-    year: int = Field(description="Publication year")
-    doi_or_url: Optional[str] = Field(None, description="DOI or URL (or null)")
-    used_for: str = Field(description="What this source is used for")
-    method_description: str = Field(description="Description of the method")
-
-
 class WeightScore(BaseModel):
     """A rubric-based weight score with justification."""
 
@@ -175,9 +163,6 @@ class ParameterMetadata(BaseModel):
     )
     secondary_data_sources: List[SecondarySource] = Field(
         description="Secondary data sources (reference values, constants)"
-    )
-    methodological_sources: List[MethodologicalSource] = Field(
-        description="Methodological sources (formulas, analysis methods)"
     )
     biological_relevance: BiologicalRelevance = Field(description="Biological relevance weights")
 
@@ -319,9 +304,6 @@ class TestStatistic(BaseModel):
     )
     secondary_data_sources: List[SecondarySource] = Field(
         description="Secondary data sources (reference values, constants)"
-    )
-    methodological_sources: List[MethodologicalSource] = Field(
-        description="Methodological sources (formulas, analysis methods)"
     )
     validation_weights: ValidationWeights = Field(description="Validation weights")
 

@@ -66,7 +66,6 @@ class TestSchemaValidator:
                     }
                 ],
                 "secondary_data_sources": [],
-                "methodological_sources": [],
                 "biological_relevance": {
                     "species_match": {"value": 1.0, "justification": "Same species"},
                     "system_match": {"value": 1.0, "justification": "Same system"},
@@ -798,28 +797,6 @@ class TestDOIValidator:
         sources = validator.collect_sources(data)
         assert len(sources) == 1
         assert sources[0][0] == "src1"
-
-    def test_collect_sources_from_methodological(self):
-        """Test collecting sources from methodological_sources."""
-        validator = DOIValidator("/tmp", rate_limit=0.1)
-
-        data = {
-            "methodological_sources": [
-                {
-                    "source_tag": "method1",
-                    "title": "Statistical Methods",
-                    "first_author": "Fisher",
-                    "year": 2018,
-                    "doi_or_url": "https://example.com/methods",
-                    "used_for": "Statistical analysis",
-                    "method_description": "Bootstrap methods",
-                }
-            ]
-        }
-
-        sources = validator.collect_sources(data)
-        assert len(sources) == 1
-        assert sources[0][0] == "method1"
 
     def test_collect_sources_skips_missing_doi(self):
         """Test collector skips sources without DOI/URL."""

@@ -95,7 +95,6 @@ derivation_explanation: Simple calculation
 key_study_limitations: None
 primary_data_sources: []
 secondary_data_sources: []
-methodological_sources: []
 biological_relevance:
   species_match:
     value: 1.0
@@ -151,7 +150,6 @@ derivation_explanation: Simple calculation
 key_study_limitations: None
 primary_data_sources: []
 secondary_data_sources: []
-methodological_sources: []
 biological_relevance:
   species_match:
     value: 1.0
@@ -349,7 +347,6 @@ derivation_explanation: Simple calculation
 key_study_limitations: None
 primary_data_sources: []
 secondary_data_sources: []
-methodological_sources: []
 biological_relevance:
   species_match:
     value: 1.0

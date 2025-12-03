@@ -708,7 +708,6 @@ class ValidationFixBatchCreator(BatchCreator):
   "key_study_limitations": "...",
   "primary_data_sources": [...],
   "secondary_data_sources": [...],
-  "methodological_sources": [...],
   "validation_weights": {
     "species_match": {"value": 1.0, "justification": "..."},
     ...
@@ -752,7 +751,6 @@ class ValidationFixBatchCreator(BatchCreator):
   "key_study_limitations": "...",
   "primary_data_sources": [...],
   "secondary_data_sources": [...],
-  "methodological_sources": [...],
   "biological_relevance": {
     "species_match": {"value": 1.0, "justification": "..."},
     ...

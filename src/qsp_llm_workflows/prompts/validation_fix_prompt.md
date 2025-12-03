@@ -59,7 +59,7 @@ Text snippets are automatically verified against the full paper text. When fixin
 
 ### Source Reference Errors
 - Ensure every input has a valid source_ref field
-- source_ref should reference a key in data_sources or methodological_sources
+- source_ref should reference a key in primary_data_sources or secondary_data_sources
 - Add missing source entries if needed, using "INFERRED" or similar placeholders
 
 ### DOI Resolution Errors

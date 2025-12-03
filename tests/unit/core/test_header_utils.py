@@ -138,7 +138,6 @@ class TestParameterMetadataSplitMerge:
                 )
             ],
             secondary_data_sources=[],
-            methodological_sources=[],
             biological_relevance=BiologicalRelevance(
                 species_match=WeightScore(value=1.0, justification="Human cells"),
                 system_match=WeightScore(value=0.9, justification="Similar system"),
@@ -234,7 +233,6 @@ class TestParameterMetadataSplitMerge:
                 }
             ],
             "secondary_data_sources": [],
-            "methodological_sources": [],
             "biological_relevance": {
                 "species_match": {"value": 1.0, "justification": "Human"},
                 "system_match": {"value": 0.9, "justification": "Similar"},
@@ -335,7 +333,6 @@ class TestHeaderManager:
             "key_study_limitations": "Limitations",
             "primary_data_sources": [],
             "secondary_data_sources": [],
-            "methodological_sources": [],
             "biological_relevance": {
                 "species_match": {"value": 1.0, "justification": "Human"},
                 "system_match": {"value": 0.9, "justification": "Similar"},
@@ -387,7 +384,6 @@ class TestHeaderManager:
             "key_study_limitations": "Limitations",
             "primary_data_sources": [],
             "secondary_data_sources": [],
-            "methodological_sources": [],
             "biological_relevance": {
                 "species_match": {"value": 1.0, "justification": "Human"},
                 "system_match": {"value": 0.9, "justification": "Similar"},
