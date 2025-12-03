@@ -42,7 +42,7 @@ For this test statistic, find 1-2 real published papers that report:
 
 **Handling missing variability:**
 If a study reports mean/median but no dispersion:
-1. Search for variability in similar PDAC studies with the same marker
+1. Search for variability in similar {{CANCER_TYPE}} studies with the same marker
 2. If found, borrow the CV (coefficient of variation) and document the source
 3. If not found, assume a conservative CV (e.g., 50-100% for immune cell counts) and document this assumption
 4. Reduce `overall_confidence` by 0.1-0.15 for borrowed/assumed variability
@@ -69,14 +69,14 @@ Only after exhausting the options above, report: "Insufficient data available" a
 When searching for measurements, prefer sources in this order:
 
 **Tier 1 (Best):** Same indication, same compartment, same measurement modality
-- Example: PDAC tumor IHC for intratumoral cell densities
+- Example: {{CANCER_TYPE}} tumor IHC for intratumoral cell densities
 
 **Tier 2 (Good):** Same indication, adjacent compartment OR different modality
-- Example: PDAC blood flow cytometry (for tumor, need to justify transfer)
-- Example: PDAC tumor scRNA-seq (different modality than IHC)
+- Example: {{CANCER_TYPE}} blood flow cytometry (for tumor, need to justify transfer)
+- Example: {{CANCER_TYPE}} tumor scRNA-seq (different modality than IHC)
 
 **Tier 3 (Acceptable with justification):** Related indication, same compartment
-- Example: Other GI cancers for PDAC (e.g., colorectal)
+- Example: Other related cancers for {{CANCER_TYPE}} (e.g., similar tumor types)
 - Requires explicit biology justification
 
 **Tier 4 (Last resort):** Pan-cancer or non-cancer reference
@@ -92,22 +92,22 @@ When searching for measurements, prefer sources in this order:
 
 For tumor cytokine measurements (V_T.IL6, V_T.IL10, V_T.IFNg, V_T.TGFb, V_T.CCL2, V_T.CXCL12, V_T.IL12, V_T.PDGF, etc.), the compartment/matrix hierarchy below applies **in addition to** the indication hierarchy above.
 
-**CRITICAL: Always search for PDAC-specific data first within each compartment tier.** Only fall back to cross-indication data (e.g., CRC, breast) if PDAC data is truly unavailable for that compartment type.
+**CRITICAL: Always search for {{CANCER_TYPE}}-specific data first within each compartment tier.** Only fall back to cross-indication data (e.g., other solid tumors) if {{CANCER_TYPE}} data is truly unavailable for that compartment type.
 
 **Compartment preference order:**
 
-**Tier 1 (Best):** PDAC tumor interstitial fluid (TIF) - direct TME measurement
-- Obtained by centrifugation or microdialysis of resected PDAC tumors
+**Tier 1 (Best):** {{CANCER_TYPE}} tumor interstitial fluid (TIF) - direct TME measurement
+- Obtained by centrifugation or microdialysis of resected {{CANCER_TYPE}} tumors
 - Units: pg/mL - directly comparable to model (after nM→pg/mL conversion)
 
-**Tier 2 (Good):** PDAC tumor tissue homogenate/lysate
+**Tier 2 (Good):** {{CANCER_TYPE}} tumor tissue homogenate/lysate
 - Common in literature, reported as pg/mg protein or pg/mg tissue
 - Requires unit conversion (see below)
 - Includes both extracellular and some intracellular cytokine pools
-- **Known PDAC sources exist** (e.g., Bellone et al. 2006 measured IL-6, IL-10, TGF-β in PDAC tissue homogenates)
+- Search for {{CANCER_TYPE}}-specific studies measuring cytokines in tissue homogenates
 
-**Tier 3 (Acceptable with caveats):** Tumor tissue/TIF from related indications (CRC, breast, ovarian)
-- Only use if PDAC-specific data unavailable after thorough search
+**Tier 3 (Acceptable with caveats):** Tumor tissue/TIF from related indications
+- Only use if {{CANCER_TYPE}}-specific data unavailable after thorough search
 - Requires biological justification for cross-indication transfer
 - Reduce `indication_match` to ≤0.65
 
@@ -120,12 +120,12 @@ For tumor cytokine measurements (V_T.IL6, V_T.IL10, V_T.IFNg, V_T.TGFb, V_T.CCL2
 
 | Data Tier | `system_match` | `indication_match` | `overall_confidence` penalty |
 |-----------|----------------|-------------------|------------------------------|
-| Tier 1 (PDAC TIF) | 1.0 | 1.0 | None |
-| Tier 2 (PDAC Homogenate) | 0.85-0.9 | 1.0 | -0.05 to -0.1 (unit conversion) |
+| Tier 1 ({{CANCER_TYPE}} TIF) | 1.0 | 1.0 | None |
+| Tier 2 ({{CANCER_TYPE}} Homogenate) | 0.85-0.9 | 1.0 | -0.05 to -0.1 (unit conversion) |
 | Tier 3 (Cross-indication) | 0.8-0.9 | ≤0.65 | -0.15 to -0.25 (indication + compartment) |
 | Tier 4 (Serum/plasma) | ≤0.5 | varies | -0.2 to -0.3 (compartment mismatch) |
 
-**Note:** Cross-indication data (Tier 3) should ONLY be used after exhausting PDAC-specific sources. If using CRC or other GI cancer data for PDAC, explicitly document why PDAC data was not found.
+**Note:** Cross-indication data (Tier 3) should ONLY be used after exhausting {{CANCER_TYPE}}-specific sources. If using data from other cancers for {{CANCER_TYPE}}, explicitly document why {{CANCER_TYPE}} data was not found.
 
 **Unit conversion for tissue homogenate data:**
 
@@ -134,7 +134,7 @@ To convert pg/mg protein → pg/mL (model-compatible):
 pg/mL ≈ pg/mg protein × [mg protein / mL tumor volume]
 ```
 
-Typical conversion factor: **~100 mg protein/mL** for dense tumors like PDAC (range: 50-150).
+Literature values for solid tumor protein content typically range **50-150 mg protein/mL**; search for {{CANCER_TYPE}}-specific values if available.
 
 Example: If literature reports IL-6 = 50 pg/mg protein:
 - Point estimate: 50 × 100 = 5,000 pg/mL
@@ -219,7 +219,7 @@ tot_cells = 8500  # assumed
 Example (GOOD - documented with uncertainty propagation):
 ```python
 # Total nucleated cell density prior: 8500 cells/mm² (95% CI: 5000-14000)
-# Based on PDAC histology literature (no single source; methodological prior)
+# Based on histology literature (no single source; methodological prior)
 # Propagated as lognormal with sigma=0.35
 tot_cells = rng.lognormal(np.log(8500), 0.35, size=N)
 ```

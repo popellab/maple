@@ -43,6 +43,7 @@ def build_test_statistic_prompt(
     scenario_context: str,
     required_species_with_units: str,
     derived_species_description: str,
+    cancer_type: str,
     used_primary_studies: str = "",
 ) -> str:
     """
@@ -53,6 +54,7 @@ def build_test_statistic_prompt(
         scenario_context: Experimental scenario and dosing context
         required_species_with_units: Required species with units
         derived_species_description: Description of derived species/test statistic
+        cancer_type: Cancer type/indication (e.g., "PDAC", "melanoma")
         used_primary_studies: List of already-used studies (optional)
 
     Returns:
@@ -69,6 +71,7 @@ def build_test_statistic_prompt(
     prompt = prompt.replace("{{SCENARIO_CONTEXT}}", scenario_context)
     prompt = prompt.replace("{{REQUIRED_SPECIES_WITH_UNITS}}", required_species_with_units)
     prompt = prompt.replace("{{DERIVED_SPECIES_DESCRIPTION}}", derived_species_description)
+    prompt = prompt.replace("{{CANCER_TYPE}}", cancer_type)
     prompt = prompt.replace("{{SOURCE_AND_VALIDATION_RUBRICS}}", rubrics)
     prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
 

@@ -522,12 +522,16 @@ class TestStatisticBatchCreator(BatchCreator):
                     required_species, species_units_mapping
                 )
 
+                # Get cancer type from CSV row
+                cancer_type = row.get("cancer_type", "unknown")
+
                 # Build the prompt using simple prompt builder
                 prompt = build_test_statistic_prompt(
                     model_context=model_context_block,
                     scenario_context=scenario_context_block,
                     required_species_with_units=required_species_with_units,
                     derived_species_description=derived_species_description,
+                    cancer_type=cancer_type,
                     used_primary_studies="",  # No used studies tracking for test statistics yet
                 )
 
