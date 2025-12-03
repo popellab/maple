@@ -90,20 +90,26 @@ When searching for measurements, prefer sources in this order:
 
 ## Cytokine/Chemokine Data Sources
 
-For tumor cytokine measurements (V_T.IL6, V_T.IL10, V_T.IFNg, V_T.TGFb, V_T.CCL2, V_T.CXCL12, V_T.IL12, V_T.PDGF, etc.), prefer sources in this order:
+For tumor cytokine measurements (V_T.IL6, V_T.IL10, V_T.IFNg, V_T.TGFb, V_T.CCL2, V_T.CXCL12, V_T.IL12, V_T.PDGF, etc.), the compartment/matrix hierarchy below applies **in addition to** the indication hierarchy above.
 
-**Tier 1 (Best):** Tumor interstitial fluid (TIF) - direct TME measurement
-- Obtained by centrifugation or microdialysis of resected tumors
+**CRITICAL: Always search for PDAC-specific data first within each compartment tier.** Only fall back to cross-indication data (e.g., CRC, breast) if PDAC data is truly unavailable for that compartment type.
+
+**Compartment preference order:**
+
+**Tier 1 (Best):** PDAC tumor interstitial fluid (TIF) - direct TME measurement
+- Obtained by centrifugation or microdialysis of resected PDAC tumors
 - Units: pg/mL - directly comparable to model (after nM→pg/mL conversion)
 
-**Tier 2 (Good):** Tumor tissue homogenate/lysate
+**Tier 2 (Good):** PDAC tumor tissue homogenate/lysate
 - Common in literature, reported as pg/mg protein or pg/mg tissue
 - Requires unit conversion (see below)
 - Includes both extracellular and some intracellular cytokine pools
+- **Known PDAC sources exist** (e.g., Bellone et al. 2006 measured IL-6, IL-10, TGF-β in PDAC tissue homogenates)
 
-**Tier 3 (Acceptable with caveats):** Tumor interstitial fluid from related indications
-- Example: Breast or ovarian TIF data for PDAC (with indication_match penalty)
+**Tier 3 (Acceptable with caveats):** Tumor tissue/TIF from related indications (CRC, breast, ovarian)
+- Only use if PDAC-specific data unavailable after thorough search
 - Requires biological justification for cross-indication transfer
+- Reduce `indication_match` to ≤0.65
 
 **Tier 4 (Last resort for cytokines):** Serum/plasma
 - Reflects systemic levels, NOT tumor microenvironment concentrations
@@ -112,12 +118,14 @@ For tumor cytokine measurements (V_T.IL6, V_T.IL10, V_T.IFNg, V_T.TGFb, V_T.CCL2
 
 **Confidence score adjustments for cytokine data tiers:**
 
-| Data Tier | `system_match` | `overall_confidence` penalty |
-|-----------|----------------|------------------------------|
-| Tier 1 (TIF) | 1.0 | None |
-| Tier 2 (Homogenate) | 0.85-0.9 | -0.05 to -0.1 (for unit conversion uncertainty) |
-| Tier 3 (Cross-indication TIF) | 0.8-0.9 | -0.1 to -0.15 (also reduce `indication_match`) |
-| Tier 4 (Serum/plasma) | ≤0.5 | -0.2 to -0.3 (compartment mismatch) |
+| Data Tier | `system_match` | `indication_match` | `overall_confidence` penalty |
+|-----------|----------------|-------------------|------------------------------|
+| Tier 1 (PDAC TIF) | 1.0 | 1.0 | None |
+| Tier 2 (PDAC Homogenate) | 0.85-0.9 | 1.0 | -0.05 to -0.1 (unit conversion) |
+| Tier 3 (Cross-indication) | 0.8-0.9 | ≤0.65 | -0.15 to -0.25 (indication + compartment) |
+| Tier 4 (Serum/plasma) | ≤0.5 | varies | -0.2 to -0.3 (compartment mismatch) |
+
+**Note:** Cross-indication data (Tier 3) should ONLY be used after exhausting PDAC-specific sources. If using CRC or other GI cancer data for PDAC, explicitly document why PDAC data was not found.
 
 **Unit conversion for tissue homogenate data:**
 
