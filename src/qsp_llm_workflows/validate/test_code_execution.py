@@ -468,13 +468,33 @@ class CodeExecutionValidator(Validator):
         YELLOW = "\033[93m"
         RESET = "\033[0m"
 
+        # Count matches vs mismatches
+        n_match = sum(1 for info in self.executable_files.values() if info["is_valid"])
+        n_mismatch = len(self.executable_files) - n_match
+
         print()
         print("=" * 60)
         print("APPLY COMPUTED VALUES")
         print("=" * 60)
         print()
         print(f"Found {len(self.executable_files)} files with executable code.")
-        print("You can choose to overwrite YAML values with computed values for each file.")
+        print(f"  {GREEN}✓ {n_match} match{RESET}")
+        print(f"  {YELLOW}✗ {n_mismatch} mismatch{RESET}")
+        print()
+
+        # Ask if user wants to enter the review
+        while True:
+            response = (
+                input("Review files and optionally overwrite values? [y/n]: ").strip().lower()
+            )
+            if response in ("y", "yes"):
+                break
+            elif response in ("n", "no"):
+                print("Skipping value overwrite review.")
+                return
+            else:
+                print("Please enter 'y' or 'n'")
+
         print()
 
         updated_count = 0
