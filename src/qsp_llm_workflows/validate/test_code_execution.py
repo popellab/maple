@@ -17,7 +17,6 @@ Usage:
         --threshold 5.0
 """
 import re
-from pathlib import Path
 
 import numpy as np
 
@@ -306,9 +305,10 @@ class CodeExecutionValidator(Validator):
         Validate code execution in a single YAML file.
 
         Returns:
-            (is_valid, error_msg, code_type, computed_values) tuple
+            (is_valid, error_msg, code_type, computed_values, current_values) tuple
             - code_type: "parameter" or "test_statistic" or None
             - computed_values: dict with median, iqr, ci95 or empty dict
+            - current_values: dict with current YAML values (median, iqr, ci95)
         """
         data = file_info["data"]
         file_info["filename"]
@@ -317,13 +317,13 @@ class CodeExecutionValidator(Validator):
         python_code, code_type = self.extract_python_code(data)
 
         if not python_code:
-            return (True, "No Python code found (skipped)", None, {})
+            return (True, "No Python code found (skipped)", None, {}, {})
 
         # Extract inputs
         inputs = self.extract_inputs(data)
 
         if not inputs:
-            return (False, "No inputs defined", code_type, {})
+            return (False, "No inputs defined", code_type, {}, {})
 
         # Extract expected values from YAML
         expected_mean = None
@@ -343,6 +343,13 @@ class CodeExecutionValidator(Validator):
             expected_variance = estimates.get("iqr") or estimates.get("variance")
             expected_ci95 = estimates.get("ci95")
 
+        # Store current YAML values
+        current_values = {
+            "median": expected_mean,
+            "iqr": expected_variance,
+            "ci95": expected_ci95 if expected_ci95 else [None, None],
+        }
+
         # Execute Python code with comparison
         success, message, results = self.execute_python_code(
             python_code, inputs, code_type, expected_mean, expected_variance, expected_ci95
@@ -358,7 +365,7 @@ class CodeExecutionValidator(Validator):
                 "ci95": [cv["ci95_lower"], cv["ci95_upper"]],
             }
 
-        return (success, message, code_type, computed_values)
+        return (success, message, code_type, computed_values, current_values)
 
     def validate(self) -> ValidationReport:
         """Validate Python code in all YAML files."""
@@ -390,7 +397,9 @@ class CodeExecutionValidator(Validator):
             # Show progress
             print(f"[{idx}/{total_files}] {filename}")
 
-            is_valid, message, code_type, computed_values = self.validate_file(file_info)
+            is_valid, message, code_type, computed_values, current_values = self.validate_file(
+                file_info
+            )
 
             # Store computed values for all files with executable code
             if code_type and computed_values:
@@ -398,6 +407,7 @@ class CodeExecutionValidator(Validator):
                     "filename": filename,
                     "code_type": code_type,
                     "computed_values": computed_values,
+                    "current_values": current_values,
                     "is_valid": is_valid,
                 }
 
@@ -474,20 +484,35 @@ class CodeExecutionValidator(Validator):
             filename = info["filename"]
             code_type = info["code_type"]
             computed = info["computed_values"]
+            current = info["current_values"]
             is_valid = info["is_valid"]
 
             # Show file info
             status = f"{GREEN}✓ MATCH{RESET}" if is_valid else f"{YELLOW}✗ MISMATCH{RESET}"
             print(f"{CYAN}File: {filename}{RESET} [{status}]")
-            print(f"  Computed values:")
-            print(f"    median: {computed['median']:.6e}")
-            print(f"    iqr:    {computed['iqr']:.6e}")
-            print(f"    ci95:   [{computed['ci95'][0]:.6e}, {computed['ci95'][1]:.6e}]")
+
+            # Format current values (handle None)
+            def fmt(val):
+                return f"{val:.6e}" if val is not None else "None"
+
+            def fmt_ci95(ci):
+                if ci and ci[0] is not None and ci[1] is not None:
+                    return f"[{ci[0]:.6e}, {ci[1]:.6e}]"
+                return str(ci)
+
+            # Show current vs computed values side by side
+            print(f"  {'Field':<8} {'Current (YAML)':<20} {'Computed (code)':<20}")
+            print(f"  {'-'*8} {'-'*20} {'-'*20}")
+            print(f"  {'median':<8} {fmt(current['median']):<20} {fmt(computed['median']):<20}")
+            print(f"  {'iqr':<8} {fmt(current['iqr']):<20} {fmt(computed['iqr']):<20}")
+            print(f"  {'ci95':<8} {fmt_ci95(current['ci95']):<20} {fmt_ci95(computed['ci95']):<20}")
             print()
 
             # Prompt user
             while True:
-                response = input("  Overwrite YAML with computed values? [y/n/q(uit)]: ").strip().lower()
+                response = (
+                    input("  Overwrite YAML with computed values? [y/n/q(uit)]: ").strip().lower()
+                )
                 if response in ("y", "yes"):
                     success = self._update_yaml_values(filepath, code_type, computed)
                     if success:
@@ -594,9 +619,7 @@ class CodeExecutionValidator(Validator):
                 #   - 1.23
                 #   - 4.56
                 ci95_multiline_pattern = (
-                    r"(^\s+ci95:\s*\n)"
-                    r"(\s+- )[\d.eE+-]+\n"
-                    r"(\s+- )[\d.eE+-]+"
+                    r"(^\s+ci95:\s*\n)" r"(\s+- )[\d.eE+-]+\n" r"(\s+- )[\d.eE+-]+"
                 )
                 replacement = rf"\g<1>\g<2>{ci95_lower:.10g}\n\g<3>{ci95_upper:.10g}"
                 section_content = re.sub(

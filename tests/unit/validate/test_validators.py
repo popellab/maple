@@ -249,6 +249,11 @@ def derive_parameter(inputs):
             assert stored["computed_values"]["ci95"] == [1.0, 3.0]
             assert stored["is_valid"] is False  # Values don't match
 
+            # Check that current YAML values were also stored
+            assert stored["current_values"]["median"] == 99.0
+            assert stored["current_values"]["iqr"] == 99.0
+            assert stored["current_values"]["ci95"] == [99.0, 99.0]
+
     def test_update_yaml_values_inline_ci95(self):
         """Test _update_yaml_values correctly updates YAML with inline ci95 format."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -342,9 +347,7 @@ def derive_parameter(inputs):
             validator = CodeExecutionValidator(tmpdir, interactive=False)
             computed = {"median": 100.0, "iqr": 50.0, "ci95": [25.0, 175.0]}
 
-            success = validator._update_yaml_values(
-                str(yaml_file), "test_statistic", computed
-            )
+            success = validator._update_yaml_values(str(yaml_file), "test_statistic", computed)
             assert success is True
 
             # Read back and verify
