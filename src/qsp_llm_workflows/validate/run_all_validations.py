@@ -35,7 +35,7 @@ from qsp_llm_workflows.validate.check_duplicate_primary_sources import (
 from qsp_llm_workflows.validate.check_snippet_sources_automated import (
     AutomatedSnippetVerifier,
 )
-from qsp_llm_workflows.validate.tag_validation_results import tag_directory
+from qsp_llm_workflows.validate.tag_validation_results import tag_files_individually
 
 # Load environment variables from .env file
 load_dotenv()
@@ -117,57 +117,30 @@ Examples:
     # Print master summary
     orchestrator.print_master_summary(result)
 
-    # Tag files with validation results
+    # Tag files with validation results (per-file based on which validations each passed)
     print(f"\n{'='*60}")
     print("TAGGING FILES WITH VALIDATION RESULTS")
     print(f"{'='*60}\n")
 
-    # Get validation tags for passed validations
-    validation_tags = [
-        name.lower().replace(" ", "_").replace("-", "_")
-        for name in result.get_passed_validation_names()
-    ]
+    # Get per-file validation tags
+    file_tags = result.get_per_file_tags()
 
-    if validation_tags:
-        print(f"Validation tags to add: {', '.join(validation_tags)}")
+    if file_tags:
         try:
-            tag_directory(str(data_dir), validation_tags)
-            print("✓ Files tagged successfully")
+            tagged_count = tag_files_individually(str(data_dir), file_tags)
+            print(f"✓ Tagged {tagged_count} files with their passed validations")
         except Exception as e:
             print(f"⚠ Warning: Could not tag files: {e}")
     else:
-        print("No validations passed - skipping tagging")
+        print("No files passed any validations - skipping tagging")
 
     print()
 
-    # Check if any validations failed
+    # Exit with appropriate code
     if result.has_failures:
-        # Provide instructions for running validation fix workflow
-        print("\n" + "=" * 60)
-        print("VALIDATION FAILURES DETECTED")
-        print("=" * 60)
-        print("\nYou can automatically fix validation errors by submitting")
-        print("failed YAMLs back to OpenAI for correction.")
-        print("\nTo run validation fix workflow:")
-
-        # Construct fix command with --dir if custom directory was used
-        if args.dir:
-            fix_cmd = f"qsp-fix {args.workflow_type} --immediate --dir {args.dir}"
-        else:
-            fix_cmd = f"qsp-fix {args.workflow_type} --immediate"
-
-        print(f"  {fix_cmd}")
-        print("\nThis will:")
-        print("  1. Create fix batch requests from validation failures")
-        print("  2. Upload to OpenAI API")
-        print("  3. Monitor until completion")
-        print("  4. Unpack fixed YAMLs (overwrites originals)")
-        print("  5. Prompt you to re-run validation")
-        print()
-
         sys.exit(1)
     else:
-        print("\n✓ All validations passed!")
+        print("✓ All validations passed!")
         sys.exit(0)
 
 

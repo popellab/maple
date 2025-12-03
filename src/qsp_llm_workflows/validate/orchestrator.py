@@ -42,12 +42,47 @@ class ValidationResult:
 
     def get_passed_validation_names(self) -> List[str]:
         """
-        Get list of validation names that passed.
+        Get list of validation names that passed globally (all files passed).
 
         Returns:
             List of validation names (for tagging)
         """
         return [report.name for report in self.reports if len(report.failed) == 0]
+
+    def get_per_file_tags(self) -> Dict[str, List[str]]:
+        """
+        Get validation tags for each file based on which validations it passed.
+
+        Returns:
+            Dict mapping filename to list of validation tags that file passed
+        """
+        # Collect all filenames from all reports
+        all_files = set()
+        for report in self.reports:
+            for entry in report.passed:
+                all_files.add(entry["item"])
+            for entry in report.failed:
+                all_files.add(entry["item"])
+
+        # For each file, determine which validations it passed
+        file_tags: Dict[str, List[str]] = {}
+        for filename in all_files:
+            tags = []
+            for report in self.reports:
+                # Check if this file passed this validation
+                passed_items = {entry["item"] for entry in report.passed}
+                failed_items = {entry["item"] for entry in report.failed}
+
+                # File passed if it's in passed list and not in failed list
+                if filename in passed_items and filename not in failed_items:
+                    # Convert validation name to tag format
+                    tag = report.name.lower().replace(" ", "_").replace("-", "_")
+                    tags.append(tag)
+
+            if tags:
+                file_tags[filename] = tags
+
+        return file_tags
 
     def to_dict(self) -> Dict[str, Any]:
         """

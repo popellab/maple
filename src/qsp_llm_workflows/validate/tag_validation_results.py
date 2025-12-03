@@ -93,11 +93,11 @@ def tag_file(file_path: Path, validation_tags: list) -> bool:
 
 def tag_directory(data_dir: str, validation_tags: list) -> int:
     """
-    Tag all YAML files in a directory with validation results.
+    Tag all YAML files in a directory with the same validation results.
 
     Args:
         data_dir: Directory containing YAML files
-        validation_tags: List of validation tag strings
+        validation_tags: List of validation tag strings (applied to all files)
 
     Returns:
         Number of files successfully tagged
@@ -117,6 +117,32 @@ def tag_directory(data_dir: str, validation_tags: list) -> int:
     for yaml_file in yaml_files:
         if tag_file(yaml_file, validation_tags):
             success_count += 1
+
+    return success_count
+
+
+def tag_files_individually(data_dir: str, file_tags: dict) -> int:
+    """
+    Tag YAML files with per-file validation results.
+
+    Args:
+        data_dir: Directory containing YAML files
+        file_tags: Dict mapping filename to list of validation tags
+                   e.g., {"file1.yaml": ["schema", "code_execution"], "file2.yaml": ["schema"]}
+
+    Returns:
+        Number of files successfully tagged
+    """
+    data_dir_path = Path(data_dir)
+    if not data_dir_path.exists():
+        raise ValueError(f"Directory not found: {data_dir}")
+
+    success_count = 0
+    for filename, tags in file_tags.items():
+        file_path = data_dir_path / filename
+        if file_path.exists() and tags:
+            if tag_file(file_path, tags):
+                success_count += 1
 
     return success_count
 

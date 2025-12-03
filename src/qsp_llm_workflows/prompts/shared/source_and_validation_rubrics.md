@@ -4,7 +4,6 @@
 
 **Primary:** Original experimental data. Use real DOIs. No reuse across derivations.
 **Secondary:** Reference values, textbooks. Can reuse. Use `doi_or_url` field.
-**Methodological:** Formulas, methods. Can reuse. Use `doi_or_url` field + `used_for` + `method_description`.
 
 **Data extraction:**
 - Prefer text and tables when available

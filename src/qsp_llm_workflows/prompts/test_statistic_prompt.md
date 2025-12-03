@@ -378,7 +378,7 @@ Text snippets are automatically verified against the full paper text. Follow the
 }
 ```
 
-**Secondary/Methodological (doi_or_url field):**
+**Secondary (doi_or_url field):**
 Same structure but use `doi_or_url` instead of `doi` (can be DOI, URL, or null)
 
 ---

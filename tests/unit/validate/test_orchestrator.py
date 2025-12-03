@@ -6,10 +6,12 @@ import json
 import tempfile
 from pathlib import Path
 
+import yaml
 
 from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.validate.orchestrator import ValidationOrchestrator, ValidationResult
 from qsp_llm_workflows.validate.validation_utils import ValidationReport
+from qsp_llm_workflows.validate.tag_validation_results import tag_files_individually
 
 
 class PassingValidator(Validator):
@@ -312,3 +314,59 @@ class TestValidationOrchestrator:
             assert summary["validations"][0]["success"] is True
             assert summary["validations"][1]["name"] == "Failing Validation"
             assert summary["validations"][1]["success"] is False
+
+    def test_get_per_file_tags(self):
+        """Test getting per-file validation tags based on which validations each file passed."""
+        # Create reports where different files pass different validations
+        report1 = ValidationReport("Schema Validation")
+        report1.add_pass("file1.yaml", "OK")
+        report1.add_pass("file2.yaml", "OK")
+        report1.add_fail("file3.yaml", "Failed schema")
+
+        report2 = ValidationReport("Code Execution")
+        report2.add_pass("file1.yaml", "OK")
+        report2.add_fail("file2.yaml", "Code error")
+        report2.add_pass("file3.yaml", "OK")
+
+        result = ValidationResult([report1, report2], "/data", "Model")
+        file_tags = result.get_per_file_tags()
+
+        # file1 passed both validations
+        assert len(file_tags["file1.yaml"]) == 2
+
+        # file2 passed schema only
+        assert "schema_validation" in file_tags["file2.yaml"]
+        assert "code_execution" not in file_tags["file2.yaml"]
+
+        # file3 passed code execution only
+        assert "code_execution" in file_tags["file3.yaml"]
+        assert "schema_validation" not in file_tags["file3.yaml"]
+
+
+class TestTagFilesIndividually:
+    """Test tag_files_individually function."""
+
+    def test_tags_files_with_different_tags(self):
+        """Test that files are tagged with their individual validation results."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file1 = Path(tmpdir) / "file1.yaml"
+            file2 = Path(tmpdir) / "file2.yaml"
+            file1.write_text("parameter_name: test1\n")
+            file2.write_text("parameter_name: test2\n")
+
+            file_tags = {
+                "file1.yaml": ["schema_validation", "code_execution"],
+                "file2.yaml": ["schema_validation"],
+            }
+
+            count = tag_files_individually(tmpdir, file_tags)
+            assert count == 2
+
+            # Check file1 has 2 tags, file2 has 1 tag
+            with open(file1) as f:
+                content1 = yaml.safe_load(f)
+            assert len(content1["validation"]["tags"]) == 2
+
+            with open(file2) as f:
+                content2 = yaml.safe_load(f)
+            assert len(content2["validation"]["tags"]) == 1
