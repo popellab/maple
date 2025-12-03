@@ -772,6 +772,31 @@ class AutomatedSnippetVerifier(Validator):
         print(f"Total sources with failed snippets: {len(abstract_failures)}")
         print("=" * 70 + "\n")
 
+    def print_full_text_verification_prompt(self, full_text_failures: dict) -> None:
+        """Print full-text sources with failed snippets requiring manual verification."""
+        print("\n" + "=" * 70)
+        print("MANUAL VERIFICATION REQUIRED (FULL TEXT - MISMATCHES)")
+        print("The following papers have full text available, but some")
+        print("snippets or values could not be verified automatically.")
+        print("=" * 70 + "\n")
+
+        for source_tag, info in sorted(full_text_failures.items()):
+            doi = info["doi"]
+            failed_snippets = info.get("failed_snippets", [])
+            filenames = sorted(set(inp["filename"] for inp in info["inputs"]))
+
+            print(f"Source: {source_tag}")
+            print(f"DOI: https://doi.org/{self.normalize_doi(doi)}")
+            print(f"YAML file(s): {', '.join(filenames)}")
+            print(f"\nFailed snippets/values to verify ({len(failed_snippets)}):")
+            for i, snippet in enumerate(failed_snippets, 1):
+                display = snippet if len(snippet) <= 80 else snippet[:77] + "..."
+                print(f'  {i}. "{display}"')
+            print("-" * 70 + "\n")
+
+        print(f"Total sources with mismatches: {len(full_text_failures)}")
+        print("=" * 70 + "\n")
+
     def get_manual_verification(self) -> bool:
         """Prompt user to verify remaining papers manually."""
         print("Please verify the snippets in the papers listed above.")
@@ -1045,6 +1070,7 @@ class AutomatedSnippetVerifier(Validator):
         abstract_only_failures: dict = (
             {}
         )  # Abstract-only papers with failed snippets (after Unpaywall)
+        full_text_failures: dict = {}  # Full-text papers with snippet/value mismatches
         # Tuple: (item_name, snippet, found, score, source_type, failure_reason)
         automated_results: list[tuple[str, str, bool, float, str, Optional[str]]] = []
 
@@ -1158,6 +1184,20 @@ class AutomatedSnippetVerifier(Validator):
                     f"{values_found}/{num_inputs} values verified"
                 )
 
+                # Track full-text papers with failures for manual verification
+                if text_source == "full_text" and values_found < num_inputs:
+                    failed_snippets = []
+                    for result in input_results:
+                        snippet_found = result[3]
+                        value_in_match = result[6]
+                        if not snippet_found or not value_in_match:
+                            snippet_text = result[1]
+                            failed_snippets.append(snippet_text)
+                    full_text_failures[source_tag] = {
+                        **info,
+                        "failed_snippets": failed_snippets,
+                    }
+
         print()
 
         # Add automated results to report
@@ -1229,6 +1269,24 @@ class AutomatedSnippetVerifier(Validator):
                     report.add_warning(
                         f"{item_name} (manual verification)",
                         f"{failed_count} snippet(s) not in abstract/full text, verified manually by user",
+                    )
+
+        # Handle manual verification for full-text papers with mismatches
+        if full_text_failures:
+            self.print_full_text_verification_prompt(full_text_failures)
+            user_verified = self.get_manual_verification()
+
+            for source_tag, info in full_text_failures.items():
+                filenames = sorted(set(inp["filename"] for inp in info["inputs"]))
+                item_name = f"{', '.join(filenames)} → {source_tag}"
+                failed_count = len(info.get("failed_snippets", []))
+
+                # Note: The failures were already added to report above
+                # Here we just add a note about manual verification status
+                if user_verified:
+                    report.add_warning(
+                        f"{item_name} (manual verification)",
+                        f"{failed_count} snippet(s) not matched in full text, verified manually by user",
                     )
 
         return report

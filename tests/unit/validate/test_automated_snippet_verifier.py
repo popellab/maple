@@ -1073,6 +1073,29 @@ class TestManualVerificationPrompts:
         assert "snippet2 not found" in captured.out
         assert "2" in captured.out  # Count of failed snippets
 
+    def test_print_full_text_verification_prompt(self, capsys):
+        """Test full-text verification prompt shows mismatched snippets."""
+        verifier = AutomatedSnippetVerifier("/tmp")
+
+        full_text_failures = {
+            "smith2020": {
+                "doi": "10.1234/smith",
+                "snippets": {"all snippets"},
+                "inputs": [{"filename": "test.yaml"}],
+                "failed_snippets": ["snippet with wrong value", "snippet not found in text"],
+            }
+        }
+
+        verifier.print_full_text_verification_prompt(full_text_failures)
+        captured = capsys.readouterr()
+
+        assert "FULL TEXT" in captured.out
+        assert "MISMATCHES" in captured.out
+        assert "smith2020" in captured.out
+        assert "snippet with wrong value" in captured.out
+        assert "snippet not found in text" in captured.out
+        assert "2" in captured.out  # Count of failed snippets
+
 
 class TestAbstractOnlyFailures:
     """Test handling of abstract-only papers with snippet failures."""
@@ -1181,6 +1204,118 @@ class TestAbstractOnlyFailures:
         # Check that prompt was printed
         captured = capsys.readouterr()
         assert "ABSTRACT ONLY" in captured.out or "MANUAL VERIFICATION" in captured.out
+
+
+class TestFullTextFailures:
+    """Test handling of full-text papers with snippet/value mismatches."""
+
+    def test_full_text_failure_triggers_manual_verification(self, tmp_path, capsys):
+        """Test that full-text mismatches trigger manual verification prompt."""
+        yaml_file = tmp_path / "test.yaml"
+
+        data = {
+            "parameter_estimates": {
+                "inputs": [
+                    {
+                        "name": "stat",
+                        "value": 999,  # Wrong value - won't be in paper
+                        "value_snippet": "tumor count was measured",  # Snippet will match
+                        "source_ref": "src",
+                    }
+                ]
+            },
+            "primary_data_sources": [
+                {
+                    "source_tag": "src",
+                    "doi": "10.1234/test",
+                    "title": "Test",
+                    "first_author": "A",
+                    "year": 2024,
+                }
+            ],
+        }
+        with open(yaml_file, "w") as f:
+            yaml.dump(data, f)
+
+        verifier = AutomatedSnippetVerifier(str(tmp_path))
+
+        def mock_get_paper_text(_):
+            from qsp_llm_workflows.validate.check_snippet_sources_automated import PaperInfo
+
+            # Return full text that contains snippet but NOT the value 999
+            full_text = "The tumor count was measured to be 17 cells per field in the study."
+            return (
+                full_text,
+                PaperInfo(pmcid="PMC123", in_pmc=True),
+                "full_text_open_access",
+            )
+
+        with patch.object(verifier, "get_paper_text", side_effect=mock_get_paper_text):
+            with patch.object(
+                verifier, "get_manual_verification", return_value=True
+            ) as mock_verify:
+                verifier.validate()
+
+        # Manual verification should have been called for full-text mismatch
+        mock_verify.assert_called()
+
+        # Check that full-text prompt was printed
+        captured = capsys.readouterr()
+        assert "FULL TEXT" in captured.out or "MISMATCHES" in captured.out
+
+    def test_full_text_success_no_manual_verification(self, tmp_path, capsys):
+        """Test that full-text success doesn't trigger manual verification."""
+        yaml_file = tmp_path / "test.yaml"
+
+        data = {
+            "parameter_estimates": {
+                "inputs": [
+                    {
+                        "name": "stat",
+                        "value": 17,  # Correct value - will be in paper
+                        "value_snippet": "count was 17",  # Snippet will match
+                        "source_ref": "src",
+                    }
+                ]
+            },
+            "primary_data_sources": [
+                {
+                    "source_tag": "src",
+                    "doi": "10.1234/test",
+                    "title": "Test",
+                    "first_author": "A",
+                    "year": 2024,
+                }
+            ],
+        }
+        with open(yaml_file, "w") as f:
+            yaml.dump(data, f)
+
+        verifier = AutomatedSnippetVerifier(str(tmp_path))
+
+        def mock_get_paper_text(_):
+            from qsp_llm_workflows.validate.check_snippet_sources_automated import PaperInfo
+
+            # Return full text with both snippet AND value
+            full_text = "The count was 17 cells per field."
+            return (
+                full_text,
+                PaperInfo(pmcid="PMC123", in_pmc=True),
+                "full_text_open_access",
+            )
+
+        with patch.object(verifier, "get_paper_text", side_effect=mock_get_paper_text):
+            with patch.object(
+                verifier, "get_manual_verification", return_value=True
+            ) as mock_verify:
+                verifier.validate()
+
+        # Manual verification should NOT have been called
+        mock_verify.assert_not_called()
+
+        # No manual verification prompts should appear
+        captured = capsys.readouterr()
+        assert "MANUAL VERIFICATION" not in captured.out
 
 
 class TestUnpaywallIntegration:
