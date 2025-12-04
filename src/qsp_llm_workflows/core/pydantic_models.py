@@ -214,7 +214,12 @@ class ModelOutput(BaseModel):
     """Model output computation specification."""
 
     code: str = Field(
-        description="Python code to compute test statistic from model simulation (in code fence)"
+        description=(
+            "Python code defining a compute_test_statistic(time, species_dict) function. "
+            "Arguments: time (1D numpy array of timepoints), species_dict (dict mapping "
+            "species names from required_species to 1D numpy arrays of values at each timepoint). "
+            "Must return a scalar float value (the computed test statistic)."
+        )
     )
 
 

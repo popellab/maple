@@ -286,14 +286,29 @@ Document the alignment in `test_statistic_definition`:
 Your code MUST use the exact species names provided in "Available model species" below.
 If the literature measures something different, document the mapping assumption.
 
+**Function signature (must match exactly):**
 ```python
 import numpy as np
 
-def compute_test_statistic(time, species_dict):
-    """Compute test statistic from model simulation."""
-    # Extract species, interpolate, compute metric
-    return test_statistic_value  # float
+def compute_test_statistic(time: np.ndarray, species_dict: dict) -> float:
+    """
+    Compute test statistic from model simulation.
+
+    Args:
+        time: 1D numpy array of simulation timepoints
+        species_dict: Dict mapping species names (from required_species) to
+                      1D numpy arrays of values at each timepoint
+
+    Returns:
+        Scalar float value (the computed test statistic)
+    """
+    # Extract species from dict, e.g.: cd8 = species_dict['V_T.CD8']
+    # Interpolate to specific timepoint if needed
+    # Compute and return scalar metric
+    return test_statistic_value
 ```
+
+**Important:** The function must return a single scalar float, not an array.
 
 ## Derivation Code
 ```python
