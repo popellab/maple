@@ -98,6 +98,25 @@ def add_header_fields(json_data: dict, metadata: dict, batch_type: str) -> dict:
         json_data["scenario_context"] = metadata.get("scenario_context", "")
         json_data["schema_version"] = "v2"
 
+        # Parse required_species from comma-separated string to list
+        required_species_str = metadata.get("required_species", "")
+        if not required_species_str.strip():
+            raise ValueError(
+                f"required_species is required for test statistic "
+                f"'{metadata['test_statistic_id']}'"
+            )
+        json_data["required_species"] = [
+            s.strip() for s in required_species_str.split(",") if s.strip()
+        ]
+
+        derived_species_desc = metadata.get("derived_species_description", "")
+        if not derived_species_desc.strip():
+            raise ValueError(
+                f"derived_species_description is required for test statistic "
+                f"'{metadata['test_statistic_id']}'"
+            )
+        json_data["derived_species_description"] = derived_species_desc
+
     else:  # parameter
         param_name = metadata["parameter_name"]
         cancer_type = metadata["cancer_type"]
@@ -305,6 +324,8 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                     filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
                     # Move header fields to top (reverse order since we prepend)
+                    json_data = move_field_to_top(json_data, "derived_species_description")
+                    json_data = move_field_to_top(json_data, "required_species")
                     json_data = move_field_to_top(json_data, "scenario_context")
                     json_data = move_field_to_top(json_data, "model_context")
                     json_data = move_field_to_top(json_data, "context_hash")
