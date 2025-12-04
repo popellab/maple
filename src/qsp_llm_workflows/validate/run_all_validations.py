@@ -4,13 +4,14 @@ Master validation runner - executes all core validation checks.
 
 Runs:
 1. Template compliance validation
-2. Code execution testing
-3. Text snippet validation
-4. Source reference validation
-5. DOI resolution validation
-6. Value consistency checking (vs legacy and same-context derivations)
-7. Duplicate primary sources check (prevents duplicate extractions)
-8. Automated snippet source verification (via Europe PMC, with manual fallback)
+2. Code execution testing (derivation_code)
+3. Model output code validation (test statistics only - compute_test_statistic function)
+4. Text snippet validation
+5. Source reference validation
+6. DOI resolution validation
+7. Value consistency checking (vs legacy and same-context derivations)
+8. Duplicate primary sources check (prevents duplicate extractions)
+9. Automated snippet source verification (via Europe PMC, with manual fallback)
 
 Usage:
     python scripts/validate/run_all_validations.py test_statistics
@@ -35,6 +36,7 @@ from qsp_llm_workflows.validate.check_duplicate_primary_sources import (
 from qsp_llm_workflows.validate.check_snippet_sources_automated import (
     AutomatedSnippetVerifier,
 )
+from qsp_llm_workflows.validate.check_model_output_code import ModelOutputCodeValidator
 from qsp_llm_workflows.validate.tag_validation_results import tag_files_individually
 
 # Load environment variables from .env file
@@ -55,6 +57,7 @@ def get_validators(data_dir: str, model_class):
     return [
         SchemaValidator(data_dir, model_class=model_class),
         CodeExecutionValidator(data_dir, threshold_pct=5.0),
+        ModelOutputCodeValidator(data_dir),  # Test statistics only
         TextSnippetValidator(data_dir),
         SourceReferenceValidator(data_dir),
         DOIValidator(data_dir, rate_limit=1.0),
