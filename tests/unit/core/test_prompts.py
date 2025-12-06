@@ -66,6 +66,7 @@ class TestBuildTestStatisticPrompt:
             scenario_context="Baseline no treatment",
             required_species_with_units="V_T.C (mm³)",
             derived_species_description="Tumor volume at day 14",
+            cancer_type="PDAC",
             used_primary_studies="- Johnson et al. 2021",
         )
 
@@ -87,6 +88,7 @@ class TestBuildTestStatisticPrompt:
             scenario_context="Scenario",
             required_species_with_units="Species",
             derived_species_description="Description",
+            cancer_type="melanoma",
             used_primary_studies="",
         )
 
@@ -100,11 +102,26 @@ class TestBuildTestStatisticPrompt:
             scenario_context="Test",
             required_species_with_units="Test",
             derived_species_description="Test",
+            cancer_type="NSCLC",
         )
 
         # Shared rubrics should be included
         assert len(prompt) > 1000
         assert "{{SOURCE_AND_VALIDATION_RUBRICS}}" not in prompt
+
+    def test_cancer_type_substitution(self):
+        """Test that cancer type is substituted throughout prompt."""
+        prompt = build_test_statistic_prompt(
+            model_context="Test model",
+            scenario_context="Test scenario",
+            required_species_with_units="V_T.C",
+            derived_species_description="Test description",
+            cancer_type="melanoma",
+        )
+
+        # Cancer type should appear in data source hierarchy guidance
+        assert "melanoma" in prompt
+        assert "{{CANCER_TYPE}}" not in prompt
 
 
 class TestBuildValidationFixPrompt:
@@ -147,6 +164,7 @@ class TestPromptContent:
             scenario_context="Test",
             required_species_with_units="Test",
             derived_species_description="Test",
+            cancer_type="PDAC",
         )
 
         # Should contain key instruction sections

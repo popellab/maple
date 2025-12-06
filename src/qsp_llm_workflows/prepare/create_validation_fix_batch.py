@@ -190,7 +190,7 @@ def main():
     parser.add_argument("--data-dir", required=True, help="Directory with YAML files to fix")
     parser.add_argument(
         "--validation-results-dir",
-        default="output/validation_results",
+        default="validation-outputs",
         help="Directory with validation reports",
     )
     parser.add_argument(

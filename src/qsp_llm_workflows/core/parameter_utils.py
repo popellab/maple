@@ -283,7 +283,7 @@ def build_model_context(
 def collect_existing_studies(
     cancer_type: str,
     parameter_name: str,
-    parameter_storage_dir: Path = None,
+    parameter_storage_dir: Path,
     context_hash: str = None,
 ) -> str:
     """
@@ -292,19 +292,13 @@ def collect_existing_studies(
     Args:
         cancer_type: Cancer type for the parameter
         parameter_name: Name of the parameter
-        parameter_storage_dir: Path to parameter storage directory (defaults to ../qsp-metadata-storage/parameter_estimates)
+        parameter_storage_dir: Path to parameter storage directory (e.g., metadata-storage/parameter_estimates)
         context_hash: Optional context hash to filter by model context
 
     Returns:
         Formatted string describing existing studies, or empty string if none exist
     """
     import yaml
-
-    if parameter_storage_dir is None:
-        # Default to sibling directory
-        parameter_storage_dir = (
-            Path(__file__).parent.parent.parent / "qsp-metadata-storage" / "parameter_estimates"
-        )
 
     if not parameter_storage_dir.exists():
         return ""
@@ -354,9 +348,6 @@ def collect_existing_studies(
             # Extract raw source fields (handle multiple schema variants)
             if "data_sources" in study_data and study_data["data_sources"]:
                 all_sources.append(("data_sources", study_data["data_sources"]))
-
-            if "methodological_sources" in study_data and study_data["methodological_sources"]:
-                all_sources.append(("methodological_sources", study_data["methodological_sources"]))
 
             # Check v1 schema: sources (fallback)
             if "sources" in study_data and study_data["sources"]:

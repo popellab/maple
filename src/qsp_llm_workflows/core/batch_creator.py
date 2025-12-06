@@ -256,14 +256,14 @@ class ParameterBatchCreator(BatchCreator):
 
         return "\n".join(output) if output else "No model context available."
 
-    def process(self, input_csv: Path, parameter_storage_dir: Path = None) -> List[Dict[str, Any]]:
+    def process(self, input_csv: Path, parameter_storage_dir: Path) -> List[Dict[str, Any]]:
         """
         Process parameter extraction inputs and generate batch requests.
 
         Args:
             input_csv: CSV file with columns: cancer_type, parameter_name, parameter_units,
                       parameter_description, model_context (JSON), definition_hash
-            parameter_storage_dir: Optional path to parameter storage directory for existing studies
+            parameter_storage_dir: Path to parameter storage directory for checking existing studies
 
         Returns:
             List of batch request dictionaries
@@ -294,10 +294,6 @@ class ParameterBatchCreator(BatchCreator):
 
                 # Collect existing studies to avoid re-extracting from same sources
                 # Use definition_hash from CSV (same as context_hash in model_context)
-                if parameter_storage_dir is None:
-                    parameter_storage_dir = (
-                        self.base_dir.parent / "qsp-metadata-storage" / "parameter_estimates"
-                    )
                 existing_studies = collect_existing_studies(
                     cancer_type, parameter_name, parameter_storage_dir, definition_hash
                 )
@@ -526,12 +522,16 @@ class TestStatisticBatchCreator(BatchCreator):
                     required_species, species_units_mapping
                 )
 
+                # Get cancer type from CSV row
+                cancer_type = row.get("cancer_type", "unknown")
+
                 # Build the prompt using simple prompt builder
                 prompt = build_test_statistic_prompt(
                     model_context=model_context_block,
                     scenario_context=scenario_context_block,
                     required_species_with_units=required_species_with_units,
                     derived_species_description=derived_species_description,
+                    cancer_type=cancer_type,
                     used_primary_studies="",  # No used studies tracking for test statistics yet
                 )
 
@@ -712,7 +712,6 @@ class ValidationFixBatchCreator(BatchCreator):
   "key_study_limitations": "...",
   "primary_data_sources": [...],
   "secondary_data_sources": [...],
-  "methodological_sources": [...],
   "validation_weights": {
     "species_match": {"value": 1.0, "justification": "..."},
     ...
@@ -756,7 +755,6 @@ class ValidationFixBatchCreator(BatchCreator):
   "key_study_limitations": "...",
   "primary_data_sources": [...],
   "secondary_data_sources": [...],
-  "methodological_sources": [...],
   "biological_relevance": {
     "species_match": {"value": 1.0, "justification": "..."},
     ...

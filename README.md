@@ -54,25 +54,25 @@ This toolkit automates metadata extraction from scientific papers using OpenAI's
 - **Validation suite**: 8 automated validators ensure quality and completeness
 - **Git integration**: Automated branch creation and review workflow
 
-All extracted metadata is validated and stored in the companion `qsp-metadata-storage` repository.
+All extracted metadata is validated and stored in a user-specified output directory within your project repository.
 
 ## Basic Usage
 
 **Simple extraction workflow:**
 ```bash
 # Run automated extraction
-qsp-extract input.csv --type parameter
+qsp-extract input.csv --type parameter --output-dir metadata-storage
 
 # Validate results
-qsp-validate parameter_estimates
+qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
 
 # Fix validation errors (if needed)
-qsp-fix parameter_estimates --immediate
+qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --immediate
 ```
 
 **Use immediate mode for faster processing:**
 ```bash
-qsp-extract input.csv --type parameter --immediate
+qsp-extract input.csv --type parameter --output-dir metadata-storage --immediate
 ```
 
 See [docs/automated_workflow.md](docs/automated_workflow.md) for complete instructions including:
@@ -118,7 +118,7 @@ See [CLAUDE.md](CLAUDE.md) for:
 - Modular prompt assembly system
 - Class-based batch creation
 - Validation suite implementation
-- Integration with qsp-metadata-storage
+- Integration with metadata storage directories
 - Development guidelines and code standards
 
 ## Documentation

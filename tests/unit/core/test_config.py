@@ -152,6 +152,21 @@ class TestWorkflowConfig:
 
         assert "OPENAI_API_KEY" in str(exc_info.value)
 
+    def test_from_env_missing_storage_dir(self, tmp_path, monkeypatch):
+        """Test loading from environment without storage directory raises error."""
+        # Set API key but not storage dir
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("QSP_BASE_DIR", str(tmp_path / "workflows"))
+        monkeypatch.delenv("QSP_STORAGE_DIR", raising=False)
+
+        # Change to tmp directory
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            WorkflowConfig.from_env()
+
+        assert "Storage directory not specified" in str(exc_info.value)
+
     def test_from_env_with_dotenv_file(self, tmp_path, monkeypatch):
         """Test loading from .env file."""
         # Create .env file
@@ -168,6 +183,39 @@ class TestWorkflowConfig:
         config = WorkflowConfig.from_env()
 
         assert config.openai_api_key == "test-key-123"
+
+    def test_from_env_with_explicit_storage_dir(self, tmp_path, monkeypatch):
+        """Test loading from env with explicit storage_dir parameter."""
+        # Change to tmp_path to avoid reading .env from project root
+        monkeypatch.chdir(tmp_path)
+
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("QSP_BASE_DIR", str(tmp_path / "workflows"))
+        # Don't set QSP_STORAGE_DIR - will use parameter instead
+
+        storage_path = tmp_path / "my-metadata-storage"
+
+        config = WorkflowConfig.from_env(storage_dir=storage_path)
+
+        assert config.storage_dir == storage_path
+        assert config.openai_api_key == "test-key"
+
+    def test_from_env_explicit_storage_dir_overrides_env(self, tmp_path, monkeypatch):
+        """Test that explicit storage_dir parameter overrides environment variable."""
+        # Change to tmp_path to avoid reading .env from project root
+        monkeypatch.chdir(tmp_path)
+
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("QSP_BASE_DIR", str(tmp_path / "workflows"))
+        monkeypatch.setenv(
+            "QSP_STORAGE_DIR", str(tmp_path / "env-storage")
+        )  # This should be overridden
+
+        explicit_storage = tmp_path / "explicit-storage"
+
+        config = WorkflowConfig.from_env(storage_dir=explicit_storage)
+
+        assert config.storage_dir == explicit_storage  # Parameter takes precedence
 
     def test_from_env_with_overrides(self, tmp_path, monkeypatch):
         """Test loading from environment with custom settings."""

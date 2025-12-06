@@ -60,7 +60,12 @@ class CreateBatchStep(WorkflowStep):
 
         # Create batch
         try:
-            output_file = creator.run(None, context.input_csv)
+            # For parameter workflow, pass storage_dir for existing studies lookup
+            if context.workflow_type == "parameter":
+                parameter_storage_dir = context.config.storage_dir / "parameter_estimates"
+                output_file = creator.run(None, context.input_csv, parameter_storage_dir)
+            else:
+                output_file = creator.run(None, context.input_csv)
             logger.debug("Batch creator returned file: %s", output_file)
         except Exception as e:
             logger.error("Batch creation failed: %s", e, exc_info=True)

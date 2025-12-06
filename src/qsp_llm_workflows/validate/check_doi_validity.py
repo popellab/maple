@@ -12,7 +12,7 @@ Works for both parameter estimates and test statistics.
 
 Usage:
     python scripts/validate/check_doi_validity.py \\
-        ../qsp-metadata-storage/parameter_estimates \\
+        metadata-storage/parameter_estimates \\
         output/doi_validation.json
 """
 import time
@@ -202,7 +202,7 @@ class DOIValidator(Validator):
         """
         Collect all sources with DOIs or URLs.
 
-        Note: Primary sources use 'doi' field, secondary/methodological use 'doi_or_url'
+        Note: Primary sources use 'doi' field, secondary sources use 'doi_or_url'
 
         Returns:
             List of (source_tag, source_dict) tuples
@@ -238,33 +238,18 @@ class DOIValidator(Validator):
                         if "doi_or_url" in source or "doi" in source:
                             sources.append((tag, source))
 
-        # Collect from methodological_sources (uses 'doi_or_url' field)
-        if "methodological_sources" in data:
-            ms = data["methodological_sources"]
-            if isinstance(ms, list):
-                for source in ms:
-                    if isinstance(source, dict) and "source_tag" in source:
-                        # Check doi_or_url (new) or doi (backward compatibility)
-                        if "doi_or_url" in source or "doi" in source:
-                            sources.append((source["source_tag"], source))
-            elif isinstance(ms, dict):
-                for tag, source in ms.items():
-                    if isinstance(source, dict):
-                        if "doi_or_url" in source or "doi" in source:
-                            sources.append((tag, source))
-
         return sources
 
     def validate_source_doi_or_url(self, source_tag: str, source_dict: dict) -> tuple:
         """
         Validate a single source's DOI or URL.
 
-        Note: Primary sources use 'doi', secondary/methodological use 'doi_or_url'
+        Note: Primary sources use 'doi', secondary sources use 'doi_or_url'
 
         Returns:
             (is_valid, error_msg) tuple
         """
-        # Check for doi_or_url field first (secondary/methodological), then doi (primary or legacy)
+        # Check for doi_or_url field first (secondary), then doi (primary or legacy)
         value = source_dict.get("doi_or_url") or source_dict.get("doi")
 
         if not value:

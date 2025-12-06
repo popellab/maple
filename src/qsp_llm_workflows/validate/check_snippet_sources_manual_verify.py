@@ -7,7 +7,7 @@ Waits for user to verify snippets in papers, then writes validation report.
 
 Usage:
     python scripts/validate/check_snippet_sources_manual_verify.py \
-        ../qsp-metadata-storage/parameter_estimates \
+        metadata-storage/parameter_estimates \
         output/snippet_sources.json
 """
 from collections import defaultdict
@@ -42,17 +42,6 @@ def collect_sources(data: dict) -> dict:
             for tag, source in sds.items():
                 sources[tag] = source if isinstance(source, dict) else {"source_tag": tag}
 
-    # Collect from methodological_sources
-    if "methodological_sources" in data:
-        ms = data["methodological_sources"]
-        if isinstance(ms, list):
-            for source in ms:
-                if isinstance(source, dict) and "source_tag" in source:
-                    sources[source["source_tag"]] = source
-        elif isinstance(ms, dict):
-            for tag, source in ms.items():
-                sources[tag] = source if isinstance(source, dict) else {"source_tag": tag}
-
     return sources
 
 
@@ -77,7 +66,7 @@ def get_doi_from_source(source: dict) -> str:
     if "doi" in source:
         return source["doi"]
 
-    # Secondary/methodological use 'doi_or_url'
+    # Secondary sources use 'doi_or_url'
     if "doi_or_url" in source:
         value = source["doi_or_url"]
         if value and (value.startswith("10.") or "doi.org" in value.lower()):

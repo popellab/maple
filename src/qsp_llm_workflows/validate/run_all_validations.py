@@ -4,13 +4,14 @@ Master validation runner - executes all core validation checks.
 
 Runs:
 1. Template compliance validation
-2. Code execution testing
-3. Text snippet validation
-4. Source reference validation
-5. DOI resolution validation
-6. Value consistency checking (vs legacy and same-context derivations)
-7. Duplicate primary sources check (prevents duplicate extractions)
-8. Manual snippet source verification (interactive)
+2. Code execution testing (derivation_code)
+3. Model output code validation (test statistics only - compute_test_statistic function)
+4. Text snippet validation
+5. Source reference validation
+6. DOI resolution validation
+7. Value consistency checking (vs legacy and same-context derivations)
+8. Duplicate primary sources check (prevents duplicate extractions)
+9. Automated snippet source verification (via Europe PMC, with manual fallback)
 
 Usage:
     python scripts/validate/run_all_validations.py test_statistics
@@ -32,10 +33,11 @@ from qsp_llm_workflows.validate.check_value_consistency import ValueConsistencyC
 from qsp_llm_workflows.validate.check_duplicate_primary_sources import (
     DuplicatePrimarySourceChecker,
 )
-from qsp_llm_workflows.validate.check_snippet_sources_manual_verify import (
-    SnippetSourceManualVerifier,
+from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+    AutomatedSnippetVerifier,
 )
-from qsp_llm_workflows.validate.tag_validation_results import tag_directory
+from qsp_llm_workflows.validate.check_model_output_code import ModelOutputCodeValidator
+from qsp_llm_workflows.validate.tag_validation_results import tag_files_individually
 
 # Load environment variables from .env file
 load_dotenv()
@@ -55,12 +57,13 @@ def get_validators(data_dir: str, model_class):
     return [
         SchemaValidator(data_dir, model_class=model_class),
         CodeExecutionValidator(data_dir, threshold_pct=5.0),
+        ModelOutputCodeValidator(data_dir),  # Test statistics only
         TextSnippetValidator(data_dir),
         SourceReferenceValidator(data_dir),
         DOIValidator(data_dir, rate_limit=1.0),
         ValueConsistencyChecker(data_dir),
         DuplicatePrimarySourceChecker(data_dir),
-        SnippetSourceManualVerifier(data_dir),
+        AutomatedSnippetVerifier(data_dir, rate_limit=0.5, fuzzy_threshold=0.8),
     ]
 
 
@@ -69,9 +72,8 @@ def main():
         description="Run all validation checks on metadata files",
         epilog="""
 Examples:
-    qsp-validate test_statistics
-    qsp-validate parameter_estimates
-    qsp-validate parameter_estimates --dir /path/to/custom/directory
+    qsp-validate test_statistics --dir metadata-storage/to-review/test_statistics
+    qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
         """,
     )
     parser.add_argument(
@@ -82,24 +84,21 @@ Examples:
     parser.add_argument(
         "--dir",
         type=str,
-        default=None,
-        help="Custom directory to validate (default: ../qsp-metadata-storage/to-review/{workflow_type})",
+        required=True,
+        help="Directory to validate (e.g., metadata-storage/to-review/parameter_estimates)",
     )
 
     args = parser.parse_args()
 
-    # Determine paths and model based on workflow type
+    # Determine model class based on workflow type
     if args.workflow_type == "test_statistics":
         model_class = TestStatistic
-        default_dir = Path("../qsp-metadata-storage/to-review/test_statistics")
     else:  # parameter_estimates
         model_class = ParameterMetadata
-        default_dir = Path("../qsp-metadata-storage/to-review/parameter_estimates")
 
-    # Use custom directory if provided, otherwise use default
-    data_dir = Path(args.dir) if args.dir else default_dir
+    data_dir = Path(args.dir).resolve()
 
-    output_dir = Path("output/validation_results")
+    output_dir = Path("validation-outputs")
 
     # Validate paths exist
     if not data_dir.exists():
@@ -121,57 +120,30 @@ Examples:
     # Print master summary
     orchestrator.print_master_summary(result)
 
-    # Tag files with validation results
+    # Tag files with validation results (per-file based on which validations each passed)
     print(f"\n{'='*60}")
     print("TAGGING FILES WITH VALIDATION RESULTS")
     print(f"{'='*60}\n")
 
-    # Get validation tags for passed validations
-    validation_tags = [
-        name.lower().replace(" ", "_").replace("-", "_")
-        for name in result.get_passed_validation_names()
-    ]
+    # Get per-file validation tags
+    file_tags = result.get_per_file_tags()
 
-    if validation_tags:
-        print(f"Validation tags to add: {', '.join(validation_tags)}")
+    if file_tags:
         try:
-            tag_directory(str(data_dir), validation_tags)
-            print("✓ Files tagged successfully")
+            tagged_count = tag_files_individually(str(data_dir), file_tags)
+            print(f"✓ Tagged {tagged_count} files with their passed validations")
         except Exception as e:
             print(f"⚠ Warning: Could not tag files: {e}")
     else:
-        print("No validations passed - skipping tagging")
+        print("No files passed any validations - skipping tagging")
 
     print()
 
-    # Check if any validations failed
+    # Exit with appropriate code
     if result.has_failures:
-        # Provide instructions for running validation fix workflow
-        print("\n" + "=" * 60)
-        print("VALIDATION FAILURES DETECTED")
-        print("=" * 60)
-        print("\nYou can automatically fix validation errors by submitting")
-        print("failed YAMLs back to OpenAI for correction.")
-        print("\nTo run validation fix workflow:")
-
-        # Construct fix command with --dir if custom directory was used
-        if args.dir:
-            fix_cmd = f"qsp-fix {args.workflow_type} --immediate --dir {args.dir}"
-        else:
-            fix_cmd = f"qsp-fix {args.workflow_type} --immediate"
-
-        print(f"  {fix_cmd}")
-        print("\nThis will:")
-        print("  1. Create fix batch requests from validation failures")
-        print("  2. Upload to OpenAI API")
-        print("  3. Monitor until completion")
-        print("  4. Unpack fixed YAMLs (overwrites originals)")
-        print("  5. Prompt you to re-run validation")
-        print()
-
         sys.exit(1)
     else:
-        print("\n✓ All validations passed!")
+        print("✓ All validations passed!")
         sys.exit(0)
 
 

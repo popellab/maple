@@ -66,7 +66,6 @@ class TestSchemaValidator:
                     }
                 ],
                 "secondary_data_sources": [],
-                "methodological_sources": [],
                 "biological_relevance": {
                     "species_match": {"value": 1.0, "justification": "Same species"},
                     "system_match": {"value": 1.0, "justification": "Same system"},
@@ -168,7 +167,7 @@ def derive_parameter(inputs):
             with open(yaml_file, "w") as f:
                 yaml.dump(data, f)
 
-            validator = CodeExecutionValidator(tmpdir)
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
             report = validator.validate()
 
             assert len(report.failed) == 0
@@ -197,11 +196,219 @@ def derive_parameter(inputs):
             with open(yaml_file, "w") as f:
                 yaml.dump(data, f)
 
-            validator = CodeExecutionValidator(tmpdir)
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
             report = validator.validate()
 
             assert len(report.failed) == 1
             assert "error" in report.failed[0]["reason"].lower()
+
+    def test_stores_computed_values_for_executable_files(self):
+        """Test that computed values are stored for all files with executable code."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_estimates": {
+                    "median": 99.0,  # Wrong value - should be 2.0
+                    "iqr": 99.0,  # Wrong value - should be 1.0
+                    "ci95": [99.0, 99.0],  # Wrong values - should be [1.0, 3.0]
+                    "derivation_code": """
+def derive_parameter(inputs):
+    return {
+        "median_param": 2.0,
+        "iqr_param": 1.0,
+        "ci95_param": [1.0, 3.0]
+    }
+""",
+                    "inputs": [
+                        {
+                            "name": "input1",
+                            "value": 1.0,
+                            "units": "dimensionless",
+                            "description": "Test input",
+                            "source_ref": "src1",
+                        }
+                    ],
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
+            validator.validate()
+
+            # Check that computed values were stored
+            assert len(validator.executable_files) == 1
+            filepath = str(yaml_file)
+            assert filepath in validator.executable_files
+
+            stored = validator.executable_files[filepath]
+            assert stored["code_type"] == "parameter"
+            assert stored["computed_values"]["median"] == 2.0
+            assert stored["computed_values"]["iqr"] == 1.0
+            assert stored["computed_values"]["ci95"] == [1.0, 3.0]
+            assert stored["is_valid"] is False  # Values don't match
+
+            # Check that current YAML values were also stored
+            assert stored["current_values"]["median"] == 99.0
+            assert stored["current_values"]["iqr"] == 99.0
+            assert stored["current_values"]["ci95"] == [99.0, 99.0]
+
+    def test_update_yaml_values_inline_ci95(self):
+        """Test _update_yaml_values correctly updates YAML with inline ci95 format."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            # Write YAML with inline ci95 format
+            content = """parameter_estimates:
+  inputs:
+    - name: input1
+      value: 1.0
+  derivation_code: |
+    def derive_parameter(inputs):
+        return {"median_param": 1.0, "iqr_param": 0.5, "ci95_param": [0.5, 1.5]}
+  median: 1.0
+  iqr: 0.5
+  ci95: [0.5, 1.5]
+  units: per_day
+"""
+            with open(yaml_file, "w") as f:
+                f.write(content)
+
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
+            computed = {"median": 2.5, "iqr": 1.2, "ci95": [0.8, 4.2]}
+
+            success = validator._update_yaml_values(str(yaml_file), "parameter", computed)
+            assert success is True
+
+            # Read back and verify
+            with open(yaml_file, "r") as f:
+                updated = f.read()
+
+            assert "median: 2.5" in updated
+            assert "iqr: 1.2" in updated
+            assert "[0.8, 4.2]" in updated
+
+    def test_update_yaml_values_multiline_ci95(self):
+        """Test _update_yaml_values correctly updates YAML with multiline ci95 format."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            # Write YAML with multiline ci95 format
+            content = """parameter_estimates:
+  inputs:
+    - name: input1
+      value: 1.0
+  derivation_code: |
+    def derive_parameter(inputs):
+        return {"median_param": 1.0, "iqr_param": 0.5, "ci95_param": [0.5, 1.5]}
+  median: 1.0
+  iqr: 0.5
+  ci95:
+    - 0.5
+    - 1.5
+  units: per_day
+"""
+            with open(yaml_file, "w") as f:
+                f.write(content)
+
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
+            computed = {"median": 3.0, "iqr": 2.0, "ci95": [1.5, 4.5]}
+
+            success = validator._update_yaml_values(str(yaml_file), "parameter", computed)
+            assert success is True
+
+            # Read back and verify
+            with open(yaml_file, "r") as f:
+                updated = f.read()
+
+            assert "median: 3" in updated
+            assert "iqr: 2" in updated
+            assert "- 1.5" in updated
+            assert "- 4.5" in updated
+
+    def test_update_yaml_values_test_statistic(self):
+        """Test _update_yaml_values works for test_statistic_estimates section."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            content = """test_statistic_estimates:
+  inputs:
+    - name: input1
+      value: 1.0
+  derivation_code: |
+    def derive_distribution(inputs):
+        return {"median_stat": 1.0, "iqr_stat": 0.5, "ci95_stat": [0.5, 1.5]}
+  median: 1.0
+  iqr: 0.5
+  ci95: [0.5, 1.5]
+  units: mm3
+"""
+            with open(yaml_file, "w") as f:
+                f.write(content)
+
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
+            computed = {"median": 100.0, "iqr": 50.0, "ci95": [25.0, 175.0]}
+
+            success = validator._update_yaml_values(str(yaml_file), "test_statistic", computed)
+            assert success is True
+
+            # Read back and verify
+            with open(yaml_file, "r") as f:
+                updated = f.read()
+
+            assert "median: 100" in updated
+            assert "iqr: 50" in updated
+            assert "[25, 175]" in updated
+
+    def test_update_yaml_preserves_other_content(self):
+        """Test that updating values doesn't corrupt other YAML content."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            content = """# Header comment
+schema_version: v3
+parameter_name: k_growth
+
+parameter_estimates:
+  inputs:
+    - name: input1
+      value: 1.0
+      description: "Important input"
+  derivation_code: |
+    def derive_parameter(inputs):
+        return {"median_param": 1.0, "iqr_param": 0.5, "ci95_param": [0.5, 1.5]}
+  median: 1.0
+  iqr: 0.5
+  ci95: [0.5, 1.5]
+  units: per_day
+
+key_assumptions:
+  - number: 1
+    text: "Important assumption"
+
+# Footer comment
+"""
+            with open(yaml_file, "w") as f:
+                f.write(content)
+
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
+            computed = {"median": 5.0, "iqr": 2.0, "ci95": [2.0, 8.0]}
+
+            success = validator._update_yaml_values(str(yaml_file), "parameter", computed)
+            assert success is True
+
+            # Read back and verify structure is preserved
+            with open(yaml_file, "r") as f:
+                updated = f.read()
+
+            # Check values were updated
+            assert "median: 5" in updated
+            assert "iqr: 2" in updated
+
+            # Check other content is preserved
+            assert "# Header comment" in updated
+            assert "schema_version: v3" in updated
+            assert "parameter_name: k_growth" in updated
+            assert 'description: "Important input"' in updated
+            assert "key_assumptions:" in updated
+            assert '"Important assumption"' in updated
+            assert "# Footer comment" in updated
 
 
 class TestTextSnippetValidator:
@@ -590,28 +797,6 @@ class TestDOIValidator:
         sources = validator.collect_sources(data)
         assert len(sources) == 1
         assert sources[0][0] == "src1"
-
-    def test_collect_sources_from_methodological(self):
-        """Test collecting sources from methodological_sources."""
-        validator = DOIValidator("/tmp", rate_limit=0.1)
-
-        data = {
-            "methodological_sources": [
-                {
-                    "source_tag": "method1",
-                    "title": "Statistical Methods",
-                    "first_author": "Fisher",
-                    "year": 2018,
-                    "doi_or_url": "https://example.com/methods",
-                    "used_for": "Statistical analysis",
-                    "method_description": "Bootstrap methods",
-                }
-            ]
-        }
-
-        sources = validator.collect_sources(data)
-        assert len(sources) == 1
-        assert sources[0][0] == "method1"
 
     def test_collect_sources_skips_missing_doi(self):
         """Test collector skips sources without DOI/URL."""

@@ -12,7 +12,7 @@ Works for both parameter estimates and test statistics.
 
 Usage:
     python scripts/validate/check_value_consistency.py \\
-        ../qsp-metadata-storage/parameter_estimates \\
+        metadata-storage/parameter_estimates \\
         output/value_consistency.json
 """
 from pathlib import Path

@@ -50,18 +50,6 @@ class SecondarySource(BaseModel):
     doi_or_url: Optional[str] = Field(None, description="DOI or URL (or null)")
 
 
-class MethodologicalSource(BaseModel):
-    """A methodological source (formulas, conversion factors)."""
-
-    source_tag: str = Field(description="Unique tag for referencing")
-    title: str = Field(description="Full title")
-    first_author: str = Field(description="First author last name")
-    year: int = Field(description="Publication year")
-    doi_or_url: Optional[str] = Field(None, description="DOI or URL (or null)")
-    used_for: str = Field(description="What this source is used for")
-    method_description: str = Field(description="Description of the method")
-
-
 class WeightScore(BaseModel):
     """A rubric-based weight score with justification."""
 
@@ -78,7 +66,15 @@ class ParameterEstimates(BaseModel):
     """Parameter estimates with structured inputs and derivation."""
 
     inputs: List[Input] = Field(description="List of inputs used in derivation")
-    derivation_code: str = Field(description="Python code for derivation (in code fence)")
+    derivation_code: str = Field(
+        description=(
+            "Python code defining a derive_parameter(inputs) function. "
+            "The inputs argument is a list of dicts, each with 'name' and 'value' keys. "
+            "Access values like: float([x for x in inputs if x['name']=='Foo'][0]['value']). "
+            "Must return dict with keys: median_param (float), iqr_param (float), "
+            "ci95_param ([lower, upper])."
+        )
+    )
     median: float = Field(description="Median value")
     iqr: float = Field(description="Interquartile range")
     ci95: List[float] = Field(description="95% confidence interval [lower, upper]")
@@ -168,9 +164,6 @@ class ParameterMetadata(BaseModel):
     secondary_data_sources: List[SecondarySource] = Field(
         description="Secondary data sources (reference values, constants)"
     )
-    methodological_sources: List[MethodologicalSource] = Field(
-        description="Methodological sources (formulas, analysis methods)"
-    )
     biological_relevance: BiologicalRelevance = Field(description="Biological relevance weights")
 
     @classmethod
@@ -221,7 +214,12 @@ class ModelOutput(BaseModel):
     """Model output computation specification."""
 
     code: str = Field(
-        description="Python code to compute test statistic from model simulation (in code fence)"
+        description=(
+            "Python code defining a compute_test_statistic(time, species_dict) function. "
+            "Arguments: time (1D numpy array of timepoints), species_dict (dict mapping "
+            "species names from required_species to 1D numpy arrays of values at each timepoint). "
+            "Must return a scalar float value (the computed test statistic)."
+        )
     )
 
 
@@ -229,7 +227,15 @@ class TestStatisticEstimates(BaseModel):
     """Test statistic estimates with structured inputs and derivation."""
 
     inputs: List[Input] = Field(description="List of inputs used in derivation")
-    derivation_code: str = Field(description="Python code for bootstrap derivation (in code fence)")
+    derivation_code: str = Field(
+        description=(
+            "Python code defining a derive_distribution(inputs) function. "
+            "The inputs argument is a list of dicts, each with 'name' and 'value' keys. "
+            "Access values like: float([x for x in inputs if x['name']=='Foo'][0]['value']). "
+            "Must return dict with keys: median_stat (float), iqr_stat (float), "
+            "ci95_stat ([lower, upper])."
+        )
+    )
     median: float = Field(description="Median value")
     iqr: float = Field(description="Interquartile range")
     ci95: List[float] = Field(description="95% confidence interval [lower, upper]")
@@ -303,9 +309,6 @@ class TestStatistic(BaseModel):
     )
     secondary_data_sources: List[SecondarySource] = Field(
         description="Secondary data sources (reference values, constants)"
-    )
-    methodological_sources: List[MethodologicalSource] = Field(
-        description="Methodological sources (formulas, analysis methods)"
     )
     validation_weights: ValidationWeights = Field(description="Validation weights")
 

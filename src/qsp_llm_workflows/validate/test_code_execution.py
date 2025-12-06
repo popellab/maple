@@ -12,11 +12,12 @@ Works for both parameter estimates (v3 schema) and test statistics (v2 schema).
 
 Usage:
     python scripts/validate/test_code_execution.py \\
-        ../qsp-metadata-storage/parameter_estimates \\
+        metadata-storage/parameter_estimates \\
         output/code_execution_report.json \\
         --threshold 5.0
 """
 import re
+
 import numpy as np
 
 from qsp_llm_workflows.validate.validator import Validator
@@ -29,9 +30,19 @@ class CodeExecutionValidator(Validator):
     Works for both parameters (v3) and test statistics (v2).
     """
 
-    def __init__(self, data_dir: str, threshold_pct: float = 5.0, **kwargs):
+    def __init__(
+        self,
+        data_dir: str,
+        threshold_pct: float = 5.0,
+        interactive: bool = True,
+        **kwargs,
+    ):
         super().__init__(data_dir, **kwargs)
         self.threshold_pct = threshold_pct
+        self.interactive = interactive
+        # Store computed values for all files with executable code
+        # Key: filepath, Value: dict with code_type and computed_values
+        self.executable_files: dict[str, dict] = {}
 
     @property
     def name(self) -> str:
@@ -71,50 +82,37 @@ class CodeExecutionValidator(Validator):
 
         return code.strip()
 
-    def extract_inputs(self, data: dict) -> dict:
+    def extract_inputs(self, data: dict) -> list:
         """
         Extract inputs from parameter_estimates or test_statistic_estimates.
-        Convert to dict format for passing to derive function.
+
+        Returns the raw list of input dicts as expected by the derivation functions.
+        Each input dict has keys: name, value, units, description, source_ref, etc.
+
+        The derivation code accesses inputs like:
+            float([x for x in inputs if x['name']=='Foo'][0]['value'])
 
         Returns:
-            Dict of inputs keyed by name
+            List of input dicts, or None if no inputs found
         """
         # Try parameter_estimates first
         if "parameter_estimates" in data:
             estimates = data["parameter_estimates"]
-            if "inputs" in estimates:
-                return self._convert_inputs_list_to_dict(estimates["inputs"])
+            if "inputs" in estimates and isinstance(estimates["inputs"], list):
+                return estimates["inputs"]
 
         # Try test_statistic_estimates
         if "test_statistic_estimates" in data:
             estimates = data["test_statistic_estimates"]
-            if "inputs" in estimates:
-                return self._convert_inputs_list_to_dict(estimates["inputs"])
+            if "inputs" in estimates and isinstance(estimates["inputs"], list):
+                return estimates["inputs"]
 
         return None
-
-    def _convert_inputs_list_to_dict(self, inputs_list: list) -> dict:
-        """Convert list of inputs to dict keyed by name."""
-        if not isinstance(inputs_list, list):
-            return None
-
-        inputs_dict = {}
-        for inp in inputs_list:
-            if not isinstance(inp, dict) or "name" not in inp:
-                continue
-            inputs_dict[inp["name"]] = {
-                "value": inp.get("value"),
-                "units": inp.get("units"),
-                "description": inp.get("description"),
-                "source_ref": inp.get("source_ref"),
-            }
-
-        return inputs_dict
 
     def execute_python_code(
         self,
         code: str,
-        inputs: dict,
+        inputs: list,
         code_type: str,
         expected_mean: float = None,
         expected_variance: float = None,
@@ -126,10 +124,11 @@ class CodeExecutionValidator(Validator):
 
         Args:
             code: Python code to execute
-            inputs: Dict of inputs to pass to derive function
+            inputs: List of input dicts to pass to derive function.
+                    Each dict has 'name', 'value', 'units', etc.
             code_type: "parameter" or "test_statistic"
-            expected_mean: Expected mean value
-            expected_variance: Expected variance value
+            expected_mean: Expected mean/median value
+            expected_variance: Expected variance/iqr value
             expected_ci95: Expected CI95 [lower, upper]
 
         Returns:
@@ -306,7 +305,10 @@ class CodeExecutionValidator(Validator):
         Validate code execution in a single YAML file.
 
         Returns:
-            (is_valid, error_msg) tuple
+            (is_valid, error_msg, code_type, computed_values, current_values) tuple
+            - code_type: "parameter" or "test_statistic" or None
+            - computed_values: dict with median, iqr, ci95 or empty dict
+            - current_values: dict with current YAML values (median, iqr, ci95)
         """
         data = file_info["data"]
         file_info["filename"]
@@ -315,13 +317,13 @@ class CodeExecutionValidator(Validator):
         python_code, code_type = self.extract_python_code(data)
 
         if not python_code:
-            return (True, "No Python code found (skipped)")
+            return (True, "No Python code found (skipped)", None, {}, {})
 
         # Extract inputs
         inputs = self.extract_inputs(data)
 
         if not inputs:
-            return (False, "No inputs defined")
+            return (False, "No inputs defined", code_type, {}, {})
 
         # Extract expected values from YAML
         expected_mean = None
@@ -341,28 +343,321 @@ class CodeExecutionValidator(Validator):
             expected_variance = estimates.get("iqr") or estimates.get("variance")
             expected_ci95 = estimates.get("ci95")
 
+        # Store current YAML values
+        current_values = {
+            "median": expected_mean,
+            "iqr": expected_variance,
+            "ci95": expected_ci95 if expected_ci95 else [None, None],
+        }
+
         # Execute Python code with comparison
         success, message, results = self.execute_python_code(
             python_code, inputs, code_type, expected_mean, expected_variance, expected_ci95
         )
 
-        return (success, message)
+        # Extract computed values in a format suitable for YAML update
+        computed_values = {}
+        if results.get("computed_values"):
+            cv = results["computed_values"]
+            computed_values = {
+                "median": cv["central"],
+                "iqr": cv["spread"],
+                "ci95": [cv["ci95_lower"], cv["ci95_upper"]],
+            }
+
+        return (success, message, code_type, computed_values, current_values)
 
     def validate(self) -> ValidationReport:
         """Validate Python code in all YAML files."""
         report = ValidationReport(self.name)
 
+        # ANSI color codes
+        GREEN = "\033[92m"
+        RED = "\033[91m"
+        YELLOW = "\033[93m"
+        RESET = "\033[0m"
+
         print(f"Testing Python code execution in {self.data_dir}...")
+        print(f"Value match threshold: {self.threshold_pct}%")
+        print()
+
         files = load_yaml_directory(self.data_dir)
+        total_files = len(files)
+        passed = 0
+        failed = 0
+        skipped = 0
 
-        for file_info in files:
+        # Clear executable_files from any previous run
+        self.executable_files = {}
+
+        for idx, file_info in enumerate(files, 1):
             filename = file_info["filename"]
+            filepath = file_info["filepath"]
 
-            is_valid, message = self.validate_file(file_info)
+            # Show progress
+            print(f"[{idx}/{total_files}] {filename}")
 
-            if is_valid:
+            is_valid, message, code_type, computed_values, current_values = self.validate_file(
+                file_info
+            )
+
+            # Store computed values for all files with executable code
+            if code_type and computed_values:
+                self.executable_files[filepath] = {
+                    "filename": filename,
+                    "code_type": code_type,
+                    "computed_values": computed_values,
+                    "current_values": current_values,
+                    "is_valid": is_valid,
+                }
+
+            if "skipped" in message.lower():
+                print(f"{YELLOW}  ⊘ No Python code found (skipped){RESET}")
+                skipped += 1
+                report.add_pass(filename, message)
+            elif is_valid:
+                # Print the comparison results (message contains the formatted comparisons)
+                if message.startswith("\n"):
+                    # Multi-line message with comparisons - print each line
+                    for line in message.strip().split("\n"):
+                        if "✓" in line:
+                            print(f"{GREEN}  {line.strip()}{RESET}")
+                        elif "✗" in line:
+                            print(f"{RED}  {line.strip()}{RESET}")
+                        else:
+                            print(f"  {line.strip()}")
+                    print(f"{GREEN}  ✓ All values match{RESET}")
+                else:
+                    print(f"{GREEN}  ✓ {message}{RESET}")
+                passed += 1
                 report.add_pass(filename, message)
             else:
+                # Print the error/comparison results
+                if message.startswith("\n"):
+                    for line in message.strip().split("\n"):
+                        if "✓" in line:
+                            print(f"{GREEN}  {line.strip()}{RESET}")
+                        elif "✗" in line:
+                            print(f"{RED}  {line.strip()}{RESET}")
+                        else:
+                            print(f"  {line.strip()}")
+                    print(f"{RED}  ✗ Value mismatch detected{RESET}")
+                else:
+                    print(f"{RED}  ✗ {message}{RESET}")
+                failed += 1
                 report.add_fail(filename, message)
 
+        # Print summary
+        print()
+        print(f"Summary: {passed} passed, {failed} failed, {skipped} skipped")
+
+        # Prompt user if there are files with executable code (unless interactive=False)
+        if self.interactive and self.executable_files:
+            self._prompt_apply_computed_values()
+
         return report
+
+    def _prompt_apply_computed_values(self) -> None:
+        """
+        Interactively prompt user to overwrite YAML values with computed values.
+        Goes through each file with executable code one by one.
+        """
+        # ANSI color codes
+        CYAN = "\033[96m"
+        GREEN = "\033[92m"
+        YELLOW = "\033[93m"
+        RESET = "\033[0m"
+
+        # Count matches vs mismatches
+        n_match = sum(1 for info in self.executable_files.values() if info["is_valid"])
+        n_mismatch = len(self.executable_files) - n_match
+
+        print()
+        print("=" * 60)
+        print("APPLY COMPUTED VALUES")
+        print("=" * 60)
+        print()
+        print(f"Found {len(self.executable_files)} files with executable code.")
+        print(f"  {GREEN}✓ {n_match} match{RESET}")
+        print(f"  {YELLOW}✗ {n_mismatch} mismatch{RESET}")
+        print()
+
+        # Ask if user wants to enter the review
+        while True:
+            response = (
+                input("Review files and optionally overwrite values? [y/n]: ").strip().lower()
+            )
+            if response in ("y", "yes"):
+                break
+            elif response in ("n", "no"):
+                print("Skipping value overwrite review.")
+                return
+            else:
+                print("Please enter 'y' or 'n'")
+
+        print()
+
+        updated_count = 0
+        skipped_count = 0
+
+        for filepath, info in self.executable_files.items():
+            filename = info["filename"]
+            code_type = info["code_type"]
+            computed = info["computed_values"]
+            current = info["current_values"]
+            is_valid = info["is_valid"]
+
+            # Show file info
+            status = f"{GREEN}✓ MATCH{RESET}" if is_valid else f"{YELLOW}✗ MISMATCH{RESET}"
+            print(f"{CYAN}File: {filename}{RESET} [{status}]")
+
+            # Format current values (handle None)
+            def fmt(val):
+                return f"{val:.6e}" if val is not None else "None"
+
+            def fmt_ci95(ci):
+                if ci and ci[0] is not None and ci[1] is not None:
+                    return f"[{ci[0]:.6e}, {ci[1]:.6e}]"
+                return str(ci)
+
+            # Show current vs computed values side by side
+            print(f"  {'Field':<8} {'Current (YAML)':<20} {'Computed (code)':<20}")
+            print(f"  {'-'*8} {'-'*20} {'-'*20}")
+            print(f"  {'median':<8} {fmt(current['median']):<20} {fmt(computed['median']):<20}")
+            print(f"  {'iqr':<8} {fmt(current['iqr']):<20} {fmt(computed['iqr']):<20}")
+            print(f"  {'ci95':<8} {fmt_ci95(current['ci95']):<20} {fmt_ci95(computed['ci95']):<20}")
+            print()
+
+            # Prompt user
+            while True:
+                response = (
+                    input("  Overwrite YAML with computed values? [y/n/q(uit)]: ").strip().lower()
+                )
+                if response in ("y", "yes"):
+                    success = self._update_yaml_values(filepath, code_type, computed)
+                    if success:
+                        print(f"  {GREEN}✓ Updated{RESET}")
+                        updated_count += 1
+                    else:
+                        print(f"  {YELLOW}✗ Failed to update{RESET}")
+                    break
+                elif response in ("n", "no"):
+                    print("  Skipped")
+                    skipped_count += 1
+                    break
+                elif response in ("q", "quit"):
+                    print()
+                    print(f"Stopped. Updated {updated_count} files, skipped {skipped_count} files.")
+                    return
+                else:
+                    print("  Please enter 'y', 'n', or 'q'")
+
+            print()
+
+        print(f"Done. Updated {updated_count} files, skipped {skipped_count} files.")
+
+    def _update_yaml_values(self, filepath: str, code_type: str, computed_values: dict) -> bool:
+        """
+        Update median, iqr, and ci95 values in a YAML file.
+
+        Args:
+            filepath: Path to the YAML file
+            code_type: "parameter" or "test_statistic"
+            computed_values: dict with median, iqr, ci95 keys
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Read the file content
+            with open(filepath, "r") as f:
+                content = f.read()
+
+            # Determine the estimates section key
+            if code_type == "parameter":
+                section_key = "parameter_estimates"
+            else:
+                section_key = "test_statistic_estimates"
+
+            # Use regex to find and replace values within the estimates section
+            # This preserves formatting better than loading/dumping YAML
+
+            # Find the section start
+            section_pattern = rf"^{section_key}:\s*$"
+            section_match = re.search(section_pattern, content, re.MULTILINE)
+            if not section_match:
+                print(f"    Warning: Could not find {section_key} section")
+                return False
+
+            section_start = section_match.end()
+
+            # Find the next top-level key (or end of file)
+            next_section = re.search(r"^\w+:", content[section_start:], re.MULTILINE)
+            if next_section:
+                section_end = section_start + next_section.start()
+            else:
+                section_end = len(content)
+
+            section_content = content[section_start:section_end]
+
+            # Replace median value
+            median_pattern = r"(^\s+median:\s*)[\d.eE+-]+"
+            section_content = re.sub(
+                median_pattern,
+                rf"\g<1>{computed_values['median']:.10g}",
+                section_content,
+                flags=re.MULTILINE,
+            )
+
+            # Replace iqr value
+            iqr_pattern = r"(^\s+iqr:\s*)[\d.eE+-]+"
+            section_content = re.sub(
+                iqr_pattern,
+                rf"\g<1>{computed_values['iqr']:.10g}",
+                section_content,
+                flags=re.MULTILINE,
+            )
+
+            # Replace ci95 value - handle both inline [a, b] and multi-line formats
+            ci95_lower = computed_values["ci95"][0]
+            ci95_upper = computed_values["ci95"][1]
+
+            # Try inline format first: ci95: [1.23, 4.56]
+            ci95_inline_pattern = r"(^\s+ci95:\s*)\[[\d.eE+\-,\s]+\]"
+            new_ci95 = f"[{ci95_lower:.10g}, {ci95_upper:.10g}]"
+            section_content, n_subs = re.subn(
+                ci95_inline_pattern,
+                rf"\g<1>{new_ci95}",
+                section_content,
+                flags=re.MULTILINE,
+            )
+
+            # If no inline match, try multi-line format
+            if n_subs == 0:
+                # Multi-line format:
+                # ci95:
+                #   - 1.23
+                #   - 4.56
+                ci95_multiline_pattern = (
+                    r"(^\s+ci95:\s*\n)" r"(\s+- )[\d.eE+-]+\n" r"(\s+- )[\d.eE+-]+"
+                )
+                replacement = rf"\g<1>\g<2>{ci95_lower:.10g}\n\g<3>{ci95_upper:.10g}"
+                section_content = re.sub(
+                    ci95_multiline_pattern,
+                    replacement,
+                    section_content,
+                    flags=re.MULTILINE,
+                )
+
+            # Reconstruct the file
+            new_content = content[:section_start] + section_content + content[section_end:]
+
+            # Write back
+            with open(filepath, "w") as f:
+                f.write(new_content)
+
+            return True
+
+        except Exception as e:
+            print(f"    Error updating file: {e}")
+            return False
