@@ -46,6 +46,9 @@ class ModelDefinitionExporter:
         """
         Export parameter definitions from the model.
 
+        Note: Also exports species_units.json alongside the output file
+        when called via export_to_json().
+
         Returns:
             Dict mapping parameter name -> {definition: dict, hash: str, filename: str}
         """
@@ -63,6 +66,9 @@ class ModelDefinitionExporter:
             simbio_species_df = self._load_simbio_species()
             model_context_df = self._load_model_context()
 
+            # Cache species data for species_units export
+            self._cached_species_df = simbio_species_df
+
             # Generate parameter definitions
             param_definitions = self._generate_parameter_definitions(
                 simbio_params_df, model_context_df, simbio_species_df
@@ -75,24 +81,65 @@ class ModelDefinitionExporter:
             if self.temp_dir and Path(self.temp_dir).exists():
                 shutil.rmtree(self.temp_dir)
 
+    def _generate_species_units(self, simbio_species_df: pd.DataFrame) -> Dict[str, str]:
+        """
+        Generate species units dictionary from SimBiology species data.
+
+        Returns:
+            Dict mapping qualified species name (Compartment.Species) -> unit string
+        """
+        species_units = {}
+
+        for _, row in simbio_species_df.iterrows():
+            name = row["Name"]
+            units = row["Units"] if pd.notna(row["Units"]) and row["Units"] else "dimensionless"
+            compartment = row.get("Compartment", "")
+
+            # Store under simple name
+            species_units[name] = units
+
+            # Also store under qualified name (Compartment.Species)
+            if pd.notna(compartment) and compartment:
+                qualified_name = f"{compartment}.{name}"
+                species_units[qualified_name] = units
+
+        return species_units
+
     def export_to_json(self, output_file: str):
         """
-        Export parameter definitions to JSON file.
+        Export parameter definitions and species units to JSON files.
+
+        Creates two files:
+        - <output_file>: Parameter definitions
+        - <output_dir>/species_units.json: Species name -> unit mapping
 
         Args:
-            output_file: Path to output JSON file
+            output_file: Path to output JSON file for parameter definitions
         """
+        # Export definitions (also caches species data)
         definitions = self.export_definitions()
+
+        # Generate species units from cached data
+        if hasattr(self, "_cached_species_df") and self._cached_species_df is not None:
+            species_units = self._generate_species_units(self._cached_species_df)
+        else:
+            species_units = {}
+            print("Warning: No species data available for species_units.json")
 
         # Create output directory if needed
         output_path = Path(output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write to JSON
+        # Write parameter definitions
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(definitions, f, indent=2, ensure_ascii=False)
+        print(f"Exported {len(definitions)} parameter definitions → {output_path}")
 
-        print(f"Exported {len(definitions)} parameter definitions")
+        # Write species units
+        species_units_path = output_path.parent / "species_units.json"
+        with open(species_units_path, "w", encoding="utf-8") as f:
+            json.dump(species_units, f, indent=2, ensure_ascii=False)
+        print(f"Exported {len(species_units)} species units → {species_units_path}")
 
     def _run_matlab_export(self):
         """Run MATLAB to export model data."""
