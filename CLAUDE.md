@@ -107,28 +107,59 @@ This creates an enriched CSV with:
 
 #### Test Statistic CSV
 
-Partial input (test statistics without context):
+**New workflow:** For test statistics, the user provides the `compute_test_statistic` function code directly. This ensures the computation is exactly what you intend. The LLM then focuses on extracting literature values that match your test statistic definition.
+
+Pre-enriched input (user provides the code):
 ```csv
-test_statistic_id,required_species,derived_species_description
-tumor_volume_day14,V_T.C,Tumor volume in mm³ at 14 days
+test_statistic_id,output_unit,model_output_code
+tgfb_concentration_baseline,nanomolarity,"def compute_test_statistic(time, species_dict, ureg):
+    return species_dict['V_T.TGFb'][0]"
+tumor_volume_day14,millimeter ** 3,"def compute_test_statistic(time, species_dict, ureg):
+    import numpy as np
+    cells = species_dict['V_T.C1']
+    day_14_idx = np.argmin(np.abs(time.magnitude - 14))
+    return cells[day_14_idx] * (1e-6 * ureg.millimeter**3 / ureg.cell)"
 ```
 
-Enrich with model and scenario context:
+**Key points:**
+- `output_unit`: Pint-parseable unit string (e.g., `nanomolarity`, `millimeter ** 3`, `1 / day`, `dimensionless`)
+- `model_output_code`: Python function with signature `(time, species_dict, ureg)` where:
+  - `time`: numpy array with Pint day units
+  - `species_dict`: dict mapping species names to Pint quantities (e.g., `species_dict['V_T.TGFb']` returns nanomolar values)
+  - `ureg`: Pint UnitRegistry for unit conversions
+- Function must return a Pint Quantity with the declared `output_unit`
+
+**Export model and species units first:**
 ```bash
-# Enrich partial CSV with model and scenario context
+# Export model definitions AND species_units.json
+qsp-export-model \
+  --matlab-model ../your-model-repo/scripts/your_model_file.m \
+  --output batch_jobs/input_data/model_definitions.json
+# This also creates batch_jobs/input_data/species_units.json
+```
+
+**Enrich with scenario context and validate units:**
+```bash
+# Enrich and validate (validates Pint units during enrichment)
 qsp-enrich-csv test_statistic \
-  partial_test_stats.csv \
-  model_context.txt \
-  baseline_no_treatment.yaml \
+  test_stats_input.csv \
+  scenario.yaml \
+  batch_jobs/input_data/species_units.json \
   -o batch_jobs/input_data/test_statistic_input.csv
 ```
 
-This creates an enriched CSV with:
-- `test_statistic_id`, `cancer_type`, `context_hash`
-- `model_context`, `scenario_context`
-- `required_species`, `derived_species_description`
+**Validation during enrichment:**
+- Parses `model_output_code` and checks function signature
+- Extracts species accessed from code (via AST)
+- Validates all accessed species exist in `species_units.json`
+- Executes code with Pint-wrapped mock data
+- Verifies output has correct unit dimensionality
 
-**Note:** Model definitions are exported from MATLAB model files. Scenario context files are stored in model-specific repositories (e.g., `your-model-repo/scenarios/`).
+This creates an enriched CSV with:
+- `test_statistic_id`, `output_unit`, `model_output_code`
+- `scenario_context`, `context_hash`
+
+**Note:** Model definitions and species units are exported from MATLAB model files. Scenario context files are stored in model-specific repositories (e.g., `your-model-repo/scenarios/`).
 
 ### Automated Workflow (Step 2)
 
@@ -348,11 +379,17 @@ The package uses a generalized prompt assembly system that builds prompts from m
 5. **Validation**: Automated validation suite checks quality and completeness
 
 **Test Statistics Workflow:**
-1. **CSV Enrichment**: Partial CSV + model context + scenario YAML → enriched CSV
-2. **Batch Creation**: System generates prompts with full context
-3. **LLM Processing**: LLM creates test statistic definitions with R bootstrap code
-4. **Unpacking**: Results unpacked to `<output-dir>/to-review/test_statistics/`
-5. **Aggregation**: Distributions pooled using inverse-variance weighting
+1. **Model Export**: Export model definitions + `species_units.json` from MATLAB
+2. **CSV Enrichment**: User-provided CSV (with `model_output_code`) + scenario YAML + species_units.json → enriched CSV
+   - **Pint unit validation**: During enrichment, each `compute_test_statistic` function is:
+     - Parsed (AST checks signature is `(time, species_dict, ureg)`)
+     - Validated (all accessed species exist in model)
+     - Executed with Pint-wrapped mock data
+     - Verified to return correct unit dimensionality
+3. **Batch Creation**: System generates prompts with full context
+4. **LLM Processing**: LLM extracts literature values matching the user-defined test statistic
+5. **Unpacking**: Results unpacked to `<output-dir>/to-review/test_statistics/`
+6. **Aggregation**: Distributions pooled using inverse-variance weighting
 
 ### Key Design Principles
 
@@ -381,6 +418,20 @@ This package integrates with a user-specified metadata storage directory:
 - Hash-based filenames enable multiple extractions per parameter
 
 ## Development
+
+### Git Commands
+
+**Important:** When running git commands in this repository, use plain `git` commands (not `git -C`):
+
+```bash
+# Correct
+git status
+git diff
+git add .
+
+# Incorrect (don't use -C flag)
+git -C /path/to/repo status
+```
 
 ### Running Tests
 
