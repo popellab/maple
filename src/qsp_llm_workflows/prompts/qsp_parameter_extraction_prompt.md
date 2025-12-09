@@ -31,6 +31,90 @@ For this parameter, you must:
    - `iqr_param`: Interquartile range (Q3 - Q1) of Monte Carlo draws
    - `ci95_param`: 95% percentile confidence interval as [lower, upper]
 
+**IMPORTANT: Use Pint for unit-safe calculations.**
+
+The derivation code must use the Pint library for all unit conversions and calculations. This ensures dimensional consistency between literature inputs and model parameter units.
+
+**The function must return Pint Quantities, not raw floats.** The returned values will be validated to ensure they have the correct units matching the parameter's declared units.
+
+```python
+import numpy as np
+import pint
+
+def derive_parameter(inputs, ureg):
+    """
+    Derive parameter distribution from literature data using Pint units.
+
+    Args:
+        inputs: List of input dicts, each with 'name', 'value', 'units', etc.
+        ureg: Pint UnitRegistry (provided by validator, includes custom units)
+
+    Returns:
+        dict with Pint Quantities:
+        - 'median_param': Pint Quantity with parameter units
+        - 'iqr_param': Pint Quantity with parameter units
+        - 'ci95_param': [lower, upper] as Pint Quantities with parameter units
+    """
+    # Extract input with units
+    # val = float([x for x in inputs if x['name']=='half_life'][0]['value'])
+    # units_str = [x for x in inputs if x['name']=='half_life'][0]['units']
+    # half_life = val * ureg.parse_expression(units_str)
+
+    # Bootstrap/Monte Carlo for uncertainty
+    N = 10000
+    rng = np.random.default_rng(42)
+
+    # Perform unit-aware calculations
+    # k = np.log(2) / half_life  # Pint handles units automatically
+    # k_per_day = k.to(1 / ureg.day)  # Convert to model units
+
+    # NumPy functions work directly on Pint Quantities - no need to extract magnitudes
+    # samples is a Pint Quantity array with correct units
+
+    return {
+        'median_param': np.median(samples),
+        'iqr_param': np.percentile(samples, 75) - np.percentile(samples, 25),
+        'ci95_param': [np.percentile(samples, 2.5), np.percentile(samples, 97.5)]
+    }
+```
+
+**Key Pint usage patterns:**
+
+1. **Parse unit strings from inputs:**
+   ```python
+   units = ureg.parse_expression(input_dict['units'])
+   value_with_units = float(input_dict['value']) * units
+   ```
+
+2. **Convert to model units:**
+   ```python
+   # Half-life to rate constant
+   k = np.log(2) / half_life
+   k_per_day = k.to(1 / ureg.day)
+
+   # Concentration conversions
+   conc_nM = concentration.to(ureg.nanomolar)
+   ```
+
+3. **Dimensionless parameters:**
+   ```python
+   # Ratios, fractions, Hill coefficients
+   ratio = value1 / value2  # Units cancel, result is dimensionless
+   ```
+
+4. **NumPy works directly on Pint Quantities:**
+   ```python
+   # No need to extract .magnitude - NumPy preserves units
+   median = np.median(samples)  # Returns Pint Quantity
+   percentile = np.percentile(samples, 75)  # Returns Pint Quantity
+   ```
+
+**Common unit aliases (already defined in ureg):**
+- `nanomolarity` = `nanomolar` (SimBiology convention)
+- `cell` = custom unit for cell counts
+- `1/day`, `1/hour` = rate constants
+- `dimensionless` = unitless ratios, fractions, Hill coefficients
+
 ---
 
 ## Experimental Documentation
