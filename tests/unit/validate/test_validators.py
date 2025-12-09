@@ -203,6 +203,159 @@ def derive_parameter(inputs, ureg):
             assert len(report.failed) == 1
             assert "error" in report.failed[0]["reason"].lower()
 
+    def test_fails_when_returning_raw_floats_not_pint(self):
+        """Test validator fails when code returns raw floats instead of Pint Quantities."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_units": "1 / day",
+                "parameter_estimates": {
+                    "median": 1.0,
+                    "iqr": 0.5,
+                    "ci95": [0.5, 1.5],
+                    "derivation_code": """
+def derive_parameter(inputs, ureg):
+    # Wrong: returning raw floats instead of Pint Quantities
+    return {
+        "median_param": 1.0,
+        "iqr_param": 0.5,
+        "ci95_param": [0.5, 1.5]
+    }
+""",
+                    "inputs": [
+                        {
+                            "name": "input1",
+                            "value": 1.0,
+                            "units": "dimensionless",
+                            "description": "Test input",
+                            "source_ref": "src1",
+                        }
+                    ],
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
+            report = validator.validate()
+
+            assert len(report.failed) == 1
+            assert "pint" in report.failed[0]["reason"].lower()
+
+    def test_fails_when_unit_dimensionality_mismatch(self):
+        """Test validator fails when returned units don't match expected dimensionality."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_units": "nanomolar",  # Expects concentration
+                "parameter_estimates": {
+                    "median": 1.0,
+                    "iqr": 0.5,
+                    "ci95": [0.5, 1.5],
+                    "derivation_code": """
+def derive_parameter(inputs, ureg):
+    # Wrong: returning rate (1/day) when concentration (nanomolar) expected
+    return {
+        "median_param": 1.0 / ureg.day,
+        "iqr_param": 0.5 / ureg.day,
+        "ci95_param": [0.5 / ureg.day, 1.5 / ureg.day]
+    }
+""",
+                    "inputs": [
+                        {
+                            "name": "input1",
+                            "value": 1.0,
+                            "units": "dimensionless",
+                            "description": "Test input",
+                            "source_ref": "src1",
+                        }
+                    ],
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
+            report = validator.validate()
+
+            assert len(report.failed) == 1
+            assert "mismatch" in report.failed[0]["reason"].lower()
+
+    def test_passes_test_statistic_with_pint_quantities(self):
+        """Test validator passes test statistic derivation with Pint Quantities."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "output_unit": "nanomolar",
+                "test_statistic_estimates": {
+                    "median": 50.0,
+                    "iqr": 10.0,
+                    "ci95": [40.0, 60.0],
+                    "derivation_code": """
+def derive_distribution(inputs, ureg):
+    return {
+        "median_stat": 50.0 * ureg.nanomolar,
+        "iqr_stat": 10.0 * ureg.nanomolar,
+        "ci95_stat": [40.0 * ureg.nanomolar, 60.0 * ureg.nanomolar]
+    }
+""",
+                    "inputs": [
+                        {
+                            "name": "concentration",
+                            "value": 50.0,
+                            "units": "nanomolar",
+                            "description": "Measured concentration",
+                            "source_ref": "src1",
+                        }
+                    ],
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
+            report = validator.validate()
+
+            assert len(report.failed) == 0
+
+    def test_passes_dimensionless_parameter(self):
+        """Test validator passes dimensionless parameters (ratios, fractions)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "test.yaml"
+            data = {
+                "parameter_units": "dimensionless",
+                "parameter_estimates": {
+                    "median": 0.5,
+                    "iqr": 0.1,
+                    "ci95": [0.3, 0.7],
+                    "derivation_code": """
+def derive_parameter(inputs, ureg):
+    # Dimensionless ratio
+    return {
+        "median_param": 0.5 * ureg.dimensionless,
+        "iqr_param": 0.1 * ureg.dimensionless,
+        "ci95_param": [0.3 * ureg.dimensionless, 0.7 * ureg.dimensionless]
+    }
+""",
+                    "inputs": [
+                        {
+                            "name": "fraction",
+                            "value": 0.5,
+                            "units": "dimensionless",
+                            "description": "Fraction",
+                            "source_ref": "src1",
+                        }
+                    ],
+                },
+            }
+            with open(yaml_file, "w") as f:
+                yaml.dump(data, f)
+
+            validator = CodeExecutionValidator(tmpdir, interactive=False)
+            report = validator.validate()
+
+            assert len(report.failed) == 0
+
     def test_stores_computed_values_for_executable_files(self):
         """Test that computed values are stored for all files with executable code."""
         with tempfile.TemporaryDirectory() as tmpdir:
