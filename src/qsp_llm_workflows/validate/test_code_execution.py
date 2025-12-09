@@ -4,7 +4,8 @@ Test Python code execution from YAML files.
 
 Validates:
 - Python code executes without errors
-- Function returns required fields (mean/variance for parameters, median/iqr for test statistics)
+- Function returns required fields (median/iqr for parameters and test statistics)
+- Returned values are Pint Quantities with correct unit dimensionality
 - Returned values match declared values in YAML
 - All inputs have corresponding sources
 
@@ -19,15 +20,23 @@ Usage:
 import re
 
 import numpy as np
+import pint
 
 from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
+from qsp_llm_workflows.core.unit_registry import create_unit_registry
 
 
 class CodeExecutionValidator(Validator):
     """
     Validate Python code execution from YAML files.
     Works for both parameters (v3) and test statistics (v2).
+
+    Validates that derivation code:
+    1. Executes without errors
+    2. Returns Pint Quantities (not raw floats)
+    3. Returns values with correct unit dimensionality
+    4. Returns values matching declared YAML values (within threshold)
     """
 
     def __init__(
@@ -43,6 +52,8 @@ class CodeExecutionValidator(Validator):
         # Store computed values for all files with executable code
         # Key: filepath, Value: dict with code_type and computed_values
         self.executable_files: dict[str, dict] = {}
+        # Create Pint UnitRegistry using shared factory
+        self.ureg = create_unit_registry()
 
     @property
     def name(self) -> str:
@@ -114,19 +125,21 @@ class CodeExecutionValidator(Validator):
         code: str,
         inputs: list,
         code_type: str,
+        expected_unit: str = None,
         expected_mean: float = None,
         expected_variance: float = None,
         expected_ci95: list = None,
     ) -> tuple:
         """
         Execute Python code and check for errors.
-        Compare computed values to expected values from YAML.
+        Validate Pint quantities and compare computed values to expected values.
 
         Args:
             code: Python code to execute
             inputs: List of input dicts to pass to derive function.
                     Each dict has 'name', 'value', 'units', etc.
             code_type: "parameter" or "test_statistic"
+            expected_unit: Expected output unit (Pint-parseable string)
             expected_mean: Expected mean/median value
             expected_variance: Expected variance/iqr value
             expected_ci95: Expected CI95 [lower, upper]
@@ -140,8 +153,8 @@ class CodeExecutionValidator(Validator):
         if not inputs:
             return (False, "No inputs defined", {})
 
-        # Create namespace for execution
-        namespace = {"inputs": inputs, "np": np, "numpy": np}
+        # Create namespace for execution with Pint support
+        namespace = {"inputs": inputs, "np": np, "numpy": np, "pint": pint, "ureg": self.ureg}
 
         try:
             # Execute the code in isolated namespace
@@ -154,11 +167,11 @@ class CodeExecutionValidator(Validator):
                     "median_param",
                     "iqr_param",
                     "ci95_param",
-                ]  # Changed to robust stats
+                ]
                 stat_names = ["median", "iqr"]  # For display
             elif code_type == "test_statistic":
                 func_name = "derive_distribution"
-                expected_keys = ["median_stat", "iqr_stat", "ci95_stat"]  # Changed to robust stats
+                expected_keys = ["median_stat", "iqr_stat", "ci95_stat"]
                 stat_names = ["median", "iqr"]  # For display
             else:
                 return (False, f"Unknown code type: {code_type}", {})
@@ -167,9 +180,9 @@ class CodeExecutionValidator(Validator):
             if func_name not in namespace:
                 return (False, f"Code does not define {func_name} function", {})
 
-            # Call the function
+            # Call the function with ureg argument
             derive_func = namespace[func_name]
-            result = derive_func(inputs)
+            result = derive_func(inputs, self.ureg)
 
             # Validate return type
             if not isinstance(result, dict):
@@ -181,16 +194,58 @@ class CodeExecutionValidator(Validator):
                 return (False, f"Missing required fields in result: {missing}", {})
 
             # Extract computed values (normalize keys for comparison)
-            central_key = expected_keys[0]  # mean_param or median_stat
-            spread_key = expected_keys[1]  # variance_param or iqr_stat
+            central_key = expected_keys[0]  # median_param or median_stat
+            spread_key = expected_keys[1]  # iqr_param or iqr_stat
             ci95_key = expected_keys[2]
 
-            # Use generic names for internal comparison
+            # Validate Pint quantities and extract magnitudes
+            central_value = result[central_key]
+            spread_value = result[spread_key]
+            ci95_values = result[ci95_key]
+
+            # Check that returned values are Pint Quantities
+            if not isinstance(central_value, pint.Quantity):
+                return (
+                    False,
+                    f"{central_key} is not a Pint Quantity (got {type(central_value).__name__}). "
+                    "Derivation code must return Pint Quantities, not raw floats.",
+                    {},
+                )
+
+            # Validate unit dimensionality if expected_unit provided
+            if expected_unit:
+                try:
+                    expected_pint_unit = self.ureg.parse_expression(expected_unit)
+                    if central_value.dimensionality != expected_pint_unit.dimensionality:
+                        return (
+                            False,
+                            f"Unit mismatch: {central_key} has units {central_value.units} "
+                            f"(dimensionality: {central_value.dimensionality}), "
+                            f"expected {expected_unit} (dimensionality: {expected_pint_unit.dimensionality})",
+                            {},
+                        )
+                except pint.UndefinedUnitError as e:
+                    return (False, f"Invalid expected_unit '{expected_unit}': {e}", {})
+
+            # Extract magnitudes for comparison (after unit validation)
             computed_values = {
-                "central": float(result[central_key]),  # mean or median
-                "spread": float(result[spread_key]),  # variance or iqr
-                "ci95_lower": float(result[ci95_key][0]),
-                "ci95_upper": float(result[ci95_key][1]),
+                "central": float(central_value.magnitude),
+                "spread": (
+                    float(spread_value.magnitude)
+                    if isinstance(spread_value, pint.Quantity)
+                    else float(spread_value)
+                ),
+                "ci95_lower": (
+                    float(ci95_values[0].magnitude)
+                    if isinstance(ci95_values[0], pint.Quantity)
+                    else float(ci95_values[0])
+                ),
+                "ci95_upper": (
+                    float(ci95_values[1].magnitude)
+                    if isinstance(ci95_values[1], pint.Quantity)
+                    else float(ci95_values[1])
+                ),
+                "units": str(central_value.units),
             }
 
             # Compare to expected values if provided
@@ -329,19 +384,26 @@ class CodeExecutionValidator(Validator):
         expected_mean = None
         expected_variance = None
         expected_ci95 = None
+        expected_unit = None
 
-        if code_type == "parameter" and "parameter_estimates" in data:
-            estimates = data["parameter_estimates"]
-            # Support both old (mean/variance) and new (median/iqr) field names
-            expected_mean = estimates.get("median") or estimates.get("mean")
-            expected_variance = estimates.get("iqr") or estimates.get("variance")
-            expected_ci95 = estimates.get("ci95")
-        elif code_type == "test_statistic" and "test_statistic_estimates" in data:
-            estimates = data["test_statistic_estimates"]
-            # Support both old (mean/variance) and new (median/iqr) field names
-            expected_mean = estimates.get("median") or estimates.get("mean")
-            expected_variance = estimates.get("iqr") or estimates.get("variance")
-            expected_ci95 = estimates.get("ci95")
+        if code_type == "parameter":
+            # Get expected unit from header field
+            expected_unit = data.get("parameter_units")
+            if "parameter_estimates" in data:
+                estimates = data["parameter_estimates"]
+                # Support both old (mean/variance) and new (median/iqr) field names
+                expected_mean = estimates.get("median") or estimates.get("mean")
+                expected_variance = estimates.get("iqr") or estimates.get("variance")
+                expected_ci95 = estimates.get("ci95")
+        elif code_type == "test_statistic":
+            # Get expected unit from header field
+            expected_unit = data.get("output_unit")
+            if "test_statistic_estimates" in data:
+                estimates = data["test_statistic_estimates"]
+                # Support both old (mean/variance) and new (median/iqr) field names
+                expected_mean = estimates.get("median") or estimates.get("mean")
+                expected_variance = estimates.get("iqr") or estimates.get("variance")
+                expected_ci95 = estimates.get("ci95")
 
         # Store current YAML values
         current_values = {
@@ -350,9 +412,15 @@ class CodeExecutionValidator(Validator):
             "ci95": expected_ci95 if expected_ci95 else [None, None],
         }
 
-        # Execute Python code with comparison
+        # Execute Python code with comparison and unit validation
         success, message, results = self.execute_python_code(
-            python_code, inputs, code_type, expected_mean, expected_variance, expected_ci95
+            python_code,
+            inputs,
+            code_type,
+            expected_unit,
+            expected_mean,
+            expected_variance,
+            expected_ci95,
         )
 
         # Extract computed values in a format suitable for YAML update

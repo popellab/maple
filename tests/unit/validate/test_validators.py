@@ -140,17 +140,18 @@ class TestCodeExecutionValidator:
         with tempfile.TemporaryDirectory() as tmpdir:
             yaml_file = Path(tmpdir) / "test.yaml"
             data = {
+                "parameter_units": "1 / day",
                 "parameter_estimates": {
                     "median": 1.0,
                     "iqr": 0.5,
                     "ci95": [0.5, 1.5],
                     "derivation_code": """
 import numpy as np
-def derive_parameter(inputs):
+def derive_parameter(inputs, ureg):
     return {
-        "median_param": 1.0,
-        "iqr_param": 0.5,
-        "ci95_param": [0.5, 1.5]
+        "median_param": 1.0 / ureg.day,
+        "iqr_param": 0.5 / ureg.day,
+        "ci95_param": [0.5 / ureg.day, 1.5 / ureg.day]
     }
 """,
                     "inputs": [
@@ -207,16 +208,17 @@ def derive_parameter(inputs):
         with tempfile.TemporaryDirectory() as tmpdir:
             yaml_file = Path(tmpdir) / "test.yaml"
             data = {
+                "parameter_units": "1 / day",
                 "parameter_estimates": {
                     "median": 99.0,  # Wrong value - should be 2.0
                     "iqr": 99.0,  # Wrong value - should be 1.0
                     "ci95": [99.0, 99.0],  # Wrong values - should be [1.0, 3.0]
                     "derivation_code": """
-def derive_parameter(inputs):
+def derive_parameter(inputs, ureg):
     return {
-        "median_param": 2.0,
-        "iqr_param": 1.0,
-        "ci95_param": [1.0, 3.0]
+        "median_param": 2.0 / ureg.day,
+        "iqr_param": 1.0 / ureg.day,
+        "ci95_param": [1.0 / ureg.day, 3.0 / ureg.day]
     }
 """,
                     "inputs": [

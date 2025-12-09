@@ -25,6 +25,8 @@ import pandas as pd
 import pint
 import yaml
 
+from qsp_llm_workflows.core.unit_registry import create_unit_registry
+
 
 class CodeUnitValidator:
     """
@@ -50,20 +52,7 @@ class CodeUnitValidator:
         self.output_unit = output_unit
         self.species_units = species_units
         self.errors: list[str] = []
-        self.ureg = self._create_unit_registry()
-
-    def _create_unit_registry(self) -> pint.UnitRegistry:
-        """Create Pint UnitRegistry with custom QSP units."""
-        ureg = pint.UnitRegistry()
-        # Cell counts
-        ureg.define("cells = [cell_count]")
-        ureg.define("cell = cells")
-        # SimBiology uses "nanomolarity" but Pint uses "nanomolar"
-        ureg.define("nanomolarity = nanomolar")
-        ureg.define("micromolarity = micromolar")
-        ureg.define("millimolarity = millimolar")
-        ureg.define("molarity = molar")
-        return ureg
+        self.ureg = create_unit_registry()
 
     def _clean_code_block(self, code: str) -> str:
         """Remove markdown code fences if present."""
