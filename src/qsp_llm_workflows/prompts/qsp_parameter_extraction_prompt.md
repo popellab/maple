@@ -80,14 +80,15 @@ def derive_parameter(inputs, ureg):
 
 **GOLDEN RULE: Keep values tethered to their units as long as possible.**
 
-Let Pint propagate units through your entire calculation. This catches dimensional errors automatically and makes unit conversions explicit. **Never extract `.magnitude` until the final return statement (if at all).**
+Let Pint propagate units through your entire calculation. This catches dimensional errors automatically and makes unit conversions explicit. **Never extract `.magnitude` until absolutely necessary (e.g., for lognormal distribution parameters).**
 
 **Key Pint usage patterns:**
 
-1. **Parse unit strings from inputs - attach units immediately:**
+1. **Inputs are pre-converted to Pint Quantities:**
+   The validator automatically converts your `inputs` list to a dict of Pint Quantities keyed by input name. Just access them directly:
    ```python
-   units = ureg.parse_expression(input_dict['units'])
-   value_with_units = float(input_dict['value']) * units
+   # inputs is a dict: {'half_life': <Quantity(5, 'hour')>, ...}
+   half_life = inputs['half_life']  # Already a Pint Quantity!
    ```
 
 2. **Let units flow through calculations:**
@@ -115,46 +116,50 @@ Let Pint propagate units through your entire calculation. This catches dimension
 
 5. **Monte Carlo with units - keep arrays as Quantities:**
    ```python
-   # GOOD: Units stay attached throughout
-   half_life = rng.lognormal(np.log(5), 0.3, size=N) * ureg.hour
-   k = np.log(2) / half_life  # Array of Quantities with 1/hour units
-   k_per_day = k.to(1 / ureg.day)  # Convert entire array
+   half_life = inputs['half_life']  # Already a Pint Quantity
 
-   # BAD: Extracting magnitude too early loses unit safety
-   half_life_mag = rng.lognormal(np.log(5), 0.3, size=N)  # Unitless!
-   k_mag = np.log(2) / half_life_mag  # What units is this? Unknown!
+   # For lognormal, extract magnitude for the distribution parameter, then reattach units
+   half_life_samples = rng.lognormal(
+       np.log(half_life.magnitude), 0.3, size=N
+   ) * half_life.units  # Reattach units immediately!
+
+   k = np.log(2) / half_life_samples  # Array of Quantities with 1/hour units
+   k_per_day = k.to(1 / ureg.day)  # Convert entire array
    ```
 
 **Anti-patterns to AVOID:**
 
 ```python
-# BAD: Extracting magnitude immediately defeats unit checking
-val = float(input_dict['value'])  # Lost the units!
-result = val * 0.693 / 24  # What units? Who knows!
+# BAD: Manually parsing inputs - they're already Pint Quantities!
+val = float(inputs['half_life'].magnitude)  # Unnecessary extraction
+units = inputs['half_life'].units  # Just use the Quantity directly!
 
-# BAD: Converting to magnitude for "convenience"
-samples_mag = samples.magnitude  # Now you can't catch unit errors
-median = np.median(samples_mag)  # Returns float, not Quantity
+# BAD: Keeping magnitudes separate from units
+samples_mag = rng.lognormal(mean, sigma, size=N)  # Unitless samples
+# ... many lines of code ...
+samples = samples_mag * ureg.hour  # Easy to forget or get wrong units
 
 # BAD: Hard-coded conversion factors
 k = 0.693 / half_life_hours / 24  # Manual hour→day conversion, error-prone
+
+# GOOD: Let Pint handle conversions explicitly
+k = np.log(2) / half_life  # Pint knows half_life units
+k_per_day = k.to(1 / ureg.day)  # Clear, verifiable
 ```
 
 **Best practice example:**
 
 ```python
 def derive_parameter(inputs, ureg):
-    # Step 1: Attach units to all inputs IMMEDIATELY
-    half_life_input = [x for x in inputs if x['name'] == 'half_life'][0]
-    half_life_mean = float(half_life_input['value']) * ureg.parse_expression(half_life_input['units'])
+    # Step 1: Access inputs directly - they're already Pint Quantities!
+    half_life = inputs['half_life']  # e.g., <Quantity(5, 'hour')>
 
-    # Step 2: Monte Carlo with units attached
+    # Step 2: Monte Carlo - extract magnitude only for distribution, reattach immediately
     N = 10000
     rng = np.random.default_rng(42)
-    # Assume 30% CV - samples is a Pint Quantity array
     half_life_samples = rng.lognormal(
-        np.log(half_life_mean.magnitude), 0.3, size=N
-    ) * half_life_mean.units
+        np.log(half_life.magnitude), 0.3, size=N
+    ) * half_life.units  # Samples now have correct units
 
     # Step 3: Let Pint handle dimensional analysis
     k_samples = np.log(2) / half_life_samples  # Units: 1/[time]

@@ -328,14 +328,15 @@ def derive_distribution(inputs, ureg):
 
 **GOLDEN RULE: Keep values tethered to their units as long as possible.**
 
-Let Pint propagate units through your entire calculation. This catches dimensional errors automatically and makes unit conversions explicit. **Never extract `.magnitude` until the final return statement (if at all).**
+Let Pint propagate units through your entire calculation. This catches dimensional errors automatically and makes unit conversions explicit. **Never extract `.magnitude` until absolutely necessary (e.g., for lognormal distribution parameters).**
 
 **Key Pint usage patterns:**
 
-1. **Parse unit strings from inputs - attach units immediately:**
+1. **Inputs are pre-converted to Pint Quantities:**
+   The validator automatically converts your `inputs` list to a dict of Pint Quantities keyed by input name. Just access them directly:
    ```python
-   units = ureg.parse_expression(input_dict['units'])
-   value_with_units = float(input_dict['value']) * units
+   # inputs is a dict: {'cd8_density': <Quantity(150, 'cell / mm**2')>, ...}
+   cd8_density = inputs['cd8_density']  # Already a Pint Quantity!
    ```
 
 2. **Let units flow through calculations:**
@@ -361,26 +362,25 @@ Let Pint propagate units through your entire calculation. This catches dimension
 
 5. **Monte Carlo with units - keep arrays as Quantities:**
    ```python
-   # GOOD: Units stay attached throughout
-   cd8_density = rng.lognormal(np.log(150), 0.5, size=N) * ureg('cell / mm**2')
-   tumor_volume = rng.lognormal(np.log(500), 0.3, size=N) * ureg.milliliter
-   # Calculations preserve units automatically
-   total_cd8 = cd8_density * tumor_volume.to('mm**2')  # Pint handles conversion
+   cd8_density = inputs['cd8_density']  # Already a Pint Quantity
 
-   # BAD: Extracting magnitude too early
-   cd8_mag = rng.lognormal(np.log(150), 0.5, size=N)  # Unitless - what is this?
+   # For lognormal, extract magnitude for the distribution parameter, then reattach units
+   cd8_samples = rng.lognormal(
+       np.log(cd8_density.magnitude), 0.5, size=N
+   ) * cd8_density.units  # Reattach units immediately!
    ```
 
 **Anti-patterns to AVOID:**
 
 ```python
-# BAD: Extracting magnitude immediately defeats unit checking
-val = float(input_dict['value'])  # Lost the units!
-result = val * 1000  # Is this a unit conversion? What units?
+# BAD: Manually parsing inputs - they're already Pint Quantities!
+val = float(inputs['cd8_density'].magnitude)  # Unnecessary extraction
+units = inputs['cd8_density'].units  # Just use the Quantity directly!
 
-# BAD: Converting to magnitude for "convenience"
-samples_mag = samples.magnitude  # Now you can't catch unit errors
-median = np.median(samples_mag)  # Returns float, not Quantity
+# BAD: Keeping magnitudes separate from units
+samples_mag = rng.lognormal(mean, sigma, size=N)  # Unitless samples
+# ... many lines of code ...
+samples = samples_mag * ureg('cell / mm**2')  # Easy to forget or get wrong units
 
 # BAD: Hard-coded conversion factors without Pint
 density_per_ml = density_per_mm3 * 1000  # Manual mm³→mL, error-prone
@@ -389,29 +389,25 @@ density_per_ml = density_per_mm3 * 1000  # Manual mm³→mL, error-prone
 density_per_ml = density_per_mm3.to('cell / mL')  # Clear, verifiable
 ```
 
-**Best practice example (cell density with unit propagation):**
+**Best practice example (cell density ratio with unit propagation):**
 
 ```python
 def derive_distribution(inputs, ureg):
-    # Step 1: Attach units to all inputs IMMEDIATELY
-    cd8_input = [x for x in inputs if x['name'] == 'cd8_density'][0]
-    cd8_mean = float(cd8_input['value']) * ureg.parse_expression(cd8_input['units'])
+    # Step 1: Access inputs directly - they're already Pint Quantities!
+    cd8_density = inputs['cd8_density']  # e.g., <Quantity(150, 'cell / mm**2')>
+    treg_density = inputs['treg_density']  # e.g., <Quantity(50, 'cell / mm**2')>
 
-    treg_input = [x for x in inputs if x['name'] == 'treg_density'][0]
-    treg_mean = float(treg_input['value']) * ureg.parse_expression(treg_input['units'])
-
-    # Step 2: Monte Carlo with units attached
+    # Step 2: Monte Carlo - extract magnitude only for distribution, reattach immediately
     N = 10000
     rng = np.random.default_rng(42)
 
-    # Samples are Pint Quantity arrays
     cd8_samples = rng.lognormal(
-        np.log(cd8_mean.magnitude), 0.5, size=N
-    ) * cd8_mean.units
+        np.log(cd8_density.magnitude), 0.5, size=N
+    ) * cd8_density.units  # Samples now have correct units
 
     treg_samples = rng.lognormal(
-        np.log(treg_mean.magnitude), 0.5, size=N
-    ) * treg_mean.units
+        np.log(treg_density.magnitude), 0.5, size=N
+    ) * treg_density.units
 
     # Step 3: Let Pint handle dimensional analysis
     # If both are cell/mm², ratio is dimensionless automatically
