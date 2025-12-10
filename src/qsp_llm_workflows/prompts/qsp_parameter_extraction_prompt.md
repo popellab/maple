@@ -46,7 +46,7 @@ def derive_parameter(inputs, ureg):
     Derive parameter distribution from literature data using Pint units.
 
     Args:
-        inputs: List of input dicts, each with 'name', 'value', 'units', etc.
+        inputs: dict mapping input name to Pint Quantity (pre-converted by validator)
         ureg: Pint UnitRegistry (provided by validator, includes custom units)
 
     Returns:
@@ -200,7 +200,7 @@ def derive_parameter(inputs, ureg):
 ## Requirements Summary
 
 **Code:**
-- Python function `derive_parameter(inputs)` returning median_param, iqr_param, ci95_param
+- Python function `derive_parameter(inputs, ureg)` returning median_param, iqr_param, ci95_param
 - Bootstrap preferred for uncertainty quantification
 - Use outlier-robust statistics (median/IQR instead of mean/variance)
 - Set random seed via inputs for reproducibility
@@ -221,26 +221,7 @@ def derive_parameter(inputs, ureg):
 - Weights follow rubric tables exactly
 - Code uses exactly the defined inputs
 
-**Text Snippets (CRITICAL for automated verification):**
-Text snippets (`value_snippet`) are automatically verified against the full paper text. Follow these rules strictly:
-
-1. **VERBATIM only**: Copy exact text from the paper. Never paraphrase, summarize, or reconstruct.
-2. **No table reconstruction**: Do NOT create artificial table notation like `CD8^{+} | ... | 17 (9-30)`. Tables are flattened when we extract text, so this format won't match.
-3. **Use continuous text spans**: Find a short, continuous phrase that contains the value. For table data, the snippet should be just the cell value and any immediately adjacent text, e.g., `"17 (9-30)"` not a reconstructed row.
-4. **Include context when helpful**: A few surrounding words help locate the snippet, e.g., `"median survival of 18.2 months"` is better than just `"18.2"`.
-5. **Avoid LaTeX formatting**: Write `CD8+` not `CD8^{+}`. Write subscripts inline: `CO2` not `CO_{2}`.
-6. **Keep snippets short**: 5-50 words is ideal. Long snippets are harder to match exactly.
-7. **For units**: Find where units are explicitly stated, e.g., `"expressed as cells per high-power field"` or `"measured in ng/mL"`.
-
-**Good snippet examples:**
-- `"median CD8+ density was 17 (IQR 9-30) cells/HPF"` ✓
-- `"n = 137 patients"` ✓
-- `"tumor volume measured in mm³"` ✓
-
-**Bad snippet examples:**
-- `"CD8^{+} | No neoadjuvant | 17 (9-30)"` ✗ (reconstructed table, LaTeX)
-- `"The study found elevated levels"` ✗ (no actual value)
-- `"approximately 17"` ✗ (paraphrased, paper says "17 (9-30)")
+**Text Snippets:** See detailed rules in Source Guidelines above - snippets are automatically verified.
 
 ---
 

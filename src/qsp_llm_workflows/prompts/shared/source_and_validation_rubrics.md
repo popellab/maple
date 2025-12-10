@@ -8,10 +8,31 @@
 **Data extraction:**
 - Prefer text and tables when available
 - Values and snippets go in `inputs` section (not sources)
-- Each input needs `value_snippet` with VERBATIM quote from the paper
 - **Units must be Pint-parseable** (e.g., `pg/mL`, `cells/mm^2`, `dimensionless`, `percent`). Do NOT use descriptive units like `pg/mg protein` or `% of CD45+ cells` - simplify to Pint-compatible strings
 - **Only include inputs that are USED in derivation_code** - every input must flow into the computation
 - Do NOT include boolean/qualitative indicators (e.g., `value: 1.0, units: "boolean"`) or confirmatory flags documenting study conditions (e.g., treatment-naive status, gating definitions). These belong in `study_design`, `key_assumptions`, or `key_study_limitations` instead
+
+**Text Snippets (CRITICAL for automated verification):**
+
+Text snippets are automatically verified against the full paper text. Follow these rules strictly:
+
+1. **VERBATIM only**: Copy exact text from the paper. Never paraphrase, summarize, or reconstruct.
+2. **No table reconstruction**: Do NOT create artificial table notation like `CD8^{+} | ... | 17 (9-30)`. Tables are flattened when we extract text, so this format won't match.
+3. **Use continuous text spans**: Find a short, continuous phrase that contains the value. For table data, the snippet should be just the cell value and any immediately adjacent text, e.g., `"17 (9-30)"` not a reconstructed row.
+4. **Include context when helpful**: A few surrounding words help locate the snippet, e.g., `"median survival of 18.2 months"` is better than just `"18.2"`.
+5. **Avoid LaTeX formatting**: Write `CD8+` not `CD8^{+}`. Write subscripts inline: `CO2` not `CO_{2}`.
+6. **Keep snippets short**: 5-50 words is ideal. Long snippets are harder to match exactly.
+7. **For units**: Find where units are explicitly stated, e.g., `"expressed as cells per high-power field"` or `"measured in ng/mL"`.
+
+**Good snippet examples:**
+- `"median CD8+ density was 17 (IQR 9-30) cells/HPF"` ✓
+- `"n = 137 patients"` ✓
+- `"tumor volume measured in mm³"` ✓
+
+**Bad snippet examples:**
+- `"CD8^{+} | No neoadjuvant | 17 (9-30)"` ✗ (reconstructed table, LaTeX)
+- `"The study found elevated levels"` ✗ (no actual value)
+- `"approximately 17"` ✗ (paraphrased, paper says "17 (9-30)")
 
 **For figure-extracted values (when text/table unavailable):**
 - IS allowed, but with documentation requirements
