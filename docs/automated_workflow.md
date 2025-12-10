@@ -328,7 +328,10 @@ First, export model definitions which also generates `species_units.json`:
 qsp-export-model \
   --matlab-model ../your-model-repo/scripts/your_model_file.m \
   --output batch_jobs/input_data/model_definitions.json
-# This also creates batch_jobs/input_data/species_units.json
+# This also creates batch_jobs/input_data/species_units.json containing:
+# - Species units (e.g., V_T.CD8: cell, V_T.TGFb: nanomolarity)
+# - Parameter units (e.g., initial_tumour_diameter: centimeter)
+# - Compartment volumes (e.g., V_T: milliliter, V_C: liter)
 ```
 
 #### Step 2: Create Pre-Enriched CSV
@@ -626,21 +629,24 @@ After the manual review, run the automated validators:
 # For parameter estimates
 qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
 
-# For test statistics
-qsp-validate test_statistics --dir metadata-storage/to-review/test_statistics
+# For test statistics (requires species_units.json for unit validation)
+qsp-validate test_statistics \
+  --dir metadata-storage/to-review/test_statistics \
+  --species-units-file batch_jobs/input_data/species_units.json
 ```
 
-The validation suite will run all 8 validators and generate detailed reports in `validation-outputs/`.
+The validation suite will run all 9 validators and generate detailed reports in `validation-outputs/`.
 
 **The automated validation includes:**
 1. Schema compliance (YAML structure)
-2. Source references (all source_refs are valid)
-3. Text snippets (snippets contain the reported values)
-4. DOI validity (DOIs resolve to real papers)
-5. Code execution (R/Python derivation code runs)
-6. Value consistency (cross-checks against other extractions)
-7. Duplicate primary sources (checks for already-used primary data sources)
-8. Manual snippet source verification (interactive paper verification)
+2. Code execution (R/Python derivation code runs)
+3. Model output code (test statistic `compute_test_statistic` function validates - correct signature, returns Pint Quantity with correct units)
+4. Text snippets (snippets contain the reported values)
+5. Source references (all source_refs are valid)
+6. DOI validity (DOIs resolve to real papers)
+7. Value consistency (cross-checks against other extractions)
+8. Duplicate primary sources (checks for already-used primary data sources)
+9. Automated snippet source verification (verifies snippets via Europe PMC API)
 
 ### 3. Manual Snippet Source Verification
 
@@ -668,13 +674,14 @@ Check files in `to-review/`:
 - Check unit consistency
 - Review validation reports in `validation-outputs/`
   - `schema_compliance.json` - Template compliance results
-  - `source_references.json` - Source reference validation
+  - `code_execution.json` - R/Python derivation code test results
+  - `model_output_code.json` - Test statistic compute_test_statistic validation
   - `text_snippets.json` - Text snippet verification
+  - `source_references.json` - Source reference validation
   - `doi_validity.json` - DOI resolution results
-  - `code_execution.json` - Code execution test results
   - `value_consistency.json` - Value consistency checks
   - `duplicate_primary_sources.json` - Duplicate primary source checks
-  - `snippet_sources.json` - Manual snippet source verification results
+  - `snippet_sources.json` - Automated snippet source verification results
 
 ### 5. Approve/Reject Files
 
@@ -766,10 +773,11 @@ Workflow creates/uses these files in `batch_jobs/`:
 
 Validation reports are written to `validation-outputs/`:
 - `schema_compliance.json`
-- `source_references.json`
-- `text_snippets.json`
-- `doi_validity.json`
 - `code_execution.json`
+- `model_output_code.json`
+- `text_snippets.json`
+- `source_references.json`
+- `doi_validity.json`
 - `value_consistency.json`
 - `duplicate_primary_sources.json`
 - `snippet_sources.json`

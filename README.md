@@ -51,7 +51,7 @@ This toolkit automates metadata extraction from scientific papers using OpenAI's
 
 - **Parameter extraction**: Extract parameter values, ranges, and distributions from literature
 - **Test statistics**: Create validation constraints from experimental data
-- **Validation suite**: 8 automated validators ensure quality and completeness
+- **Validation suite**: 9 automated validators ensure quality and completeness
 - **Git integration**: Automated branch creation and review workflow
 
 All extracted metadata is validated and stored in a user-specified output directory within your project repository.
@@ -108,7 +108,7 @@ qsp-llm-workflows/
 - **Modular Architecture**: Clean separation of concerns
 - **Automated Workflows**: End-to-end extraction and validation
 - **Git Integration**: Automated branch creation and review
-- **Validation Suite**: 8 validators including DOI resolution, code execution, and manual verification
+- **Validation Suite**: 9 validators including DOI resolution, code execution, and unit validation
 - **Error Fixing**: Automatically resubmit failed extractions to OpenAI for correction
 
 ## For Developers
