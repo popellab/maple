@@ -64,10 +64,13 @@ class ModelDefinitionExporter:
             # Load exported data
             simbio_params_df = self._load_simbio_parameters()
             simbio_species_df = self._load_simbio_species()
+            simbio_compartments_df = self._load_simbio_compartments()
             model_context_df = self._load_model_context()
 
-            # Cache species data for species_units export
+            # Cache data for species_units export
             self._cached_species_df = simbio_species_df
+            self._cached_params_df = simbio_params_df
+            self._cached_compartments_df = simbio_compartments_df
 
             # Generate parameter definitions
             param_definitions = self._generate_parameter_definitions(
@@ -81,29 +84,61 @@ class ModelDefinitionExporter:
             if self.temp_dir and Path(self.temp_dir).exists():
                 shutil.rmtree(self.temp_dir)
 
-    def _generate_species_units(self, simbio_species_df: pd.DataFrame) -> Dict[str, str]:
+    def _generate_species_units(
+        self,
+        simbio_species_df: pd.DataFrame,
+        simbio_params_df: pd.DataFrame | None = None,
+        simbio_compartments_df: pd.DataFrame | None = None,
+    ) -> Dict[str, str]:
         """
-        Generate species units dictionary from SimBiology species data.
+        Generate units dictionary from SimBiology species, parameters, and compartments.
+
+        Includes species, parameters, and compartments since test statistic code
+        (required_species) can reference all three types.
 
         Returns:
-            Dict mapping qualified species name (Compartment.Species) -> unit string
+            Dict mapping name -> unit string
+            Example: {'V_T.CD8': 'cell', 'initial_tumour_diameter': 'centimeter', 'V_T': 'milliliter'}
         """
-        species_units = {}
+        units_dict = {}
 
+        # Add species units
         for _, row in simbio_species_df.iterrows():
             name = row["Name"]
             units = row["Units"] if pd.notna(row["Units"]) and row["Units"] else "dimensionless"
             compartment = row.get("Compartment", "")
 
             # Store under simple name
-            species_units[name] = units
+            units_dict[name] = units
 
             # Also store under qualified name (Compartment.Species)
             if pd.notna(compartment) and compartment:
                 qualified_name = f"{compartment}.{name}"
-                species_units[qualified_name] = units
+                units_dict[qualified_name] = units
 
-        return species_units
+        # Add parameter units (for scalar parameters used in test statistics)
+        if simbio_params_df is not None:
+            for _, row in simbio_params_df.iterrows():
+                name = row["Name"]
+                units = row["Units"] if pd.notna(row["Units"]) and row["Units"] else "dimensionless"
+                # Only add if not already present (species take priority)
+                if name not in units_dict:
+                    units_dict[name] = units
+
+        # Add compartment units (for compartment volumes like V_T, V_C, etc.)
+        if simbio_compartments_df is not None and len(simbio_compartments_df) > 0:
+            for _, row in simbio_compartments_df.iterrows():
+                name = row["Name"]
+                units = (
+                    row["CapacityUnits"]
+                    if pd.notna(row["CapacityUnits"]) and row["CapacityUnits"]
+                    else "milliliter"
+                )
+                # Only add if not already present
+                if name not in units_dict:
+                    units_dict[name] = units
+
+        return units_dict
 
     def export_to_json(self, output_file: str):
         """
@@ -116,12 +151,16 @@ class ModelDefinitionExporter:
         Args:
             output_file: Path to output JSON file for parameter definitions
         """
-        # Export definitions (also caches species data)
+        # Export definitions (also caches species, params, and compartments data)
         definitions = self.export_definitions()
 
-        # Generate species units from cached data
+        # Generate units from cached data (includes species, parameters, and compartments)
         if hasattr(self, "_cached_species_df") and self._cached_species_df is not None:
-            species_units = self._generate_species_units(self._cached_species_df)
+            params_df = getattr(self, "_cached_params_df", None)
+            compartments_df = getattr(self, "_cached_compartments_df", None)
+            species_units = self._generate_species_units(
+                self._cached_species_df, params_df, compartments_df
+            )
         else:
             species_units = {}
             print("Warning: No species data available for species_units.json")
@@ -199,6 +238,15 @@ class ModelDefinitionExporter:
             raise FileNotFoundError(f"MATLAB did not generate {species_file}")
 
         return pd.read_csv(species_file)
+
+    def _load_simbio_compartments(self) -> pd.DataFrame:
+        """Load simbio_compartments.csv from MATLAB export."""
+        compartments_file = Path(self.temp_dir) / "simbio_compartments.csv"
+        if not compartments_file.exists():
+            # Compartments file is optional for backward compatibility
+            return pd.DataFrame(columns=["Name", "CapacityUnits", "Notes"])
+
+        return pd.read_csv(compartments_file)
 
     def _load_model_context(self) -> pd.DataFrame:
         """Load model_context.csv from MATLAB export."""

@@ -93,37 +93,75 @@ class CodeExecutionValidator(Validator):
 
         return code.strip()
 
-    def extract_inputs(self, data: dict) -> list:
+    def extract_inputs(self, data: dict) -> dict:
         """
         Extract inputs from parameter_estimates or test_statistic_estimates.
 
-        Returns the raw list of input dicts as expected by the derivation functions.
-        Each input dict has keys: name, value, units, description, source_ref, etc.
-
-        The derivation code accesses inputs like:
-            float([x for x in inputs if x['name']=='Foo'][0]['value'])
+        Converts the list of input dicts from YAML into a dict of Pint quantities
+        keyed by input name. This is the format expected by derivation functions:
+            inputs['Input Name'].magnitude  # access value
+            inputs['Input Name'].units      # access units
 
         Returns:
-            List of input dicts, or None if no inputs found
+            Dict mapping input names to Pint Quantities, or None if no inputs found
         """
+        inputs_list = None
+
         # Try parameter_estimates first
         if "parameter_estimates" in data:
             estimates = data["parameter_estimates"]
             if "inputs" in estimates and isinstance(estimates["inputs"], list):
-                return estimates["inputs"]
+                inputs_list = estimates["inputs"]
 
         # Try test_statistic_estimates
-        if "test_statistic_estimates" in data:
+        if inputs_list is None and "test_statistic_estimates" in data:
             estimates = data["test_statistic_estimates"]
             if "inputs" in estimates and isinstance(estimates["inputs"], list):
-                return estimates["inputs"]
+                inputs_list = estimates["inputs"]
 
-        return None
+        if inputs_list is None:
+            return None
+
+        # Convert list of dicts to dict of Pint quantities
+        inputs_dict = {}
+        for inp in inputs_list:
+            name = inp.get("name")
+            value = inp.get("value")
+            units_str = inp.get("units", "dimensionless")
+
+            if name is None or value is None:
+                continue
+
+            # Parse units and create Pint quantity
+            try:
+                # Handle special unit strings
+                if units_str in (None, "", "dimensionless", "unitless", "ratio"):
+                    pint_qty = float(value) * self.ureg.dimensionless
+                elif units_str in ("patients", "samples", "cases", "lesions"):
+                    # Count units - treat as dimensionless with magnitude
+                    pint_qty = float(value) * self.ureg.dimensionless
+                elif units_str.startswith("%") or "percent" in units_str.lower():
+                    # Percentages - treat as dimensionless
+                    pint_qty = float(value) * self.ureg.dimensionless
+                elif units_str.endswith("percentage points"):
+                    pint_qty = float(value) * self.ureg.dimensionless
+                elif "log-space" in units_str.lower() or "log_" in units_str.lower():
+                    pint_qty = float(value) * self.ureg.dimensionless
+                else:
+                    # Try to parse the unit string
+                    pint_qty = float(value) * self.ureg.parse_expression(units_str)
+            except (pint.UndefinedUnitError, pint.DimensionalityError):
+                # Fall back to dimensionless if parsing fails
+                pint_qty = float(value) * self.ureg.dimensionless
+
+            inputs_dict[name] = pint_qty
+
+        return inputs_dict if inputs_dict else None
 
     def execute_python_code(
         self,
         code: str,
-        inputs: list,
+        inputs: dict,
         code_type: str,
         expected_unit: str = None,
         expected_mean: float = None,
@@ -136,8 +174,8 @@ class CodeExecutionValidator(Validator):
 
         Args:
             code: Python code to execute
-            inputs: List of input dicts to pass to derive function.
-                    Each dict has 'name', 'value', 'units', etc.
+            inputs: Dict mapping input names to Pint Quantities.
+                    Access values like: inputs['name'].magnitude
             code_type: "parameter" or "test_statistic"
             expected_unit: Expected output unit (Pint-parseable string)
             expected_mean: Expected mean/median value
@@ -307,6 +345,26 @@ class CodeExecutionValidator(Validator):
             # Build message with calculated vs reported values
             if comparison_results:
                 issues = []
+
+                # Report units validation
+                computed_units = computed_values["units"]
+                if expected_unit:
+                    units_match = (
+                        central_value.dimensionality
+                        == self.ureg.parse_expression(expected_unit).dimensionality
+                    )
+                    if units_match:
+                        issues.append(
+                            f"  units:    computed={computed_units}, expected={expected_unit} ✓"
+                        )
+                    else:
+                        issues.append(
+                            f"  units:    computed={computed_units}, expected={expected_unit} ✗"
+                        )
+                else:
+                    issues.append(
+                        f"  units:    computed={computed_units} (no expected unit specified)"
+                    )
 
                 # Report central tendency (mean or median)
                 if expected_mean is not None:

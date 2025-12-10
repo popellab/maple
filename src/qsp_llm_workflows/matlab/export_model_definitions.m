@@ -187,6 +187,34 @@ function export_model_definitions(model_file, temp_dir, model_type)
         writetable(T_species, species_file);
         fprintf('Species exported to: %s\n', species_file);
 
+        % Export compartments (for compartment volumes like V_T)
+        fprintf('Exporting compartments...\n');
+        compartments = sbioselect(model, 'Type', 'compartment');
+
+        if isempty(compartments)
+            warning('No compartments found in the model');
+            compartmentNames = {};
+            compartmentCapacityUnits = {};
+            compartmentNotes = {};
+        else
+            compartmentNames = {compartments.Name};
+            compartmentCapacityUnits = {compartments.CapacityUnits};
+            compartmentNotes = {compartments.Notes};
+        end
+
+        % Create compartments table
+        if isempty(compartmentNames)
+            T_compartments = table(cell(0,1), cell(0,1), cell(0,1), ...
+                'VariableNames', {'Name', 'CapacityUnits', 'Notes'});
+        else
+            T_compartments = table(compartmentNames', compartmentCapacityUnits', compartmentNotes', ...
+                'VariableNames', {'Name', 'CapacityUnits', 'Notes'});
+        end
+
+        compartments_file = fullfile(temp_dir, 'simbio_compartments.csv');
+        writetable(T_compartments, compartments_file);
+        fprintf('Compartments exported to: %s\n', compartments_file);
+
         % Export model context using parameterReactionTableExtended
         fprintf('Exporting model context...\n');
         T_context = parameterReactionTableExtended(model);

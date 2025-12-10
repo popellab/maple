@@ -43,13 +43,14 @@ from qsp_llm_workflows.validate.tag_validation_results import tag_files_individu
 load_dotenv()
 
 
-def get_validators(data_dir: str, model_class):
+def get_validators(data_dir: str, model_class, species_units_file: str | None = None):
     """
     Get list of validators to run.
 
     Args:
         data_dir: Directory containing YAML files
         model_class: Pydantic model class for schema validation
+        species_units_file: Optional path to species_units.json for model output code validation
 
     Returns:
         List of Validator instances
@@ -57,7 +58,7 @@ def get_validators(data_dir: str, model_class):
     return [
         SchemaValidator(data_dir, model_class=model_class),
         CodeExecutionValidator(data_dir, threshold_pct=5.0),
-        ModelOutputCodeValidator(data_dir),  # Test statistics only
+        ModelOutputCodeValidator(data_dir, species_units_file=species_units_file),
         TextSnippetValidator(data_dir),
         SourceReferenceValidator(data_dir),
         DOIValidator(data_dir, rate_limit=1.0),
@@ -87,6 +88,12 @@ Examples:
         required=True,
         help="Directory to validate (e.g., metadata-storage/to-review/parameter_estimates)",
     )
+    parser.add_argument(
+        "--species-units-file",
+        type=str,
+        default=None,
+        help="Path to species_units.json for model output code validation (from qsp-export-model)",
+    )
 
     args = parser.parse_args()
 
@@ -112,7 +119,7 @@ Examples:
     orchestrator = ValidationOrchestrator(str(data_dir), output_dir, model_class.__name__)
 
     # Get validators
-    validators = get_validators(str(data_dir), model_class)
+    validators = get_validators(str(data_dir), model_class, args.species_units_file)
 
     # Run all validations
     result = orchestrator.run_all_validations(validators)

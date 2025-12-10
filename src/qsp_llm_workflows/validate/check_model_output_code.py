@@ -1,30 +1,69 @@
 #!/usr/bin/env python3
 """
-Validate model_output.code for test statistics.
+Validate model_output_code for test statistics.
 
 Validates that the compute_test_statistic function:
-1. Is properly defined with the correct signature
-2. Accepts time (numpy array) and species_dict (dict) arguments
-3. Returns a scalar float value when called with mock data
+1. Is properly defined with the correct signature (time, species_dict, ureg)
+2. Accepts Pint-wrapped time array and species_dict arguments
+3. Returns a Pint Quantity when called with mock data
 
 This validation only applies to test statistics (not parameter estimates).
 """
+import json
 import re
+from pathlib import Path
+
 import numpy as np
+import pint
 
 from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.core.validation_utils import load_yaml_directory, ValidationReport
+from qsp_llm_workflows.core.unit_registry import ureg
+
+
+def load_species_units(species_units_file: str | Path) -> dict[str, str]:
+    """
+    Load species units from JSON file.
+
+    Args:
+        species_units_file: Path to species_units.json (from qsp-export-model)
+
+    Returns:
+        Dict mapping species name -> unit string
+        Example: {'V_T.CD8': 'cell', 'TGFb': 'nanomolarity'}
+    """
+    with open(species_units_file) as f:
+        return json.load(f)
 
 
 class ModelOutputCodeValidator(Validator):
     """
-    Validate model_output.code for test statistics.
+    Validate model_output_code for test statistics.
 
-    Checks that compute_test_statistic(time, species_dict) -> float is properly defined.
+    Checks that compute_test_statistic(time, species_dict, ureg) -> pint.Quantity is properly defined.
+
+    If species_units_file is provided, mock data will use correct units from the model.
+    Otherwise, falls back to dimensionless units (may cause validation failures for
+    code that performs unit conversions).
     """
 
-    def __init__(self, data_dir: str, **kwargs):
+    def __init__(self, data_dir: str, species_units_file: str | None = None, **kwargs):
+        """
+        Initialize validator.
+
+        Args:
+            data_dir: Directory containing test statistic YAML files
+            species_units_file: Optional path to species_units.json (from qsp-export-model).
+                              If provided, mock data will use correct units from the model.
+                              If not provided, falls back to dimensionless units.
+        """
         super().__init__(data_dir, **kwargs)
+        self.ureg = ureg
+        self.species_units: dict[str, str] = {}
+
+        if species_units_file:
+            self.species_units = load_species_units(species_units_file)
+            print(f"Loaded units for {len(self.species_units)} species from {species_units_file}")
 
     @property
     def name(self) -> str:
@@ -42,12 +81,8 @@ class ModelOutputCodeValidator(Validator):
         return code.strip()
 
     def _extract_model_output_code(self, data: dict) -> str | None:
-        """Extract model_output.code from test statistic YAML."""
-        model_output = data.get("model_output")
-        if not model_output:
-            return None
-
-        code = model_output.get("code")
+        """Extract model_output_code from test statistic YAML header field."""
+        code = data.get("model_output_code")
         if not code:
             return None
 
@@ -63,7 +98,7 @@ class ModelOutputCodeValidator(Validator):
 
     def validate_file(self, _filepath: str, data: dict) -> tuple[bool, str]:
         """
-        Validate model_output.code for a single test statistic file.
+        Validate model_output_code for a single test statistic file.
 
         Returns:
             (is_valid, message) tuple
@@ -72,26 +107,28 @@ class ModelOutputCodeValidator(Validator):
         if "test_statistic_id" not in data:
             return (True, "Skipped (not a test statistic)")
 
-        # Extract model_output.code
+        # Extract model_output_code
         code = self._extract_model_output_code(data)
         if not code:
-            return (False, "Missing model_output.code field")
+            return (False, "Missing model_output_code field")
 
         # Check that function is defined
         if "def compute_test_statistic" not in code:
             return (False, "Function 'compute_test_statistic' not defined in code")
 
-        # Check function signature has correct arguments
-        signature_pattern = r"def\s+compute_test_statistic\s*\(\s*(\w+)\s*[,:]\s*.*?(\w+)\s*[,:)]"
+        # Check function signature has correct arguments (time, species_dict, ureg)
+        signature_pattern = (
+            r"def\s+compute_test_statistic\s*\(\s*(\w+)\s*[,:]\s*.*?(\w+)\s*[,:]\s*.*?(\w+)\s*[,:)]"
+        )
         match = re.search(signature_pattern, code)
         if not match:
             return (
                 False,
                 "Function signature doesn't match expected pattern: "
-                "compute_test_statistic(time, species_dict)",
+                "compute_test_statistic(time, species_dict, ureg)",
             )
 
-        arg1, arg2 = match.groups()
+        arg1, arg2, arg3 = match.groups()
         if arg1 != "time":
             return (
                 False,
@@ -102,22 +139,47 @@ class ModelOutputCodeValidator(Validator):
                 False,
                 f"Second argument should be 'species_dict', got '{arg2}'",
             )
+        if arg3 != "ureg":
+            return (
+                False,
+                f"Third argument should be 'ureg', got '{arg3}'",
+            )
 
         # Get required species for mock data
         required_species = self._get_required_species(data)
         if not required_species:
             return (False, "No required_species defined - cannot validate code execution")
 
+        # Get expected output unit (required field)
+        output_unit = data.get("output_unit")
+        if not output_unit:
+            return (False, "Missing required output_unit field")
+
         # Try executing the code with mock data
         try:
-            # Create mock time array
-            mock_time = np.linspace(0, 14, 100)
+            # Create mock time array with Pint units (days)
+            # Use 0-60 days to cover common time ranges in test statistics
+            mock_time = np.linspace(0, 60, 200) * self.ureg.day
 
-            # Create mock species_dict with required species
+            # Create mock species_dict with required species as Pint quantities
             mock_species_dict = {}
             for species in required_species:
-                # Generate plausible mock data (positive values with some variation)
-                mock_species_dict[species] = np.abs(np.sin(mock_time) + 1) * 100
+                # Look up unit from species_units if available
+                unit_str = self.species_units.get(species, "dimensionless")
+                try:
+                    unit = self.ureg.parse_expression(unit_str)
+                except pint.UndefinedUnitError:
+                    # Fall back to dimensionless if unit string is invalid
+                    unit = self.ureg.dimensionless
+
+                # Species starting with V_ are compartment time-series, others are scalars
+                if species.startswith("V_"):
+                    # Generate plausible mock data (positive values with some variation)
+                    mock_data = np.abs(np.sin(mock_time.magnitude / 10) + 1.5) * 100
+                    mock_species_dict[species] = mock_data * unit
+                else:
+                    # Scalar parameter (e.g., initial_tumour_diameter)
+                    mock_species_dict[species] = 10.0 * unit
 
             # Execute the code to define the function
             local_namespace = {"np": np, "numpy": np}
@@ -129,33 +191,38 @@ class ModelOutputCodeValidator(Validator):
 
             func = local_namespace["compute_test_statistic"]
 
-            # Call the function with mock data
-            result = func(mock_time, mock_species_dict)
+            # Call the function with mock data and ureg
+            result = func(mock_time, mock_species_dict, self.ureg)
 
-            # Validate return type is scalar
-            if isinstance(result, np.ndarray):
-                if result.ndim == 0:
-                    # 0-dimensional array is ok, extract scalar
-                    result = float(result)
-                else:
-                    return (
-                        False,
-                        f"Function returned array with shape {result.shape}, expected scalar",
-                    )
-
-            if not isinstance(result, (int, float, np.floating, np.integer)):
+            # Validate return type is Pint Quantity
+            if not isinstance(result, pint.Quantity):
                 return (
                     False,
-                    f"Function returned {type(result).__name__}, expected scalar float",
+                    f"Function returned {type(result).__name__}, expected pint.Quantity",
                 )
 
-            # Check for NaN or Inf
-            if np.isnan(result):
+            # Check for NaN or Inf in magnitude
+            if np.isnan(result.magnitude):
                 return (False, "Function returned NaN")
-            if np.isinf(result):
+            if np.isinf(result.magnitude):
                 return (False, "Function returned Inf")
 
-            return (True, f"Valid (returned {result:.6g})")
+            # Validate output unit dimensionality matches declared output_unit
+            try:
+                expected_unit = self.ureg.parse_expression(output_unit)
+                if result.dimensionality != expected_unit.dimensionality:
+                    return (
+                        False,
+                        f"Unit mismatch: function returned {result.units:~} "
+                        f"but output_unit declares {expected_unit:~}",
+                    )
+            except pint.UndefinedUnitError:
+                return (False, f"Cannot parse declared output_unit: {output_unit}")
+
+            # Format result for display
+            result_str = f"{result.magnitude:.6g} {result.units:~}"
+
+            return (True, f"Valid (returned {result_str})")
 
         except Exception as e:
             return (False, f"Code execution failed: {str(e)}")
