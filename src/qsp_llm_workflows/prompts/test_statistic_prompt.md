@@ -326,26 +326,30 @@ def derive_distribution(inputs, ureg):
     }
 ```
 
+**GOLDEN RULE: Keep values tethered to their units as long as possible.**
+
+Let Pint propagate units through your entire calculation. This catches dimensional errors automatically and makes unit conversions explicit. **Never extract `.magnitude` until the final return statement (if at all).**
+
 **Key Pint usage patterns:**
 
-1. **Parse unit strings from inputs:**
+1. **Parse unit strings from inputs - attach units immediately:**
    ```python
    units = ureg.parse_expression(input_dict['units'])
    value_with_units = float(input_dict['value']) * units
    ```
 
-2. **Unit conversions:**
+2. **Let units flow through calculations:**
    ```python
-   # Convert between compatible units
+   # Convert between compatible units - Pint checks compatibility
    conc_molar = concentration.to(ureg.molar)
 
-   # Convert with explicit factor
+   # Unit conversions with explicit factors
    volume_mm3 = cells * (1e-6 * ureg.millimeter**3 / ureg.cell)
    ```
 
-3. **Dimensionless ratios:**
+3. **Dimensionless ratios emerge naturally:**
    ```python
-   ratio = tregs / cd8  # Units cancel, result is dimensionless
+   ratio = tregs / cd8  # Units cancel, Pint tracks this
    ```
 
 4. **NumPy works directly on Pint Quantities:**
@@ -354,6 +358,72 @@ def derive_distribution(inputs, ureg):
    median = np.median(samples)  # Returns Pint Quantity
    percentile = np.percentile(samples, 75)  # Returns Pint Quantity
    ```
+
+5. **Monte Carlo with units - keep arrays as Quantities:**
+   ```python
+   # GOOD: Units stay attached throughout
+   cd8_density = rng.lognormal(np.log(150), 0.5, size=N) * ureg('cell / mm**2')
+   tumor_volume = rng.lognormal(np.log(500), 0.3, size=N) * ureg.milliliter
+   # Calculations preserve units automatically
+   total_cd8 = cd8_density * tumor_volume.to('mm**2')  # Pint handles conversion
+
+   # BAD: Extracting magnitude too early
+   cd8_mag = rng.lognormal(np.log(150), 0.5, size=N)  # Unitless - what is this?
+   ```
+
+**Anti-patterns to AVOID:**
+
+```python
+# BAD: Extracting magnitude immediately defeats unit checking
+val = float(input_dict['value'])  # Lost the units!
+result = val * 1000  # Is this a unit conversion? What units?
+
+# BAD: Converting to magnitude for "convenience"
+samples_mag = samples.magnitude  # Now you can't catch unit errors
+median = np.median(samples_mag)  # Returns float, not Quantity
+
+# BAD: Hard-coded conversion factors without Pint
+density_per_ml = density_per_mm3 * 1000  # Manual mm³→mL, error-prone
+
+# GOOD: Let Pint handle conversions explicitly
+density_per_ml = density_per_mm3.to('cell / mL')  # Clear, verifiable
+```
+
+**Best practice example (cell density with unit propagation):**
+
+```python
+def derive_distribution(inputs, ureg):
+    # Step 1: Attach units to all inputs IMMEDIATELY
+    cd8_input = [x for x in inputs if x['name'] == 'cd8_density'][0]
+    cd8_mean = float(cd8_input['value']) * ureg.parse_expression(cd8_input['units'])
+
+    treg_input = [x for x in inputs if x['name'] == 'treg_density'][0]
+    treg_mean = float(treg_input['value']) * ureg.parse_expression(treg_input['units'])
+
+    # Step 2: Monte Carlo with units attached
+    N = 10000
+    rng = np.random.default_rng(42)
+
+    # Samples are Pint Quantity arrays
+    cd8_samples = rng.lognormal(
+        np.log(cd8_mean.magnitude), 0.5, size=N
+    ) * cd8_mean.units
+
+    treg_samples = rng.lognormal(
+        np.log(treg_mean.magnitude), 0.5, size=N
+    ) * treg_mean.units
+
+    # Step 3: Let Pint handle dimensional analysis
+    # If both are cell/mm², ratio is dimensionless automatically
+    ratio_samples = cd8_samples / treg_samples
+
+    # Step 4: Return Quantities - validator checks units match output_unit
+    return {
+        'median_stat': np.median(ratio_samples),
+        'iqr_stat': np.percentile(ratio_samples, 75) - np.percentile(ratio_samples, 25),
+        'ci95_stat': [np.percentile(ratio_samples, 2.5), np.percentile(ratio_samples, 97.5)]
+    }
+```
 
 **Common unit aliases (already defined in ureg):**
 - `nanomolarity` = `nanomolar` (SimBiology convention)

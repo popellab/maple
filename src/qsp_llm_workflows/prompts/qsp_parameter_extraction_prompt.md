@@ -78,28 +78,32 @@ def derive_parameter(inputs, ureg):
     }
 ```
 
+**GOLDEN RULE: Keep values tethered to their units as long as possible.**
+
+Let Pint propagate units through your entire calculation. This catches dimensional errors automatically and makes unit conversions explicit. **Never extract `.magnitude` until the final return statement (if at all).**
+
 **Key Pint usage patterns:**
 
-1. **Parse unit strings from inputs:**
+1. **Parse unit strings from inputs - attach units immediately:**
    ```python
    units = ureg.parse_expression(input_dict['units'])
    value_with_units = float(input_dict['value']) * units
    ```
 
-2. **Convert to model units:**
+2. **Let units flow through calculations:**
    ```python
-   # Half-life to rate constant
-   k = np.log(2) / half_life
-   k_per_day = k.to(1 / ureg.day)
+   # Half-life to rate constant - Pint handles the dimensional analysis
+   k = np.log(2) / half_life  # If half_life is in hours, k is in 1/hour
+   k_per_day = k.to(1 / ureg.day)  # Convert to model units
 
    # Concentration conversions
    conc_nM = concentration.to(ureg.nanomolar)
    ```
 
-3. **Dimensionless parameters:**
+3. **Dimensionless parameters emerge naturally:**
    ```python
-   # Ratios, fractions, Hill coefficients
-   ratio = value1 / value2  # Units cancel, result is dimensionless
+   # Ratios, fractions, Hill coefficients - units cancel automatically
+   ratio = value1 / value2  # Pint tracks that units cancel
    ```
 
 4. **NumPy works directly on Pint Quantities:**
@@ -108,6 +112,63 @@ def derive_parameter(inputs, ureg):
    median = np.median(samples)  # Returns Pint Quantity
    percentile = np.percentile(samples, 75)  # Returns Pint Quantity
    ```
+
+5. **Monte Carlo with units - keep arrays as Quantities:**
+   ```python
+   # GOOD: Units stay attached throughout
+   half_life = rng.lognormal(np.log(5), 0.3, size=N) * ureg.hour
+   k = np.log(2) / half_life  # Array of Quantities with 1/hour units
+   k_per_day = k.to(1 / ureg.day)  # Convert entire array
+
+   # BAD: Extracting magnitude too early loses unit safety
+   half_life_mag = rng.lognormal(np.log(5), 0.3, size=N)  # Unitless!
+   k_mag = np.log(2) / half_life_mag  # What units is this? Unknown!
+   ```
+
+**Anti-patterns to AVOID:**
+
+```python
+# BAD: Extracting magnitude immediately defeats unit checking
+val = float(input_dict['value'])  # Lost the units!
+result = val * 0.693 / 24  # What units? Who knows!
+
+# BAD: Converting to magnitude for "convenience"
+samples_mag = samples.magnitude  # Now you can't catch unit errors
+median = np.median(samples_mag)  # Returns float, not Quantity
+
+# BAD: Hard-coded conversion factors
+k = 0.693 / half_life_hours / 24  # Manual hour→day conversion, error-prone
+```
+
+**Best practice example:**
+
+```python
+def derive_parameter(inputs, ureg):
+    # Step 1: Attach units to all inputs IMMEDIATELY
+    half_life_input = [x for x in inputs if x['name'] == 'half_life'][0]
+    half_life_mean = float(half_life_input['value']) * ureg.parse_expression(half_life_input['units'])
+
+    # Step 2: Monte Carlo with units attached
+    N = 10000
+    rng = np.random.default_rng(42)
+    # Assume 30% CV - samples is a Pint Quantity array
+    half_life_samples = rng.lognormal(
+        np.log(half_life_mean.magnitude), 0.3, size=N
+    ) * half_life_mean.units
+
+    # Step 3: Let Pint handle dimensional analysis
+    k_samples = np.log(2) / half_life_samples  # Units: 1/[time]
+
+    # Step 4: Convert to model units - Pint checks compatibility
+    k_per_day = k_samples.to(1 / ureg.day)  # Would error if units incompatible
+
+    # Step 5: Return Quantities - validator checks units match parameter definition
+    return {
+        'median_param': np.median(k_per_day),
+        'iqr_param': np.percentile(k_per_day, 75) - np.percentile(k_per_day, 25),
+        'ci95_param': [np.percentile(k_per_day, 2.5), np.percentile(k_per_day, 97.5)]
+    }
+```
 
 **Common unit aliases (already defined in ureg):**
 - `nanomolarity` = `nanomolar` (SimBiology convention)

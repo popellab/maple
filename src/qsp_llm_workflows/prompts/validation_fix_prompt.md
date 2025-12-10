@@ -31,6 +31,13 @@ Fix the validation errors listed below, and while doing so:
 - Ensure all required outputs are generated (mean, variance, median, etc.)
 - The goal is **exact numerical consistency** between code output and reported values
 
+**Pint Unit Handling (if code has unit errors):**
+- **Keep values tethered to units** throughout calculations - don't extract `.magnitude` too early
+- Attach units immediately when parsing inputs: `value * ureg.parse_expression(units_str)`
+- Let Pint propagate units through calculations automatically
+- Return Pint Quantities, not raw floats
+- Common anti-pattern to fix: `val = float(input['value'])` loses units - should be `val = float(input['value']) * ureg.parse_expression(input['units'])`
+
 ### Text Snippet Errors
 Text snippets are automatically verified against the full paper text. When fixing snippet errors:
 
