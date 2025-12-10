@@ -21,13 +21,13 @@ class Input(BaseModel):
 
     name: str = Field(description="Input name")
     value: float = Field(description="Input value")
-    units: str = Field(description="Input units")
+    units: str = Field(
+        description="Input units (must be Pint-parseable, e.g., 'pg/mL', 'cells/mm^2', 'dimensionless')"
+    )
     description: str = Field(description="Input description")
     source_ref: Optional[str] = Field(description="Source reference tag (or null)")
     value_table_or_section: Optional[str] = Field(description="Location of value in source")
     value_snippet: Optional[str] = Field(description="Text snippet containing value")
-    units_table_or_section: Optional[str] = Field(description="Location of units in source")
-    units_snippet: Optional[str] = Field(description="Text snippet containing units")
 
 
 class Source(BaseModel):

@@ -445,8 +445,8 @@ Each input needs:
 - `source_ref` - References a source below
 - `value_table_or_section` - Where the value appears
 - `value_snippet` - VERBATIM quote showing the value (see snippet rules below)
-- `units_table_or_section` - Where units are stated
-- `units_snippet` - VERBATIM quote showing units (see snippet rules below)
+
+**Units must be Pint-parseable** (e.g., `pg/mL`, `cells/mm^2`, `dimensionless`, `percent`). Do NOT use descriptive units like `pg/mg protein` or `% of CD45+ cells` - simplify to Pint-compatible strings.
 
 **Only include inputs that are USED in derivation_code.** Every input must flow into the statistical computation.
 

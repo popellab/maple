@@ -222,7 +222,7 @@ def derive_parameter(inputs, ureg):
 - Code uses exactly the defined inputs
 
 **Text Snippets (CRITICAL for automated verification):**
-Text snippets (`value_snippet`, `units_snippet`) are automatically verified against the full paper text. Follow these rules strictly:
+Text snippets (`value_snippet`) are automatically verified against the full paper text. Follow these rules strictly:
 
 1. **VERBATIM only**: Copy exact text from the paper. Never paraphrase, summarize, or reconstruct.
 2. **No table reconstruction**: Do NOT create artificial table notation like `CD8^{+} | ... | 17 (9-30)`. Tables are flattened when we extract text, so this format won't match.
@@ -259,6 +259,6 @@ Extract parameter metadata following all requirements above.
 - Use `\n` for line breaks, `\n\n` for paragraphs in text fields
 - Python code should be plain text (no markdown code fences within the code strings)
 - `derivation_code`: raw Python (no ```python wrapper)
-- `inputs`: array with name, value, units, description, source_ref, value_table_or_section, value_snippet, units_table_or_section, units_snippet
+- `inputs`: array with name, value, units (Pint-parseable), description, source_ref, value_table_or_section, value_snippet
 - Numbers as numbers, not strings
 - Every source_ref must have corresponding source entry

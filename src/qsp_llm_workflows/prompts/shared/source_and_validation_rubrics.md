@@ -8,17 +8,14 @@
 **Data extraction:**
 - Prefer text and tables when available
 - Values and snippets go in `inputs` section (not sources)
-- Each input needs `value_snippet` and `units_snippet`
+- Each input needs `value_snippet` with VERBATIM quote from the paper
+- **Units must be Pint-parseable** (e.g., `pg/mL`, `cells/mm^2`, `dimensionless`, `percent`). Do NOT use descriptive units like `pg/mg protein` or `% of CD45+ cells` - simplify to Pint-compatible strings
 - **Only include inputs that are USED in derivation_code** - every input must flow into the computation
 - Do NOT include boolean/qualitative indicators (e.g., `value: 1.0, units: "boolean"`) or confirmatory flags documenting study conditions (e.g., treatment-naive status, gating definitions). These belong in `study_design`, `key_assumptions`, or `key_study_limitations` instead
-
-**For text/table values:**
-- `value_snippet` and `units_snippet` must be VERBATIM quotes from the paper
 
 **For figure-extracted values (when text/table unavailable):**
 - IS allowed, but with documentation requirements
 - `value_snippet`: Describe the figure and your reading, e.g., "Figure 2A bar height ~45, error bar to ~60 (estimated from axis)"
-- `units_snippet`: Quote the axis label verbatim, e.g., "y-axis label: 'CD163+ cells/HPF'"
 - Reduce `overall_confidence` by 0.1 for figure-extracted values
 - Add to `key_assumptions`: "Value estimated from figure; exact numeric not reported in text/tables"
 
