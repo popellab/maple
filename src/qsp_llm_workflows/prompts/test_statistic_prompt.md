@@ -252,20 +252,21 @@ Confidence interval reasonableness:
 
 # What You'll Generate
 
-1. **model_output** - Python function computing test statistic from model simulation
-2. **test_statistic_definition** - Mathematical definition
-3. **study_overview** - What's measured and why (1-2 sentences)
-4. **study_design** - How it was measured (1-2 sentences)
-5. **test_statistic_estimates**:
+**Note:** The `model_output_code` (compute_test_statistic function) is user-provided during CSV preparation - you do NOT generate it.
+
+1. **test_statistic_definition** - Mathematical definition
+2. **study_overview** - What's measured and why (1-2 sentences)
+3. **study_design** - How it was measured (1-2 sentences)
+4. **test_statistic_estimates**:
    - `inputs` - Extracted values with source references and verbatim text snippets
    - `derivation_code` - Python function deriving distribution with bootstrap/Monte Carlo
    - `median`, `iqr`, `ci95`, `units` - Statistical outputs (using outlier-robust statistics)
    - `key_assumptions` - 3-5 critical assumptions as list with number and text
-6. **derivation_explanation** - Step-by-step explanation referencing assumptions
-7. **key_study_limitations** - Critical limitations affecting reliability
-8. **primary_data_sources** - Papers with data (real DOIs required)
-9. **secondary_data_sources** - Reference values (doi_or_url field)
-10. **validation_weights** - Quality scores for 7 dimensions (see rubrics below)
+5. **derivation_explanation** - Step-by-step explanation referencing assumptions
+6. **key_study_limitations** - Critical limitations affecting reliability
+7. **primary_data_sources** - Papers with data (real DOIs required)
+8. **secondary_data_sources** - Reference values (doi_or_url field)
+9. **validation_weights** - Quality scores for 7 dimensions (see rubrics below)
 
 ---
 

@@ -689,9 +689,6 @@ class ValidationFixBatchCreator(BatchCreator):
             return """Example output format for test statistics:
 ```json
 {
-  "model_output": {
-    "code": "import numpy as np\\n\\ndef compute_test_statistic(...):\\n    ..."
-  },
   "test_statistic_definition": "...",
   "study_overview": "...",
   "study_design": "...",
@@ -731,13 +728,11 @@ class ValidationFixBatchCreator(BatchCreator):
       {
         "name": "...",
         "value": 1.23,
-        "units": "...",
+        "units": "pg/mL",
         "description": "...",
         "source_ref": "SOURCE_TAG",
         "value_table_or_section": "Table 2",
-        "value_snippet": "...",
-        "units_table_or_section": "Table 2",
-        "units_snippet": "..."
+        "value_snippet": "..."
       }
     ],
     "derivation_code": "```python\\n...\\n```",
