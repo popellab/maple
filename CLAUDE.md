@@ -135,7 +135,10 @@ tumor_volume_day14,millimeter ** 3,"def compute_test_statistic(time, species_dic
 qsp-export-model \
   --matlab-model ../your-model-repo/scripts/your_model_file.m \
   --output batch_jobs/input_data/model_definitions.json
-# This also creates batch_jobs/input_data/species_units.json
+# This also creates batch_jobs/input_data/species_units.json containing:
+# - Species units (e.g., V_T.CD8: cell, V_T.TGFb: nanomolarity)
+# - Parameter units (e.g., initial_tumour_diameter: centimeter)
+# - Compartment volumes (e.g., V_T: milliliter, V_C: liter)
 ```
 
 **Enrich with scenario context and validate units:**
@@ -188,7 +191,13 @@ qsp-extract input.csv --type parameter --output-dir metadata-storage --immediate
 
 **After workflow completes, manually run validation:**
 ```bash
+# For parameter estimates
 qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
+
+# For test statistics (requires species_units.json for unit validation)
+qsp-validate test_statistics \
+  --dir metadata-storage/to-review/test_statistics \
+  --species-units-file batch_jobs/input_data/species_units.json
 ```
 
 See `docs/automated_workflow.md` for complete documentation.
@@ -236,16 +245,17 @@ qsp-fix test_statistics --dir metadata-storage/to-review/test_statistics --timeo
 
 ### Validation Suite
 
-The automated validation suite includes 8 validators:
+The automated validation suite includes 9 validators:
 
 1. **Schema Compliance** - YAML structure matches template
-2. **Code Execution** - R/Python code runs without errors
-3. **Text Snippets** - Snippets contain declared values
-4. **Source References** - All source_refs point to defined sources
-5. **DOI Validity** - DOIs resolve and metadata matches
-6. **Value Consistency** - Values consistent across related extractions
-7. **Duplicate Primary Sources** - Primary data sources not already used in accepted extractions
-8. **Manual Snippet Source Verification** - Interactive verification of snippets in papers
+2. **Code Execution** - R/Python derivation_code runs without errors
+3. **Model Output Code** - Test statistic `compute_test_statistic` function validates (correct signature, returns Pint Quantity with correct units)
+4. **Text Snippets** - Snippets contain declared values
+5. **Source References** - All source_refs point to defined sources
+6. **DOI Validity** - DOIs resolve and metadata matches
+7. **Value Consistency** - Values consistent across related extractions
+8. **Duplicate Primary Sources** - Primary data sources not already used in accepted extractions
+9. **Automated Snippet Source Verification** - Verifies snippets via Europe PMC API
 
 **Manual Snippet Source Verification**:
 - Generates report with DOI links and snippets grouped by source
@@ -391,6 +401,41 @@ The package uses a generalized prompt assembly system that builds prompts from m
 5. **Unpacking**: Results unpacked to `<output-dir>/to-review/test_statistics/`
 6. **Aggregation**: Distributions pooled using inverse-variance weighting
 
+### Shared Pint UnitRegistry
+
+All code that handles units must use the shared Pint UnitRegistry from `unit_registry.py`:
+
+```python
+from qsp_llm_workflows.core.unit_registry import ureg
+```
+
+**Why a shared registry?**
+- Pint quantities from different registries cannot be compared or combined
+- Custom units (`cell`, `nanomolarity`) are defined once in the shared registry
+- All validators, code execution, and enrichment use the same registry
+
+**Custom units defined:**
+- `cell = [cell_count]` - for cell counts and densities
+- `nanomolarity = nanomolar` - SimBiology convention alias
+- `micromolarity`, `millimolarity`, `molarity` - additional SimBiology aliases
+
+**Usage in code:**
+```python
+from qsp_llm_workflows.core.unit_registry import ureg
+
+# Creating quantities
+time = np.linspace(0, 14, 100) * ureg.day
+concentration = 5.0 * ureg.nanomolarity
+
+# Unit conversions
+density.to('cell / mm**3')
+
+# Dimensionless ratios
+ratio.to(ureg.dimensionless)
+```
+
+**IMPORTANT:** Never create a new `pint.UnitRegistry()` in validation or processing code. Always import `ureg` from the shared module.
+
 ### Key Design Principles
 
 **Package Architecture:**
@@ -406,6 +451,7 @@ The package uses a generalized prompt assembly system that builds prompts from m
 - **Class-focused architecture**: Prefer class-based designs over functional approaches
 - **No main runners in libraries**: Only CLI scripts have `if __name__ == "__main__"` blocks
 - **Explicit interfaces**: Require all necessary arguments, avoid complex default logic
+- **Shared UnitRegistry**: Always use `get_unit_registry()`, never create new registries
 
 ### Integration with Metadata Storage
 
