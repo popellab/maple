@@ -81,6 +81,8 @@ class TestTestStatisticHeaders:
             schema_version="v2",
             test_statistic_id="tumor_vol_day14",
             cancer_type="PDAC",
+            output_unit="millimeter ** 3",
+            model_output_code="def compute_test_statistic(time, species_dict, ureg):\n    return species_dict['V_T.C'][14] * ureg.cell",
             scenario_context={"treatment": "Drug A", "dose": "10 mg/kg"},
             required_species=["V_T.C"],
             derived_species_description="Tumor volume at day 14",
@@ -90,6 +92,8 @@ class TestTestStatisticHeaders:
 
         assert headers.test_statistic_id == "tumor_vol_day14"
         assert headers.cancer_type == "PDAC"
+        assert headers.output_unit == "millimeter ** 3"
+        assert "compute_test_statistic" in headers.model_output_code
         assert "V_T.C" in headers.required_species
 
 

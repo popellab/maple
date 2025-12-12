@@ -252,80 +252,174 @@ Confidence interval reasonableness:
 
 # What You'll Generate
 
-1. **model_output** - Python function computing test statistic from model simulation
-2. **test_statistic_definition** - Mathematical definition
-3. **study_overview** - What's measured and why (1-2 sentences)
-4. **study_design** - How it was measured (1-2 sentences)
-5. **test_statistic_estimates**:
+**Note:** The `model_output_code` (compute_test_statistic function) is user-provided during CSV preparation - you do NOT generate it.
+
+1. **test_statistic_definition** - Mathematical definition
+2. **study_overview** - What's measured and why (1-2 sentences)
+3. **study_design** - How it was measured (1-2 sentences)
+4. **test_statistic_estimates**:
    - `inputs` - Extracted values with source references and verbatim text snippets
    - `derivation_code` - Python function deriving distribution with bootstrap/Monte Carlo
    - `median`, `iqr`, `ci95`, `units` - Statistical outputs (using outlier-robust statistics)
    - `key_assumptions` - 3-5 critical assumptions as list with number and text
-6. **derivation_explanation** - Step-by-step explanation referencing assumptions
-7. **key_study_limitations** - Critical limitations affecting reliability
-8. **primary_data_sources** - Papers with data (real DOIs required)
-9. **secondary_data_sources** - Reference values (doi_or_url field)
-10. **validation_weights** - Quality scores for 7 dimensions (see rubrics below)
+5. **derivation_explanation** - Step-by-step explanation referencing assumptions
+6. **key_study_limitations** - Critical limitations affecting reliability
+7. **primary_data_sources** - Papers with data (real DOIs required)
+8. **secondary_data_sources** - Reference values (doi_or_url field)
+9. **validation_weights** - Quality scores for 7 dimensions (see rubrics below)
 
 ---
 
 # Technical Specs
 
-## Model Output Code
+## Derivation Code
 
-**Species Alignment Requirement:**
+**IMPORTANT: Use Pint for unit-safe calculations.**
 
-Before writing code, verify the mapping between:
-- Literature measurement (e.g., "PD-1+ CD8+ cells")
-- Model species (e.g., "V_T.CD8_exh")
+The derivation code must use the Pint library for all unit conversions and calculations. This ensures dimensional consistency between inputs and outputs.
 
-Document the alignment in `test_statistic_definition`:
-- If exact match: state "Direct measurement of model species"
-- If proxy: state "Literature proxy (X) maps to model species (Y) because..."
+**The function must return Pint Quantities, not raw floats.** The returned values will be validated to ensure they have the correct units matching the test statistic's declared `output_unit`.
 
-Your code MUST use the exact species names provided in "Available model species" below.
-If the literature measures something different, document the mapping assumption.
-
-**Function signature (must match exactly):**
 ```python
 import numpy as np
+import pint
 
-def compute_test_statistic(time: np.ndarray, species_dict: dict) -> float:
+def derive_distribution(inputs, ureg):
     """
-    Compute test statistic from model simulation.
+    Derive expected distribution from literature data using Pint units.
 
     Args:
-        time: 1D numpy array of simulation timepoints
-        species_dict: Dict mapping species names (from required_species) to
-                      1D numpy arrays of values at each timepoint
+        inputs: dict mapping input name to Pint Quantity (pre-converted by validator)
+        ureg: Pint UnitRegistry (provided by validator, includes custom units)
 
     Returns:
-        Scalar float value (the computed test statistic)
+        dict with Pint Quantities:
+        - 'median_stat': Pint Quantity with output units
+        - 'iqr_stat': Pint Quantity with output units
+        - 'ci95_stat': [lower, upper] as Pint Quantities with output units
     """
-    # Extract species from dict, e.g.: cd8 = species_dict['V_T.CD8']
-    # Interpolate to specific timepoint if needed
-    # Compute and return scalar metric
-    return test_statistic_value
-```
+    # Extract input with units
+    # val = float([x for x in inputs if x['name']=='concentration'][0]['value'])
+    # units_str = [x for x in inputs if x['name']=='concentration'][0]['units']
+    # concentration = val * ureg.parse_expression(units_str)
 
-**Important:** The function must return a single scalar float, not an array.
-
-## Derivation Code
-```python
-import numpy as np
-
-def derive_distribution(inputs):
-    """Derive expected distribution from literature data."""
-    # Extract input values
     # Bootstrap/Monte Carlo for uncertainty
-    # Propagate through computations
-    # Use outlier-robust statistics (median/IQR instead of mean/variance)
+    N = 10000
+    rng = np.random.default_rng(42)
+
+    # Perform unit-aware calculations
+    # All intermediate values should be Pint Quantities
+    # Pint automatically checks dimensional consistency
+
+    # NumPy functions work directly on Pint Quantities - no need to extract magnitudes
+    # samples is a Pint Quantity array with correct units
+
     return {
-        'median_stat': float,
-        'iqr_stat': float,
-        'ci95_stat': [lower, upper]
+        'median_stat': np.median(samples),
+        'iqr_stat': np.percentile(samples, 75) - np.percentile(samples, 25),
+        'ci95_stat': [np.percentile(samples, 2.5), np.percentile(samples, 97.5)]
     }
 ```
+
+**GOLDEN RULE: Keep values tethered to their units as long as possible.**
+
+Let Pint propagate units through your entire calculation. This catches dimensional errors automatically and makes unit conversions explicit. **Never extract `.magnitude` until absolutely necessary (e.g., for lognormal distribution parameters).**
+
+**Key Pint usage patterns:**
+
+1. **Inputs are pre-converted to Pint Quantities:**
+   The validator automatically converts your `inputs` list to a dict of Pint Quantities keyed by input name. Just access them directly:
+   ```python
+   # inputs is a dict: {'cd8_density': <Quantity(150, 'cell / mm**2')>, ...}
+   cd8_density = inputs['cd8_density']  # Already a Pint Quantity!
+   ```
+
+2. **Let units flow through calculations:**
+   ```python
+   # Convert between compatible units - Pint checks compatibility
+   conc_molar = concentration.to(ureg.molar)
+
+   # Unit conversions with explicit factors
+   volume_mm3 = cells * (1e-6 * ureg.millimeter**3 / ureg.cell)
+   ```
+
+3. **Dimensionless ratios emerge naturally:**
+   ```python
+   ratio = tregs / cd8  # Units cancel, Pint tracks this
+   ```
+
+4. **NumPy works directly on Pint Quantities:**
+   ```python
+   # No need to extract .magnitude - NumPy preserves units
+   median = np.median(samples)  # Returns Pint Quantity
+   percentile = np.percentile(samples, 75)  # Returns Pint Quantity
+   ```
+
+5. **Monte Carlo with units - keep arrays as Quantities:**
+   ```python
+   cd8_density = inputs['cd8_density']  # Already a Pint Quantity
+
+   # For lognormal, extract magnitude for the distribution parameter, then reattach units
+   cd8_samples = rng.lognormal(
+       np.log(cd8_density.magnitude), 0.5, size=N
+   ) * cd8_density.units  # Reattach units immediately!
+   ```
+
+**Anti-patterns to AVOID:**
+
+```python
+# BAD: Manually parsing inputs - they're already Pint Quantities!
+val = float(inputs['cd8_density'].magnitude)  # Unnecessary extraction
+units = inputs['cd8_density'].units  # Just use the Quantity directly!
+
+# BAD: Keeping magnitudes separate from units
+samples_mag = rng.lognormal(mean, sigma, size=N)  # Unitless samples
+# ... many lines of code ...
+samples = samples_mag * ureg('cell / mm**2')  # Easy to forget or get wrong units
+
+# BAD: Hard-coded conversion factors without Pint
+density_per_ml = density_per_mm3 * 1000  # Manual mm³→mL, error-prone
+
+# GOOD: Let Pint handle conversions explicitly
+density_per_ml = density_per_mm3.to('cell / mL')  # Clear, verifiable
+```
+
+**Best practice example (cell density ratio with unit propagation):**
+
+```python
+def derive_distribution(inputs, ureg):
+    # Step 1: Access inputs directly - they're already Pint Quantities!
+    cd8_density = inputs['cd8_density']  # e.g., <Quantity(150, 'cell / mm**2')>
+    treg_density = inputs['treg_density']  # e.g., <Quantity(50, 'cell / mm**2')>
+
+    # Step 2: Monte Carlo - extract magnitude only for distribution, reattach immediately
+    N = 10000
+    rng = np.random.default_rng(42)
+
+    cd8_samples = rng.lognormal(
+        np.log(cd8_density.magnitude), 0.5, size=N
+    ) * cd8_density.units  # Samples now have correct units
+
+    treg_samples = rng.lognormal(
+        np.log(treg_density.magnitude), 0.5, size=N
+    ) * treg_density.units
+
+    # Step 3: Let Pint handle dimensional analysis
+    # If both are cell/mm², ratio is dimensionless automatically
+    ratio_samples = cd8_samples / treg_samples
+
+    # Step 4: Return Quantities - validator checks units match output_unit
+    return {
+        'median_stat': np.median(ratio_samples),
+        'iqr_stat': np.percentile(ratio_samples, 75) - np.percentile(ratio_samples, 25),
+        'ci95_stat': [np.percentile(ratio_samples, 2.5), np.percentile(ratio_samples, 97.5)]
+    }
+```
+
+**Common unit aliases (already defined in ureg):**
+- `nanomolarity` = `nanomolar` (SimBiology convention)
+- `cell` = custom unit for cell counts
+- `dimensionless` = unitless ratios
 
 ## Self-Verification Requirement
 
@@ -346,8 +440,8 @@ Each input needs:
 - `source_ref` - References a source below
 - `value_table_or_section` - Where the value appears
 - `value_snippet` - VERBATIM quote showing the value (see snippet rules below)
-- `units_table_or_section` - Where units are stated
-- `units_snippet` - VERBATIM quote showing units (see snippet rules below)
+
+**Units must be Pint-parseable** (e.g., `pg/mL`, `cells/mm^2`, `dimensionless`, `percent`). Do NOT use descriptive units like `pg/mg protein` or `% of CD45+ cells` - simplify to Pint-compatible strings.
 
 **Only include inputs that are USED in derivation_code.** Every input must flow into the statistical computation.
 
@@ -358,27 +452,7 @@ Each input needs:
 
 These conditions belong in `study_design`, `key_assumptions`, or `key_study_limitations` - not as inputs.
 
-## Text Snippets (CRITICAL for automated verification)
-
-Text snippets are automatically verified against the full paper text. Follow these rules strictly:
-
-1. **VERBATIM only**: Copy exact text from the paper. Never paraphrase, summarize, or reconstruct.
-2. **No table reconstruction**: Do NOT create artificial table notation like `CD8^{+} | ... | 17 (9-30)`. Tables are flattened when we extract text, so this format won't match.
-3. **Use continuous text spans**: Find a short, continuous phrase that contains the value. For table data, the snippet should be just the cell value and any immediately adjacent text, e.g., `"17 (9-30)"` not a reconstructed row.
-4. **Include context when helpful**: A few surrounding words help locate the snippet, e.g., `"median survival of 18.2 months"` is better than just `"18.2"`.
-5. **Avoid LaTeX formatting**: Write `CD8+` not `CD8^{+}`. Write subscripts inline: `CO2` not `CO_{2}`.
-6. **Keep snippets short**: 5-50 words is ideal. Long snippets are harder to match exactly.
-7. **For units**: Find where units are explicitly stated, e.g., `"expressed as cells per high-power field"` or `"measured in ng/mL"`.
-
-**Good snippet examples:**
-- `"median CD8+ density was 17 (IQR 9-30) cells/HPF"` ✓
-- `"n = 137 patients"` ✓
-- `"tumor volume measured in mm³"` ✓
-
-**Bad snippet examples:**
-- `"CD8^{+} | No neoadjuvant | 17 (9-30)"` ✗ (reconstructed table, LaTeX)
-- `"The study found elevated levels"` ✗ (no actual value)
-- `"approximately 17"` ✗ (paraphrased, paper says "17 (9-30)")
+**Text Snippets:** See detailed rules in Validation Rubrics below - snippets are automatically verified.
 
 ## Sources Structure
 

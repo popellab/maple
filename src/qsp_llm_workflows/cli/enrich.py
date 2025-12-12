@@ -15,7 +15,7 @@ def main():
         epilog="""
 Examples:
     qsp-enrich-csv parameter input.csv model_defs.json YOUR_CANCER_TYPE -o output.csv
-    qsp-enrich-csv test_statistic input.csv model_context.txt scenario.yaml -o output.csv
+    qsp-enrich-csv test_statistic input.csv scenario.yaml species.csv -o output.csv
         """,
     )
 
@@ -26,11 +26,12 @@ Examples:
     parser.add_argument(
         "context_file",
         type=Path,
-        help="Context file (model definitions JSON for parameters, model context text for test statistics)",
+        help="Context file (model definitions JSON for parameters, scenario YAML for test statistics)",
     )
 
     parser.add_argument(
-        "additional_arg", help="Cancer type for parameters, scenario YAML for test statistics"
+        "additional_arg",
+        help="Cancer type for parameters, species units file (CSV/JSON) for test statistics",
     )
 
     parser.add_argument(
@@ -70,18 +71,19 @@ Examples:
     else:  # test_statistic
         from qsp_llm_workflows.prepare.enrich_test_statistic_csv import main as enrich_main
 
-        scenario_file = Path(args.additional_arg)
+        species_file = Path(args.additional_arg)
 
-        if not scenario_file.exists():
-            print(f"Error: Scenario file not found: {scenario_file}", file=sys.stderr)
+        if not species_file.exists():
+            print(f"Error: Species file not found: {species_file}", file=sys.stderr)
             sys.exit(1)
 
         # Set up sys.argv for the enrich script
+        # New signature: partial_csv, scenario_yaml, species_file
         sys.argv = [
             "enrich_test_statistic_csv.py",
             str(args.input_csv),
-            str(args.context_file),
-            str(scenario_file),
+            str(args.context_file),  # scenario_yaml
+            str(species_file),
         ]
 
         if args.output:

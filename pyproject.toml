@@ -39,6 +39,7 @@ dev = [
     "black>=23.0",
     "ruff>=0.1.0",
     "freezegun>=1.2.0",
+    "pint>=0.25",  # For unit-aware test statistic calculations
 ]
 
 [project.scripts]
