@@ -19,6 +19,7 @@ class TestBuildParameterExtractionPrompt:
         prompt = build_parameter_extraction_prompt(
             parameter_info="**Parameter Name:** k_growth\n**Units:** 1/day",
             model_context="Growth rate of cancer cells",
+            cancer_type="PDAC",
             used_primary_studies="- Smith et al. 2020",
         )
 
@@ -37,6 +38,7 @@ class TestBuildParameterExtractionPrompt:
         prompt = build_parameter_extraction_prompt(
             parameter_info="**Parameter Name:** k_death",
             model_context="Death rate",
+            cancer_type="melanoma",
             used_primary_studies="",
         )
 
@@ -49,11 +51,51 @@ class TestBuildParameterExtractionPrompt:
         prompt = build_parameter_extraction_prompt(
             parameter_info="Test param",
             model_context="Test context",
+            cancer_type="NSCLC",
         )
 
         # Shared rubrics should be included (they contain validation guidance)
         assert len(prompt) > 1000  # Prompt should be substantial
         assert "{{SOURCE_AND_VALIDATION_RUBRICS}}" not in prompt
+
+    def test_cancer_type_substitution(self):
+        """Test that cancer type is substituted throughout prompt."""
+        prompt = build_parameter_extraction_prompt(
+            parameter_info="**Parameter Name:** k_growth",
+            model_context="Test model context",
+            cancer_type="PDAC",
+        )
+
+        # Cancer type should appear multiple times (in hierarchy, requirements, etc.)
+        assert "PDAC" in prompt
+        assert prompt.count("PDAC") >= 5  # Should appear in multiple sections
+        assert "{{CANCER_TYPE}}" not in prompt
+
+    def test_cancer_type_in_goal_section(self):
+        """Test that cancer type appears in the goal/purpose section."""
+        prompt = build_parameter_extraction_prompt(
+            parameter_info="Test param",
+            model_context="Test context",
+            cancer_type="melanoma",
+        )
+
+        # Should mention cancer type in goal
+        assert "melanoma" in prompt
+        # Should have cancer-specific guidance
+        assert "melanoma-specific" in prompt or "melanoma" in prompt.lower()
+
+    def test_cancer_type_in_source_hierarchy(self):
+        """Test that cancer type appears in source hierarchy guidance."""
+        prompt = build_parameter_extraction_prompt(
+            parameter_info="Test param",
+            model_context="Test context",
+            cancer_type="NSCLC",
+        )
+
+        # Should have tiered hierarchy mentioning the cancer type
+        assert "NSCLC-specific" in prompt or "NSCLC" in prompt
+        # Should mention cross-indication guidance
+        assert "cross-indication" in prompt.lower() or "indication" in prompt.lower()
 
 
 class TestBuildTestStatisticPrompt:
@@ -151,6 +193,7 @@ class TestPromptContent:
         prompt = build_parameter_extraction_prompt(
             parameter_info="Test",
             model_context="Test",
+            cancer_type="PDAC",
         )
 
         # Should contain key instruction sections
@@ -169,3 +212,30 @@ class TestPromptContent:
 
         # Should contain key instruction sections
         assert "test statistic" in prompt.lower() or "model output" in prompt.lower()
+
+    def test_parameter_prompt_emphasizes_cancer_specificity(self):
+        """Test that parameter prompt emphasizes cancer-specific data."""
+        prompt = build_parameter_extraction_prompt(
+            parameter_info="Test param",
+            model_context="Test context",
+            cancer_type="PDAC",
+        )
+
+        # Should have strong cancer-specific guidance
+        assert "PDAC-specific" in prompt
+        assert "prioritize" in prompt.lower() or "CRITICAL" in prompt
+
+    def test_test_statistic_prompt_emphasizes_cancer_specificity(self):
+        """Test that test statistic prompt emphasizes cancer-specific data."""
+        prompt = build_test_statistic_prompt(
+            model_context="Test",
+            scenario_context="Test",
+            required_species_with_units="Test",
+            derived_species_description="Test",
+            cancer_type="melanoma",
+        )
+
+        # Should have cancer-specific data source hierarchy
+        assert "melanoma" in prompt
+        # Count occurrences - should be many due to tiered hierarchy
+        assert prompt.count("melanoma") >= 10
