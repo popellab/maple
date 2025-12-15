@@ -93,6 +93,7 @@ class ImmediateRequestProcessor:
             param_desc = row.get("parameter_description", "")
             model_context = row.get("model_context", "")
 
+            cancer_type = row.get("cancer_type", "UNKNOWN")
             parameter_info = f"**Parameter Name:** {param_name}\n"
             parameter_info += f"**Units:** {param_units}\n"
             parameter_info += f"**Description:** {param_desc}\n"
@@ -100,11 +101,13 @@ class ImmediateRequestProcessor:
             return build_parameter_extraction_prompt(
                 parameter_info=parameter_info,
                 model_context=model_context,
+                cancer_type=cancer_type,
                 used_primary_studies="",  # No used studies tracking in immediate mode yet
             )
 
         elif workflow_type == "test_statistic":
             # Extract test statistic info from CSV
+            cancer_type = row.get("cancer_type", "UNKNOWN")
             required_species = row.get("required_species", "")
             derived_desc = row.get("derived_species_description", "")
             model_context = row.get("model_context", "")
@@ -115,6 +118,7 @@ class ImmediateRequestProcessor:
                 scenario_context=scenario_context,
                 required_species_with_units=required_species,
                 derived_species_description=derived_desc,
+                cancer_type=cancer_type,
                 used_primary_studies="",  # No used studies tracking yet
             )
 

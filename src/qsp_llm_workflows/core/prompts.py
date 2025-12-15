@@ -10,6 +10,7 @@ from qsp_llm_workflows.core.resource_utils import read_prompt, read_shared_promp
 def build_parameter_extraction_prompt(
     parameter_info: str,
     model_context: str,
+    cancer_type: str,
     used_primary_studies: str = "",
 ) -> str:
     """
@@ -18,6 +19,7 @@ def build_parameter_extraction_prompt(
     Args:
         parameter_info: Formatted parameter information (name, units, description)
         model_context: Mathematical role and biological context
+        cancer_type: Cancer type/indication (e.g., "PDAC", "melanoma")
         used_primary_studies: List of already-used studies (optional)
 
     Returns:
@@ -32,6 +34,7 @@ def build_parameter_extraction_prompt(
     # Substitute placeholders
     prompt = prompt.replace("{{PARAMETER_INFO}}", parameter_info)
     prompt = prompt.replace("{{MODEL_CONTEXT}}", model_context)
+    prompt = prompt.replace("{{CANCER_TYPE}}", cancer_type)
     prompt = prompt.replace("{{SOURCE_AND_VALIDATION_RUBRICS}}", rubrics)
     prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
 

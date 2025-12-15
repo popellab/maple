@@ -68,10 +68,10 @@ class ParameterEstimates(BaseModel):
     inputs: List[Input] = Field(description="List of inputs used in derivation")
     derivation_code: str = Field(
         description=(
-            "Python code defining a derive_parameter(inputs) function. "
-            "The inputs argument is a list of dicts, each with 'name' and 'value' keys. "
-            "Access values like: float([x for x in inputs if x['name']=='Foo'][0]['value']). "
-            "Must return dict with keys: median_param (float), iqr_param (float), "
+            "Python code defining a derive_parameter(inputs, ureg) function. "
+            "inputs is a dict mapping input names to Pint Quantities. "
+            "Access values like: inputs['half_life'] (already a Pint Quantity). "
+            "Must return dict with Pint Quantities: median_param, iqr_param, "
             "ci95_param ([lower, upper])."
         )
     )
@@ -229,10 +229,10 @@ class TestStatisticEstimates(BaseModel):
     inputs: List[Input] = Field(description="List of inputs used in derivation")
     derivation_code: str = Field(
         description=(
-            "Python code defining a derive_distribution(inputs) function. "
-            "The inputs argument is a list of dicts, each with 'name' and 'value' keys. "
-            "Access values like: float([x for x in inputs if x['name']=='Foo'][0]['value']). "
-            "Must return dict with keys: median_stat (float), iqr_stat (float), "
+            "Python code defining a derive_distribution(inputs, ureg) function. "
+            "inputs is a dict mapping input names to Pint Quantities. "
+            "Access values like: inputs['concentration'] (already a Pint Quantity). "
+            "Must return dict with Pint Quantities: median_stat, iqr_stat, "
             "ci95_stat ([lower, upper])."
         )
     )
