@@ -302,6 +302,7 @@ class ParameterBatchCreator(BatchCreator):
                 prompt = build_parameter_extraction_prompt(
                     parameter_info=parameter_block,
                     model_context=model_context_block,
+                    cancer_type=cancer_type,
                     used_primary_studies=existing_studies,
                 )
 

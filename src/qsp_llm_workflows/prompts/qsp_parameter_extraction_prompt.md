@@ -1,9 +1,16 @@
 # Goal
 
-You are a research assistant helping to extract and document parameters for a quantitative systems pharmacology (QSP) immune oncology model.
-Your task is to create **comprehensive, reproducible metadata** for a model parameter by carefully analyzing scientific literature and experimental data.
+You are a research assistant helping to extract and document parameters for a quantitative systems pharmacology (QSP) immune oncology model **for {{CANCER_TYPE}}**.
+Your task is to create **comprehensive, reproducible metadata** for a model parameter by carefully analyzing scientific literature and experimental data **specific to {{CANCER_TYPE}}**.
 
-**Purpose:** These parameter extractions will be used as **informative priors for simulation-based inference (SBI)** during QSP model calibration. The extracted distributions (median, IQR, 95% CI) will inform Bayesian parameter estimation, helping constrain the parameter space during model fitting to experimental data.
+**Purpose:** These parameter extractions will be used as **informative priors for simulation-based inference (SBI)** during QSP model calibration for {{CANCER_TYPE}}. The extracted distributions (median, IQR, 95% CI) will inform Bayesian parameter estimation, helping constrain the parameter space during model fitting to {{CANCER_TYPE}} experimental data.
+
+**CRITICAL: Cancer-Specific Data Required**
+You MUST prioritize {{CANCER_TYPE}}-specific data sources. The parameter values can vary significantly between cancer types due to differences in tumor microenvironment, immune infiltration, and disease biology. Use this hierarchy:
+
+1. **Best:** {{CANCER_TYPE}}-specific human studies
+2. **Acceptable:** Related solid tumor studies (e.g., other adenocarcinomas) with documented justification
+3. **Last resort:** Pan-cancer or general oncology data - reduce `indication_match` to ≤0.65
 
 **IMPORTANT:** The following primary studies have already been used for this parameter (same name and context). Do NOT reuse these studies - find independent sources instead:
 
@@ -84,11 +91,11 @@ def derive_parameter(inputs, ureg):
 
 ## Experimental Documentation
 
-6. **Study overview (1-2 sentences):** WHAT parameter is being measured, WHY it's biologically relevant, and the overall approach
-7. **Study design (1-2 sentences):** HOW the measurement was performed (assay type, sample size, key methods)
-8. **Key assumptions (list):** 3-5 critical assumptions only (e.g., distributional assumptions, model choices, data quality). Each assumption should have a number and text. Do NOT include trivial assumptions like "bootstrap samples are independent" or "conversion factors are standard".
+6. **Study overview (1-2 sentences):** WHAT parameter is being measured in {{CANCER_TYPE}}, WHY it's biologically relevant to {{CANCER_TYPE}}, and the overall approach
+7. **Study design (1-2 sentences):** HOW the measurement was performed (assay type, sample size, key methods). Note if data is from {{CANCER_TYPE}} patients or cross-indication.
+8. **Key assumptions (list):** 3-5 critical assumptions only (e.g., distributional assumptions, model choices, data quality). Each assumption should have a number and text. **If using non-{{CANCER_TYPE}} data, include an assumption justifying the cross-indication transfer.** Do NOT include trivial assumptions like "bootstrap samples are independent" or "conversion factors are standard".
 9. **Derivation explanation:** Step-by-step plain-language explanation of the Python code (3-6 steps recommended). Reference and justify assumptions using "ASSUMPTION N: ..." format where N matches the key from key_assumptions.
-10. **Key study limitations:** List critical limitations and their specific impact on reliability
+10. **Key study limitations:** List critical limitations and their specific impact on reliability. **If not {{CANCER_TYPE}}-specific, note how cancer type differences might affect the parameter value.**
 
 ---
 
@@ -98,6 +105,11 @@ def derive_parameter(inputs, ureg):
 
 ## Requirements Summary
 
+**Cancer Specificity:**
+- **Prioritize {{CANCER_TYPE}}-specific sources** over pan-cancer or cross-indication data
+- If using non-{{CANCER_TYPE}} data, document justification in `key_assumptions`
+- Reduce `indication_match` weight for cross-indication sources
+
 **Code:**
 - Python function `derive_parameter(inputs, ureg)` returning median_param, iqr_param, ci95_param
 - Bootstrap preferred for uncertainty quantification
@@ -105,19 +117,20 @@ def derive_parameter(inputs, ureg):
 - Set random seed via inputs for reproducibility
 
 **Documentation:**
-- `study_overview` (1-2 sentences): WHAT and WHY
-- `study_design` (1-2 sentences): HOW
+- `study_overview` (1-2 sentences): WHAT and WHY for {{CANCER_TYPE}}
+- `study_design` (1-2 sentences): HOW (note if {{CANCER_TYPE}}-specific or cross-indication)
 - `key_assumptions` (list): 3-5 critical assumptions only with number and text
 - `derivation_explanation`: Step-by-step with "ASSUMPTION N: ..." references
 
 **Sources:**
 - Separate primary and secondary sources
+- **Search for {{CANCER_TYPE}}-specific studies first**
 - All values/locations in inputs, not sources
 - Text/table extraction only (no digitization)
 
 **Validation:**
 - Citations are real, accessible publications
-- Weights follow rubric tables exactly
+- Weights follow rubric tables exactly (especially `indication_match` for {{CANCER_TYPE}} specificity)
 - Code uses exactly the defined inputs
 
 **Text Snippets:** See detailed rules in Source Guidelines above - snippets are automatically verified.
@@ -133,12 +146,14 @@ def derive_parameter(inputs, ureg):
 
 ---
 
-Extract parameter metadata following all requirements above.
+Extract parameter metadata for **{{CANCER_TYPE}}** following all requirements above.
 
 **Key points:**
+- **Prioritize {{CANCER_TYPE}}-specific literature** - this is a {{CANCER_TYPE}} model
 - Use `\n` for line breaks, `\n\n` for paragraphs in text fields
 - Python code should be plain text (no markdown code fences within the code strings)
 - `derivation_code`: raw Python (no ```python wrapper)
 - `inputs`: array with name, value, units (Pint-parseable), description, source_ref, value_table_or_section, value_snippet
 - Numbers as numbers, not strings
 - Every source_ref must have corresponding source entry
+- If no {{CANCER_TYPE}}-specific data exists, justify cross-indication use in assumptions
