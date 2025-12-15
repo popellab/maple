@@ -10,13 +10,20 @@ import sys
 import json
 import re
 import csv
-import yaml
+import io
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Tuple, Optional
 
+from ruamel.yaml import YAML
+from ruamel.yaml.scalarstring import LiteralScalarString
+
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 from qsp_llm_workflows.core.header_utils import HeaderManager
+
+
+# Threshold for converting strings to block scalars
+BLOCK_SCALAR_THRESHOLD = 80
 
 
 def extract_json_from_content(content: str) -> Optional[str]:
@@ -153,25 +160,52 @@ def move_field_to_top(data: dict, field_name: str) -> dict:
     return data
 
 
+def _convert_long_strings_to_block(obj, threshold=BLOCK_SCALAR_THRESHOLD):
+    """
+    Recursively convert long strings to LiteralScalarString for block scalar formatting.
+
+    Args:
+        obj: The object to process (dict, list, or scalar)
+        threshold: Strings longer than this become block scalars
+
+    Returns:
+        The processed object with long strings converted
+    """
+    if isinstance(obj, dict):
+        return {k: _convert_long_strings_to_block(v, threshold) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_long_strings_to_block(item, threshold) for item in obj]
+    elif isinstance(obj, str):
+        # Convert to block scalar if string is long or contains newlines
+        if len(obj) > threshold or "\n" in obj:
+            # Ensure string ends with newline for clean block scalar
+            text = obj if obj.endswith("\n") else obj + "\n"
+            return LiteralScalarString(text)
+        return obj
+    else:
+        return obj
+
+
 def convert_to_yaml(json_data: dict) -> str:
-    """Convert JSON to YAML with proper formatting."""
+    """Convert JSON to YAML with proper formatting using ruamel.yaml."""
+    # Convert long strings to block scalars
+    processed_data = _convert_long_strings_to_block(json_data)
 
-    # Custom representer for multi-line strings
-    def str_representer(dumper, data):
-        if "\n" in data:
-            return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+    # Configure ruamel.yaml
+    yaml = YAML()
+    yaml.default_flow_style = False
+    yaml.allow_unicode = True
+    yaml.width = 120  # Reasonable line width for readability
+    # Best practice indent for readable YAML:
+    # - mapping keys at 2-space indent
+    # - sequence "-" at 2-space indent
+    # - content after "-" on same line (offset=0 means no extra indent after dash)
+    yaml.indent(mapping=2, sequence=2, offset=0)
 
-    yaml.add_representer(str, str_representer, Dumper=yaml.SafeDumper)
-
-    return yaml.dump(
-        json_data,
-        Dumper=yaml.SafeDumper,
-        default_flow_style=False,
-        allow_unicode=True,
-        sort_keys=False,
-        width=1000,
-    )
+    # Dump to string
+    stream = io.StringIO()
+    yaml.dump(processed_data, stream)
+    return stream.getvalue()
 
 
 def parse_custom_id(custom_id: str) -> Tuple[str, str, str]:
@@ -272,8 +306,10 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                     continue
 
                 # Load original YAML to determine model type
+                yaml_loader = YAML()
+                yaml_loader.preserve_quotes = True
                 with open(original_path, "r", encoding="utf-8") as f:
-                    original_yaml = yaml.safe_load(f.read())
+                    original_yaml = yaml_loader.load(f)
 
                 # Determine model class from file structure
                 if "parameter_name" in original_yaml:

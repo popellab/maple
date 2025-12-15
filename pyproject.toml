@@ -32,6 +32,7 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
     "pint>=0.25",  # For unit-aware test statistic calculations
+    "ruamel.yaml>=0.18",  # Better YAML formatting with block scalars
 ]
 
 [project.optional-dependencies]
