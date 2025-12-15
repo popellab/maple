@@ -1,972 +1,189 @@
 # Automated Extraction Workflow
 
-## Overview
-
-This workflow automates LLM-based parameter extraction from scientific papers. Instead of running 7+ manual commands, you run **one command** and the system:
-
-1. Creates batch requests
-2. Uploads to OpenAI API
-3. Monitors progress automatically
-4. Unpacks files to a staging area
-5. Creates a git branch and pushes for review
-
-**After the workflow completes,** you manually run validation to check the extracted data.
-
-**Time savings:** From 20-30 minutes of manual work → 1 minute to launch, then walk away.
-
-**Note on examples:** All code examples in this document use generic placeholder paths like `your-model-repo` and `YOUR_CANCER_TYPE`. Replace these with your actual repository and model names when running commands.
-
-### What Happens When You Run a Workflow?
-
-**Prerequisites:** Export model definitions and enrich your CSV (see [Input Files](#preparing-your-input-file))
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  You have an enriched CSV with parameter definitions        │
-│  cancer_type,parameter_name,definition_hash,...             │
-│  PDAC,k_C_growth,abc123,...                                 │
-└─────────────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────────────┐
-│  You run ONE command:                                       │
-│  qsp-extract input.csv --type parameter \                   │
-│              --output-dir metadata-storage                  │
-└─────────────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────────────┐
-│  The system automatically:                                  │
-│  1. Creates batch requests and uploads to OpenAI           │
-│  2. Monitors progress (shows you updates)                   │
-│  3. Downloads results when complete                         │
-│  4. Unpacks files to metadata-storage/to-review/            │
-└─────────────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────────────┐
-│  You run validation manually:                               │
-│  qsp-validate parameter_estimates \                         │
-│              --dir metadata-storage/to-review/param...      │
-└─────────────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Review validation reports and approve/reject files         │
-│  Check validation-outputs/ for detailed reports      │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
+This guide walks you through extracting parameter estimates and test statistics from scientific literature using OpenAI's API. The workflow handles batch creation, API upload, monitoring, and result unpacking automatically—you just provide an input CSV and run one command.
 
 ## First-Time Setup
 
-If this is your first time using the workflow, follow these setup steps carefully. You only need to do this once.
+### Prerequisites
 
-### Step 1: Install Python (if not already installed)
+You'll need Python 3.9+, Git with SSH keys configured for GitHub, and an OpenAI API key.
 
-Check if Python 3 is installed:
+**Python:** Check with `python3 --version`. If not installed, get it from [python.org](https://www.python.org/downloads/) or via Homebrew (`brew install python3`).
 
-```bash
-python3 --version
-```
+**Git and SSH:** If you can run `ssh -T git@github.com` and see a success message, you're set. Otherwise, generate keys with `ssh-keygen -t ed25519 -C "your.email@example.com"` and add the public key to [GitHub Settings → SSH keys](https://github.com/settings/keys).
 
-If you see something like `Python 3.9.x` or higher, you're good. If not, install Python:
-- **Mac:** Install via [Homebrew](https://brew.sh/): `brew install python3`
-- **Linux:** `sudo apt install python3 python3-pip`
-- **Windows:** Download from [python.org](https://www.python.org/downloads/)
+**OpenAI API Key:** JHU users should follow the [JHU API Key Guide](https://support.cmts.jhu.edu/hc/en-us/articles/38383798293133-Guide-to-Managing-API-Keys-and-Usage-Limits-on-platform-openai-com). Other institutions typically have their own provisioning process—check with IT.
 
-### Step 2: Set Up GitHub SSH Keys
-
-SSH keys let you clone and push to GitHub without entering your password every time.
-
-**Check if you already have SSH keys:**
+### Installation
 
 ```bash
-ls -al ~/.ssh
-```
-
-If you see files like `id_rsa` and `id_rsa.pub` (or `id_ed25519` and `id_ed25519.pub`), you already have keys. Skip to "Add SSH key to GitHub" below.
-
-**Generate new SSH keys (if needed):**
-
-```bash
-# Generate SSH key (replace with your GitHub email)
-ssh-keygen -t ed25519 -C "your.email@example.com"
-
-# Press Enter to accept default file location
-# Press Enter twice to skip passphrase (or set one if you prefer)
-```
-
-**Add SSH key to GitHub:**
-
-```bash
-# Copy your public key to clipboard
-# Mac:
-cat ~/.ssh/id_ed25519.pub | pbcopy
-
-# Linux (with xclip):
-cat ~/.ssh/id_ed25519.pub | xclip -selection clipboard
-
-# Or just display it and copy manually:
-cat ~/.ssh/id_ed25519.pub
-```
-
-Then:
-1. Go to [GitHub Settings → SSH and GPG keys](https://github.com/settings/keys)
-2. Click "New SSH key"
-3. Paste your public key
-4. Click "Add SSH key"
-
-**Test your connection:**
-
-```bash
-ssh -T git@github.com
-```
-
-You should see: `Hi username! You've successfully authenticated...`
-
-### Step 3: Clone the Repository
-
-Clone the workflows repository:
-
-```bash
-# Navigate to where you want your projects (e.g., Documents or Projects)
 cd ~/Projects  # or wherever you keep code
-
-# Clone the workflows repository
 git clone git@github.com:popellab/qsp-llm-workflows.git
-```
-
-**Note:** Metadata storage is now specified per-project via the `--output-dir` argument. You'll create a `metadata-storage/` directory within your project repository (e.g., `your-model-repo/metadata-storage/`).
-
-### Step 4: Set Up Python Virtual Environment
-
-A virtual environment keeps Python packages for this project separate from your system.
-
-```bash
-# Navigate to the workflows repository
 cd qsp-llm-workflows
 
-# Create virtual environment
 python3 -m venv venv
-
-# Activate virtual environment
 source venv/bin/activate
+pip install -e .
 
-# Your prompt should now show (venv) at the beginning
-```
-
-**Install required packages:**
-
-```bash
-# Make sure venv is activated (you should see (venv) in your prompt)
-pip install -r requirements.txt
-```
-
-### Step 5: Provision Your OpenAI API Key
-
-Each user provisions and manages their own OpenAI API key.
-
-**For JHU users:**
-Follow the [JHU Guide to Managing API Keys and Usage Limits](https://support.cmts.jhu.edu/hc/en-us/articles/38383798293133-Guide-to-Managing-API-Keys-and-Usage-Limits-on-platform-openai-com)
-
-**For other institutions:**
-Check with your institution's IT support for guidance on provisioning OpenAI API keys through institutional accounts.
-
-**Once you have your API key:**
-
-```bash
-# From the qsp-llm-workflows directory:
+# Store your API key (never commit this file)
 echo "OPENAI_API_KEY=sk-your-key-here" > .env
 ```
 
-Replace `sk-your-key-here` with your actual API key.
+Verify with `qsp-extract --help`—you should see usage information.
 
-**Important:**
-- Never commit the `.env` file to git (it's already in `.gitignore`)
-- Never share your API key with others
-- Each user should have their own key for usage tracking
+## The Workflow
 
-**Verify everything works:**
+Every extraction follows the same pattern: prepare input → run extraction → validate → review.
 
-```bash
-# Make sure you're in qsp-llm-workflows directory
-# Make sure virtual environment is activated (venv)
-qsp-extract --help
-```
+### Step 1: Prepare Input CSV
 
-You should see help text without errors. If so, you're ready to run extractions!
-
----
-
-## Quick Start (For Regular Use)
-
-Once you've completed first-time setup, starting a workflow is simple:
+The extraction needs context about your model. Start by exporting model definitions from your MATLAB file or SimBiology project:
 
 ```bash
-# 1. Navigate to the repository
-cd ~/Projects/qsp-llm-workflows
-
-# 2. Activate virtual environment (do this every time you open a new terminal)
-source venv/bin/activate
-
-# 3. Run an example workflow
-# First export model definitions from your MATLAB model file or SimBiology project
 qsp-export-model \
-  --matlab-model ../your-model-repo/scripts/your_model_file.m \
+  --matlab-model ../your-model-repo/scripts/model.m \
   --output batch_jobs/input_data/model_definitions.json
-
-# Or if you have a SimBiology project file:
-# qsp-export-model \
-#   --simbiology-project ../your-model-repo/models/your_model.sbproj \
-#   --output batch_jobs/input_data/model_definitions.json
-
-# Then enrich your input CSV with model context
-qsp-enrich-csv parameter \
-  your_parameter_input.csv \
-  batch_jobs/input_data/model_definitions.json \
-  YOUR_CANCER_TYPE \
-  -o batch_jobs/input_data/enriched_input.csv
-
-# Finally run extraction
-qsp-extract \
-  batch_jobs/input_data/enriched_input.csv \
-  --type parameter \
-  --immediate
 ```
 
-**Example CSV files:** We've included simple example CSVs in the `docs/` directory:
-- `docs/example_parameter_input.csv` - Simple list of 2 parameter names
-- `docs/example_test_statistic_input.csv` - Partial test statistic definitions (3 metrics)
+This also creates `species_units.json` with unit information for each model species.
 
-**Note:** These examples are generic templates. To run them, you'll need a model repository with your MATLAB model file, model context, and scenario definitions. The examples demonstrate the two-step workflow: enrichment → extraction.
-
-**For faster testing:** Use the `--immediate` flag to process via the Responses API instead of waiting for batch completion (minutes instead of hours, perfect for testing). The batch API is cheaper for large production runs.
-
----
-
-## Preparing Your Input File
-
-The workflow requires a **two-step process**:
-1. **Step 1: Create enriched CSV** with model definitions (this section)
-2. **Step 2: Run extraction workflow** (next section)
-
-### Parameter Extraction Input File
-
-**IMPORTANT:** Parameter extraction requires an enriched CSV with model definitions. The simple example CSVs in this repository (like `docs/example_parameter_input.csv`) are **NOT sufficient** for actual extraction - they're only for demonstration.
-
-#### Step 1: Create Enriched CSV
-
-Start with a simple CSV listing parameter names:
+**For parameter extraction**, create a simple CSV with parameter names, then enrich it:
 
 ```csv
 parameter_name
 k_C_growth
 k_C_death
-k_CD8_act
 ```
 
-Then enrich it with model definitions:
-
 ```bash
-# Enrich simple CSV with model definitions
 qsp-enrich-csv parameter \
-  simple_parameter_input.csv \
-  model_definitions.json \
+  params.csv \
+  batch_jobs/input_data/model_definitions.json \
   PDAC \
-  -o batch_jobs/input_data/pdac_extraction_input.csv
+  -o batch_jobs/input_data/enriched_params.csv
 ```
 
-**Where do model definitions come from?**
-
-Model definitions are exported from MATLAB model files or SimBiology project files using the export script:
-
-```bash
-# From qsp-llm-workflows repository:
-
-# Option 1: From MATLAB script (runs the .m file to create model)
-qsp-export-model \
-  --matlab-model ../your-model-repo/scripts/your_model_file.m \
-  --output batch_jobs/input_data/model_definitions.json
-
-# Option 2: From SimBiology project file (faster if model is already compiled)
-qsp-export-model \
-  --simbiology-project ../your-model-repo/models/your_model.sbproj \
-  --output batch_jobs/input_data/model_definitions.json
-```
-
-The MATLAB script option works with any SimBiology model file that creates a variable named `model`. The SimBiology project option loads a saved `.sbproj` file directly, which can be faster for large models. Replace paths with your actual model repository location.
-
-#### Enriched CSV Format
-
-The enrichment script creates a CSV with these columns:
-
-| Column | Description | Example |
-|--------|-------------|---------|
-| `cancer_type` | Cancer type | `PDAC` |
-| `parameter_name` | Parameter name | `k_C_growth` |
-| `definition_hash` | Hash of parameter definition | `abc123` |
-| `parameter_units` | Units | `1/day` |
-| `parameter_description` | Description | `Cancer cell growth rate` |
-| `model_context` | JSON with reactions/rules | `{"reactions_and_rules":[...]}` |
-
-#### Example Files
-
-The repository includes example CSVs in `docs/`:
-- `example_parameter_input.csv` - Simple parameter names (input for enrichment)
-- `example_test_statistic_input.csv` - Partial test statistics (input for enrichment)
-
-See the [Quick Start](#quick-start-for-regular-use) section for usage examples.
-
-### Test Statistics Input File
-
-**IMPORTANT:** For test statistics, you provide the `compute_test_statistic` function code directly. This ensures the computation is exactly what you intend. The LLM then focuses on extracting literature values that match your test statistic definition.
-
-#### Step 1: Export Model and Species Units
-
-First, export model definitions which also generates `species_units.json`:
-
-```bash
-# Export model definitions AND species_units.json
-qsp-export-model \
-  --matlab-model ../your-model-repo/scripts/your_model_file.m \
-  --output batch_jobs/input_data/model_definitions.json
-# This also creates batch_jobs/input_data/species_units.json containing:
-# - Species units (e.g., V_T.CD8: cell, V_T.TGFb: nanomolarity)
-# - Parameter units (e.g., initial_tumour_diameter: centimeter)
-# - Compartment volumes (e.g., V_T: milliliter, V_C: liter)
-```
-
-#### Step 2: Create Pre-Enriched CSV
-
-Create a CSV with your test statistics and the code to compute them:
+**For test statistics**, you write the `compute_test_statistic` function directly. This ensures the computation is exactly what you intend:
 
 ```csv
 test_statistic_id,output_unit,model_output_code
-tgfb_concentration_baseline,nanomolarity,"def compute_test_statistic(time, species_dict, ureg):
-    return species_dict['V_T.TGFb'][0]"
 tumor_volume_day14,millimeter ** 3,"def compute_test_statistic(time, species_dict, ureg):
     import numpy as np
     cells = species_dict['V_T.C1']
-    day_14_idx = np.argmin(np.abs(time.magnitude - 14))
-    return cells[day_14_idx] * (1e-6 * ureg.millimeter**3 / ureg.cell)"
-treg_to_cd8_ratio,dimensionless,"def compute_test_statistic(time, species_dict, ureg):
-    tregs = species_dict['V_T.Treg'][0]
-    cd8 = species_dict['V_T.CD8'][0]
-    return tregs / cd8"
+    idx = np.argmin(np.abs(time.magnitude - 14))
+    return cells[idx] * (1e-6 * ureg.millimeter**3 / ureg.cell)"
 ```
 
-**Key points about `model_output_code`:**
-- Function signature must be `(time, species_dict, ureg)`
-- `time`: numpy array with Pint day units (use `time.magnitude` for raw values)
-- `species_dict`: dict mapping species names to Pint quantities
-- `ureg`: Pint UnitRegistry for unit conversions
-- Must return a Pint Quantity matching the declared `output_unit`
-
-**Valid `output_unit` values (Pint-parseable):**
-- Concentrations: `nanomolarity`, `micromolarity`, `molarity`
-- Volumes: `millimeter ** 3`, `liter`
-- Rates: `1 / day`, `1 / hour`
-- Dimensionless: `dimensionless`
-- Cell counts: `cell`
-
-#### Step 3: Enrich and Validate
+Then enrich with scenario context:
 
 ```bash
-# Enrich with scenario context and validate Pint units
 qsp-enrich-csv test_statistic \
-  test_stats_input.csv \
+  test_stats.csv \
   scenario.yaml \
   batch_jobs/input_data/species_units.json \
-  -o batch_jobs/input_data/test_statistic_input.csv
+  -o batch_jobs/input_data/enriched_test_stats.csv
 ```
 
-**Validation during enrichment:**
-- Parses code and checks function signature is `(time, species_dict, ureg)`
-- Extracts species accessed from code (via AST parsing)
-- Validates all accessed species exist in `species_units.json`
-- Executes code with Pint-wrapped mock data
-- Verifies output has correct unit dimensionality
+The enrichment validates your code: it checks the function signature, verifies accessed species exist, and confirms the output has the right units.
 
-If validation fails, you'll see clear error messages:
-```
-Validating tumor_volume_day14...
-  ✗ Output unit mismatch: got cell, expected millimeter ** 3
-```
-
-**Where do files come from?**
-- `species_units.json`: Auto-generated by `qsp-export-model`
-- `scenario.yaml`: Scenario context stored in model-specific repositories
-
-#### Enriched CSV Format
-
-The enrichment script creates a CSV with these columns:
-
-| Column | Description | Example |
-|--------|-------------|---------|
-| `test_statistic_id` | Unique ID | `tumor_volume_day14` |
-| `output_unit` | Pint unit string | `millimeter ** 3` |
-| `model_output_code` | User-provided function | `def compute_test_statistic(...)` |
-| `scenario_context` | Experimental conditions | `Untreated PDAC tumor growth` |
-| `context_hash` | Hash of scenario | `abc123` |
-
-#### Example Files
-
-See `batch_jobs/input_data/test_statistic_pre_enriched_example.csv` for a complete example.
-
-### Common Issues
-
-**Problem:** Script says "No such file"
-- **Solution:** Make sure you're running the command from the `qsp-llm-workflows` directory
-- **Solution:** Check the file path - try `ls parameter_input.csv` to verify it exists
-
-**Problem:** CSV parsing errors
-- **Solution:** Make sure column headers are **exactly** as shown (case-sensitive, no spaces)
-- **Solution:** Check for hidden characters - save as plain text CSV, not Excel format
-- **Solution:** No empty rows at the beginning or end of file
-
-**Problem:** "Missing model definitions" or "Required column missing"
-- **Solution:** Ensure you've run the CSV enrichment step first (see "Preparing Your Input File" above)
-- **Solution:** For production extractions, use enriched CSVs with all required columns
-- **Solution:** Example CSVs are for testing only - they lack model context needed for quality extractions
-
-### Where to Put Your Input Files
-
-You can put input files anywhere, but we recommend:
-
-```bash
-qsp-llm-workflows/
-├── batch_jobs/
-│   └── input_data/          # Put your CSV files here
-│       ├── parameter_input.csv
-│       └── test_stat_input.csv
-```
-
-Then reference them in commands:
+### Step 2: Run Extraction
 
 ```bash
 qsp-extract \
-  batch_jobs/input_data/parameter_input.csv \
-  --type parameter
-```
-
----
-
-## Usage
-
-### Basic Syntax
-
-```bash
-qsp-extract <input.csv> --type <workflow_type> [options]
-```
-
-### Workflow Types
-
-- `parameter` - Full parameter extraction with v3 schema
-- `test_statistic` - Test statistic extraction with v2 schema
-
-### Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--timeout SECONDS` | Max wait time for batch completion | 3600 (1 hour) |
-| `--immediate` | Use Responses API for immediate processing (faster, more expensive) | False |
-| `--no-push` | Create branch locally without pushing | False |
-| `--branch-prefix PREFIX` | Custom prefix for review branches | `review/batch` |
-
-**Note:** The `--skip-validation` option has been removed. Validation is now always a separate manual step after the workflow completes.
-
-## Examples
-
-### Parameter Extraction
-
-```bash
-# Simple example with 2 parameters (good for testing)
-# Step 1: Enrich with model definitions
-qsp-enrich-csv parameter \
-  docs/example_parameter_input.csv \
-  batch_jobs/input_data/model_definitions.json \
-  YOUR_CANCER_TYPE \
-  -o batch_jobs/input_data/example_enriched.csv
-
-# Step 2: Extract (use --immediate for faster testing)
-qsp-extract \
-  batch_jobs/input_data/example_enriched.csv \
+  batch_jobs/input_data/enriched_params.csv \
   --type parameter \
+  --output-dir ../your-model-repo/metadata-storage \
   --immediate
-
-# Production example with enriched CSV
-qsp-extract \
-  batch_jobs/input_data/production_parameters.csv \
-  --type parameter \
-  --timeout 7200
 ```
 
-### Test Statistics
+The `--immediate` flag uses the Responses API for faster turnaround (minutes instead of hours). Without it, requests go through the Batch API, which is cheaper but can take up to 24 hours.
+
+The workflow creates batch requests, uploads them, monitors progress, and unpacks results to `metadata-storage/to-review/`.
+
+### Step 3: Validate
+
+Run the validation suite after extraction completes:
 
 ```bash
-# Simple example with 3 test statistics (good for testing)
-# Step 1: Enrich with model context and scenario
-qsp-enrich-csv test_statistic \
-  docs/example_test_statistic_input.csv \
-  ../your-model-repo/model_context.txt \
-  ../your-model-repo/scenarios/baseline_scenario.yaml \
-  -o batch_jobs/input_data/example_enriched.csv
+# For parameters
+qsp-validate parameter_estimates \
+  --dir ../your-model-repo/metadata-storage/to-review/parameter_estimates
 
-# Step 2: Extract
-qsp-extract \
-  batch_jobs/input_data/example_enriched.csv \
-  --type test_statistic \
-  --immediate
-
-# Production example with enriched CSV
-qsp-extract \
-  batch_jobs/input_data/production_test_statistics.csv \
-  --type test_statistic
-```
-
-**Note:** Validation is always a separate manual step. Run it after the workflow completes if needed.
-
-### Local-Only Review
-
-```bash
-# Create review branch but don't push (review locally first)
-qsp-extract \
-  input.csv \
-  --type parameter \
-  --no-push
-```
-
-## Workflow Output
-
-### Success Output
-
-```
-======================================================================
-AUTOMATED EXTRACTION WORKFLOW
-======================================================================
-Type: parameter
-Input: batch_jobs/input_data/core_extraction_input.csv
-Timeout: 3600s
-Validation: Enabled
-Push: Enabled
-======================================================================
-
-Creating parameter batch requests...
-✓ Batch requests created: parameter_requests.jsonl
-Uploading batch: parameter_requests.jsonl...
-✓ Batch uploaded: batch_ABC123
-Monitoring batch batch_ABC123...
-  Status: validating (0/15 completed)
-  Status: in_progress (5/15 completed)
-  Status: in_progress (10/15 completed)
-  Status: in_progress (15/15 completed)
-  Status: finalizing (15/15 completed)
-✓ Results downloaded: batch_ABC123_results.jsonl
-Unpacking results to to-review/...
-✓ Unpacked 15 files to to-review/
-Creating review branch and committing files...
-✓ Pushed to origin/review/batch-parameter-2025-10-27-abc123
-
-======================================================================
-WORKFLOW SUMMARY
-======================================================================
-✓ Status: SUCCESS
-✓ Workflow type: parameter
-✓ Files extracted: 15
-✓ Duration: 450.2s
-✓ Review branch: review/batch-parameter-2025-10-27-abc123
-✓ Pushed to origin/review/batch-parameter-2025-10-27-abc123
-
-Next steps:
-  1. Manual high-level review: Open a few YAMLs, check derivation_explanation and assumptions
-  2. Run validation: qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
-  3. Manual snippet verification: Click DOI links, verify snippets with Ctrl+F
-  4. Review detailed validation reports in validation-outputs/
-  5. Move approved files to appropriate directories (reject bad ones)
-  6. Commit changes and open a pull request on GitHub
-  7. Merge PR after team review
-======================================================================
-```
-
-## Review Process
-
-After the workflow completes, review and validate the extracted files. **Recommended order:**
-
-1. Manual high-level review (quick quality check)
-2. Automated validation suite
-3. Manual snippet source verification (if needed)
-4. Detailed review of validation reports
-5. Approve/reject files
-6. Commit and open PR
-
-### 1. Manual High-Level Review (Do This First!)
-
-**Before running automated validation**, do a quick manual review to catch obvious issues:
-
-Open a few YAML files in `to-review/` and check:
-
-- [ ] Does `derivation_explanation` clearly describe how the value was obtained?
-- [ ] Are mathematical transformations and statistical methods explained and justified?
-- [ ] Are key assumptions explicitly stated and reasonable?
-- [ ] Are unit conversions and data transformations transparent and traceable?
-- [ ] Is the value in a reasonable biological range?
-
-**Red flags to watch for:**
-- Vague explanations like "extracted from paper" or "calculated from data"
-- Missing justification for unit conversions
-- No assumptions listed (very few extractions have zero assumptions)
-- Values that seem biologically implausible
-
-See `scripts/validate/MANUAL_REVIEW_CHECKLIST.md` for the complete checklist.
-
-**If you find major issues at this stage:**
-- Consider discarding the results and re-running the extraction with improved prompts
-- Or use the validation fix workflow: `qsp-fix <workflow_type>`
-
-### 2. Run Automated Validation Suite
-
-After the manual review, run the automated validators:
-
-```bash
-# For parameter estimates
-qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
-
-# For test statistics (requires species_units.json for unit validation)
+# For test statistics (needs species_units.json for unit checking)
 qsp-validate test_statistics \
-  --dir metadata-storage/to-review/test_statistics \
+  --dir ../your-model-repo/metadata-storage/to-review/test_statistics \
   --species-units-file batch_jobs/input_data/species_units.json
 ```
 
-The validation suite will run all 9 validators and generate detailed reports in `validation-outputs/`.
+The suite runs 9 validators: schema compliance, code execution, DOI resolution, text snippet verification, source reference checks, value consistency, duplicate source detection, model output code validation, and automated snippet source verification.
 
-**The automated validation includes:**
-1. Schema compliance (YAML structure)
-2. Code execution (R/Python derivation code runs)
-3. Model output code (test statistic `compute_test_statistic` function validates - correct signature, returns Pint Quantity with correct units)
-4. Text snippets (snippets contain the reported values)
-5. Source references (all source_refs are valid)
-6. DOI validity (DOIs resolve to real papers)
-7. Value consistency (cross-checks against other extractions)
-8. Duplicate primary sources (checks for already-used primary data sources)
-9. Automated snippet source verification (verifies snippets via Europe PMC API)
-
-### 3. Manual Snippet Source Verification
-
-**Important:** The final validator prompts you to **manually verify snippets in papers**.
-
-When you run `run_all_validations.py`, the last step will:
-1. Print a report with DOI links and text snippets grouped by source
-2. **Wait for you** to click DOI links and verify snippets appear in papers
-3. Ask you to confirm (y/n) that snippets are accurate
-
-**How to verify:**
-- Click the DOI link to open the paper in your browser
-- Use Ctrl+F (or Cmd+F) to search for the snippet text
-- Verify the snippet actually appears in the paper
-- Check that the context matches the claimed value
-
-If verified, the validator will tag all files with `manual_snippet_source_verification`.
-
-### 4. Review Detailed Validation Reports
-
-Check files in `to-review/`:
-- Verify citations are real and accessible
-- Confirm extracted values match sources
-- Validate derivation logic and assumptions
-- Check unit consistency
-- Review validation reports in `validation-outputs/`
-  - `schema_compliance.json` - Template compliance results
-  - `code_execution.json` - R/Python derivation code test results
-  - `model_output_code.json` - Test statistic compute_test_statistic validation
-  - `text_snippets.json` - Text snippet verification
-  - `source_references.json` - Source reference validation
-  - `doi_validity.json` - DOI resolution results
-  - `value_consistency.json` - Value consistency checks
-  - `duplicate_primary_sources.json` - Duplicate primary source checks
-  - `snippet_sources.json` - Automated snippet source verification results
-
-### 5. Approve/Reject Files
-
-After reviewing both manual and automated validation results, approve or reject each file.
-
-**Approve files** by moving to final location:
+Results go to `validation-outputs/` as JSON files. If validation finds issues, you can fix them:
 
 ```bash
-# Parameter estimates
-mv to-review/k_C_growth_*.yaml parameter_estimates/
-
-# Test statistics
-mv to-review/tumor_volume_*.yaml test_statistics/
-```
-
-**Reject files** by deleting:
-
-```bash
-
-# Delete rejected file
-rm to-review/k_C_growth_Smith2020_PDAC_abc123.yaml
-```
-
-### 7. Commit and Open Pull Request
-
-```bash
-# Commit your review changes
-git add .
-git commit -m "Review complete: approved 12 files, rejected 3 files"
-
-# Push to remote
-git push
-
-# Open a pull request on GitHub
-# Option 1: Using GitHub web interface
-#   Go to your project repository's pull requests page
-#   Click "New pull request"
-#   Select your review branch (e.g., review/batch-parameter-2025-10-27-abc123)
-#   Add description of what was reviewed and approved
-#   Request review from team members
-#   Click "Create pull request"
-
-# Option 2: Using GitHub CLI (if installed)
-gh pr create --title "Review: batch-parameter-2025-10-27" \
-  --body "Reviewed and approved 12 files, rejected 3 files. See commit message for details."
-```
-
-**After PR is approved and merged:**
-
-```bash
-# Switch back to main and update
-git checkout main
-git pull
-
-# The review branch will be automatically deleted after merge
-```
-
----
-
-## Error Handling
-
-If the workflow fails, you'll see:
-
-```
-✗ Workflow failed: Batch batch_ABC123 did not complete within 3600s
-
-======================================================================
-WORKFLOW SUMMARY
-======================================================================
-✗ Status: FAILED
-✗ Error: Batch batch_ABC123 did not complete within 3600s
-✗ Duration: 3600.5s
-======================================================================
-```
-
-Common errors:
-- **Timeout**: Batch didn't complete in time → increase `--timeout`
-- **No results**: Input CSV has issues → verify CSV format
-- **Git errors**: Branch already exists or can't push → check git status
-- **Unpacking errors**: Template mismatch → ensure you're using the correct workflow type
-
-## Batch Jobs Directory
-
-Workflow creates/uses these files in `batch_jobs/`:
-
-- `parameter_requests.jsonl` - Extraction batch requests
-- `parameter_requests.batch_id` - Batch metadata (ID, type, CSV)
-- `batch_ABC123_results.jsonl` - Raw extraction results
-
-Validation reports are written to `validation-outputs/`:
-- `schema_compliance.json`
-- `code_execution.json`
-- `model_output_code.json`
-- `text_snippets.json`
-- `source_references.json`
-- `doi_validity.json`
-- `value_consistency.json`
-- `duplicate_primary_sources.json`
-- `snippet_sources.json`
-
-All batch files are gitignored and available for debugging if needed.
-
----
-
-## Troubleshooting
-
-### Common Issues for Beginners
-
-#### "python: command not found" or "python3: command not found"
-
-**Problem:** Python is not installed or not in your PATH.
-
-**Solution:**
-```bash
-# Check if Python 3 is installed
-which python3
-
-# If not found, install Python (Mac with Homebrew)
-brew install python3
-
-# Try using python3 explicitly to check installation
-python3 --version
-```
-
-#### "No module named 'openai'" or similar import errors
-
-**Problem:** You haven't activated the virtual environment or haven't installed dependencies.
-
-**Solution:**
-```bash
-# Make sure you're in the right directory
-cd ~/Projects/qsp-llm-workflows
-
-# Activate virtual environment (you should see (venv) in your prompt)
-source venv/bin/activate
-
-# If you still get errors, reinstall dependencies
-pip install -r requirements.txt
-```
-
-**Important:** You must activate the virtual environment (`source venv/bin/activate`) **every time** you open a new terminal window.
-
-#### "OPENAI_API_KEY not found"
-
-**Problem:** The `.env` file doesn't exist or is in the wrong location.
-
-**Solution:**
-```bash
-# Make sure you're in qsp-llm-workflows directory
-pwd  # Should show: /Users/yourname/Projects/qsp-llm-workflows
-
-# Create .env file with your API key
-echo "OPENAI_API_KEY=sk-your-actual-key-here" > .env
-
-# Verify the file was created
-cat .env
-```
-
-**If you don't have an API key yet:**
-- **JHU users:** Follow the [JHU API Key Provisioning Guide](https://support.cmts.jhu.edu/hc/en-us/articles/38383798293133-Guide-to-Managing-API-Keys-and-Usage-Limits-on-platform-openai-com)
-- **Other institutions:** Check with your institution's IT support for OpenAI API key provisioning
-
-#### "Output directory not found"
-
-**Problem:** The specified output directory doesn't exist.
-
-**Solution:**
-```bash
-# The --output-dir you specified must exist
-# Create it if needed:
-mkdir -p metadata-storage
-
-# Then run the command again with the correct path:
-qsp-extract input.csv --type parameter --output-dir metadata-storage
-```
-
-The output directory must be created before running the workflow.
-
-#### "Permission denied (publickey)" when pushing to GitHub
-
-**Problem:** SSH keys aren't set up correctly.
-
-**Solution:**
-```bash
-# Test SSH connection
-ssh -T git@github.com
-
-# If it fails, check if you have SSH keys
-ls -al ~/.ssh
-
-# If no keys exist, generate them (see "Step 2: Set Up GitHub SSH Keys" above)
-ssh-keygen -t ed25519 -C "your.email@example.com"
-
-# Add public key to GitHub at: https://github.com/settings/keys
-cat ~/.ssh/id_ed25519.pub
-```
-
-#### "fatal: not a git repository"
-
-**Problem:** You're running commands from the wrong directory.
-
-**Solution:**
-```bash
-# Always run workflow commands from qsp-llm-workflows directory
-cd ~/Projects/qsp-llm-workflows
-
-# Verify you're in the right place
-ls -la  # Should see: scripts/, templates/, batch_jobs/, etc.
-```
-
-#### Timeout Issues
-
-**Problem:** Large batches don't complete within the default 1-hour timeout.
-
-**Solution 1 - Use immediate mode for faster processing:**
-```bash
-# Process via Responses API (faster, but more expensive)
-qsp-extract input.csv \
-  --type parameter \
-  --output-dir metadata-storage \
+qsp-fix parameter_estimates \
+  --dir ../your-model-repo/metadata-storage/to-review/parameter_estimates \
   --immediate
 ```
 
-The `--immediate` flag bypasses the batch API and processes requests immediately via the Responses API. This is much faster (minutes instead of hours) but costs more. **Good for testing or small batches.**
+This sends failed files back to OpenAI with the error messages for correction.
 
-**Solution 2 - Increase timeout for batch API:**
-```bash
-# Increase timeout to 2 hours (7200 seconds)
-qsp-extract input.csv \
-  --type parameter \
-  --output-dir metadata-storage \
-  --timeout 7200
+### Step 4: Review and Approve
 
-# For very large batches, try 4 hours
-qsp-extract input.csv \
-  --type parameter \
-  --timeout 14400
-```
+Before trusting the automated validation, open a few YAML files and do a quick sanity check. Does the `derivation_explanation` actually explain how the value was derived? Are the assumptions reasonable? Is the value in a plausible biological range?
 
-**Note:** OpenAI's batch API can take up to 24 hours for large batches, but typically completes in 1-2 hours. The batch API is 50% cheaper than the Responses API, so use it for large production batches.
-
-#### Validation Errors
-
-**Problem:** You ran validation and found errors in the extracted files.
-
-**Solution:**
-1. Review the validation reports in `validation-outputs/` to understand what failed
-2. For files with errors, you can either:
-   - Fix them manually
-   - Use the validation fix workflow: `qsp-fix <workflow_type>`
-   - Delete and re-extract problematic files
-
-See CLAUDE.md for details on the validation fix workflow.
-
-### Getting Help
-
-If you're still stuck:
-
-1. **Check this documentation** - Most common issues are covered above
-2. **Ask a labmate** - Someone else may have encountered the same issue
-3. **Check the error message carefully** - Often it tells you exactly what's wrong
-4. **For API key issues** - Follow your institution's API key provisioning guide (see Step 5 above)
-5. **For repository access** - Ask your PI or lab manager for GitHub access
-
-### Common Command Reference
-
-Here's a quick reference of commands you'll use frequently:
+Move approved files to their final location:
 
 ```bash
-# Navigate to workflows directory
-cd ~/Projects/qsp-llm-workflows
-
-# Activate virtual environment (do this every time!)
-source venv/bin/activate
-
-# Check if a file exists
-ls parameter_input.csv
-
-# Run parameter extraction (specify your output directory)
-qsp-extract \
-  batch_jobs/input_data/parameter_input.csv \
-  --type parameter \
-  --output-dir metadata-storage
-
-# List files in to-review/
-ls metadata-storage/to-review/
+mv to-review/k_C_growth_*.yaml parameter_estimates/
 ```
 
+Delete rejected files or re-run extraction for them.
+
+## Command Reference
+
+**Main commands:**
+
+```bash
+qsp-extract input.csv --type parameter --output-dir path/to/storage
+qsp-extract input.csv --type test_statistic --output-dir path/to/storage --immediate
+qsp-validate parameter_estimates --dir path/to/files
+qsp-fix parameter_estimates --dir path/to/files --immediate
+```
+
+**Options:**
+
+| Flag | What it does |
+|------|--------------|
+| `--immediate` | Use Responses API instead of Batch API (faster, costs more) |
+| `--timeout N` | Wait N seconds for batch completion (default: 3600) |
+| `--no-push` | Don't push the review branch to GitHub |
+
+## Troubleshooting
+
+**"No module named 'openai'"** — You need to activate the virtual environment. Run `source venv/bin/activate` every time you open a new terminal.
+
+**"OPENAI_API_KEY not found"** — Create the `.env` file in the qsp-llm-workflows directory: `echo "OPENAI_API_KEY=sk-..." > .env`
+
+**Timeout errors** — Use `--immediate` for faster processing, or increase `--timeout` for large batches.
+
+**"Permission denied (publickey)"** — Your SSH keys aren't configured. Run `ssh-keygen -t ed25519` and add the public key to GitHub.
+
+**Validation failures** — Check `validation-outputs/*.json` for details. Use `qsp-fix` to automatically resubmit failures, or fix manually.
+
+## File Locations
+
+Workflow files are organized as:
+
+```
+qsp-llm-workflows/
+├── batch_jobs/
+│   ├── input_data/           # Your enriched CSVs go here
+│   └── *.jsonl               # Batch request/response files (gitignored)
+└── validation-outputs/       # Validation reports (gitignored)
+
+your-model-repo/
+└── metadata-storage/
+    ├── to-review/            # Newly extracted files pending review
+    ├── parameter_estimates/  # Approved parameter files
+    └── test_statistics/      # Approved test statistic files
+```
