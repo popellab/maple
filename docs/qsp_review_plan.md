@@ -48,7 +48,7 @@ Interactive, one file at a time. Uses Claude Code headless mode (`claude -p "...
 
 ## Scientific Soundness Rubric (Embedded)
 
-The rubric covers 6 dimensions, scored as PASS/CONCERN/FAIL:
+The rubric covers 5 dimensions requiring scientific judgment, scored as PASS/CONCERN/FAIL. Technical checks (code execution, DOI resolution, snippet verification) are handled by automated validators in Phase 2.
 
 ### 1. Statistical Methodology
 - Is uncertainty quantification appropriate? (bootstrap vs parametric)
@@ -73,17 +73,11 @@ The rubric covers 6 dimensions, scored as PASS/CONCERN/FAIL:
 - Is uncertainty inflated appropriately for each assumption?
 - Are cascading assumptions (4+) flagged?
 
-### 5. Derivation Reproducibility
-- Does the Python code execute correctly?
-- Do calculated values match reported values?
-- Are units handled correctly with Pint?
-- Is the code readable and the logic clear?
-
-### 6. Source Traceability
-- Are text snippets verbatim (not paraphrased)?
-- Do DOIs resolve and metadata match?
-- Is each input value traceable to a specific source location?
-- Are primary vs secondary sources correctly classified?
+### 5. Biological Plausibility
+- Is the value in a reasonable biological range for this parameter type?
+- Does the magnitude align with known biology?
+- Are derived quantities internally consistent?
+- Does the uncertainty range span biologically meaningful values?
 
 ## File Structure
 

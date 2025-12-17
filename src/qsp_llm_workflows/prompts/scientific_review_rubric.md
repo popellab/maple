@@ -2,6 +2,8 @@
 
 You are reviewing a QSP parameter extraction or test statistic for scientific soundness. Evaluate the YAML file against each dimension below, scoring as **PASS**, **CONCERN**, or **FAIL**.
 
+This review focuses on scientific judgment that requires domain expertise. Technical checks (code execution, DOI resolution, snippet verification) are handled separately by automated validators.
+
 ## Scoring Criteria
 
 - **PASS**: Meets all requirements, no issues
@@ -92,43 +94,24 @@ Evaluate whether assumptions are clearly documented.
 
 ---
 
-## 5. Derivation Reproducibility
+## 5. Biological Plausibility
 
-Evaluate whether the derivation can be reproduced.
-
-**Check:**
-- Does the Python code execute without errors?
-- Do calculated values match reported median, IQR, and CI95?
-- Are units handled correctly with Pint?
-- Is the code logic clear and readable?
-
-**FAIL if:**
-- Code does not execute
-- Calculated values differ significantly from reported
-- Unit errors in calculation
-- Code logic is incorrect
-
----
-
-## 6. Source Traceability
-
-Evaluate whether values can be traced back to sources.
+Evaluate whether the extracted value makes biological sense.
 
 **Check:**
-- Are text snippets verbatim quotes (not paraphrased)?
-- Do DOIs resolve to the correct papers?
-- Does paper metadata (author, year, title) match the DOI?
-- Is each input value traceable to a specific source location?
-- Are primary vs secondary sources correctly classified?
+- Is the value in a reasonable biological range for this parameter type?
+- Does the magnitude align with known biology? (e.g., cell doubling times typically 0.5-7 days for cancer cells)
+- Are derived quantities internally consistent? (e.g., if growth and death rates are both extracted, does net growth match expected tumor behavior?)
+- Does the uncertainty range span biologically meaningful values?
 
 **FAIL if:**
-- DOI does not resolve or points to wrong paper
-- Values cannot be found in cited source
-- Primary source incorrectly classified as secondary
+- Value is orders of magnitude outside expected biological range
+- Derived quantities are internally contradictory
+- Uncertainty range includes physically impossible values (e.g., negative rates)
 
 **CONCERN if:**
-- Snippets appear slightly paraphrased
-- Source location vague (no table/figure reference)
+- Value is at the edge of expected range without explanation
+- Limited biological context provided to justify unusual values
 
 ---
 
@@ -156,11 +139,7 @@ Respond with a JSON object:
       "score": "PASS" | "CONCERN" | "FAIL",
       "reasoning": "Brief explanation"
     },
-    "derivation_reproducibility": {
-      "score": "PASS" | "CONCERN" | "FAIL",
-      "reasoning": "Brief explanation"
-    },
-    "source_traceability": {
+    "biological_plausibility": {
       "score": "PASS" | "CONCERN" | "FAIL",
       "reasoning": "Brief explanation"
     }
