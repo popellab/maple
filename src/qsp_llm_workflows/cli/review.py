@@ -21,12 +21,10 @@ def main():
 Examples:
     qsp-review parameter_estimates --file metadata-storage/to-review/parameter_estimates/k_growth.yaml
     qsp-review test_statistics --file metadata-storage/to-review/test_statistics/tumor_volume.yaml
-    qsp-review test_statistics --file path/to/file.yaml --species-units-file species_units.json
 
 This command uses Claude Code in headless mode to:
-1. Review the extraction against a scientific soundness rubric
-2. Run automated validation and suggest intelligent fixes
-3. Recommend prompt improvements based on patterns observed
+1. Review the extraction against a scientific soundness rubric (5 dimensions)
+2. Recommend up to 2 low-complexity prompt improvements based on issues found
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -42,13 +40,6 @@ This command uses Claude Code in headless mode to:
         type=str,
         required=True,
         help="YAML file to review",
-    )
-
-    parser.add_argument(
-        "--species-units-file",
-        type=str,
-        default=None,
-        help="Path to species_units.json for model output code validation (test statistics only)",
     )
 
     parser.add_argument(
@@ -75,7 +66,6 @@ This command uses Claude Code in headless mode to:
 
     reviewer = ScientificReviewer(
         workflow_type=args.workflow_type,
-        species_units_file=args.species_units_file,
         recommendations_file=args.recommendations_file,
     )
 

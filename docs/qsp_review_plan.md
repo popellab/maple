@@ -26,25 +26,21 @@ qsp-review test_statistics --file path/to/extraction.yaml
 
 Interactive, one file at a time. Uses Claude Code headless mode (`claude -p "..." --allowedTools "Read,Bash" --output-format stream-json`).
 
-### Three-Phase Workflow
+### Two-Phase Workflow
 
 **Phase 1: Scientific Soundness Review**
 - Claude reads the YAML file
 - Evaluates against embedded rubric (see below)
 - Outputs: PASS/FAIL + detailed reasoning + specific concerns
-- User decides whether to proceed or reject
+- User decides whether to accept or reject
 
-**Phase 2: Automated Validation + Intelligent Fix**
-- Run existing validators programmatically
-- If failures: Claude reads validation JSON, understands root causes
-- Claude attempts targeted fixes (not blind re-prompting)
-- User approves/rejects each fix
-
-**Phase 3: Prompt Improvement Recommendations**
-- Based on issues found in phases 1-2
-- Claude suggests specific prompt changes
-- Weighs generalizability vs. complexity
+**Phase 2: Prompt Improvement Recommendations**
+- Based on issues found in Phase 1
+- Claude reads the current prompt to understand existing guidance
+- Suggests AT MOST 2 low-complexity changes (1-2 sentences each)
 - Outputs to console AND saves to `review_recommendations.md`
+
+Note: Automated validation is handled separately via `qsp-validate`.
 
 ## Scientific Soundness Rubric (Embedded)
 
