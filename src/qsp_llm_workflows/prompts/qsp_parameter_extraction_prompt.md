@@ -52,6 +52,8 @@ Your `mathematical_role` should include:
 2. What this implies for appropriate data sources
 3. Any gotchas (e.g., "model assumes saturating cytokine, but most studies use sub-saturating doses")
 
+**Note on saturation/modulation terms:** When your derivation assumes model saturation or modulation terms equal 1 (e.g., Hill functions = 1, volume terms = max, exclusion factors = 0), explicitly document this in assumptions and note the derived value is an "effective baseline" that may not match literature values for the isolated mechanistic rate.
+
 **Example analysis for k_M1_pol:**
 ```
 Equation: k_M1_pol * Mac_M2 * (IL12/(IL12+IL12_50) + IFNg/(IFNg+IFNg_50))
@@ -298,6 +300,8 @@ When the measured quantity is not identical to the model parameter, you are usin
 | Time-to-marker-change | Rate constant | Moderate | ±50% |
 | Cell death (apoptosis) | Exhaustion/dysfunction | Weak | ±100% — death ≠ survival with dysfunction |
 | Marker expression timing | Functional state transition | Moderate | ±50% — markers lag functional changes |
+
+**Note on adhesion → extravasation proxies:** Literature reports only 10–50% of firmly adhered leukocytes successfully transmigrate. Unless measuring actual transmigration, apply a transmigration efficiency factor (default: 0.1–0.5) and document as a separate assumption.
 
 **Document the proxy chain explicitly:**
 
