@@ -8,11 +8,16 @@ Provides a two-phase review workflow:
 
 import json
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
 from qsp_llm_workflows.core.resource_utils import read_prompt
+
+# Lock for thread-safe file writing
+_file_lock = threading.Lock()
 
 
 class ScientificReviewer:
@@ -46,12 +51,13 @@ class ScientificReviewer:
         else:
             self.prompt_file = "qsp_parameter_extraction_prompt.md"
 
-    def review_file(self, yaml_path: Path) -> bool:
+    def review_file(self, yaml_path: Path, interactive: bool = True) -> bool:
         """
         Run two-phase review on a single YAML file.
 
         Args:
             yaml_path: Path to the YAML file to review
+            interactive: If True, prompt user for CONCERN decisions. If False, auto-reject CONCERNs.
 
         Returns:
             True if file passed review, False otherwise
@@ -76,26 +82,111 @@ class ScientificReviewer:
         self._display_review(review_result)
 
         # Determine pass/fail
-        passed = review_result.get("overall") == "PASS"
+        overall = review_result.get("overall", "FAIL")
+        passed = overall == "PASS"
 
         # Check for CONCERNs
-        if review_result.get("overall") == "CONCERN":
+        if overall == "CONCERN":
             concerns = sum(
                 1
                 for dim in review_result.get("dimensions", {}).values()
                 if dim.get("score") == "CONCERN"
             )
-            print(f"\n{concerns} CONCERN(s) found. Accept despite concerns? [y/N] ", end="")
-            response = input().strip().lower()
-            if response == "y":
-                passed = True
+            if interactive:
+                print(f"\n{concerns} CONCERN(s) found. Accept despite concerns? [y/N] ", end="")
+                response = input().strip().lower()
+                if response == "y":
+                    passed = True
+                else:
+                    print("Review rejected by user.")
             else:
-                print("Review rejected by user.")
+                print(f"\n{concerns} CONCERN(s) found. (Non-interactive mode: not accepted)")
 
         # Phase 2: Prompt recommendations (regardless of pass/fail)
         self._generate_recommendations(review_result, yaml_path)
 
         return passed
+
+    def review_directory(self, dir_path: Path, max_workers: int = 4) -> dict[str, bool]:
+        """
+        Review all YAML files in a directory in parallel.
+
+        Args:
+            dir_path: Directory containing YAML files
+            max_workers: Maximum number of parallel workers
+
+        Returns:
+            Dict mapping filename to pass/fail status
+        """
+        dir_path = dir_path.resolve()
+        yaml_files = list(dir_path.glob("*.yaml")) + list(dir_path.glob("*.yml"))
+
+        if not yaml_files:
+            print(f"No YAML files found in {dir_path}")
+            return {}
+
+        print(f"\nFound {len(yaml_files)} YAML files to review")
+        print(f"Running with {max_workers} parallel workers\n")
+        print("=" * 60)
+
+        results: dict[str, bool] = {}
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_file = {executor.submit(self._review_file_quiet, f): f for f in yaml_files}
+
+            for future in as_completed(future_to_file):
+                yaml_file = future_to_file[future]
+                try:
+                    passed, review_result = future.result()
+                    results[yaml_file.name] = passed
+
+                    # Print summary for this file
+                    overall = review_result.get("overall", "ERROR") if review_result else "ERROR"
+                    status = "✓ PASS" if passed else f"✗ {overall}"
+                    print(f"{yaml_file.name}: {status}")
+
+                except Exception as e:
+                    results[yaml_file.name] = False
+                    print(f"{yaml_file.name}: ✗ ERROR - {e}")
+
+        # Print summary
+        print("\n" + "=" * 60)
+        print("SUMMARY")
+        print("=" * 60)
+        passed_count = sum(1 for v in results.values() if v)
+        failed_count = len(results) - passed_count
+        print(f"Passed: {passed_count}")
+        print(f"Failed/Concerns: {failed_count}")
+        print(f"Recommendations saved to: {self.recommendations_file}")
+
+        return results
+
+    def _review_file_quiet(self, yaml_path: Path) -> tuple[bool, Optional[dict]]:
+        """
+        Review a file without interactive prompts (for parallel execution).
+
+        Returns:
+            Tuple of (passed, review_result)
+        """
+        yaml_path = yaml_path.resolve()
+
+        if not yaml_path.exists():
+            return False, None
+
+        # Phase 1: Scientific soundness review
+        review_result = self._run_scientific_review(yaml_path)
+
+        if review_result is None:
+            return False, None
+
+        # Determine pass/fail (CONCERNs count as not passed in batch mode)
+        overall = review_result.get("overall", "FAIL")
+        passed = overall == "PASS"
+
+        # Phase 2: Prompt recommendations (thread-safe)
+        self._generate_recommendations_quiet(review_result, yaml_path)
+
+        return passed, review_result
 
     def _header(self, title: str) -> str:
         """Create a formatted header."""
@@ -309,6 +400,90 @@ If no low-complexity, generalizable improvements are warranted, say so."""
         except FileNotFoundError:
             print("\nError: Claude Code CLI not found")
 
+    def _generate_recommendations_quiet(self, review_result: dict, yaml_path: Path):
+        """
+        Generate recommendations without console output (for parallel execution).
+
+        Thread-safe version that only writes to file.
+        """
+        # Collect issues from review
+        issues = []
+        if review_result:
+            for issue in review_result.get("critical_issues", []):
+                issues.append(issue)
+            for dim_name, dim_data in review_result.get("dimensions", {}).items():
+                if dim_data.get("score") in ["CONCERN", "FAIL"]:
+                    issues.append(
+                        f"{dim_name.replace('_', ' ').title()}: {dim_data.get('reasoning', '')}"
+                    )
+
+        if not issues:
+            return
+
+        issues_text = "\n".join(f"- {issue}" for issue in issues)
+
+        # Get the path to the current prompt file
+        from qsp_llm_workflows.core.resource_utils import get_package_root
+
+        prompt_path = get_package_root() / "prompts" / self.prompt_file
+
+        prompt = f"""Based on reviewing a {self.workflow_type.replace('_', ' ')} extraction, suggest prompt improvements.
+
+IMPORTANT CONSTRAINTS:
+- Provide AT MOST 2 recommendations
+- Each recommendation must be LOW COMPLEXITY (1-2 sentences to add, no structural changes)
+- Do NOT suggest changes that add significant complexity to the prompt
+- Only suggest changes that are highly generalizable across many extractions
+
+First, read the current prompt to understand what guidance already exists:
+{prompt_path}
+
+Then read the extraction that was reviewed:
+{yaml_path}
+
+Issues found in the extraction:
+{issues_text}
+
+For each recommendation (max 2), provide:
+1. The issue it addresses
+2. The exact text to add to the prompt (keep it brief!)
+3. Where in the prompt it should go
+
+Skip any recommendation if:
+- The prompt already covers this adequately
+- It would only help this specific extraction (not generalizable)
+- It requires significant prompt restructuring
+
+If no low-complexity, generalizable improvements are warranted, say so."""
+
+        try:
+            result = subprocess.run(
+                [
+                    "claude",
+                    "-p",
+                    prompt,
+                    "--allowedTools",
+                    "Read",
+                    "--output-format",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+
+            if result.returncode != 0:
+                return
+
+            output = json.loads(result.stdout)
+            recommendations = output.get("result", "No recommendations generated.")
+
+            # Thread-safe file write
+            self._save_recommendations_threadsafe(yaml_path, issues, recommendations)
+
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+            pass
+
     def _save_recommendations(self, yaml_path: Path, issues: list, recommendations: str):
         """Save recommendations to markdown file."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -336,3 +511,29 @@ Workflow type: {self.workflow_type}
             f.write(content)
 
         print(f"\nRecommendations saved to: {self.recommendations_file}")
+
+    def _save_recommendations_threadsafe(self, yaml_path: Path, issues: list, recommendations: str):
+        """Thread-safe version of save recommendations."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        content = f"""# Prompt Improvement Recommendations
+
+Generated: {timestamp}
+File reviewed: {yaml_path.name}
+Workflow type: {self.workflow_type}
+
+## Issues Found
+
+{chr(10).join(f'- {issue}' for issue in issues)}
+
+## Recommendations
+
+{recommendations}
+
+---
+"""
+
+        with _file_lock:
+            mode = "a" if self.recommendations_file.exists() else "w"
+            with open(self.recommendations_file, mode) as f:
+                f.write(content)

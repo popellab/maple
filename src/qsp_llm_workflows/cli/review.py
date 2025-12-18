@@ -19,8 +19,14 @@ def main():
         description="Review QSP extractions for scientific soundness using Claude Code",
         epilog="""
 Examples:
-    qsp-review parameter_estimates --file metadata-storage/to-review/parameter_estimates/k_growth.yaml
-    qsp-review test_statistics --file metadata-storage/to-review/test_statistics/tumor_volume.yaml
+    # Review a single file
+    qsp-review parameter_estimates --file path/to/k_growth.yaml
+
+    # Review all YAMLs in a directory (in parallel)
+    qsp-review parameter_estimates --dir metadata-storage/to-review/parameter_estimates
+
+    # Limit parallel workers
+    qsp-review test_statistics --dir path/to/files --workers 2
 
 This command uses Claude Code in headless mode to:
 1. Review the extraction against a scientific soundness rubric (5 dimensions)
@@ -35,11 +41,23 @@ This command uses Claude Code in headless mode to:
         help="Type of extraction to review",
     )
 
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--file",
         type=str,
-        required=True,
-        help="YAML file to review",
+        help="Single YAML file to review",
+    )
+    group.add_argument(
+        "--dir",
+        type=str,
+        help="Directory of YAML files to review (runs in parallel)",
+    )
+
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of parallel workers when using --dir (default: 4)",
     )
 
     parser.add_argument(
@@ -50,11 +68,6 @@ This command uses Claude Code in headless mode to:
     )
 
     args = parser.parse_args()
-
-    yaml_path = Path(args.file)
-    if not yaml_path.exists():
-        print(f"Error: File not found: {yaml_path}")
-        sys.exit(1)
 
     # Check for Claude Code CLI
     import shutil
@@ -69,9 +82,22 @@ This command uses Claude Code in headless mode to:
         recommendations_file=args.recommendations_file,
     )
 
-    success = reviewer.review_file(yaml_path)
-
-    sys.exit(0 if success else 1)
+    if args.file:
+        yaml_path = Path(args.file)
+        if not yaml_path.exists():
+            print(f"Error: File not found: {yaml_path}")
+            sys.exit(1)
+        success = reviewer.review_file(yaml_path)
+        sys.exit(0 if success else 1)
+    else:
+        dir_path = Path(args.dir)
+        if not dir_path.exists():
+            print(f"Error: Directory not found: {dir_path}")
+            sys.exit(1)
+        results = reviewer.review_directory(dir_path, max_workers=args.workers)
+        # Exit with failure if any reviews failed
+        all_passed = all(results.values())
+        sys.exit(0 if all_passed else 1)
 
 
 if __name__ == "__main__":
