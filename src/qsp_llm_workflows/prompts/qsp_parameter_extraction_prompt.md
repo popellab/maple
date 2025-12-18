@@ -171,6 +171,8 @@ For state transition parameters (polarization, differentiation, exhaustion), ver
 | Mixed starting states (M0→M2 + M1→M2) | High | Prefer model-matching sources; weight others lower; add assumption |
 | Opposite direction (M2→M1 for M1→M2 param) | Invalid | Do not use |
 
+If sources measure A0→B (naive differentiation) but model uses A1→B (repolarization), reduce `regimen_match` to ≤0.55 and add +50% CI inflation. These are distinct processes with potentially different kinetics.
+
 ---
 
 ## Cross-Indication Data Handling
@@ -187,6 +189,9 @@ When {{CANCER_TYPE}}-specific quantitative data is unavailable, you may use cros
 | Other solid tumor (HNSCC, melanoma, RCC) | 0.50–0.65 | +50% CI width | Explicit assumption required |
 | Healthy donor / non-cancer human | 0.35–0.50 | +75–100% CI width | Strong justification + flag in limitations |
 | Cell line only (no primary cells/tissue) | 0.25–0.40 | +100% CI width | Consider rejecting; last resort only |
+| **Non-human species (mouse, rat)** | Multiply above `indication_match` by 0.6–0.8 | +50–100% CI width | Explicit species-transfer assumption required |
+
+For peripheral blood sources: note that TME conditions (hypoxia, TGF-β, dense stroma) often INCREASE immunosuppressive cell potency relative to blood. Consider asymmetric uncertainty (wider toward TME-enhanced values).
 
 **When using non-{{CANCER_TYPE}} numeric anchors:**
 
@@ -218,6 +223,8 @@ Flag conditions that may bias the extracted value:
 
 Document confounds in `key_study_limitations` and inflate uncertainty accordingly.
 
+**Source quality minimum:** Use only peer-reviewed literature or authoritative medical references (e.g., Harrison's, established physiology texts) for numeric values. Consumer health websites, Wikipedia, and non-peer-reviewed sources are not acceptable even for "standard" values like blood volume.
+
 ---
 
 **Example (K_T_Treg extraction):**
@@ -240,6 +247,8 @@ Use the `source_ref` field to indicate the input type:
 | **Literature consensus** | `"Multiple_sources"` or list citations | Widely accepted value from multiple sources | Combine uncertainties; note range in description |
 | **Assumed/estimated** | `"ASSUMPTION"` | Value not directly measured; based on reasoning | **Use WIDE bounds** (log-uniform preferred); flag in limitations |
 | **Computational** | `"Computation"` | Seeds, draw counts, technical parameters | N/A - not propagated |
+
+For assumed values, state whether the range is constrained by ANY measurement (even indirect) or is purely speculative. If purely speculative, use log-uniform with ≥10-fold range.
 
 **When an assumed input dominates uncertainty:**
 
@@ -287,6 +296,8 @@ When the measured quantity is not identical to the model parameter, you are usin
 | mRNA expression | Protein concentration | Variable | ±50–200% |
 | In vitro half-life | In vivo clearance | Weak | ±100–300% |
 | Time-to-marker-change | Rate constant | Moderate | ±50% |
+| Cell death (apoptosis) | Exhaustion/dysfunction | Weak | ±100% — death ≠ survival with dysfunction |
+| Marker expression timing | Functional state transition | Moderate | ±50% — markers lag functional changes |
 
 **Document the proxy chain explicitly:**
 
