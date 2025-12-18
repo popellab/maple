@@ -209,26 +209,31 @@ After your analysis, output ONLY a JSON object with your assessment (no markdown
         return None
 
     def _display_review(self, result: dict):
-        """Display the review results in a formatted table."""
+        """Display the review results."""
         dimensions = result.get("dimensions", {})
-
-        # Display dimension scores
-        print(f"{'DIMENSION':<35} {'SCORE':<10} REASONING")
-        print("-" * 80)
 
         for dim_name, dim_data in dimensions.items():
             score = dim_data.get("score", "N/A")
             reasoning = dim_data.get("reasoning", "")
-            # Truncate reasoning for display
-            if len(reasoning) > 40:
-                reasoning = reasoning[:37] + "..."
             display_name = dim_name.replace("_", " ").title()
-            print(f"{display_name:<35} {score:<10} {reasoning}")
+
+            # Color-code the score
+            if score == "PASS":
+                score_display = f"✓ {score}"
+            elif score == "CONCERN":
+                score_display = f"⚠ {score}"
+            else:
+                score_display = f"✗ {score}"
+
+            print(f"\n{display_name}: {score_display}")
+            if reasoning:
+                # Wrap long reasoning text
+                print(f"  {reasoning}")
 
         # Display overall
         overall = result.get("overall", "N/A")
-        print("-" * 80)
-        print(f"\nOVERALL: {overall}")
+        print(f"\n{'─' * 60}")
+        print(f"OVERALL: {overall}")
 
         # Display critical issues
         issues = result.get("critical_issues", [])
