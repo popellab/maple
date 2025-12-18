@@ -44,36 +44,31 @@ Note: Automated validation is handled separately via `qsp-validate`.
 
 ## Scientific Soundness Rubric (Embedded)
 
-The rubric covers 5 dimensions requiring scientific judgment, scored as PASS/CONCERN/FAIL. Technical checks (code execution, DOI resolution, snippet verification) are handled by automated validators in Phase 2.
+The rubric covers 3 deep dimensions requiring scientific judgment, scored as PASS/CONCERN/FAIL. Technical checks (code execution, DOI resolution, snippet verification) are handled by automated validators.
 
-### 1. Statistical Methodology
-- Is uncertainty quantification appropriate? (bootstrap vs parametric)
-- Is sample size adequate for the statistical approach?
-- Are distributional assumptions justified?
-- Is the derivation hierarchy level appropriate (direct > converted > derived > constructed > assumed)?
+### 1. Data Source Appropriateness
+- **Cancer type & indication**: Does source match target? Cross-indication justification?
+- **Experimental system hierarchy**: Human clinical > ex vivo > humanized mouse > syngeneic > organoid > cell line
+- **Species translation**: Interspecies scaling addressed? Known species differences?
+- **Patient population**: Disease stage, treatment history, biomarker status match?
+- **Compartment & matrix**: Right biological compartment and sample type?
+- **Source quality**: Adequately powered? Peer-reviewed? Superseded by newer data?
 
-### 2. Data Source Appropriateness
-- Does the source match the target cancer type?
-- Is the experimental system relevant (in vivo > ex vivo > organoid > cell line)?
-- Are cross-indication transfers justified?
-- Is the compartment/matrix appropriate for the measurement?
+### 2. Mechanism-to-Model Alignment
+- **Quantity matching**: Does measured quantity match model parameter definition?
+- **Proxy measurements**: If indirect measurement, is proxy validated? (mRNA→protein, peripheral→tumor, in vitro→in vivo)
+- **Temporal dynamics**: Steady-state vs transient? Acute vs chronic? Right time scale?
+- **Dose & concentration context**: Physiologically relevant? Right part of dose-response curve?
+- **Cell type specificity**: Right cell type isolated? Contamination possible? Cell state considerations?
+- **Environmental context**: In vitro vs in vivo TME differences? Oxygen, nutrients, matrix?
 
-### 3. Mechanism-to-Model Alignment
-- Does the biological mechanism in the study match the model equation?
-- If using a proxy, is it well-validated for the target?
-- Are the experimental conditions (dose, timing, stimulus) representative?
-
-### 4. Assumption Transparency
-- Are key assumptions explicitly documented?
-- Are assumptions numbered and referenced in derivation code?
-- Is uncertainty inflated appropriately for each assumption?
-- Are cascading assumptions (4+) flagged?
-
-### 5. Biological Plausibility
-- Is the value in a reasonable biological range for this parameter type?
-- Does the magnitude align with known biology?
-- Are derived quantities internally consistent?
-- Does the uncertainty range span biologically meaningful values?
+### 3. Biological Plausibility
+- **Range checking**: Within expected biological range? Compare to literature values
+- **Internal consistency**: Makes sense relative to other model parameters?
+- **Physiological constraints**: Respects diffusion limits, blood flow limits, metabolic limits?
+- **Scale appropriateness**: Molecular vs cell vs tissue level consistent?
+- **Uncertainty range**: Spans meaningful values? Excludes impossible values?
+- **Literature consensus**: Aligns with or contradicts broader literature?
 
 ## File Structure
 
