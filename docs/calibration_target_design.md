@@ -586,6 +586,77 @@ Different observable types have different sensitivity to context mismatches.
 
 ---
 
+## Validation Approaches
+
+The context distance structure involves choices (sensitivity weights, similarity matrices, λ) that could be seen as arbitrary. The following validation strategies address this concern.
+
+### 1. Sensitivity Analysis (Required)
+
+Show inference results are **robust to perturbations**:
+
+- Perturb sensitivity weights by ±25%
+- Perturb similarity matrix entries by ±0.1
+- Vary λ over reasonable range (e.g., 0.5–2.0)
+
+**Success criterion:** Posterior parameter estimates stable within X% across perturbations.
+
+### 2. Model Comparison (Required)
+
+Compare predictive performance across structures using WAIC or LOO-CV:
+
+| Model | Description |
+|-------|-------------|
+| **Null** | No context adjustment (all observables weighted equally) |
+| **Proposed** | Weighted distance with sensitivity tables |
+| **Learned** | Hierarchical model estimating weights from data |
+
+**Success criterion:** Proposed structure outperforms Null; comparable to Learned (captures structure without overfitting).
+
+### 3. Residual Calibration (Recommended)
+
+Check that context distance **predicts residual variance**:
+
+1. Fit model ignoring context mismatch
+2. Compute residuals for each observable
+3. Regress |residual| on context distance
+4. Positive slope → distance function captures real heterogeneity
+
+**Success criterion:** Significant positive relationship between distance and residual magnitude.
+
+### 4. Literature Grounding (Required)
+
+Ground each structural choice in published evidence:
+
+| Component | Literature Support |
+|-----------|-------------------|
+| **Allometric scaling** | West et al. scaling laws; FDA cross-species guidance |
+| **Indication similarity** | Tumor molecular profiling; TME clustering studies |
+| **System hierarchy** | Translational pharmacology; in vitro-in vivo correlation reviews |
+| **Observable sensitivities** | Meta-analyses reporting heterogeneity by context |
+
+### 5. Hierarchical Learning (Ideal)
+
+Put priors on structural parameters and let data inform them:
+
+```
+λ ~ HalfNormal(1)
+w[class][dim] ~ Beta(α_prior, β_prior)
+similarity[i,j] ~ Beta(α_ij, β_ij)
+```
+
+**Diagnostic checks:**
+- Posteriors concentrated → data informative, structure identifiable
+- Posteriors wide → appropriately uncertain
+- Prior-to-posterior shift → data updated beliefs (not just prior echo)
+
+### Validation Narrative
+
+For publication, the recommended narrative:
+
+> "We propose a context distance structure grounded in [allometric scaling literature, translational pharmacology]. Sensitivity analysis demonstrates robustness to ±25% perturbations in weights. Model comparison shows the proposed structure outperforms naive pooling (ΔWAIC = X) while avoiding overfitting relative to fully learned alternatives. When structural parameters are learned hierarchically, posteriors are consistent with our prior specification, indicating the structure captures meaningful heterogeneity."
+
+---
+
 ## Open Questions
 
 1. **Hard incompatibilities**: When to reject an observable entirely vs. allow heavy variance inflation? (e.g., in_vitro for survival endpoint)
