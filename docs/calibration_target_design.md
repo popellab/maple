@@ -356,26 +356,70 @@ experimental_context:
 
 ## Context Mismatch Handling
 
-When observable context differs from model context, apply:
+When observable context differs from model context, we use a **meta-analytic framework** that formally handles heterogeneity through:
 
 | Adjustment | Description |
 |------------|-------------|
-| **Bias correction** | Systematic shift (e.g., allometric scaling, compartment ratios) |
-| **Variance inflation** | Increased uncertainty due to unknown differences |
+| **Bias correction** | Systematic shift for known relationships (e.g., allometric scaling) |
+| **Variance inflation** | Increased uncertainty as a function of context distance |
 
-### Variance Inflation Composition
+---
 
-Use **geometric mean** across dimensions:
+### Meta-Analytic Framework
+
+Each observable provides an estimate of a latent quantity with context-dependent uncertainty:
 
 ```
-total = (∏ σᵢ)^(1/n)
+y_obs ~ N(μ_true + bias(ctx_obs, ctx_model), σ²_obs + σ²_mismatch)
 ```
 
-### Lookup Tables
+Where:
+- `y_obs` = observed value with reported uncertainty `σ²_obs`
+- `bias(...)` = systematic correction (if known), else 0
+- `σ²_mismatch` = additional variance due to context distance
 
-Separate tables for bias correction and variance inflation. Default to variance inflation when no bias correction available.
+---
 
-**Bias Corrections:**
+### Context Distance Function
+
+Context mismatch variance is computed from a **weighted distance function**:
+
+```
+σ²_mismatch = σ²_base × exp(λ × d(ctx_obs, ctx_model, class))
+```
+
+Where `λ` controls sensitivity (can be fixed or learned from data).
+
+The distance function uses **observable-class-specific weights** from the sensitivity tables:
+
+```
+d(ctx₁, ctx₂, class) = Σ_dim  w[class][dim] × d_dim(ctx₁[dim], ctx₂[dim])
+```
+
+**Dimension-specific distances:**
+
+| Dimension | Distance Function |
+|-----------|-------------------|
+| **Species** | 0 if match, 1 if mismatch |
+| **Indication** | `1 - similarity_matrix[ind₁][ind₂]` |
+| **Compartment** | Normalized tree distance |
+| **System** | Normalized tree distance |
+| **Treatment** | Jaccard distance on multi-select sets |
+| **Stage** | `|extent_ord₁ - extent_ord₂|/3 + |burden_ord₁ - burden_ord₂|/2` |
+
+**Sensitivity weights** (`w[class][dim]`) come from the Observable Classes section below, mapped as:
+- N/A → 0.0
+- Low → 0.25
+- Medium → 0.5
+- High → 0.75
+- Very High → 1.0
+
+---
+
+### Bias Corrections
+
+For **known systematic relationships**, apply bias corrections before inference. Default to variance inflation only when no bias correction is available.
+
 ```yaml
 bias_corrections:
   species:
@@ -386,61 +430,69 @@ bias_corrections:
           tumor_volume: 1.0
           doubling_time: 0.25
           clearance: 0.75
-          # Immune kinetics: null (no scaling)
+          # Immune kinetics: null (no scaling, use variance only)
 
   compartment:
     ratios:
       blood_to_tumor:
         IL10: {factor: 10, uncertainty: 0.5}
         TGFB: {factor: 100, uncertainty: 1.0}
-        # Add more as identified
+        # Add more as identified from literature
 ```
 
-**Variance Inflation:**
-```yaml
-variance_inflation:
-  species:
-    mouse_to_human:
-      default: 1.5
-      kinetic_rate: 1.3
-      tumor_measurement: 1.2  # After allometric correction
+---
 
-  indication:
-    method: similarity_matrix
-    scale_factor: 2.0  # inflation = 1 + k*(1-similarity)
+### Indication Similarity Matrix
 
-  compartment:
-    same: 1.0
-    related: 1.2
-    different: 1.5
+Used for `d_indication`. Symmetric; only lower triangle shown.
 
-  system:
-    method: hierarchy_distance
-    per_level: 0.2  # inflation = 1 + 0.2 * distance
-
-  treatment:
-    same: 1.0
-    minor_mismatch: 1.2
-    major_mismatch: 1.5
-
-  stage:
-    same: 1.0
-    adjacent: 1.2  # e.g., resectable vs borderline
-    distant: 1.5   # e.g., resectable vs metastatic
-```
-
-**Indication Similarity Matrix:**
 ```yaml
 indication_similarity:
   PDAC:
     PDAC: 1.0
+  colorectal:
+    PDAC: 0.7
+    colorectal: 1.0
+  gastric:
+    PDAC: 0.6
     colorectal: 0.7
-    gastric: 0.6
-    lung_adeno: 0.5
-    melanoma: 0.3
-    healthy: 0.1
+    gastric: 1.0
+  lung_adeno:
+    PDAC: 0.5
+    colorectal: 0.5
+    gastric: 0.5
+    lung_adeno: 1.0
+  melanoma:
+    PDAC: 0.3
+    colorectal: 0.3
+    gastric: 0.3
+    lung_adeno: 0.4
+    melanoma: 1.0
+  healthy:
+    PDAC: 0.1
+    colorectal: 0.1
+    gastric: 0.1
+    lung_adeno: 0.1
+    melanoma: 0.2
+    healthy: 1.0
   # Expand as needed
 ```
+
+---
+
+### Hierarchy Distances
+
+For **Compartment** and **System**, use normalized tree distance:
+
+```
+d_tree(node₁, node₂) = (path_length(node₁, node₂)) / max_depth
+```
+
+Where `path_length` = number of edges to common ancestor × 2.
+
+*Example:* `tumor.primary` vs `blood.plasma_serum` → common ancestor is root, path = 4, max_depth = 2, d = 1.0
+
+*Example:* `tumor.primary` vs `tumor.metastatic` → common ancestor is `tumor`, path = 2, d = 0.5
 
 ---
 
@@ -536,6 +588,8 @@ Different observable types have different sensitivity to context mismatches.
 
 ## Open Questions
 
-1. Hard incompatibilities: when to reject an observable vs inflate heavily?
-2. How to handle missing entries in lookup tables? (Current: default to variance inflation)
-3. Validation of bias/variance values: literature review vs expert elicitation?
+1. **Hard incompatibilities**: When to reject an observable entirely vs. allow heavy variance inflation? (e.g., in_vitro for survival endpoint)
+2. **Learning λ**: Fix `λ` from prior knowledge, or estimate from data during inference?
+3. **Bias correction coverage**: How to systematically identify when bias corrections exist vs. variance-only?
+4. **Similarity matrix calibration**: Literature review vs. expert elicitation vs. data-driven?
+5. **Interaction effects**: Should dimension distances be additive, or are there interaction terms (e.g., mouse + cell_line worse than sum)?
