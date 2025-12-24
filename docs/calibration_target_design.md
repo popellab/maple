@@ -776,11 +776,41 @@ Compare calibration target posteriors against parameter distributions from **pub
 - Prior assumptions may differ
 - Ensure parameter definitions match (same equation role, same units)
 
+### 7. Prediction Comparison (Recommended)
+
+Compare **model predictions** rather than just parameter values. This is a stronger test because different parameter combinations can produce similar outputs (equifinality), and predictions are what ultimately matter.
+
+**Types of prediction comparison:**
+
+| Type | Method |
+|------|--------|
+| **Trajectory comparison** | Simulate time courses with your posteriors vs benchmark parameters; compare tumor volume, cell populations, cytokines |
+| **Endpoint comparison** | Compare predicted summary statistics: doubling time, time to progression, steady-state ratios |
+| **Posterior predictive checks** | Both models predict on held-out validation data; which matches better? |
+| **Clinical predictions** | If benchmark made clinical predictions (response rates, survival), can you reproduce them? |
+
+**Metrics:**
+- RMSE between predicted trajectories
+- Correlation of predicted endpoints
+- Credible interval overlap for predictions
+- Calibration: do X% CIs contain X% of validation observations?
+
+**Interpreting outcomes:**
+
+| Outcome | Interpretation |
+|---------|----------------|
+| Parameters differ, predictions match | Equifinality - both calibrations functionally valid |
+| Parameters match, predictions match | Strong concordance |
+| Parameters differ, predictions differ | Which matches validation data better? |
+| Your prediction CIs wider | Appropriate uncertainty given context heterogeneity |
+
+**Why this matters:** Parameter comparison can miss the point. Two models with different parameter values but equivalent predictions are equally valid. Prediction comparison tests what we actually care about: **does the model work?**
+
 ### Validation Narrative
 
 For publication, the recommended narrative:
 
-> "We propose a context distance structure grounded in [allometric scaling literature, translational pharmacology]. Sensitivity analysis demonstrates robustness to ±25% perturbations in weights. Model comparison shows the proposed structure outperforms naive pooling (ΔWAIC = X) while avoiding overfitting relative to fully learned alternatives. When structural parameters are learned hierarchically, posteriors are consistent with our prior specification, indicating the structure captures meaningful heterogeneity. As external validation, we compared our calibration target posteriors to parameter distributions from [published benchmark model]; N of M parameters showed overlapping 80% credible intervals, with wider CIs reflecting appropriate conservatism given cross-context uncertainty."
+> "We propose a context distance structure grounded in [allometric scaling literature, translational pharmacology]. Sensitivity analysis demonstrates robustness to ±25% perturbations in weights. Model comparison shows the proposed structure outperforms naive pooling (ΔWAIC = X) while avoiding overfitting relative to fully learned alternatives. When structural parameters are learned hierarchically, posteriors are consistent with our prior specification, indicating the structure captures meaningful heterogeneity. As external validation, we compared against [published benchmark model]: N of M parameters showed overlapping 80% credible intervals, and model predictions were concordant (trajectory RMSE = Y, endpoint correlation = Z), demonstrating functional equivalence despite wider uncertainty bounds."
 
 ---
 
