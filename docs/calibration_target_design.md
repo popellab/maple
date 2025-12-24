@@ -370,25 +370,86 @@ When observable context differs from model context, we use a **meta-analytic fra
 Each observable provides an estimate of a latent quantity with context-dependent uncertainty:
 
 ```
-y_obs ~ N(μ_true + bias(ctx_obs, ctx_model), σ²_obs + σ²_mismatch)
+y_ij ~ N(μ_true + bias(ctx_ij, ctx_model) + u_j, σ²_ij + σ²_mismatch_ij)
 ```
 
 Where:
-- `y_obs` = observed value with reported uncertainty `σ²_obs`
+- `y_ij` = observable `i` from study `j`, with reported uncertainty `σ²_ij`
 - `bias(...)` = systematic correction (if known), else 0
+- `u_j` = study-level random effect (see below)
 - `σ²_mismatch` = additional variance due to context distance
+
+#### Study-Level Correlation
+
+Observables from the same study share systematic factors (patients, methods, lab). Model this as:
+
+```
+u_j ~ N(0, τ²)
+```
+
+Where `τ²` is between-study variance, estimated from data or set via prior.
+
+**Why this matters:** Without study effects, 5 observables from one paper get 5× the influence of a single-observable paper. The random effect appropriately downweights redundant information.
+
+**Implementation options:**
+1. **Full hierarchical:** Estimate `τ²` from data (requires sufficient studies)
+2. **Fixed τ²:** Set `τ² = 0.1 × median(σ²_obs)` as rule of thumb
+3. **Cluster-robust SEs:** Post-hoc adjustment without explicit random effects
 
 ---
 
-### Context Distance Function
+### Baseline Variance (σ²_base)
+
+The parameter `σ²_base` represents irreducible context-transfer uncertainty even when contexts match perfectly (d ≈ 0). It captures:
+- Methodological variation across labs
+- Biological variation not in context dimensions
+- Residual model-reality mismatch
+
+**Estimation approaches:**
+
+| Approach | Method |
+|----------|--------|
+| **Empirical** | Estimate from observables with d < 0.1 (near-matched contexts) |
+| **Prior-based** | Set `σ²_base = 0.1 × median(σ²_obs)` as fraction of typical measurement error |
+| **Hierarchical** | `σ²_base ~ InverseGamma(α, β)` with weakly informative prior |
+
+**Recommendation:** Start with prior-based, validate with residual analysis, upgrade to hierarchical if data permits.
+
+---
+
+### Variance Inflation Functional Form
 
 Context mismatch variance is computed from a **weighted distance function**:
 
 ```
-σ²_mismatch = σ²_base × exp(λ × d(ctx_obs, ctx_model, class))
+σ²_mismatch = σ²_base × f(λ × d(ctx_obs, ctx_model, class))
 ```
 
 Where `λ` controls sensitivity (can be fixed or learned from data).
+
+#### Why Exponential?
+
+We use `f(x) = exp(x) - 1` (shifted exponential) because:
+
+1. **Bounded at zero:** When d = 0, σ²_mismatch = 0 (no inflation for matched contexts)
+2. **Monotonic:** Larger distance → larger variance (always)
+3. **Convex:** Marginal penalty increases with distance (compounding uncertainty)
+4. **Multiplicative interpretation:** `exp(λd)` corresponds to multiplicative uncertainty factors
+
+#### Alternative Forms
+
+| Form | Formula | Behavior |
+|------|---------|----------|
+| **Linear** | `λ × d` | Simple; may underweight large mismatches |
+| **Quadratic** | `(λ × d)²` | Penalizes large distances more heavily |
+| **Exponential** | `exp(λ × d) - 1` | Recommended; unbounded, convex |
+| **Logistic** | `L / (1 + exp(-k(d - d₀)))` | Bounded maximum; use if inflation should plateau |
+
+**Recommendation:** Use exponential as default. Include linear and quadratic in model comparison (Validation section) to empirically justify.
+
+---
+
+### Context Distance Function
 
 The distance function uses **observable-class-specific weights** from the sensitivity tables:
 
