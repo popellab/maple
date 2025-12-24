@@ -14,11 +14,13 @@ from openai import AsyncOpenAI
 from qsp_llm_workflows.core.prompts import (
     build_parameter_extraction_prompt,
     build_test_statistic_prompt,
+    build_calibration_target_prompt,
 )
 from qsp_llm_workflows.core.pydantic_models import (
     ParameterMetadata,
     TestStatistic,
 )
+from qsp_llm_workflows.core.calibration_target_models import CalibrationTarget
 
 
 class ImmediateRequestProcessor:
@@ -60,7 +62,7 @@ class ImmediateRequestProcessor:
         Args:
             row: CSV row data
             index: Row index
-            workflow_type: "parameter" or "test_statistic"
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
 
         Returns:
             Custom ID string
@@ -72,6 +74,9 @@ class ImmediateRequestProcessor:
         elif workflow_type == "test_statistic":
             test_stat_id = row.get("test_statistic_id", "UNKNOWN")
             return f"test_stat_{test_stat_id}_{index}"
+        elif workflow_type == "calibration_target":
+            cal_target_id = row.get("calibration_target_id", "UNKNOWN")
+            return f"cal_target_{cal_target_id}_{index}"
         else:
             return f"request_{index}"
 
@@ -81,7 +86,7 @@ class ImmediateRequestProcessor:
 
         Args:
             row: CSV row data
-            workflow_type: "parameter" or "test_statistic"
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
 
         Returns:
             Assembled prompt string
@@ -122,6 +127,22 @@ class ImmediateRequestProcessor:
                 used_primary_studies="",  # No used studies tracking yet
             )
 
+        elif workflow_type == "calibration_target":
+            # Extract calibration target info from CSV
+            calibration_target_id = row.get("calibration_target_id", "")
+            cancer_type = row.get("cancer_type", "UNKNOWN")
+            observable_description = row.get("observable_description", "")
+            model_context = row.get("model_context", "")
+            context_hash = row.get("context_hash", "")
+
+            return build_calibration_target_prompt(
+                observable_description=observable_description,
+                model_context=model_context,
+                cancer_type=cancer_type,
+                calibration_target_id=calibration_target_id,
+                context_hash=context_hash,
+            )
+
         else:
             return ""
 
@@ -130,7 +151,7 @@ class ImmediateRequestProcessor:
         Get Pydantic model for workflow type.
 
         Args:
-            workflow_type: "parameter" or "test_statistic"
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
 
         Returns:
             Pydantic model class
@@ -139,6 +160,8 @@ class ImmediateRequestProcessor:
             return ParameterMetadata
         elif workflow_type == "test_statistic":
             return TestStatistic
+        elif workflow_type == "calibration_target":
+            return CalibrationTarget
         else:
             raise ValueError(f"Unknown workflow type: {workflow_type}")
 
@@ -168,8 +191,12 @@ class ImmediateRequestProcessor:
         # Get item name for logging
         if workflow_type == "parameter":
             item_name = row.get("parameter_name", f"item_{index}")
-        else:
+        elif workflow_type == "test_statistic":
             item_name = row.get("test_statistic_id", f"item_{index}")
+        elif workflow_type == "calibration_target":
+            item_name = row.get("calibration_target_id", f"item_{index}")
+        else:
+            item_name = f"item_{index}"
 
         if progress_callback:
             progress_callback(f"  [{index + 1}] Processing {item_name}...")
@@ -183,7 +210,7 @@ class ImmediateRequestProcessor:
 
             # Call Responses API with structured outputs
             response = await self.client.responses.parse(
-                model="gpt-5",
+                model="gpt-5.2",
                 input=prompt,
                 reasoning={"effort": reasoning_effort},
                 tools=[{"type": "web_search"}],

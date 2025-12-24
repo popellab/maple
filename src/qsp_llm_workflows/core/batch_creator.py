@@ -19,8 +19,10 @@ from qsp_llm_workflows.core.prompts import (
     build_parameter_extraction_prompt,
     build_test_statistic_prompt,
     build_validation_fix_prompt,
+    build_calibration_target_prompt,
 )
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
+from qsp_llm_workflows.core.calibration_target_models import CalibrationTarget
 
 
 class BatchCreator(ABC):
@@ -540,6 +542,70 @@ class TestStatisticBatchCreator(BatchCreator):
                 custom_id = f"test_stat_{test_statistic_id}_{i}"
                 request = self.create_request(
                     custom_id, prompt, TestStatistic, reasoning_effort="high"
+                )
+                requests.append(request)
+
+        return requests
+
+
+class CalibrationTargetBatchCreator(BatchCreator):
+    """
+    Creates batch requests for calibration target extraction from scientific literature.
+
+    Processes CSV input with observable descriptions and model context, generating
+    prompts to extract raw observables with experimental context for Bayesian inference.
+    """
+
+    def get_batch_type(self) -> str:
+        return "calibration_target"
+
+    def process(self, input_csv: Path) -> List[Dict[str, Any]]:
+        """
+        Process calibration target inputs and generate batch requests.
+
+        Args:
+            input_csv: CSV file with columns: calibration_target_id, cancer_type,
+                      observable_description, model_context (YAML), context_hash
+
+        Returns:
+            List of batch request dictionaries
+        """
+        import csv
+
+        requests = []
+        with open(input_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+
+            for i, row in enumerate(reader):
+                calibration_target_id = row.get("calibration_target_id", f"target_{i}")
+                cancer_type = row.get("cancer_type", "UNKNOWN")
+                observable_description = row.get("observable_description", "")
+                model_context = row.get("model_context", "")
+                context_hash = row.get("context_hash", "")
+
+                if not observable_description.strip():
+                    print(
+                        f"Warning: Empty observable description for {calibration_target_id}, skipping"
+                    )
+                    continue
+
+                if not model_context.strip():
+                    print(f"Warning: Empty model context for {calibration_target_id}, skipping")
+                    continue
+
+                # Build the prompt
+                prompt = build_calibration_target_prompt(
+                    observable_description=observable_description,
+                    model_context=model_context,
+                    cancer_type=cancer_type,
+                    calibration_target_id=calibration_target_id,
+                    context_hash=context_hash,
+                )
+
+                # Create batch request with structured outputs
+                custom_id = f"cal_target_{calibration_target_id}_{i}"
+                request = self.create_request(
+                    custom_id, prompt, CalibrationTarget, reasoning_effort="high"
                 )
                 requests.append(request)
 

@@ -81,6 +81,43 @@ def build_test_statistic_prompt(
     return prompt
 
 
+def build_calibration_target_prompt(
+    observable_description: str,
+    model_context: str,
+    cancer_type: str,
+    calibration_target_id: str,
+    context_hash: str,
+) -> str:
+    """
+    Build calibration target extraction prompt with substitutions.
+
+    Args:
+        observable_description: Description of observable to extract
+        model_context: Model's assumed context (YAML format)
+        cancer_type: Cancer type/indication (e.g., "PDAC")
+        calibration_target_id: Unique identifier for this target
+        context_hash: Hash of model context for provenance
+
+    Returns:
+        Complete prompt with all placeholders replaced
+    """
+    # Load base prompt
+    prompt = read_prompt("calibration_target_prompt.md")
+
+    # Load shared rubrics
+    rubrics = read_shared_prompt("source_and_validation_rubrics.md")
+
+    # Substitute placeholders
+    prompt = prompt.replace("{{OBSERVABLE_DESCRIPTION}}", observable_description)
+    prompt = prompt.replace("{{MODEL_CONTEXT}}", model_context)
+    prompt = prompt.replace("{{CANCER_TYPE}}", cancer_type)
+    prompt = prompt.replace("{{CALIBRATION_TARGET_ID}}", calibration_target_id)
+    prompt = prompt.replace("{{CONTEXT_HASH}}", context_hash)
+    prompt = prompt.replace("{{SOURCE_AND_VALIDATION_RUBRICS}}", rubrics)
+
+    return prompt
+
+
 def build_validation_fix_prompt(
     yaml_content: str,
     validation_errors: str,

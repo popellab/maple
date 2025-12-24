@@ -33,7 +33,7 @@ Examples:
     parser.add_argument(
         "--type",
         required=True,
-        choices=["parameter", "test_statistic"],
+        choices=["parameter", "test_statistic", "calibration_target"],
         help="Type of extraction workflow",
     )
 

@@ -57,6 +57,15 @@ def load_metadata(input_csv: Path, batch_type: str) -> Dict:
                     "required_species": row.get("required_species", ""),
                     "derived_species_description": row.get("derived_species_description", ""),
                 }
+            elif batch_type == "calibration_target":
+                key = row["calibration_target_id"]
+                metadata[key] = {
+                    "calibration_target_id": key,
+                    "cancer_type": row["cancer_type"],
+                    "context_hash": row.get("context_hash", ""),
+                    "model_context": row.get("model_context", ""),
+                    "observable_description": row.get("observable_description", ""),
+                }
             else:  # parameter
                 key = (row["cancer_type"], row["parameter_name"])
                 metadata[key] = {
@@ -96,7 +105,26 @@ def generate_derivation_id(
 
 def add_header_fields(json_data: dict, metadata: dict, batch_type: str) -> dict:
     """Add header fields to JSON data based on batch type."""
-    if batch_type == "test_statistic":
+    if batch_type == "calibration_target":
+        # Calibration targets have their own header structure
+        json_data["calibration_target_id"] = metadata["calibration_target_id"]
+        json_data["cancer_type"] = metadata["cancer_type"]
+        json_data["context_hash"] = metadata["context_hash"]
+        json_data["schema_version"] = "v1"
+
+        # Add tags
+        tags = ["ai-generated"]
+        json_data["tags"] = tags
+
+        # Parse model_context if it's a JSON string
+        model_context = metadata.get("model_context", "")
+        if model_context:
+            try:
+                json_data["model_context"] = json.loads(model_context)
+            except Exception:
+                json_data["model_context"] = model_context
+
+    elif batch_type == "test_statistic":
         # Test statistics have different header structure
         json_data["test_statistic_id"] = metadata["test_statistic_id"]
         json_data["cancer_type"] = metadata["cancer_type"]
@@ -225,6 +253,10 @@ def parse_custom_id(custom_id: str) -> Tuple[str, str, str]:
         # test_stat_TEST_STATISTIC_ID_INDEX
         return ("test_statistic", "", "_".join(parts[2:-1]))
 
+    elif parts[0] == "cal" and parts[1] == "target":
+        # cal_target_CALIBRATION_TARGET_ID_INDEX
+        return ("calibration_target", "", "_".join(parts[2:-1]))
+
     else:
         # CANCER_PARAMETER_INDEX (regular parameter extraction)
         return ("parameter", parts[0], "_".join(parts[1:-1]))
@@ -341,6 +373,10 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                     meta = metadata.get(identifier)
                     if meta:
                         cancer_type = meta["cancer_type"]
+                elif batch_type == "calibration_target":
+                    meta = metadata.get(identifier)
+                    if meta:
+                        cancer_type = meta["cancer_type"]
                 else:
                     meta = metadata.get((cancer_type, identifier))
 
@@ -367,6 +403,20 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                     json_data = move_field_to_top(json_data, "context_hash")
                     json_data = move_field_to_top(json_data, "cancer_type")
                     json_data = move_field_to_top(json_data, "test_statistic_id")
+                    json_data = move_field_to_top(json_data, "schema_version")
+
+                elif batch_type == "calibration_target":
+                    # cal_target_id_cancer_hash_deriv001.yaml
+                    base = f"{identifier}_{cancer_type}_{meta['context_hash']}"
+                    deriv_num = find_next_derivation_number(output_dir, base)
+                    filename = f"{base}_deriv{deriv_num:03d}.yaml"
+
+                    # Move header fields to top (reverse order since we prepend)
+                    json_data = move_field_to_top(json_data, "model_context")
+                    json_data = move_field_to_top(json_data, "context_hash")
+                    json_data = move_field_to_top(json_data, "tags")
+                    json_data = move_field_to_top(json_data, "cancer_type")
+                    json_data = move_field_to_top(json_data, "calibration_target_id")
                     json_data = move_field_to_top(json_data, "schema_version")
 
                 else:  # parameter
