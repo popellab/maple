@@ -374,10 +374,43 @@ y_ij ~ N(μ_true + bias(ctx_ij, ctx_model) + u_j, σ²_ij + σ²_mismatch_ij)
 ```
 
 Where:
+- `μ_true` = the latent quantity value **in the model's assumed context** (this is what we're estimating)
 - `y_ij` = observable `i` from study `j`, with reported uncertainty `σ²_ij`
-- `bias(...)` = systematic correction (if known), else 0
+- `bias(...)` = systematic correction mapping from experimental context to model context (if known), else 0
 - `u_j` = study-level random effect (see below)
 - `σ²_mismatch` = additional variance due to context distance
+
+**Interpretation:** We estimate the value as it would be observed in the model's context. Bias corrections shift observations toward that context; variance inflation accounts for residual uncertainty in the mapping.
+
+#### Likelihood Assumptions
+
+The Gaussian likelihood is a simplification. Observable types have natural likelihoods:
+
+| Observable Type | Natural Likelihood | Gaussian Approximation |
+|-----------------|-------------------|------------------------|
+| Cell counts | Poisson / Negative binomial | Valid for large counts (>30) |
+| Fractions | Beta | Valid away from 0/1 boundaries |
+| Concentrations | Log-normal | Use log-transform |
+| Survival times | Weibull / Log-normal | Not recommended |
+
+**Recommendation:** Start with Gaussian for simplicity. For fractions near boundaries or small counts, consider appropriate likelihoods. Log-transform concentrations before modeling.
+
+#### Handling Reported Uncertainty
+
+Literature reports uncertainty inconsistently. Standardize as follows:
+
+| Reported Format | Conversion to σ |
+|-----------------|-----------------|
+| SD | Use directly |
+| SE | `σ = SE × √n` |
+| 95% CI | `σ = (upper - lower) / 3.92` |
+| IQR | `σ = IQR / 1.35` (assumes Normal) |
+| Range | `σ = range / 4` (crude) |
+| **Nothing reported** | `σ = 0.3 × |value|` (assume CV = 30%) |
+
+**For missing uncertainty:** The CV = 30% default is conservative for most biological measurements. Flag these observables; they will appropriately have less influence due to larger assumed variance.
+
+**For very small n (n < 5):** Consider inflating reported σ by factor of `√(1 + 2/n)` to account for uncertainty in the variance estimate itself.
 
 #### Study-Level Correlation
 
@@ -725,3 +758,4 @@ For publication, the recommended narrative:
 3. **Bias correction coverage**: How to systematically identify when bias corrections exist vs. variance-only?
 4. **Similarity matrix calibration**: Literature review vs. expert elicitation vs. data-driven?
 5. **Interaction effects**: Should dimension distances be additive, or are there interaction terms (e.g., mouse + cell_line worse than sum)?
+6. **Measurement method heterogeneity**: Flow cytometry vs IHC, ELISA vs Luminex, etc. give systematically different values. Currently not captured in context dimensions. Add as optional dimension, or handle via additional variance term?
