@@ -17,6 +17,7 @@ from qsp_llm_workflows.core.workflow.context import WorkflowContext
 from qsp_llm_workflows.core.batch_creator import (
     ParameterBatchCreator,
     TestStatisticBatchCreator,
+    CalibrationTargetBatchCreator,
 )
 from qsp_llm_workflows.core.immediate_processor import ImmediateRequestProcessor
 from qsp_llm_workflows.core.output_directory import create_unique_output_directory
@@ -51,6 +52,8 @@ class CreateBatchStep(WorkflowStep):
             creator = ParameterBatchCreator(context.config.base_dir)
         elif context.workflow_type == "test_statistic":
             creator = TestStatisticBatchCreator(context.config.base_dir)
+        elif context.workflow_type == "calibration_target":
+            creator = CalibrationTargetBatchCreator(context.config.base_dir)
         else:
             logger.error("Unknown workflow type: %s", context.workflow_type)
             raise BatchCreationError(
