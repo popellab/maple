@@ -743,11 +743,44 @@ similarity[i,j] ~ Beta(α_ij, β_ij)
 - Posteriors wide → appropriately uncertain
 - Prior-to-posterior shift → data updated beliefs (not just prior echo)
 
+### 6. Benchmark Against Published Models (Recommended)
+
+Compare calibration target posteriors against parameter distributions from **published, expert-curated QSP models**. This tests whether the framework can recover what domain experts arrived at manually.
+
+**Procedure:**
+1. Select benchmark model with explicit parameter distributions (means, CIs, or priors)
+2. Extract calibration targets from comparable literature sources
+3. Run inference using the calibration target framework
+4. Compare resulting posteriors to published distributions
+
+**Comparison metrics:**
+
+| Metric | What It Tests |
+|--------|---------------|
+| **Overlap coefficient** | Do 80% credible intervals overlap? |
+| **Coverage** | Does their point estimate fall within your 95% CI? |
+| **Rank correlation** | Are relative orderings of parameters preserved? |
+| **Systematic bias** | Consistent shift between estimates? |
+
+**Interpreting outcomes:**
+
+| Outcome | Interpretation |
+|---------|----------------|
+| Strong agreement | Framework recovers expert knowledge |
+| Your CIs wider but contain their estimates | Appropriately conservative given context uncertainty |
+| Specific parameters disagree | Investigate: different sources? different assumptions? |
+| Their estimates outside your CIs | Red flag - may indicate missing expert judgment or structural issues |
+
+**Caveats:**
+- Published models often include unpublished expert judgment not in literature
+- Prior assumptions may differ
+- Ensure parameter definitions match (same equation role, same units)
+
 ### Validation Narrative
 
 For publication, the recommended narrative:
 
-> "We propose a context distance structure grounded in [allometric scaling literature, translational pharmacology]. Sensitivity analysis demonstrates robustness to ±25% perturbations in weights. Model comparison shows the proposed structure outperforms naive pooling (ΔWAIC = X) while avoiding overfitting relative to fully learned alternatives. When structural parameters are learned hierarchically, posteriors are consistent with our prior specification, indicating the structure captures meaningful heterogeneity."
+> "We propose a context distance structure grounded in [allometric scaling literature, translational pharmacology]. Sensitivity analysis demonstrates robustness to ±25% perturbations in weights. Model comparison shows the proposed structure outperforms naive pooling (ΔWAIC = X) while avoiding overfitting relative to fully learned alternatives. When structural parameters are learned hierarchically, posteriors are consistent with our prior specification, indicating the structure captures meaningful heterogeneity. As external validation, we compared our calibration target posteriors to parameter distributions from [published benchmark model]; N of M parameters showed overlapping 80% credible intervals, with wider CIs reflecting appropriate conservatism given cross-context uncertainty."
 
 ---
 
