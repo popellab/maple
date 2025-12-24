@@ -605,91 +605,91 @@ Where `path_length` = number of edges to common ancestor × 2.
 
 ## Observable Classes
 
-Different observable types have different sensitivity to context mismatches.
+Different observable types have different sensitivity to context mismatches. Confidence ratings indicate literature support for each sensitivity assignment.
 
 ### Cell Density / Counts
 *Examples: TIL density, Treg count, tumor cell number*
 
-| Dimension | Sensitivity |
-|-----------|-------------|
-| Species | High |
-| Indication | High |
-| Compartment | Very High |
-| System | High |
-| Treatment | Medium |
-| Stage | High |
+| Dimension | Sensitivity | Confidence | Reference |
+|-----------|-------------|------------|-----------|
+| Species | High | Medium | Allometric scaling applies to cell numbers |
+| Indication | High | High | TME composition varies by tumor type |
+| Compartment | Very High | High | Blood vs tumor differ by orders of magnitude |
+| System | High | High | [Mak 2014](https://pmc.ncbi.nlm.nih.gov/articles/PMC3902221/) - model translation <8% |
+| Treatment | Medium | Low | Assumed; less direct evidence |
+| Stage | High | High | [Larkin 2021](https://pmc.ncbi.nlm.nih.gov/articles/PMC7882695/) - burden affects infiltration |
 
 ### Cell Fractions / Ratios
 *Examples: % PD-1+ of CD8, Treg:CD8 ratio, % Ki67+*
 
-| Dimension | Sensitivity |
-|-----------|-------------|
-| Species | Medium |
-| Indication | High |
-| Compartment | Medium |
-| System | Medium |
-| Treatment | Medium |
-| Stage | Medium |
+| Dimension | Sensitivity | Confidence | Reference |
+|-----------|-------------|------------|-----------|
+| Species | Medium | High | [Villani 2018](https://pmc.ncbi.nlm.nih.gov/articles/PMC5876141/) - conserved regulatory programs |
+| Indication | High | Medium | TME composition varies; ratios less studied |
+| Compartment | Medium | Medium | Ratios more conserved than absolutes |
+| System | Medium | Medium | Relative measures less system-dependent |
+| Treatment | Medium | Low | Assumed |
+| Stage | Medium | Medium | Stage effects on ratios less dramatic |
 
 ### Concentrations (Soluble Factors)
 *Examples: IL-10 level, TGF-β, cytokine concentrations*
 
-| Dimension | Sensitivity |
-|-----------|-------------|
-| Species | Medium |
-| Indication | High |
-| Compartment | Very High |
-| System | High |
-| Treatment | High |
-| Stage | High |
+| Dimension | Sensitivity | Confidence | Reference |
+|-----------|-------------|------------|-----------|
+| Species | Medium | Medium | Cytokine biology generally conserved |
+| Indication | High | High | [Mirlekar 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC8793114/) - IL-10, TGF-β vary by tumor |
+| Compartment | Very High | High | [Morisaki 1996](https://pubmed.ncbi.nlm.nih.gov/8982367/) - tumor vs normal differs 3-5× |
+| System | High | Medium | In vivo TME differs from culture |
+| Treatment | High | Medium | Therapy alters cytokine milieu |
+| Stage | High | High | [Larkin 2021](https://pmc.ncbi.nlm.nih.gov/articles/PMC7882695/) - TGF-β, IL-10 increase with burden |
 
 ### Kinetic Rates
 *Examples: Doubling time, proliferation rate, death rate*
 
-| Dimension | Sensitivity |
-|-----------|-------------|
-| Species | Low |
-| Indication | Medium |
-| Compartment | Medium |
-| System | Medium |
-| Treatment | High |
-| Stage | Low |
+| Dimension | Sensitivity | Confidence | Reference |
+|-----------|-------------|------------|-----------|
+| Species | Low | High | [West 2002](https://www.pnas.org/doi/10.1073/pnas.012579799) - enzyme kinetics conserved across 27 orders of magnitude |
+| Indication | Medium | Medium | Tumor-specific growth rates exist |
+| Compartment | Medium | Low | Assumed |
+| System | Medium | Medium | Rates measurable in vitro and in vivo |
+| Treatment | High | High | Therapy directly modulates rates |
+| Stage | Low | Medium | Fundamental rates less stage-dependent |
 
 ### Functional Readouts
 *Examples: % killing, % suppression, cytokine production capacity*
 
-| Dimension | Sensitivity |
-|-----------|-------------|
-| Species | Medium |
-| Indication | Medium |
-| Compartment | High |
-| System | Very High |
-| Treatment | High |
-| Stage | Medium |
+| Dimension | Sensitivity | Confidence | Reference |
+|-----------|-------------|------------|-----------|
+| Species | Medium | Medium | Immune function conserved but differs in detail |
+| Indication | Medium | Low | Assumed |
+| Compartment | High | Medium | TME suppresses function vs blood |
+| System | Very High | High | [Halle 2016](https://pmc.ncbi.nlm.nih.gov/articles/PMC4846978/) - in vivo vs in vitro killing differs 10,000× |
+| Treatment | High | Medium | Immunotherapy restores function |
+| Stage | Medium | Medium | Function declines with progression |
 
 ### Tumor Measurements
 *Examples: Tumor volume, diameter, growth rate*
 
-| Dimension | Sensitivity |
-|-----------|-------------|
-| Species | Very High |
-| Indication | High |
-| Compartment | N/A |
-| System | Very High |
-| Treatment | High |
-| Stage | Very High |
+| Dimension | Sensitivity | Confidence | Reference |
+|-----------|-------------|------------|-----------|
+| Species | Very High | High | [Derendorf 2024](https://link.springer.com/article/10.1007/s40262-024-01444-6) - allometric scaling required |
+| Indication | High | High | Tumor type determines growth kinetics |
+| Compartment | N/A | — | Tumor measurements are compartment-specific |
+| System | Very High | High | Subcutaneous vs orthotopic vs clinical differ dramatically |
+| Treatment | High | High | Response is treatment-dependent |
+| Stage | Very High | High | Volume/burden defines stage |
 
 ### Survival / Time-to-Event
 *Examples: Overall survival, progression-free survival*
 
-| Dimension | Sensitivity |
-|-----------|-------------|
-| Species | Very High |
-| Indication | Very High |
-| Compartment | N/A |
-| System | Very High |
-| Treatment | Very High |
-| Stage | Very High |
+| Dimension | Sensitivity | Confidence | Reference |
+|-----------|-------------|------------|-----------|
+| Species | Very High | High | Mouse survival ≠ human survival |
+| Indication | Very High | High | Survival varies dramatically by cancer type |
+| Compartment | N/A | — | Survival is organism-level |
+| System | Very High | High | Preclinical survival poorly predicts clinical |
+| Treatment | Very High | High | Survival is primary treatment endpoint |
+| Stage | Very High | High | Stage is primary prognostic factor |
 
 ---
 
