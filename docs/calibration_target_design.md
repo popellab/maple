@@ -501,6 +501,19 @@ d(ctx₁, ctx₂, class) = Σ_dim  w[class][dim] × d_dim(ctx₁[dim], ctx₂[di
 | **Treatment** | Jaccard distance on multi-select sets |
 | **Stage** | `|extent_ord₁ - extent_ord₂|/3 + |burden_ord₁ - burden_ord₂|/2` |
 
+#### Literature Grounding for Distance Functions
+
+| Dimension | Distance | Literature Support | Confidence |
+|-----------|----------|-------------------|------------|
+| **Species** | Binary (0/1) | Translation success <8% in oncology ([Mak 2014](https://pmc.ncbi.nlm.nih.gov/articles/PMC3902221/)); allometric scaling exponents 0.65–0.75 ([Derendorf 2024](https://link.springer.com/article/10.1007/s40262-024-01444-6)) | High |
+| **Indication** | Similarity matrix | TCGA Pan-Cancer shows tumors cluster by tissue origin ([TCGA 2013](https://www.nature.com/articles/ng.2764)); cell-of-origin dominates classification ([Hoadley 2018](https://pubmed.ncbi.nlm.nih.gov/29625048/)) | High |
+| **System** | Tree distance | Preclinical-to-clinical translation ~5–8% ([Seyhan 2019](https://www.nature.com/articles/s41573-021-00301-6)); model hierarchy reflects translatability | High |
+| **Stage** | Ordinal | Tumor burden negatively correlates with immunotherapy response; higher stages show increased Tregs, MDSCs, TGF-β ([Larkin 2021](https://pmc.ncbi.nlm.nih.gov/articles/PMC7882695/)) | High |
+| **Compartment** | Tree distance | PK compartment modeling tradition; blood-tumor cytokine ratios vary by orders of magnitude | Medium |
+| **Treatment** | Jaccard | Prior therapy affects TME composition; *but Jaccard equal-weighting is assumed, not empirically validated* | Low |
+
+**Note:** Treatment distance is the weakest link. Consider refining with treatment-specific weights or alternative distance metrics if data supports.
+
 **Sensitivity weights** (`w[class][dim]`) come from the Observable Classes section below, mapped as:
 - N/A → 0.0
 - Low → 0.25
