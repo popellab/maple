@@ -104,8 +104,8 @@ def build_calibration_target_prompt(
     # Load base prompt
     prompt = read_prompt("calibration_target_prompt.md")
 
-    # Load shared rubrics
-    rubrics = read_shared_prompt("source_and_validation_rubrics.md")
+    # Load minimal rubrics (calibration targets don't need derivation/validation weight guidance)
+    rubrics = read_shared_prompt("source_rubrics_minimal.md")
 
     # Substitute placeholders
     prompt = prompt.replace("{{OBSERVABLE_DESCRIPTION}}", observable_description)
