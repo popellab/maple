@@ -569,25 +569,20 @@ class CalibrationTargetBatchCreator(BatchCreator):
             input_csv: CSV file with columns: calibration_target_id, cancer_type,
                       observable_description, model_species, model_indication,
                       model_compartment, model_system, model_treatment_history,
-                      model_stage_burden, used_primary_studies (optional)
+                      model_stage_burden, relevant_compartments, used_primary_studies (optional)
             species_units_file: Optional JSON file mapping species -> units
 
         Returns:
             List of batch request dictionaries
         """
         import csv
+        import json
 
-        # Load species units if provided
-        species_units_text = ""
+        # Load all species units if provided
+        all_species_units = {}
         if species_units_file and species_units_file.exists():
             with open(species_units_file, "r") as f:
-                import json
-
-                species_units = json.load(f)
-                # Format as readable text for prompt
-                species_units_text = "\n".join(
-                    f"- {species}: {units}" for species, units in species_units.items()
-                )
+                all_species_units = json.load(f)
 
         requests = []
         with open(input_csv, "r", encoding="utf-8") as f:
@@ -603,6 +598,7 @@ class CalibrationTargetBatchCreator(BatchCreator):
                 model_system = row.get("model_system", "")
                 model_treatment_history = row.get("model_treatment_history", "")
                 model_stage_burden = row.get("model_stage_burden", "")
+                relevant_compartments = row.get("relevant_compartments", "")
                 used_primary_studies = row.get("used_primary_studies", "")
 
                 if not observable_description.strip():
@@ -610,6 +606,24 @@ class CalibrationTargetBatchCreator(BatchCreator):
                         f"Warning: Empty observable description for {calibration_target_id}, skipping"
                     )
                     continue
+
+                # Filter species by relevant compartments
+                filtered_species_text = "Not provided"
+                if relevant_compartments and all_species_units:
+                    # Parse compartment list (comma-separated)
+                    compartments = [c.strip() for c in relevant_compartments.split(",")]
+                    # Filter species that start with any of the compartment prefixes
+                    filtered_species = {
+                        species: units
+                        for species, units in all_species_units.items()
+                        if any(species.startswith(f"{comp}.") for comp in compartments)
+                    }
+                    # Format as readable text
+                    if filtered_species:
+                        filtered_species_text = "\n".join(
+                            f"- {species}: {units}"
+                            for species, units in sorted(filtered_species.items())
+                        )
 
                 # Build the prompt
                 prompt = build_calibration_target_prompt(
@@ -621,7 +635,7 @@ class CalibrationTargetBatchCreator(BatchCreator):
                     model_system=model_system or "Not specified",
                     model_treatment_history=model_treatment_history or "Not specified",
                     model_stage_burden=model_stage_burden or "Not specified",
-                    model_species_with_units=species_units_text or "Not provided",
+                    model_species_with_units=filtered_species_text,
                     used_primary_studies=used_primary_studies
                     or "None - this is the first extraction",
                 )
