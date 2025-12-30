@@ -10,9 +10,16 @@ Extract **raw observables** from scientific literature for QSP model calibration
 
 ## What is a Calibration Target?
 
-A biological observable measured in a **specific experimental scenario**. Unlike test statistics (model-derived), calibration targets are **directly measured** values used to calibrate model parameters via Bayesian inference.
+A biological observable measured in a **specific experimental scenario**, used to calibrate QSP model parameters via Bayesian inference.
 
-Example: "CD8+/tumor ratio at day 14 post-anti-PD-1 treatment in resected PDAC tumors"
+**Critical concept:** Each observable has an **experimental context** (species, indication, compartment, system, treatment) that may differ from the **model context**.
+
+**Your task:**
+1. **Find the closest match** to the model context when searching literature
+2. **Document the experimental context accurately** - mismatches will be quantified later via formal distance metrics
+3. Prefer exact matches (same species, indication, compartment, system), but accept reasonable mismatches when necessary
+
+Example: For a human PDAC model, prefer human PDAC data > mouse PDAC data > related adenocarcinoma data > other solid tumors.
 
 ---
 
@@ -70,21 +77,13 @@ Use exact enum values for:
 **Prefer (in order):**
 1. Same indication + compartment + system (e.g., PDAC tumor IHC)
 2. Same indication + adjacent compartment OR different modality
-3. Related indication + same compartment (justify, reduce `indication_match` ≤0.65)
-4. Pan-cancer or non-cancer reference (last resort, `indication_match` ≤0.5)
+3. Related indication + same compartment (document mismatch justification)
+4. Pan-cancer or non-cancer reference (last resort, document limitations)
 
 **Never acceptable:**
 - Cell lines for clinical observables
 - Mouse data without species scaling
 - Pure assumptions without literature anchor
-
----
-
-## Validation Rubrics
-
-Assign weights [0-1] with brief justification:
-
-{{SOURCE_AND_VALIDATION_RUBRICS}}
 
 ---
 
