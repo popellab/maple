@@ -10,11 +10,178 @@ See docs/calibration_target_design.md for full specification.
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
 from qsp_llm_workflows.core.shared_models import Input, KeyAssumption
+
+
+# ============================================================================
+# Scenario Models (Interventions and Measurements)
+# ============================================================================
+
+
+class DrugDosing(BaseModel):
+    """
+    Drug dosing intervention.
+
+    Maps to schedule_dosing() and SimBiology dosing schedules.
+    """
+
+    agent: str = Field(
+        description=(
+            "Drug name (e.g., 'anti_PD1', 'gemcitabine', 'nivolumab'). "
+            "Maps to '{agent}_dose' and '{agent}_schedule' in dosing config."
+        )
+    )
+    dose: float = Field(description="Dose amount per administration")
+    dose_units: str = Field(
+        description=(
+            "Dose units (e.g., 'mg/kg', 'mg/m2', 'mg', 'cells'). "
+            "For mg/kg or mg/m2, patient_weight or patient_bsa must be provided."
+        )
+    )
+    schedule: List[float] = Field(
+        description=(
+            "Dosing timepoints in days (e.g., [0, 7, 14] for doses on days 0, 7, and 14). "
+            "Explicit timepoint list for maximum flexibility. "
+            "Converts to SimBiology dose schedule; "
+            "for qspio: can generate from [start, interval, repeat] pattern if regular."
+        )
+    )
+    patient_weight: Optional[float] = Field(
+        None, description="Patient weight in kg (required for mg/kg dosing)"
+    )
+    patient_bsa: Optional[float] = Field(
+        None, description="Patient body surface area in m^2 (required for mg/m2 dosing)"
+    )
+
+
+class SurgicalResection(BaseModel):
+    """
+    Surgical resection intervention.
+
+    Fractional removal of cells from specified compartments at a single timepoint.
+    """
+
+    timing: float = Field(description="Day when resection occurs (e.g., 14.0 for day 14)")
+    fraction_removed: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fraction of cells removed (0.0 to 1.0). "
+            "E.g., 0.9 for 90% debulking, leaving 10% residual disease. "
+            "Applied multiplicatively: new_count = old_count * (1 - fraction_removed)."
+        ),
+    )
+    affected_species: List[str] = Field(
+        description=(
+            "List of model species affected by resection (e.g., ['V_T.C1', 'V_T.Treg']). "
+            "Typically includes tumor cells and immune cells in tumor compartment."
+        )
+    )
+
+
+# TODO: Add RadiationTherapy intervention schema
+# TODO: Add CellTransferTherapy intervention schema
+# TODO: Add TumorInoculation intervention schema
+
+
+class AbsoluteTiming(BaseModel):
+    """Measurement at absolute timepoint(s) in days."""
+
+    timing_type: str = "absolute"
+    timepoints: List[float] = Field(
+        description=(
+            "Measurement timepoints in days (e.g., [7, 14, 21] for measurements at days 7, 14, 21). "
+            "Multiple timepoints allow tracking temporal dynamics."
+        )
+    )
+
+
+class RelativeTiming(BaseModel):
+    """Measurement relative to biomarker event (e.g., when tumor reaches diagnosis level)."""
+
+    timing_type: str = "relative"
+    biomarker_species: str = Field(
+        description=(
+            "Model species to monitor for trigger (SimBiology format). "
+            "E.g., 'V_T.C1' for tumor cells, 'V_T.TGFb' for TGF-beta concentration."
+        )
+    )
+    threshold: float = Field(description="Threshold value that triggers measurement when crossed")
+    threshold_units: str = Field(
+        description="Pint-parseable units of threshold (e.g., 'mm^3', 'cells', 'nanomolarity')"
+    )
+    comparison: str = Field(
+        description=(
+            "How threshold is crossed: 'reaches' (first time crossing), "
+            "'exceeds' (goes above), 'falls_below' (goes below)"
+        )
+    )
+    offset_days: float = Field(
+        default=0.0,
+        description=(
+            "Days after trigger event to perform measurement. "
+            "E.g., 7.0 for 'one week post-diagnosis', 0.0 for 'at diagnosis'."
+        ),
+    )
+
+
+class Measurement(BaseModel):
+    """
+    Measurement event specification.
+
+    Defines when and what to measure from the model to create model-derived
+    observable for comparison with calibration target literature estimate.
+    """
+
+    timing: Union[AbsoluteTiming, RelativeTiming] = Field(
+        description="When to perform measurement (absolute days or biomarker-triggered)"
+    )
+
+    required_species: List[str] = Field(
+        description=(
+            "Model species required for measurement (SimBiology format). "
+            "E.g., ['V_T.CD8', 'V_T.C1'] for CD8-to-tumor ratio measurement."
+        )
+    )
+
+    computation_code: str = Field(
+        description=(
+            "Python code defining compute_measurement(time, species_dict, ureg). "
+            "Converts model species to observable matching calibration target. "
+            "Must return Pint Quantity for comparison. "
+            "Example:\n"
+            "def compute_measurement(time, species_dict, ureg):\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    ratio = cd8 / tumor\n"
+            "    return ratio.to(ureg.dimensionless)"
+        )
+    )
+
+
+class Scenario(BaseModel):
+    """
+    Experimental scenario: sequence of interventions and measurements.
+
+    Defines all exogenous events during the experiment (treatments, measurements, etc.).
+    """
+
+    description: str = Field(
+        description="Human-readable description of the scenario (e.g., 'Anti-PD-1 monotherapy with resection')"
+    )
+    interventions: List[Union[DrugDosing, SurgicalResection]] = Field(
+        description="List of interventions applied during the experiment"
+    )
+    measurements: List[Measurement] = Field(
+        description=(
+            "List of measurement events specifying when and what to measure from model. "
+            "Creates model-derived observables for comparison with calibration target."
+        )
+    )
 
 
 # ============================================================================
@@ -300,13 +467,12 @@ class CalibrationTarget(BaseModel):
     )
 
     # --- Scenario specification (LLM-generated) ---
-    # TODO: Define structured schema for interventions/events
-    scenario: Optional[dict] = Field(
+    scenario: Optional[Scenario] = Field(
         None,
         description=(
-            "Experimental scenario: exogenous interventions or events during measurement. "
-            "Defines deviations from natural/wild state (treatments, dosing, timing, etc.). "
-            "Structure TBD - will include intervention type, agent, dose, schedule, timing."
+            "Experimental scenario: sequence of interventions and measurements. "
+            "Defines exogenous events during the experiment (drug dosing, resection, etc.). "
+            "If null, observable was measured in untreated/natural state."
         ),
     )
 
