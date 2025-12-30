@@ -485,18 +485,6 @@ class CalibrationTarget(BaseModel):
         )
     )
 
-    # --- Model computation (LLM-generated) ---
-    # TODO: Define schema for model output specification
-    model_computation_code: Optional[str] = Field(
-        None,
-        description=(
-            "Python code defining a compute_observable(time, species_dict, ureg) function. "
-            "Computes the model's prediction for this observable under the specified scenario. "
-            "Returns a Pint Quantity for comparison with calibration_target_estimates. "
-            "Structure TBD - similar to test statistic model_output_code."
-        ),
-    )
-
     # --- Experimental context (LLM-generated, grouped for distance calculations) ---
     experimental_context: ExperimentalContext = Field(
         description="Experimental context of the observable"
