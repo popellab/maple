@@ -83,20 +83,30 @@ def build_test_statistic_prompt(
 
 def build_calibration_target_prompt(
     observable_description: str,
-    model_context: str,
     cancer_type: str,
-    calibration_target_id: str,
-    context_hash: str,
+    model_species: str,
+    model_indication: str,
+    model_compartment: str,
+    model_system: str,
+    model_treatment_history: str,
+    model_stage_burden: str,
+    model_species_with_units: str,
+    used_primary_studies: str = "",
 ) -> str:
     """
     Build calibration target extraction prompt with substitutions.
 
     Args:
         observable_description: Description of observable to extract
-        model_context: Model's assumed context (YAML format)
         cancer_type: Cancer type/indication (e.g., "PDAC")
-        calibration_target_id: Unique identifier for this target
-        context_hash: Hash of model context for provenance
+        model_species: Model species (e.g., "human")
+        model_indication: Model indication (e.g., "PDAC")
+        model_compartment: Model compartment (e.g., "tumor.primary")
+        model_system: Model system (e.g., "clinical.resection")
+        model_treatment_history: Model treatment history (e.g., "treatment_naive")
+        model_stage_burden: Model stage/burden (e.g., "resectable")
+        model_species_with_units: Formatted list of available model species with units
+        used_primary_studies: Formatted list of already-used primary studies (optional)
 
     Returns:
         Complete prompt with all placeholders replaced
@@ -104,16 +114,17 @@ def build_calibration_target_prompt(
     # Load base prompt
     prompt = read_prompt("calibration_target_prompt.md")
 
-    # Load minimal rubrics (calibration targets don't need derivation/validation weight guidance)
-    rubrics = read_shared_prompt("source_rubrics_minimal.md")
-
     # Substitute placeholders
     prompt = prompt.replace("{{OBSERVABLE_DESCRIPTION}}", observable_description)
-    prompt = prompt.replace("{{MODEL_CONTEXT}}", model_context)
     prompt = prompt.replace("{{CANCER_TYPE}}", cancer_type)
-    prompt = prompt.replace("{{CALIBRATION_TARGET_ID}}", calibration_target_id)
-    prompt = prompt.replace("{{CONTEXT_HASH}}", context_hash)
-    prompt = prompt.replace("{{SOURCE_AND_VALIDATION_RUBRICS}}", rubrics)
+    prompt = prompt.replace("{{MODEL_SPECIES}}", model_species)
+    prompt = prompt.replace("{{MODEL_INDICATION}}", model_indication)
+    prompt = prompt.replace("{{MODEL_COMPARTMENT}}", model_compartment)
+    prompt = prompt.replace("{{MODEL_SYSTEM}}", model_system)
+    prompt = prompt.replace("{{MODEL_TREATMENT_HISTORY}}", model_treatment_history)
+    prompt = prompt.replace("{{MODEL_STAGE_BURDEN}}", model_stage_burden)
+    prompt = prompt.replace("{{MODEL_SPECIES_WITH_UNITS}}", model_species_with_units)
+    prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
 
     return prompt
 

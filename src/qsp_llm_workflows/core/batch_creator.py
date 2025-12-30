@@ -559,18 +559,35 @@ class CalibrationTargetBatchCreator(BatchCreator):
     def get_batch_type(self) -> str:
         return "calibration_target"
 
-    def process(self, input_csv: Path) -> List[Dict[str, Any]]:
+    def process(
+        self, input_csv: Path, species_units_file: Optional[Path] = None
+    ) -> List[Dict[str, Any]]:
         """
         Process calibration target inputs and generate batch requests.
 
         Args:
             input_csv: CSV file with columns: calibration_target_id, cancer_type,
-                      observable_description, model_context (YAML), context_hash
+                      observable_description, model_species, model_indication,
+                      model_compartment, model_system, model_treatment_history,
+                      model_stage_burden, used_primary_studies (optional)
+            species_units_file: Optional JSON file mapping species -> units
 
         Returns:
             List of batch request dictionaries
         """
         import csv
+
+        # Load species units if provided
+        species_units_text = ""
+        if species_units_file and species_units_file.exists():
+            with open(species_units_file, "r") as f:
+                import json
+
+                species_units = json.load(f)
+                # Format as readable text for prompt
+                species_units_text = "\n".join(
+                    f"- {species}: {units}" for species, units in species_units.items()
+                )
 
         requests = []
         with open(input_csv, "r", encoding="utf-8") as f:
@@ -580,8 +597,13 @@ class CalibrationTargetBatchCreator(BatchCreator):
                 calibration_target_id = row.get("calibration_target_id", f"target_{i}")
                 cancer_type = row.get("cancer_type", "UNKNOWN")
                 observable_description = row.get("observable_description", "")
-                model_context = row.get("model_context", "")
-                context_hash = row.get("context_hash", "")
+                model_species = row.get("model_species", "")
+                model_indication = row.get("model_indication", "")
+                model_compartment = row.get("model_compartment", "")
+                model_system = row.get("model_system", "")
+                model_treatment_history = row.get("model_treatment_history", "")
+                model_stage_burden = row.get("model_stage_burden", "")
+                used_primary_studies = row.get("used_primary_studies", "")
 
                 if not observable_description.strip():
                     print(
@@ -589,17 +611,19 @@ class CalibrationTargetBatchCreator(BatchCreator):
                     )
                     continue
 
-                if not model_context.strip():
-                    print(f"Warning: Empty model context for {calibration_target_id}, skipping")
-                    continue
-
                 # Build the prompt
                 prompt = build_calibration_target_prompt(
                     observable_description=observable_description,
-                    model_context=model_context,
                     cancer_type=cancer_type,
-                    calibration_target_id=calibration_target_id,
-                    context_hash=context_hash,
+                    model_species=model_species or "Not specified",
+                    model_indication=model_indication or "Not specified",
+                    model_compartment=model_compartment or "Not specified",
+                    model_system=model_system or "Not specified",
+                    model_treatment_history=model_treatment_history or "Not specified",
+                    model_stage_burden=model_stage_burden or "Not specified",
+                    model_species_with_units=species_units_text or "Not provided",
+                    used_primary_studies=used_primary_studies
+                    or "None - this is the first extraction",
                 )
 
                 # Create batch request with structured outputs
