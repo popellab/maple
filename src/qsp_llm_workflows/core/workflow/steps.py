@@ -67,6 +67,12 @@ class CreateBatchStep(WorkflowStep):
             if context.workflow_type == "parameter":
                 parameter_storage_dir = context.config.storage_dir / "parameter_estimates"
                 output_file = creator.run(None, context.input_csv, parameter_storage_dir)
+            elif context.workflow_type == "calibration_target":
+                # For calibration targets, pass species_units_file if it exists
+                species_units_file = (
+                    context.config.batch_jobs_dir / "input_data" / "species_units.json"
+                )
+                output_file = creator.run(None, context.input_csv, species_units_file)
             else:
                 output_file = creator.run(None, context.input_csv)
             logger.debug("Batch creator returned file: %s", output_file)
