@@ -91,7 +91,6 @@ class SurgicalResection(BaseModel):
 class AbsoluteTiming(BaseModel):
     """Measurement at absolute timepoint(s) in days."""
 
-    timing_type: str = "absolute"
     timepoints: List[float] = Field(
         description=(
             "Measurement timepoints in days (e.g., [7, 14, 21] for measurements at days 7, 14, 21). "
@@ -103,7 +102,6 @@ class AbsoluteTiming(BaseModel):
 class RelativeTiming(BaseModel):
     """Measurement relative to biomarker event (e.g., when tumor reaches diagnosis level)."""
 
-    timing_type: str = "relative"
     biomarker_species: str = Field(
         description=(
             "Model species to monitor for trigger (SimBiology format). "
@@ -116,8 +114,8 @@ class RelativeTiming(BaseModel):
     )
     comparison: str = Field(
         description=(
-            "How threshold is crossed: 'reaches' (first time crossing), "
-            "'exceeds' (goes above), 'falls_below' (goes below)"
+            "Comparison operator: '>' (greater than) or '<' (less than). "
+            "E.g., '>' triggers when biomarker exceeds threshold, '<' triggers when it falls below."
         )
     )
     offset_days: float = Field(
