@@ -6,15 +6,14 @@ Processes CSV rows directly without creating intermediate batch files.
 """
 
 import asyncio
-import csv
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 
-from qsp_llm_workflows.core.prompts import (
-    build_parameter_extraction_prompt,
-    build_test_statistic_prompt,
-    build_calibration_target_prompt,
+from qsp_llm_workflows.core.batch_creator import (
+    ParameterBatchCreator,
+    TestStatisticBatchCreator,
+    CalibrationTargetBatchCreator,
 )
 from qsp_llm_workflows.core.pydantic_models import (
     ParameterMetadata,
@@ -38,113 +37,36 @@ class ImmediateRequestProcessor:
         self.api_key = api_key
         self.client = AsyncOpenAI(api_key=api_key)
 
-    def read_csv_rows(self, input_csv: Path) -> List[Dict[str, str]]:
+        # Initialize batch creators for prompt building (DRY principle)
+        self.parameter_creator = ParameterBatchCreator(base_dir)
+        self.test_statistic_creator = TestStatisticBatchCreator(base_dir)
+        self.calibration_target_creator = CalibrationTargetBatchCreator(base_dir)
+
+    def get_batch_requests(
+        self, input_csv: Path, workflow_type: str, species_units_file: Optional[Path] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Read CSV file into list of row dictionaries.
+        Generate batch requests using appropriate batch creator.
+
+        This ensures DRY principle - all prompt building logic is in batch creators.
 
         Args:
-            input_csv: Path to input CSV file
-
-        Returns:
-            List of dictionaries, one per row
-        """
-        rows = []
-        with open(input_csv, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rows.append(row)
-        return rows
-
-    def create_custom_id(self, row: Dict[str, str], index: int, workflow_type: str) -> str:
-        """
-        Create custom ID for request.
-
-        Args:
-            row: CSV row data
-            index: Row index
+            input_csv: Path to input CSV
             workflow_type: "parameter", "test_statistic", or "calibration_target"
+            species_units_file: Optional species units file for calibration targets
 
         Returns:
-            Custom ID string
+            List of batch request dictionaries
         """
         if workflow_type == "parameter":
-            cancer_type = row.get("cancer_type", "UNKNOWN")
-            param_name = row.get("parameter_name", "UNKNOWN")
-            return f"{cancer_type}_{param_name}_{index}"
+            # For parameters, pass storage_dir (though not used in immediate mode)
+            return self.parameter_creator.process(input_csv, None)
         elif workflow_type == "test_statistic":
-            test_stat_id = row.get("test_statistic_id", "UNKNOWN")
-            return f"test_stat_{test_stat_id}_{index}"
+            return self.test_statistic_creator.process(input_csv)
         elif workflow_type == "calibration_target":
-            cal_target_id = row.get("calibration_target_id", "UNKNOWN")
-            return f"cal_target_{cal_target_id}_{index}"
+            return self.calibration_target_creator.process(input_csv, species_units_file)
         else:
-            return f"request_{index}"
-
-    def build_prompt(self, row: Dict[str, str], workflow_type: str) -> str:
-        """
-        Build prompt from CSV row data.
-
-        Args:
-            row: CSV row data
-            workflow_type: "parameter", "test_statistic", or "calibration_target"
-
-        Returns:
-            Assembled prompt string
-        """
-        if workflow_type == "parameter":
-            # Extract parameter info from CSV
-            param_name = row.get("parameter_name", "")
-            param_units = row.get("parameter_units", "")
-            param_desc = row.get("parameter_description", "")
-            model_context = row.get("model_context", "")
-
-            cancer_type = row.get("cancer_type", "UNKNOWN")
-            parameter_info = f"**Parameter Name:** {param_name}\n"
-            parameter_info += f"**Units:** {param_units}\n"
-            parameter_info += f"**Description:** {param_desc}\n"
-
-            return build_parameter_extraction_prompt(
-                parameter_info=parameter_info,
-                model_context=model_context,
-                cancer_type=cancer_type,
-                used_primary_studies="",  # No used studies tracking in immediate mode yet
-            )
-
-        elif workflow_type == "test_statistic":
-            # Extract test statistic info from CSV
-            cancer_type = row.get("cancer_type", "UNKNOWN")
-            required_species = row.get("required_species", "")
-            derived_desc = row.get("derived_species_description", "")
-            model_context = row.get("model_context", "")
-            scenario_context = row.get("scenario_context", "")
-
-            return build_test_statistic_prompt(
-                model_context=model_context,
-                scenario_context=scenario_context,
-                required_species_with_units=required_species,
-                derived_species_description=derived_desc,
-                cancer_type=cancer_type,
-                used_primary_studies="",  # No used studies tracking yet
-            )
-
-        elif workflow_type == "calibration_target":
-            # Extract calibration target info from CSV
-            calibration_target_id = row.get("calibration_target_id", "")
-            cancer_type = row.get("cancer_type", "UNKNOWN")
-            observable_description = row.get("observable_description", "")
-            model_context = row.get("model_context", "")
-            context_hash = row.get("context_hash", "")
-
-            return build_calibration_target_prompt(
-                observable_description=observable_description,
-                model_context=model_context,
-                cancer_type=cancer_type,
-                calibration_target_id=calibration_target_id,
-                context_hash=context_hash,
-            )
-
-        else:
-            return ""
+            return []
 
     def get_pydantic_model(self, workflow_type: str):
         """
@@ -167,44 +89,34 @@ class ImmediateRequestProcessor:
 
     async def process_single_request(
         self,
-        row: Dict[str, str],
+        request: Dict[str, Any],
         index: int,
         workflow_type: str,
         progress_callback: Optional[callable] = None,
-        reasoning_effort: str = "high",
     ) -> Dict[str, Any]:
         """
         Process a single extraction request.
 
         Args:
-            row: CSV row data
-            index: Row index
-            workflow_type: "parameter" or "test_statistic"
+            request: Batch request dictionary (from batch creator)
+            index: Request index
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
             progress_callback: Optional callback for progress updates
-            reasoning_effort: Reasoning effort level
 
         Returns:
             Result dictionary in batch-compatible format
         """
-        custom_id = self.create_custom_id(row, index, workflow_type)
+        custom_id = request["custom_id"]
+        prompt = request["body"]["input"]
+        reasoning_effort = request["body"]["reasoning"]["effort"]
 
-        # Get item name for logging
-        if workflow_type == "parameter":
-            item_name = row.get("parameter_name", f"item_{index}")
-        elif workflow_type == "test_statistic":
-            item_name = row.get("test_statistic_id", f"item_{index}")
-        elif workflow_type == "calibration_target":
-            item_name = row.get("calibration_target_id", f"item_{index}")
-        else:
-            item_name = f"item_{index}"
+        # Extract item name from custom_id for logging
+        item_name = custom_id.split("_")[-2] if "_" in custom_id else f"item_{index}"
 
         if progress_callback:
             progress_callback(f"  [{index + 1}] Processing {item_name}...")
 
         try:
-            # Build prompt from CSV data
-            prompt = self.build_prompt(row, workflow_type)
-
             # Get Pydantic model
             pydantic_model = self.get_pydantic_model(workflow_type)
 
@@ -264,22 +176,28 @@ class ImmediateRequestProcessor:
 
         Args:
             input_csv: Path to input CSV file
-            workflow_type: "parameter" or "test_statistic"
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
             progress_callback: Optional callback for progress updates
+            reasoning_effort: Reasoning effort (not used, kept for API compatibility)
 
         Returns:
             List of results in batch-compatible format
         """
-        # Read CSV rows
-        rows = self.read_csv_rows(input_csv)
+        # Get species_units_file for calibration targets
+        species_units_file = None
+        if workflow_type == "calibration_target":
+            species_units_file = self.base_dir / "batch_jobs" / "input_data" / "species_units.json"
+
+        # Generate batch requests using batch creator (DRY principle)
+        requests = self.get_batch_requests(input_csv, workflow_type, species_units_file)
 
         if progress_callback:
-            progress_callback(f"Processing {len(rows)} requests via Responses API...\n")
+            progress_callback(f"Processing {len(requests)} requests via Responses API...\n")
 
         # Create tasks for all requests
         tasks = [
-            self.process_single_request(row, i, workflow_type, progress_callback, reasoning_effort)
-            for i, row in enumerate(rows)
+            self.process_single_request(request, i, workflow_type, progress_callback)
+            for i, request in enumerate(requests)
         ]
 
         # Process concurrently
@@ -303,9 +221,9 @@ class ImmediateRequestProcessor:
 
         Args:
             input_csv: Path to input CSV file
-            workflow_type: "parameter" or "test_statistic"
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
             progress_callback: Optional callback for progress updates
-            reasoning_effort: Reasoning effort level ("low", "medium", "high")
+            reasoning_effort: Reasoning effort level (not used, kept for API compatibility)
 
         Returns:
             List of results in batch-compatible format
