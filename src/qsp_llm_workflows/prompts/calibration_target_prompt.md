@@ -56,10 +56,12 @@ Find observables that match this context as closely as possible. Document the ac
 - Leave empty list for baseline/natural measurements
 
 **Measurements** (at least ONE required):
-- Absolute timing: list of days [7, 14, 21]
-- Biomarker-triggered: species to monitor, threshold value, comparison ('>' or '<'), offset days
+- **Diagnosis timing** (most common): offset_days relative to diagnosis (0.0 = at diagnosis/baseline)
+- **Biomarker-triggered**: species to monitor, threshold value, comparison ('>' or '<'), offset days
 - Required species: which model species needed
 - Computation code: Python function converting species → observable (returns Pint Quantity)
+
+**Note on timing:** Clinical "time zero" is ambiguous. Use diagnosis timing (when tumor reaches detectable size) rather than absolute days. For unusual cases (e.g., post-surgical measurements), use biomarker-triggered timing.
 
 ### Distribution Code
 

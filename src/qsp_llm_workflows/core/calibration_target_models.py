@@ -88,14 +88,23 @@ class SurgicalResection(BaseModel):
 # TODO: Add TumorInoculation intervention schema
 
 
-class AbsoluteTiming(BaseModel):
-    """Measurement at absolute timepoint(s) in days."""
+class DiagnosisTiming(BaseModel):
+    """
+    Measurement relative to diagnosis.
 
-    timepoints: List[float] = Field(
+    In clinical settings, 'time zero' is ambiguous (birth? first tumor cell? diagnosis?).
+    This timing type anchors measurements to diagnosis - typically defined by tumor
+    reaching detectable size via imaging (CT/MRI) or clinical presentation.
+    """
+
+    offset_days: float = Field(
+        default=0.0,
         description=(
-            "Measurement timepoints in days (e.g., [7, 14, 21] for measurements at days 7, 14, 21). "
-            "Multiple timepoints allow tracking temporal dynamics."
-        )
+            "Days relative to diagnosis. "
+            "0.0 = at diagnosis (baseline). "
+            "Positive = days after diagnosis (e.g., 14.0 for 2 weeks post-diagnosis). "
+            "Negative = days before diagnosis (e.g., -7.0 for pre-diagnostic biopsy)."
+        ),
     )
 
 
@@ -138,8 +147,8 @@ class Measurement(BaseModel):
     observable for comparison with calibration target literature estimate.
     """
 
-    timing: Union[AbsoluteTiming, RelativeTiming] = Field(
-        description="When to perform measurement (absolute days or biomarker-triggered)"
+    timing: Union[DiagnosisTiming, RelativeTiming] = Field(
+        description="When to perform measurement (relative to diagnosis or biomarker-triggered)"
     )
 
     required_species: List[str] = Field(
