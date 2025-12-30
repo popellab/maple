@@ -69,6 +69,54 @@ Find observables that match this context as closely as possible. Document the ac
 - **Use Pint units** - inputs are pre-converted Pint Quantities, return Pint Quantities
 - Function signature: `derive_distribution(inputs, ureg)` returns dict with `median_obs`, `iqr_obs`, `ci95_obs`
 
+**GOLDEN RULE: Keep values tethered to their units throughout calculations.**
+
+Let Pint propagate units through your entire calculation. This catches dimensional errors automatically. **Never extract `.magnitude` early - only when absolutely necessary (e.g., for lognormal distribution parameters).**
+
+**Good example (fraction with unit validation):**
+```python
+def derive_distribution(inputs, ureg):
+    # Inputs are already Pint Quantities - use directly
+    treg_fraction_mean = inputs['treg_fraction_mean']  # e.g., 0.15 dimensionless
+    treg_fraction_sd = inputs['treg_fraction_sd']  # e.g., 0.03 dimensionless
+    n_samples = int(inputs['n_mc_samples'].magnitude)  # Only extract for integer conversion
+
+    # Bounds stay as Quantities
+    lower_bound = inputs['lower_bound_fraction']  # 0.0 dimensionless
+    upper_bound = inputs['upper_bound_fraction']  # 1.0 dimensionless
+
+    # Monte Carlo with truncated normal - extract magnitude only for distribution
+    rng = np.random.default_rng(42)
+    samples = rng.normal(
+        treg_fraction_mean.magnitude,  # Extract for distribution params
+        treg_fraction_sd.magnitude,
+        size=n_samples
+    ) * treg_fraction_mean.units  # Reattach units immediately!
+
+    # Clip with Pint Quantities - units validated automatically
+    samples = np.clip(samples, lower_bound, upper_bound)
+
+    # Return Quantities - validator checks dimensionality
+    return {
+        'median_obs': np.median(samples),
+        'iqr_obs': np.percentile(samples, 75) - np.percentile(samples, 25),
+        'ci95_obs': [np.percentile(samples, 2.5), np.percentile(samples, 97.5)]
+    }
+```
+
+**Anti-patterns to AVOID:**
+```python
+# BAD: Converting to dimensionless and stripping units early
+mean = inputs['treg_fraction_mean'].to(ureg.dimensionless).magnitude  # Loses unit checking!
+sd = inputs['treg_fraction_sd'].to(ureg.dimensionless).magnitude
+# ... calculations with bare floats ...
+# Easy to mix incompatible quantities without Pint catching errors
+
+# GOOD: Keep as Quantities, only extract magnitude when necessary
+mean = inputs['treg_fraction_mean']  # Keep as Quantity
+samples = rng.normal(mean.magnitude, sd.magnitude, N) * mean.units  # Extract only for RNG
+```
+
 ### Source Requirements
 
 - **Primary source (singular)**: One paper, real DOI that resolves
