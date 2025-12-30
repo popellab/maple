@@ -15,11 +15,24 @@ A biological observable measured in a **specific experimental scenario**, used t
 **Critical concept:** Each observable has an **experimental context** (species, indication, compartment, system, treatment) that may differ from the **model context**.
 
 **Your task:**
-1. **Find the closest match** to the model context when searching literature
+1. **Find the closest match** to the model context (specified below) when searching literature
 2. **Document the experimental context accurately** - mismatches will be quantified later via formal distance metrics
 3. Prefer exact matches (same species, indication, compartment, system), but accept reasonable mismatches when necessary
 
 Example: For a human PDAC model, prefer human PDAC data > mouse PDAC data > related adenocarcinoma data > other solid tumors.
+
+---
+
+## Model Context (Target to Match)
+
+**Species:** {{MODEL_SPECIES}}
+**Indication:** {{MODEL_INDICATION}}
+**Compartment:** {{MODEL_COMPARTMENT}}
+**System:** {{MODEL_SYSTEM}}
+**Treatment history:** {{MODEL_TREATMENT_HISTORY}}
+**Stage/burden:** {{MODEL_STAGE_BURDEN}}
+
+Find observables that match this context as closely as possible. Document the actual experimental context in your extraction.
 
 ---
 
