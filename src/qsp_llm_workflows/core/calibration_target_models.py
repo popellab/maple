@@ -108,9 +108,12 @@ class RelativeTiming(BaseModel):
             "E.g., 'V_T.C1' for tumor cells, 'V_T.TGFb' for TGF-beta concentration."
         )
     )
-    threshold: float = Field(description="Threshold value that triggers measurement when crossed")
-    threshold_units: str = Field(
-        description="Pint-parseable units of threshold (e.g., 'mm^3', 'cells', 'nanomolarity')"
+    threshold: float = Field(
+        description=(
+            "Threshold value that triggers measurement when crossed. "
+            "Value should be in the natural units of biomarker_species (from species_units.json). "
+            "E.g., if biomarker is 'V_T.C1' (cells), threshold might be 1e9 for 1 billion cells."
+        )
     )
     comparison: str = Field(
         description=(
