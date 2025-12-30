@@ -14,6 +14,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from qsp_llm_workflows.core.shared_models import Input, KeyAssumption
+
 
 # ============================================================================
 # Context Dimension Enums
@@ -73,27 +75,92 @@ class StageBurden(str, Enum):
     HIGH = "high"
 
 
-class ObservableClass(str, Enum):
-    """Classification of observable types."""
+class Indication(str, Enum):
+    """Cancer indication (hierarchical leaf nodes)."""
 
-    CELL_DENSITY = "cell_density"
-    CELL_FRACTION = "cell_fraction"
-    CONCENTRATION = "concentration"
-    KINETIC_RATE = "kinetic_rate"
-    FUNCTIONAL_READOUT = "functional_readout"
-    TUMOR_MEASUREMENT = "tumor_measurement"
-    SURVIVAL = "survival"
+    # GI Adenocarcinoma
+    PDAC = "PDAC"
+    COLORECTAL = "colorectal"
+    GASTRIC = "gastric"
+    ESOPHAGEAL = "esophageal"
+
+    # Hepatobiliary
+    HEPATOCELLULAR = "hepatocellular"
+    CHOLANGIOCARCINOMA = "cholangiocarcinoma"
+
+    # Lung
+    LUNG_ADENO = "lung_adeno"
+    LUNG_SQUAMOUS = "lung_squamous"
+    SMALL_CELL_LUNG = "small_cell_lung"
+
+    # Immunogenic Solid
+    MELANOMA = "melanoma"
+    RENAL_CELL = "renal_cell"
+    HEAD_AND_NECK = "head_and_neck"
+
+    # Other Solid
+    BREAST = "breast"
+    OVARIAN = "ovarian"
+    PROSTATE = "prostate"
+    GLIOBLASTOMA = "glioblastoma"
+
+    # Heme Malignancy
+    LYMPHOMA = "lymphoma"
+    LEUKEMIA = "leukemia"
+    MYELOMA = "myeloma"
+
+    # Non-cancer
+    HEALTHY = "healthy"
+    OTHER_DISEASE = "other_disease"
 
 
-class UncertaintyType(str, Enum):
-    """Type of reported uncertainty."""
+class Compartment(str, Enum):
+    """Anatomical compartment (hierarchical notation with dot separator)."""
 
-    SD = "sd"  # Standard deviation
-    SE = "se"  # Standard error
-    CI_95 = "ci_95"  # 95% confidence interval
-    IQR = "iqr"  # Interquartile range
-    RANGE = "range"  # Min-max range
-    ASSUMED = "assumed"  # No uncertainty reported; CV=30% assumed
+    # Tumor
+    TUMOR_PRIMARY = "tumor.primary"
+    TUMOR_METASTATIC = "tumor.metastatic"
+    TUMOR_UNSPECIFIED = "tumor.unspecified"
+
+    # Blood
+    BLOOD_WHOLE_BLOOD = "blood.whole_blood"
+    BLOOD_PBMC = "blood.PBMC"
+    BLOOD_PLASMA_SERUM = "blood.plasma_serum"
+
+    # Lymphoid
+    LYMPHOID_TUMOR_DRAINING_LN = "lymphoid.tumor_draining_LN"
+    LYMPHOID_OTHER_LN = "lymphoid.other_LN"
+    LYMPHOID_SPLEEN = "lymphoid.spleen"
+    LYMPHOID_BONE_MARROW = "lymphoid.bone_marrow"
+
+    # Other
+    OTHER_TISSUE = "other_tissue"
+    IN_VITRO = "in_vitro"
+
+
+class System(str, Enum):
+    """Experimental system (hierarchical notation with dot separator)."""
+
+    # Clinical
+    CLINICAL_BIOPSY = "clinical.biopsy"
+    CLINICAL_RESECTION = "clinical.resection"
+    CLINICAL_LIQUID_BIOPSY = "clinical.liquid_biopsy"
+
+    # Ex vivo
+    EX_VIVO_FRESH = "ex_vivo.fresh"
+    EX_VIVO_CULTURED = "ex_vivo.cultured"
+
+    # Animal in vivo
+    ANIMAL_IN_VIVO_ORTHOTOPIC = "animal_in_vivo.orthotopic"
+    ANIMAL_IN_VIVO_SUBCUTANEOUS = "animal_in_vivo.subcutaneous"
+    ANIMAL_IN_VIVO_PDX = "animal_in_vivo.PDX"
+    ANIMAL_IN_VIVO_GEM = "animal_in_vivo.GEM"
+    ANIMAL_IN_VIVO_SYNGENEIC = "animal_in_vivo.syngeneic"
+
+    # In vitro
+    IN_VITRO_ORGANOID = "in_vitro.organoid"
+    IN_VITRO_PRIMARY_CELLS = "in_vitro.primary_cells"
+    IN_VITRO_CELL_LINE = "in_vitro.cell_line"
 
 
 # ============================================================================
@@ -120,41 +187,19 @@ class ExperimentalContext(BaseModel):
     """
     Experimental context for an observable.
 
-    Uses hierarchical string notation for indication, compartment, and system.
-    E.g., "tumor.primary", "clinical.resection", "gi_adenocarcinoma.PDAC"
+    Uses typed enums for all context dimensions with hierarchical notation
+    encoded in enum values (e.g., Compartment.TUMOR_PRIMARY = "tumor.primary").
     """
 
     species: Species = Field(description="Species")
     mouse_subspecifier: Optional[MouseSubspecifier] = Field(
         None, description="Optional mouse subspecifier (only if species is mouse)"
     )
-    indication: str = Field(
-        description="Indication (hierarchical, e.g., 'PDAC', 'gi_adenocarcinoma.colorectal')"
-    )
-    compartment: str = Field(
-        description="Compartment (hierarchical, e.g., 'tumor.primary', 'blood.PBMC')"
-    )
-    system: str = Field(
-        description="Experimental system (hierarchical, e.g., 'clinical.resection', 'animal_in_vivo.orthotopic')"
-    )
+    indication: Indication = Field(description="Cancer indication")
+    compartment: Compartment = Field(description="Anatomical compartment")
+    system: System = Field(description="Experimental system")
     treatment: TreatmentContext = Field(description="Treatment context")
     stage: Stage = Field(description="Disease stage")
-
-
-class ModelContext(BaseModel):
-    """
-    Model's assumed context for calibration.
-
-    This defines the reference context against which observables are compared.
-    """
-
-    species: Species = Field(description="Model species assumption")
-    indication: str = Field(description="Model indication (e.g., 'PDAC')")
-    compartment: str = Field(description="Model compartment (e.g., 'tumor.primary')")
-    system: str = Field(description="Model system (e.g., 'clinical')")
-    treatment: List[TreatmentHistory] = Field(description="Model treatment assumption")
-    treatment_specifier: Optional[str] = Field(None, description="Optional treatment specifier")
-    stage: Stage = Field(description="Model stage assumption")
 
 
 # ============================================================================
@@ -187,40 +232,95 @@ class SecondarySource(BaseModel):
 # ============================================================================
 
 
-class CalibrationTarget(BaseModel):
+class CalibrationTargetHeaders(BaseModel):
     """
-    A calibration target: a raw observable extracted from literature.
+    Header fields for calibration target files.
 
-    Used to calibrate QSP model parameters via Bayesian inference.
+    These are metadata about the file itself (not generated by LLM):
+    - What observable is being tracked
+    - Which cancer type
+    - When and how it was derived
     """
 
-    # --- Header fields (added programmatically, not LLM-generated) ---
     schema_version: str = Field(description="Schema version (e.g., 'v1')")
     calibration_target_id: str = Field(description="Unique calibration target identifier")
     cancer_type: str = Field(description="Cancer type (e.g., 'PDAC')")
-    model_context: ModelContext = Field(description="Model's assumed context for calibration")
     tags: List[str] = Field(default_factory=list, description="Metadata tags")
     context_hash: str = Field(description="Hash of model context for provenance")
     derivation_id: Optional[str] = Field(None, description="Unique derivation identifier")
     derivation_timestamp: Optional[str] = Field(None, description="ISO timestamp of derivation")
 
-    # --- Observable fields (LLM-generated) ---
-    observable_class: ObservableClass = Field(description="Classification of observable type")
-    description: str = Field(description="Human-readable description of the observable")
-    value: float = Field(description="Observed value")
-    uncertainty: float = Field(
-        description="Uncertainty (interpretation depends on uncertainty_type)"
-    )
-    uncertainty_type: UncertaintyType = Field(description="Type of reported uncertainty")
-    units: str = Field(
-        description="Units (Pint-parseable, e.g., 'cells/mm^2', 'pg/mL', 'dimensionless')"
-    )
-    sample_size: Optional[int] = Field(None, description="Sample size (n) if reported")
 
-    # --- Source traceability (LLM-generated) ---
-    source_ref: str = Field(description="Source reference tag (must match a source)")
-    value_table_or_section: str = Field(description="Location of value in source")
-    value_snippet: str = Field(description="Verbatim text snippet containing the value")
+class CalibrationTargetEstimates(BaseModel):
+    """Calibration target estimates with structured inputs and derivation."""
+
+    inputs: List[Input] = Field(description="List of inputs used in derivation")
+    distribution_code: str = Field(
+        description=(
+            "Python code defining a derive_distribution(inputs, ureg) function. "
+            "inputs is a dict mapping input names to Pint Quantities. "
+            "Must return dict with Pint Quantities: median_obs, iqr_obs, ci95_obs ([lower, upper]). "
+            "CRITICAL: NO magic numbers allowed - every coefficient, multiplier, or constant must come from inputs. "
+            "CRITICAL: Use MC methods (parametric bootstrap) for distribution estimates, NOT analytical approximations.\n"
+            "Example (parametric bootstrap from literature):\n"
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    mean = inputs['cd8_density_mean']  # From Table 2\n"
+            "    sd = inputs['cd8_density_sd']  # From Table 2\n"
+            "    n_samples = inputs['n_mc_samples']  # e.g., 10000\n"
+            "    # Parametric bootstrap: sample from reported distribution\n"
+            "    samples = np.random.normal(mean.magnitude, sd.magnitude, int(n_samples.magnitude)) * mean.units\n"
+            "    median_obs = np.median(samples)\n"
+            "    iqr_obs = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
+            "    ci95_obs = [np.percentile(samples, 2.5), np.percentile(samples, 97.5)]\n"
+            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+        )
+    )
+    median: float = Field(description="Median value")
+    iqr: float = Field(description="Interquartile range")
+    ci95: List[float] = Field(description="95% confidence interval [lower, upper]")
+    units: str = Field(description="Units of the observable")
+
+
+class CalibrationTarget(BaseModel):
+    """
+    A calibration target: a raw observable extracted from literature.
+
+    Used to calibrate QSP model parameters via Bayesian inference.
+
+    Excludes header fields that are added during unpacking:
+    - schema_version, calibration_target_id, cancer_type
+    - tags, context_hash, derivation_id, derivation_timestamp
+    """
+
+    # --- Observable fields (LLM-generated) ---
+    description: str = Field(description="Human-readable description of the observable")
+    calibration_target_estimates: CalibrationTargetEstimates = Field(
+        description="Observable estimates with inputs and derivation"
+    )
+
+    # --- Scenario specification (LLM-generated) ---
+    # TODO: Define structured schema for interventions/events
+    scenario: Optional[dict] = Field(
+        None,
+        description=(
+            "Experimental scenario: exogenous interventions or events during measurement. "
+            "Defines deviations from natural/wild state (treatments, dosing, timing, etc.). "
+            "Structure TBD - will include intervention type, agent, dose, schedule, timing."
+        ),
+    )
+
+    # --- Model computation (LLM-generated) ---
+    # TODO: Define schema for model output specification
+    model_computation_code: Optional[str] = Field(
+        None,
+        description=(
+            "Python code defining a compute_observable(time, species_dict, ureg) function. "
+            "Computes the model's prediction for this observable under the specified scenario. "
+            "Returns a Pint Quantity for comparison with calibration_target_estimates. "
+            "Structure TBD - similar to test statistic model_output_code."
+        ),
+    )
 
     # --- Experimental context (LLM-generated, grouped for distance calculations) ---
     experimental_context: ExperimentalContext = Field(
@@ -232,14 +332,58 @@ class CalibrationTarget(BaseModel):
         description="High-level biological context (WHAT and WHY) in 1-2 sentences"
     )
     study_design: str = Field(description="Concrete experimental details (HOW) in 1-2 sentences")
+    derivation_explanation: str = Field(
+        description="Step-by-step explanation of derivation code with assumption justifications"
+    )
+    key_assumptions: List[KeyAssumption] = Field(
+        description="List of key assumptions with numbers and text"
+    )
     key_study_limitations: str = Field(
         description="Important limitations and their impact on reliability"
     )
 
     # --- Sources (LLM-generated) ---
-    primary_data_sources: List[Source] = Field(
-        description="Primary data sources (original measurements)"
+    primary_data_source: Source = Field(
+        description="Primary data source (the paper where this observable was measured)"
     )
     secondary_data_sources: List[SecondarySource] = Field(
         description="Secondary data sources (reference values, constants)"
     )
+
+    @classmethod
+    def get_header_fields(cls) -> set[str]:
+        """Get set of field names that are headers (from CalibrationTargetHeaders)."""
+        return set(CalibrationTargetHeaders.model_fields.keys())
+
+    def split(self) -> tuple[CalibrationTargetHeaders, dict]:
+        """
+        Split into headers and content.
+
+        Returns:
+            Tuple of (headers_model, content_dict)
+        """
+        header_fields = self.get_header_fields()
+        all_data = self.model_dump()
+
+        # Extract headers
+        header_data = {k: v for k, v in all_data.items() if k in header_fields}
+        headers = CalibrationTargetHeaders(**header_data)
+
+        # Extract content
+        content = {k: v for k, v in all_data.items() if k not in header_fields}
+
+        return headers, content
+
+    @classmethod
+    def from_split(cls, headers: CalibrationTargetHeaders, content: dict) -> "CalibrationTarget":
+        """
+        Create CalibrationTarget from headers and content.
+
+        Args:
+            headers: CalibrationTargetHeaders instance
+            content: Content dictionary (LLM-generated fields)
+
+        Returns:
+            Complete CalibrationTarget instance
+        """
+        return cls(**{**headers.model_dump(), **content})
