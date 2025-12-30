@@ -162,17 +162,29 @@ class WorkflowOrchestrator:
         """
         start_time = time.time()
 
+        # Override config with runtime reasoning_effort if provided
+        config = self.config
+        if reasoning_effort != config.reasoning_effort:
+            # Create new config with updated reasoning_effort
+            config = WorkflowConfig(
+                base_dir=config.base_dir,
+                storage_dir=config.storage_dir,
+                openai_api_key=config.openai_api_key,
+                openai_model=config.openai_model,
+                reasoning_effort=reasoning_effort,
+                batch_completion_window=config.batch_completion_window,
+                batch_timeout=config.batch_timeout,
+                poll_interval=config.poll_interval,
+            )
+
         # Create workflow context
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type=workflow_type,
             immediate=immediate,
-            config=self.config,
+            config=config,
             progress_callback=progress_callback,
         )
-
-        # Store reasoning effort in metadata
-        context.set_metadata("reasoning_effort", reasoning_effort)
 
         # Store start time in metadata
         context.set_metadata("started_at", datetime.now().isoformat())

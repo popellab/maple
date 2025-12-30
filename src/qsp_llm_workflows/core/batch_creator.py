@@ -258,7 +258,12 @@ class ParameterBatchCreator(BatchCreator):
 
         return "\n".join(output) if output else "No model context available."
 
-    def process(self, input_csv: Path, parameter_storage_dir: Path) -> List[Dict[str, Any]]:
+    def process(
+        self,
+        input_csv: Path,
+        parameter_storage_dir: Path,
+        reasoning_effort: str = "high",
+    ) -> List[Dict[str, Any]]:
         """
         Process parameter extraction inputs and generate batch requests.
 
@@ -266,6 +271,7 @@ class ParameterBatchCreator(BatchCreator):
             input_csv: CSV file with columns: cancer_type, parameter_name, parameter_units,
                       parameter_description, model_context (JSON), definition_hash
             parameter_storage_dir: Path to parameter storage directory for checking existing studies
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
 
         Returns:
             List of batch request dictionaries
@@ -310,7 +316,9 @@ class ParameterBatchCreator(BatchCreator):
 
                 # Create batch request with structured outputs
                 custom_id = f"{cancer_type}_{parameter_name}_{i}"
-                request = self.create_request(custom_id, prompt, ParameterMetadata)
+                request = self.create_request(
+                    custom_id, prompt, ParameterMetadata, reasoning_effort=reasoning_effort
+                )
                 requests.append(request)
 
         return requests
@@ -436,13 +444,19 @@ class TestStatisticBatchCreator(BatchCreator):
 
         return "\n".join(formatted_species)
 
-    def process(self, input_csv: Path, model_context_csv: Path = None) -> List[Dict[str, Any]]:
+    def process(
+        self,
+        input_csv: Path,
+        model_context_csv: Path = None,
+        reasoning_effort: str = "high",
+    ) -> List[Dict[str, Any]]:
         """
         Process test statistic inputs and generate batch requests.
 
         Args:
             input_csv: CSV file with test_statistic_id and biological expectation columns
             model_context_csv: Optional CSV file with model structure information
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
 
         Returns:
             List of batch request dictionaries
@@ -541,7 +555,7 @@ class TestStatisticBatchCreator(BatchCreator):
                 # Create batch request with structured outputs
                 custom_id = f"test_stat_{test_statistic_id}_{i}"
                 request = self.create_request(
-                    custom_id, prompt, TestStatistic, reasoning_effort="high"
+                    custom_id, prompt, TestStatistic, reasoning_effort=reasoning_effort
                 )
                 requests.append(request)
 
@@ -560,7 +574,10 @@ class CalibrationTargetBatchCreator(BatchCreator):
         return "calibration_target"
 
     def process(
-        self, input_csv: Path, species_units_file: Optional[Path] = None
+        self,
+        input_csv: Path,
+        species_units_file: Optional[Path] = None,
+        reasoning_effort: str = "high",
     ) -> List[Dict[str, Any]]:
         """
         Process calibration target inputs and generate batch requests.
@@ -571,6 +588,7 @@ class CalibrationTargetBatchCreator(BatchCreator):
                       model_compartment, model_system, model_treatment_history,
                       model_stage_burden, relevant_compartments, used_primary_studies (optional)
             species_units_file: Optional JSON file mapping species -> units
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
 
         Returns:
             List of batch request dictionaries
@@ -643,7 +661,7 @@ class CalibrationTargetBatchCreator(BatchCreator):
                 # Create batch request with structured outputs
                 custom_id = f"cal_target_{calibration_target_id}_{i}"
                 request = self.create_request(
-                    custom_id, prompt, CalibrationTarget, reasoning_effort="high"
+                    custom_id, prompt, CalibrationTarget, reasoning_effort=reasoning_effort
                 )
                 requests.append(request)
 

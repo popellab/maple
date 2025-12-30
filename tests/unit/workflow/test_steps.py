@@ -59,7 +59,9 @@ class TestCreateBatchStep:
         mock_creator_class.assert_called_once_with(tmp_path)
         # For parameter workflow, run is called with storage_dir / "parameter_estimates"
         expected_storage_dir = tmp_path / "storage" / "parameter_estimates"
-        mock_creator.run.assert_called_once_with(None, input_csv, expected_storage_dir)
+        mock_creator.run.assert_called_once_with(
+            None, input_csv, expected_storage_dir, reasoning_effort=config.reasoning_effort
+        )
 
     @patch("qsp_llm_workflows.core.workflow.steps.TestStatisticBatchCreator")
     def test_create_test_statistic_batch(self, mock_creator_class, tmp_path):

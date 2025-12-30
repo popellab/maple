@@ -66,15 +66,27 @@ class CreateBatchStep(WorkflowStep):
             # For parameter workflow, pass storage_dir for existing studies lookup
             if context.workflow_type == "parameter":
                 parameter_storage_dir = context.config.storage_dir / "parameter_estimates"
-                output_file = creator.run(None, context.input_csv, parameter_storage_dir)
+                output_file = creator.run(
+                    None,
+                    context.input_csv,
+                    parameter_storage_dir,
+                    reasoning_effort=context.config.reasoning_effort,
+                )
             elif context.workflow_type == "calibration_target":
                 # For calibration targets, pass species_units_file if it exists
                 species_units_file = (
                     context.config.batch_jobs_dir / "input_data" / "species_units.json"
                 )
-                output_file = creator.run(None, context.input_csv, species_units_file)
+                output_file = creator.run(
+                    None,
+                    context.input_csv,
+                    species_units_file,
+                    reasoning_effort=context.config.reasoning_effort,
+                )
             else:
-                output_file = creator.run(None, context.input_csv)
+                output_file = creator.run(
+                    None, context.input_csv, reasoning_effort=context.config.reasoning_effort
+                )
             logger.debug("Batch creator returned file: %s", output_file)
         except Exception as e:
             logger.error("Batch creation failed: %s", e, exc_info=True)
@@ -431,15 +443,12 @@ class ProcessImmediateStep(WorkflowStep):
                 context.config.base_dir, context.config.openai_api_key
             )
 
-            # Get reasoning effort from context (default to high)
-            reasoning_effort = context.get_metadata("reasoning_effort", "high")
-
             # Process requests directly from CSV
             results = processor.run(
                 context.input_csv,
                 context.workflow_type,
                 context.progress_callback,
-                reasoning_effort=reasoning_effort,
+                reasoning_effort=context.config.reasoning_effort,
             )
 
             # Write results to file (for unpacker compatibility)

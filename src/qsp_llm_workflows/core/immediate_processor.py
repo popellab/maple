@@ -43,7 +43,11 @@ class ImmediateRequestProcessor:
         self.calibration_target_creator = CalibrationTargetBatchCreator(base_dir)
 
     def get_batch_requests(
-        self, input_csv: Path, workflow_type: str, species_units_file: Optional[Path] = None
+        self,
+        input_csv: Path,
+        workflow_type: str,
+        species_units_file: Optional[Path] = None,
+        reasoning_effort: str = "high",
     ) -> List[Dict[str, Any]]:
         """
         Generate batch requests using appropriate batch creator.
@@ -54,17 +58,20 @@ class ImmediateRequestProcessor:
             input_csv: Path to input CSV
             workflow_type: "parameter", "test_statistic", or "calibration_target"
             species_units_file: Optional species units file for calibration targets
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
 
         Returns:
             List of batch request dictionaries
         """
         if workflow_type == "parameter":
             # For parameters, pass storage_dir (though not used in immediate mode)
-            return self.parameter_creator.process(input_csv, None)
+            return self.parameter_creator.process(input_csv, None, reasoning_effort)
         elif workflow_type == "test_statistic":
-            return self.test_statistic_creator.process(input_csv)
+            return self.test_statistic_creator.process(input_csv, None, reasoning_effort)
         elif workflow_type == "calibration_target":
-            return self.calibration_target_creator.process(input_csv, species_units_file)
+            return self.calibration_target_creator.process(
+                input_csv, species_units_file, reasoning_effort
+            )
         else:
             return []
 
@@ -189,7 +196,9 @@ class ImmediateRequestProcessor:
             species_units_file = self.base_dir / "batch_jobs" / "input_data" / "species_units.json"
 
         # Generate batch requests using batch creator (DRY principle)
-        requests = self.get_batch_requests(input_csv, workflow_type, species_units_file)
+        requests = self.get_batch_requests(
+            input_csv, workflow_type, species_units_file, reasoning_effort
+        )
 
         if progress_callback:
             progress_callback(f"Processing {len(requests)} requests via Responses API...\n")
