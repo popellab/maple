@@ -12,7 +12,7 @@ See docs/calibration_target_design.md for full specification.
 from enum import Enum
 from typing import List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from qsp_llm_workflows.core.shared_models import Input, KeyAssumption
 
@@ -180,9 +180,18 @@ class Scenario(BaseModel):
     measurements: List[Measurement] = Field(
         description=(
             "List of measurement events specifying when and what to measure from model. "
-            "Creates model-derived observables for comparison with calibration target."
+            "Creates model-derived observables for comparison with calibration target. "
+            "Must contain at least one measurement."
         )
     )
+
+    @field_validator("measurements")
+    @classmethod
+    def validate_at_least_one_measurement(cls, v: List[Measurement]) -> List[Measurement]:
+        """Ensure at least one measurement is specified."""
+        if len(v) < 1:
+            raise ValueError("Scenario must include at least one measurement")
+        return v
 
 
 # ============================================================================
@@ -468,13 +477,12 @@ class CalibrationTarget(BaseModel):
     )
 
     # --- Scenario specification (LLM-generated) ---
-    scenario: Optional[Scenario] = Field(
-        None,
+    scenario: Scenario = Field(
         description=(
             "Experimental scenario: sequence of interventions and measurements. "
-            "Defines exogenous events during the experiment (drug dosing, resection, etc.). "
-            "If null, observable was measured in untreated/natural state."
-        ),
+            "Must include at least one measurement to specify what observable is being extracted. "
+            "Interventions list may be empty for natural/untreated state measurements."
+        )
     )
 
     # --- Model computation (LLM-generated) ---
