@@ -101,7 +101,7 @@ qsp-enrich-csv parameter \
 ```
 
 This creates an enriched CSV with:
-- `cancer_type`, `parameter_name`, `definition_hash`
+- `cancer_type`, `parameter_name`
 - `parameter_units`, `parameter_description`
 - `model_context` (JSON with reactions, rules, related parameters)
 
@@ -160,7 +160,7 @@ qsp-enrich-csv test_statistic \
 
 This creates an enriched CSV with:
 - `test_statistic_id`, `output_unit`, `model_output_code`
-- `scenario_context`, `context_hash`
+- `scenario_context`
 
 **Note:** Model definitions and species units are exported from MATLAB model files. Scenario context files are stored in model-specific repositories (e.g., `your-model-repo/scenarios/`).
 
@@ -267,7 +267,6 @@ qsp-llm-workflows/
 │       │   ├── validation_utils.py  # Validation utilities
 │       │   ├── resource_utils.py    # Package resource access
 │       │   ├── header_utils.py      # Header field management
-│       │   ├── hash_utils.py        # Hashing utilities
 │       │   └── schema_version_detector.py
 │       │
 │       ├── prepare/                  # Prompt generation
@@ -406,10 +405,10 @@ ratio.to(ureg.dimensionless)
 This package integrates with a user-specified metadata storage directory:
 - Reads API key from `.env` file (current directory)
 - Writes extracted metadata to `<output-dir>/` directories (specified via `--output-dir`):
-  - **Parameter estimates**: `to-review/parameter_estimates/{param_name}_{author_year}_{cancer_type}_{hash}.yaml`
-  - **Test statistics**: `to-review/test_statistics/{test_stat_id}_{cancer_type}_{hash}.yaml`
+  - **Parameter estimates**: `to-review/parameter_estimates/{param_name}_{cancer_type}_deriv{num}.yaml`
+  - **Test statistics**: `to-review/test_statistics/{test_stat_id}_{cancer_type}_deriv{num}.yaml`
 - Output directory must exist (typically within your project repository, e.g., `metadata-storage/`)
-- Hash-based filenames enable multiple extractions per parameter
+- Sequential derivation numbering (deriv001, deriv002, etc.) enables multiple extractions per parameter
 
 ## Development
 

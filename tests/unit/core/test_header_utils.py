@@ -44,7 +44,6 @@ class TestParameterHeaders:
             derivation_id="deriv123",
             derivation_timestamp="2025-01-01T00:00:00",
             model_context={"reactions": ["R1"], "rules": []},
-            context_hash="abc123",
         )
 
         assert headers.parameter_name == "k_growth"
@@ -63,7 +62,6 @@ class TestParameterHeaders:
             derivation_id=None,
             derivation_timestamp=None,
             model_context={},
-            context_hash="def456",
         )
 
         data = headers.model_dump()
@@ -87,7 +85,6 @@ class TestTestStatisticHeaders:
             required_species=["V_T.C"],
             derived_species_description="Tumor volume at day 14",
             tags=["validation"],
-            context_hash="xyz789",
         )
 
         assert headers.test_statistic_id == "tumor_vol_day14"
@@ -196,7 +193,6 @@ class TestParameterMetadataSplitMerge:
             derivation_id=None,
             derivation_timestamp=None,
             model_context={},
-            context_hash="abc123",
         )
 
         content = {
@@ -367,7 +363,6 @@ class TestHeaderManager:
             derivation_id=None,
             derivation_timestamp=None,
             model_context={},
-            context_hash="def456",
         )
 
         content = {
@@ -422,7 +417,6 @@ class TestHeaderManager:
                 "derivation_id": "test123",
                 "derivation_timestamp": "2025-01-01T00:00:00",
                 "model_context": {"reactions": []},
-                "context_hash": "test_hash",
                 "mathematical_role": "Test role",
                 "parameter_range": "positive_reals",
             }
@@ -455,7 +449,6 @@ class TestHeaderManager:
                 "derivation_id": None,
                 "derivation_timestamp": None,
                 "model_context": {},
-                "context_hash": "test_hash",
                 "mathematical_role": "Test role",
                 "parameter_range": "positive_reals",
                 "study_overview": "Overview",
@@ -520,7 +513,6 @@ class TestHeaderManager:
             derivation_id=None,
             derivation_timestamp=None,
             model_context={},
-            context_hash="output_hash",
         )
 
         content = {

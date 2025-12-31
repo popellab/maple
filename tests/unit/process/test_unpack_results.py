@@ -136,7 +136,6 @@ derivation_timestamp: '2025-01-01T00:00:00'
 model_context:
   reactions: []
   rules: []
-context_hash: abc123
 mathematical_role: Old role
 parameter_range: positive_reals
 study_overview: Old overview
@@ -189,7 +188,6 @@ class TestTestStatisticHeaders:
         metadata = {
             "test_statistic_id": "tumor_volume_day14",
             "cancer_type": "PDAC",
-            "context_hash": "abc123",
             "model_context": "Test model",
             "scenario_context": "Test scenario",
             "required_species": "V_T.CD8, V_T.Treg, V_T.TumorVolume",
@@ -215,7 +213,6 @@ class TestTestStatisticHeaders:
         metadata = {
             "test_statistic_id": "test_stat",
             "cancer_type": "PDAC",
-            "context_hash": "abc123",
             "required_species": "",
             "derived_species_description": "Some description",
         }
@@ -229,7 +226,6 @@ class TestTestStatisticHeaders:
         metadata = {
             "test_statistic_id": "test_stat",
             "cancer_type": "PDAC",
-            "context_hash": "abc123",
             "required_species": "V_T.CD8",
             "derived_species_description": "",
         }
@@ -242,8 +238,8 @@ class TestTestStatisticHeaders:
         # Create input CSV with required_species
         input_csv = tmp_path / "input.csv"
         input_csv.write_text(
-            "test_statistic_id,cancer_type,context_hash,model_context,scenario_context,required_species,derived_species_description\n"
-            'tumor_volume,PDAC,abc123,Model context,Scenario context,"V_T.CD8,V_T.Treg",Tumor volume ratio\n'
+            "test_statistic_id,cancer_type,model_context,scenario_context,required_species,derived_species_description\n"
+            'tumor_volume,PDAC,Model context,Scenario context,"V_T.CD8,V_T.Treg",Tumor volume ratio\n'
         )
 
         # Create results file
