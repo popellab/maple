@@ -484,10 +484,10 @@ class CalibrationTarget(BaseModel):
     """
 
     # --- Observable fields (LLM-generated) ---
-    description: str = Field(description="Human-readable description of the observable")
     calibration_target_estimates: CalibrationTargetEstimates = Field(
         description="Observable estimates with inputs and derivation"
     )
+    description: str = Field(description="Human-readable description of the observable")
 
     # --- Scenario specification (LLM-generated) ---
     scenario: Scenario = Field(
