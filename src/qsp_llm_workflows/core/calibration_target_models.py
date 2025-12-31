@@ -131,14 +131,13 @@ class DiagnosisMeasurement(Measurement):
 
     timing_type: Literal["at_diagnosis"] = "at_diagnosis"
 
-    offset_days: float = Field(
-        default=0.0,
+    timepoints: List[float] = Field(
         description=(
-            "Days relative to diagnosis. "
-            "0.0 = at diagnosis (baseline). "
-            "Positive = days after diagnosis (e.g., 14.0 for 2 weeks post-diagnosis). "
-            "Negative = days before diagnosis (e.g., -7.0 for pre-diagnostic biopsy)."
-        ),
+            "Days relative to diagnosis to sample model output. "
+            "For single-point measurements: [0.0] = at diagnosis. "
+            "For derivatives/rates: [-1.0, 0.0, 1.0] = 1 day before/at/after diagnosis. "
+            "Positive = after diagnosis, negative = before diagnosis."
+        )
     )
 
 
@@ -166,12 +165,13 @@ class BiomarkerMeasurement(Measurement):
             "E.g., '>' triggers when biomarker exceeds threshold, '<' triggers when it falls below."
         )
     )
-    offset_days: float = Field(
-        default=0.0,
+    timepoints: List[float] = Field(
         description=(
-            "Days after trigger event to perform measurement. "
-            "E.g., 7.0 for 'one week post-diagnosis', 0.0 for 'at diagnosis'."
-        ),
+            "Days relative to trigger event to sample model output. "
+            "For single-point: [0.0] = at trigger. "
+            "For post-trigger tracking: [0.0, 7.0, 14.0] = at trigger, +7d, +14d. "
+            "For derivatives: [-1.0, 0.0, 1.0] = window around trigger."
+        )
     )
 
 
