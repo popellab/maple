@@ -3,7 +3,7 @@
 Export model definitions from SimBiology model.
 
 This module extracts parameter and species definitions from a SimBiology model
-and generates JSON definition files with content-based hashes.
+and generates JSON definition files.
 """
 
 import json
@@ -48,7 +48,7 @@ class ModelDefinitionExporter:
         when called via export_to_json().
 
         Returns:
-            Dict mapping parameter name -> {definition: dict, hash: str, filename: str}
+            Dict mapping parameter name -> {definition: dict}
         """
         print(f"Exporting definitions from {self.model_file}")
 

@@ -51,7 +51,7 @@ def extract_parameter_name_from_filename(filename: str) -> str:
     """
     Extract parameter name from standard filename format.
 
-    Format: {param_name}_{author_year}_{cancer_type}_{hash}.yaml
+    Format: {param_name}_{cancer_type}_deriv{num}.yaml
 
     Args:
         filename: YAML filename

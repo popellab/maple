@@ -313,8 +313,7 @@ def collect_existing_studies(
     for yaml_file in sorted(yaml_files):
         try:
             # Parse filename to check cancer type
-            # Formats:
-            # - Parameter estimates: {param_name}_{author_year}_{cancer_type}_{hash}.yaml
+            # Format: {param_name}_{cancer_type}_deriv{num}.yaml
             filename_parts = yaml_file.stem.split("_")
 
             # Check if cancer_type appears in filename
