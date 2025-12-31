@@ -10,7 +10,7 @@ See docs/calibration_target_design.md for full specification.
 """
 
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Annotated, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -88,68 +88,15 @@ class SurgicalResection(BaseModel):
 # TODO: Add TumorInoculation intervention schema
 
 
-class DiagnosisTiming(BaseModel):
-    """
-    Measurement relative to diagnosis.
-
-    In clinical settings, 'time zero' is ambiguous (birth? first tumor cell? diagnosis?).
-    This timing type anchors measurements to diagnosis - typically defined by tumor
-    reaching detectable size via imaging (CT/MRI) or clinical presentation.
-    """
-
-    offset_days: float = Field(
-        default=0.0,
-        description=(
-            "Days relative to diagnosis. "
-            "0.0 = at diagnosis (baseline). "
-            "Positive = days after diagnosis (e.g., 14.0 for 2 weeks post-diagnosis). "
-            "Negative = days before diagnosis (e.g., -7.0 for pre-diagnostic biopsy)."
-        ),
-    )
-
-
-class RelativeTiming(BaseModel):
-    """Measurement relative to biomarker event (e.g., when tumor reaches diagnosis level)."""
-
-    biomarker_species: str = Field(
-        description=(
-            "Model species to monitor for trigger (SimBiology format). "
-            "E.g., 'V_T.C1' for tumor cells, 'V_T.TGFb' for TGF-beta concentration."
-        )
-    )
-    threshold: float = Field(
-        description=(
-            "Threshold value that triggers measurement when crossed. "
-            "Value should be in the natural units of biomarker_species (from species_units.json). "
-            "E.g., if biomarker is 'V_T.C1' (cells), threshold might be 1e9 for 1 billion cells."
-        )
-    )
-    comparison: str = Field(
-        description=(
-            "Comparison operator: '>' (greater than) or '<' (less than). "
-            "E.g., '>' triggers when biomarker exceeds threshold, '<' triggers when it falls below."
-        )
-    )
-    offset_days: float = Field(
-        default=0.0,
-        description=(
-            "Days after trigger event to perform measurement. "
-            "E.g., 7.0 for 'one week post-diagnosis', 0.0 for 'at diagnosis'."
-        ),
-    )
-
-
 class Measurement(BaseModel):
     """
-    Measurement event specification.
+    Base measurement specification.
 
     Defines when and what to measure from the model to create model-derived
     observable for comparison with calibration target literature estimate.
-    """
 
-    timing: Union[DiagnosisTiming, RelativeTiming] = Field(
-        description="When to perform measurement (relative to diagnosis or biomarker-triggered)"
-    )
+    Note: timing_type is defined in subclasses as discriminator.
+    """
 
     required_species: List[str] = Field(
         description=(
@@ -173,6 +120,61 @@ class Measurement(BaseModel):
     )
 
 
+class DiagnosisMeasurement(Measurement):
+    """
+    Measurement relative to diagnosis.
+
+    In clinical settings, 'time zero' is ambiguous (birth? first tumor cell? diagnosis?).
+    This timing type anchors measurements to diagnosis - typically defined by tumor
+    reaching detectable size via imaging (CT/MRI) or clinical presentation.
+    """
+
+    timing_type: Literal["at_diagnosis"] = "at_diagnosis"
+
+    offset_days: float = Field(
+        default=0.0,
+        description=(
+            "Days relative to diagnosis. "
+            "0.0 = at diagnosis (baseline). "
+            "Positive = days after diagnosis (e.g., 14.0 for 2 weeks post-diagnosis). "
+            "Negative = days before diagnosis (e.g., -7.0 for pre-diagnostic biopsy)."
+        ),
+    )
+
+
+class BiomarkerMeasurement(Measurement):
+    """Measurement relative to biomarker threshold crossing."""
+
+    timing_type: Literal["biomarker_triggered"] = "biomarker_triggered"
+
+    biomarker_species: str = Field(
+        description=(
+            "Model species to monitor for trigger (SimBiology format). "
+            "E.g., 'V_T.C1' for tumor cells, 'V_T.TGFb' for TGF-beta concentration."
+        )
+    )
+    threshold: float = Field(
+        description=(
+            "Threshold value that triggers measurement when crossed. "
+            "Value should be in the natural units of biomarker_species (from species_units.json). "
+            "E.g., if biomarker is 'V_T.C1' (cells), threshold might be 1e9 for 1 billion cells."
+        )
+    )
+    comparison: Literal[">", "<"] = Field(
+        description=(
+            "Comparison operator: '>' (greater than) or '<' (less than). "
+            "E.g., '>' triggers when biomarker exceeds threshold, '<' triggers when it falls below."
+        )
+    )
+    offset_days: float = Field(
+        default=0.0,
+        description=(
+            "Days after trigger event to perform measurement. "
+            "E.g., 7.0 for 'one week post-diagnosis', 0.0 for 'at diagnosis'."
+        ),
+    )
+
+
 class Scenario(BaseModel):
     """
     Experimental scenario: sequence of interventions and measurements.
@@ -186,7 +188,11 @@ class Scenario(BaseModel):
     interventions: List[Union[DrugDosing, SurgicalResection]] = Field(
         description="List of interventions applied during the experiment"
     )
-    measurements: List[Measurement] = Field(
+    measurements: List[
+        Annotated[
+            Union[DiagnosisMeasurement, BiomarkerMeasurement], Field(discriminator="timing_type")
+        ]
+    ] = Field(
         description=(
             "List of measurement events specifying when and what to measure from model. "
             "Creates model-derived observables for comparison with calibration target. "
