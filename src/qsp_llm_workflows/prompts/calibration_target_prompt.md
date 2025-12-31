@@ -63,6 +63,35 @@ Find observables that match this context as closely as possible. Document the ac
 
 **Note on timing:** Clinical "time zero" is ambiguous. Use diagnosis timing (when tumor reaches detectable size) rather than absolute days. For unusual cases (e.g., post-surgical measurements), use biomarker-triggered timing.
 
+**Computing derivatives/rates:** If the observable requires a growth rate, velocity, or derivative:
+- The `time` array and `species_dict` values will contain multiple timepoints around the measurement time
+- For `offset_days: 0.0`, the pipeline provides data at e.g., [-1, 0, 1] days relative to diagnosis
+- Compute derivatives numerically from discrete timepoints using central differences
+- **DO NOT** assume the simulator provides analytical derivatives like `d_dt__V_T.C1`
+
+**Example - Tumor volume doubling time:**
+```python
+def compute_measurement(time, species_dict, ureg):
+    """Compute tumor volume doubling time from growth rate."""
+    import numpy as np
+
+    # time and species are arrays with 3+ points around measurement time
+    tumor = species_dict['V_T.C1']  # Array of tumor cell counts
+
+    # Central difference approximation of derivative at middle timepoint
+    dt = time[1] - time[0]  # Time step (has units)
+    dtumor_dt = (tumor[2] - tumor[0]) / (2 * dt)  # Central difference
+
+    # Instantaneous exponential growth rate
+    k = dtumor_dt / tumor[1]  # 1/day (units propagate correctly)
+
+    # Convert to doubling time
+    ln2 = np.log(2.0) * ureg.dimensionless
+    tvdt = ln2 / k  # Units: dimensionless / (1/day) = day
+
+    return tvdt.to('day')
+```
+
 ### Distribution Code
 
 **CRITICAL:**
