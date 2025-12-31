@@ -32,41 +32,6 @@ class ConfigurationError(WorkflowException):
     pass
 
 
-class BatchCreationError(WorkflowException):
-    """Batch request creation from CSV failed."""
-
-    pass
-
-
-class BatchUploadError(WorkflowException):
-    """Batch upload to OpenAI API failed."""
-
-    pass
-
-
-class BatchMonitoringError(WorkflowException):
-    """Batch monitoring or status retrieval failed."""
-
-    pass
-
-
-class BatchTimeoutError(WorkflowException):
-    """Batch did not complete within timeout period."""
-
-    def __init__(self, message: str, batch_id: str, timeout: int):
-        """
-        Initialize timeout exception.
-
-        Args:
-            message: Error description
-            batch_id: ID of the batch that timed out
-            timeout: Timeout value in seconds
-        """
-        super().__init__(message, context={"batch_id": batch_id, "timeout_seconds": timeout})
-        self.batch_id = batch_id
-        self.timeout = timeout
-
-
 class ImmediateProcessingError(WorkflowException):
     """Direct processing via Responses API failed."""
 

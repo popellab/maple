@@ -187,8 +187,6 @@ class UnpackResultsStep(WorkflowStep):
             output_dir = create_unique_output_directory(
                 base_dir=context.config.to_review_dir,
                 workflow_type=context.workflow_type,
-                immediate=context.immediate,
-                batch_id=context.batch_id,
             )
 
             context.report_progress(f"Unpacking results to {output_dir.name}/...")
