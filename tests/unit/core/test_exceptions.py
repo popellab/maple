@@ -7,10 +7,6 @@ Tests exception creation, context preservation, and inheritance.
 from qsp_llm_workflows.core.exceptions import (
     WorkflowException,
     ConfigurationError,
-    BatchCreationError,
-    BatchUploadError,
-    BatchMonitoringError,
-    BatchTimeoutError,
     ImmediateProcessingError,
     ResultsUnpackError,
     ValidationError,
@@ -40,10 +36,6 @@ class TestWorkflowException:
         """Test that all custom exceptions inherit from WorkflowException."""
         exceptions = [
             ConfigurationError("test"),
-            BatchCreationError("test"),
-            BatchUploadError("test"),
-            BatchMonitoringError("test"),
-            BatchTimeoutError("test", "batch_123", 3600),
             ImmediateProcessingError("test"),
             ResultsUnpackError("test"),
             ValidationError("test", "schema"),
@@ -52,30 +44,6 @@ class TestWorkflowException:
         for exc in exceptions:
             assert isinstance(exc, WorkflowException)
             assert isinstance(exc, Exception)
-
-
-class TestBatchTimeoutError:
-    """Test BatchTimeoutError with specific timeout context."""
-
-    def test_create_timeout_error(self):
-        """Test creating timeout error with batch_id and timeout."""
-        exc = BatchTimeoutError(
-            "Batch timed out after 3600s", batch_id="batch_abc123", timeout=3600
-        )
-
-        assert str(exc) == "Batch timed out after 3600s"
-        assert exc.batch_id == "batch_abc123"
-        assert exc.timeout == 3600
-        assert exc.context["batch_id"] == "batch_abc123"
-        assert exc.context["timeout_seconds"] == 3600
-
-    def test_timeout_error_inheritance(self):
-        """Test that timeout error is a WorkflowException."""
-        exc = BatchTimeoutError("Timeout", "batch_123", 7200)
-
-        assert isinstance(exc, BatchTimeoutError)
-        assert isinstance(exc, WorkflowException)
-        assert isinstance(exc, Exception)
 
 
 class TestValidationError:
@@ -124,9 +92,9 @@ class TestExceptionChaining:
             try:
                 raise original
             except ValueError as e:
-                raise BatchCreationError("Failed to create batch") from e
-        except BatchCreationError as exc:
-            assert str(exc) == "Failed to create batch"
+                raise ImmediateProcessingError("Failed to process request") from e
+        except ImmediateProcessingError as exc:
+            assert str(exc) == "Failed to process request"
             assert exc.__cause__ is original
             assert isinstance(exc.__cause__, ValueError)
 
@@ -143,9 +111,9 @@ class TestExceptionChaining:
 
                 outer()
             except RuntimeError as e:
-                raise BatchUploadError("Upload failed", context={"batch_id": "123"}) from e
-        except BatchUploadError as exc:
-            assert exc.context["batch_id"] == "123"
+                raise ResultsUnpackError("Unpack failed", context={"file": "results.jsonl"}) from e
+        except ResultsUnpackError as exc:
+            assert exc.context["file"] == "results.jsonl"
             assert exc.__cause__ is not None
             assert str(exc.__cause__) == "Original error"
 
@@ -157,24 +125,6 @@ class TestSpecificExceptions:
         """Test ConfigurationError."""
         exc = ConfigurationError("Missing API key")
         assert str(exc) == "Missing API key"
-        assert isinstance(exc, WorkflowException)
-
-    def test_batch_creation_error(self):
-        """Test BatchCreationError."""
-        exc = BatchCreationError("Invalid CSV format")
-        assert str(exc) == "Invalid CSV format"
-        assert isinstance(exc, WorkflowException)
-
-    def test_batch_upload_error(self):
-        """Test BatchUploadError."""
-        exc = BatchUploadError("API connection failed")
-        assert str(exc) == "API connection failed"
-        assert isinstance(exc, WorkflowException)
-
-    def test_batch_monitoring_error(self):
-        """Test BatchMonitoringError."""
-        exc = BatchMonitoringError("Failed to retrieve batch status")
-        assert str(exc) == "Failed to retrieve batch status"
         assert isinstance(exc, WorkflowException)
 
     def test_immediate_processing_error(self):
