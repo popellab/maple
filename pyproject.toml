@@ -54,7 +54,6 @@ qsp-review = "qsp_llm_workflows.cli.review:main"
 # Individual tools
 qsp-enrich-csv = "qsp_llm_workflows.cli.enrich:main"
 qsp-export-model = "qsp_llm_workflows.cli.export_model:main"
-qsp-batch-monitor = "qsp_llm_workflows.cli.monitor:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
