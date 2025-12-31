@@ -125,8 +125,7 @@ class TestUnpackResults:
         """Create original YAML file for validation fix testing."""
         yaml_file = output_dir / "test_param_PDAC_abc123_deriv001.yaml"
 
-        content = """schema_version: v3
-parameter_name: test_param
+        content = """parameter_name: test_param
 parameter_units: 1/day
 parameter_definition: Test parameter
 cancer_type: PDAC
@@ -313,7 +312,6 @@ class TestTestStatisticHeaders:
         # Verify header field ordering (required_species should be near top)
         lines = content.split("\n")
         header_fields = [
-            "schema_version",
             "test_statistic_id",
             "cancer_type",
         ]

@@ -35,7 +35,6 @@ class TestParameterHeaders:
     def test_create_parameter_headers(self):
         """Test creating ParameterHeaders instance."""
         headers = ParameterHeaders(
-            schema_version="v3",
             parameter_name="k_growth",
             parameter_units="1/day",
             parameter_definition="Growth rate of cancer cells",
@@ -53,7 +52,6 @@ class TestParameterHeaders:
     def test_parameter_headers_model_dump(self):
         """Test converting ParameterHeaders to dict."""
         headers = ParameterHeaders(
-            schema_version="v3",
             parameter_name="k_death",
             parameter_units="1/hour",
             parameter_definition="Death rate",
@@ -76,7 +74,6 @@ class TestTestStatisticHeaders:
     def test_create_test_statistic_headers(self):
         """Test creating TestStatisticHeaders instance."""
         headers = TestStatisticHeaders(
-            schema_version="v2",
             test_statistic_id="tumor_vol_day14",
             cancer_type="PDAC",
             output_unit="millimeter ** 3",
@@ -156,7 +153,6 @@ class TestParameterMetadataSplitMerge:
         """Test getting header field names."""
         header_fields = ParameterMetadata.get_header_fields()
 
-        assert "schema_version" in header_fields
         assert "parameter_name" in header_fields
         assert "cancer_type" in header_fields
         assert "model_context" in header_fields
@@ -184,7 +180,6 @@ class TestParameterMetadataSplitMerge:
         # This test verifies the content fields are properly set.
 
         headers = ParameterHeaders(
-            schema_version="v3",
             parameter_name="k_growth",
             parameter_units="1/day",
             parameter_definition="Growth rate",
@@ -354,7 +349,6 @@ class TestHeaderManager:
         manager = HeaderManager()
 
         headers = ParameterHeaders(
-            schema_version="v3",
             parameter_name="k_death",
             parameter_units="1/hour",
             parameter_definition="Death rate",
@@ -408,7 +402,6 @@ class TestHeaderManager:
         # Create temporary YAML file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml_data = {
-                "schema_version": "v3",
                 "parameter_name": "k_test",
                 "parameter_units": "1/day",
                 "parameter_definition": "Test parameter",
@@ -440,7 +433,6 @@ class TestHeaderManager:
         # Create temporary YAML file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml_data = {
-                "schema_version": "v3",
                 "parameter_name": "k_test",
                 "parameter_units": "1/day",
                 "parameter_definition": "Test parameter",
@@ -482,7 +474,6 @@ class TestHeaderManager:
         param_fields = manager.get_header_field_names(ParameterMetadata)
         assert "parameter_name" in param_fields
         assert "cancer_type" in param_fields
-        assert "schema_version" in param_fields
 
         test_stat_fields = manager.get_header_field_names(TestStatistic)
         assert "test_statistic_id" in test_stat_fields
@@ -504,7 +495,6 @@ class TestHeaderManager:
         manager = HeaderManager()
 
         headers = ParameterHeaders(
-            schema_version="v3",
             parameter_name="k_output",
             parameter_units="1/day",
             parameter_definition="Output test",

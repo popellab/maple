@@ -517,7 +517,6 @@ def derive_parameter(inputs, ureg):
         with tempfile.TemporaryDirectory() as tmpdir:
             yaml_file = Path(tmpdir) / "test.yaml"
             content = """# Header comment
-schema_version: v3
 parameter_name: k_growth
 
 parameter_estimates:
@@ -558,7 +557,6 @@ key_assumptions:
 
             # Check other content is preserved
             assert "# Header comment" in updated
-            assert "schema_version: v3" in updated
             assert "parameter_name: k_growth" in updated
             assert 'description: "Important input"' in updated
             assert "key_assumptions:" in updated

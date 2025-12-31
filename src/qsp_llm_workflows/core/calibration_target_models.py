@@ -434,7 +434,6 @@ class CalibrationTargetHeaders(BaseModel):
     - When and how it was derived
     """
 
-    schema_version: str = Field(description="Schema version (e.g., 'v1')")
     calibration_target_id: str = Field(description="Unique calibration target identifier")
     cancer_type: str = Field(description="Cancer type (e.g., 'PDAC')")
     tags: List[str] = Field(default_factory=list, description="Metadata tags")
@@ -480,7 +479,7 @@ class CalibrationTarget(BaseModel):
     Used to calibrate QSP model parameters via Bayesian inference.
 
     Excludes header fields that are added during unpacking:
-    - schema_version, calibration_target_id, cancer_type
+    - calibration_target_id, cancer_type
     - tags, derivation_id, derivation_timestamp
     """
 

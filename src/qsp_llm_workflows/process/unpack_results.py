@@ -101,7 +101,6 @@ def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
         # Calibration targets have their own header structure
         json_data["calibration_target_id"] = metadata["calibration_target_id"]
         json_data["cancer_type"] = metadata["cancer_type"]
-        json_data["schema_version"] = "v1"
 
         # Add tags
         tags = ["ai-generated"]
@@ -121,7 +120,6 @@ def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
         json_data["cancer_type"] = metadata["cancer_type"]
         json_data["model_context"] = metadata.get("model_context", "")
         json_data["scenario_context"] = metadata.get("scenario_context", "")
-        json_data["schema_version"] = "v2"
 
         # Parse required_species from comma-separated string to list
         required_species_str = metadata.get("required_species", "")
@@ -154,8 +152,6 @@ def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
         # Add tags
         tags = ["ai-generated"]
         json_data["tags"] = tags
-
-        json_data["schema_version"] = "v3"
 
         # Parse model_context if it's a JSON string
         model_context = metadata.get("model_context", "")
@@ -340,7 +336,6 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 json_data = move_field_to_top(json_data, "model_context")
                 json_data = move_field_to_top(json_data, "cancer_type")
                 json_data = move_field_to_top(json_data, "test_statistic_id")
-                json_data = move_field_to_top(json_data, "schema_version")
 
             elif workflow_type == "calibration_target":
                 # cal_target_id_cancer_deriv001.yaml
@@ -353,10 +348,9 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 json_data = move_field_to_top(json_data, "tags")
                 json_data = move_field_to_top(json_data, "cancer_type")
                 json_data = move_field_to_top(json_data, "calibration_target_id")
-                json_data = move_field_to_top(json_data, "schema_version")
 
             else:  # parameter
-                # param_cancer_deriv001.yaml (v3 schema)
+                # param_cancer_deriv001.yaml
                 base = f"{identifier}_{cancer_type}"
                 deriv_num = find_next_derivation_number(output_dir, base)
 
@@ -374,7 +368,6 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 json_data = move_field_to_top(json_data, "parameter_definition")
                 json_data = move_field_to_top(json_data, "parameter_units")
                 json_data = move_field_to_top(json_data, "parameter_name")
-                json_data = move_field_to_top(json_data, "schema_version")
 
                 filename = f"{derivation_id}.yaml"
 
