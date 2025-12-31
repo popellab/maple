@@ -56,41 +56,14 @@ Find observables that match this context as closely as possible. Document the ac
 - Leave empty list for baseline/natural measurements
 
 **Measurements** (at least ONE required):
-- **Diagnosis timing** (most common): offset_days relative to diagnosis (0.0 = at diagnosis/baseline)
-- **Biomarker-triggered**: species to monitor, threshold value, comparison ('>' or '<'), offset days
-- Required species: which model species needed
-- Computation code: Python function converting species → observable (returns Pint Quantity)
+- **timing_type**: `at_diagnosis` (most common) or `biomarker_triggered`
+- **timepoints**: Days relative to timing event. Single point `[0.0]` for direct measurements, multiple points `[-1.0, 0.0, 1.0]` for derivatives
+- **required_species**: Model species needed for computation
+- **computation_code**: Python function `compute_measurement(time, species_dict, ureg)` returning Pint Quantity
 
-**Note on timing:** Clinical "time zero" is ambiguous. Use diagnosis timing (when tumor reaches detectable size) rather than absolute days. For unusual cases (e.g., post-surgical measurements), use biomarker-triggered timing.
+For biomarker-triggered timing, also specify: `biomarker_species`, `threshold`, `comparison` ('>' or '<')
 
-**Computing derivatives/rates:** If the observable requires a growth rate, velocity, or derivative:
-- The `time` array and `species_dict` values will contain multiple timepoints around the measurement time
-- For `offset_days: 0.0`, the pipeline provides data at e.g., [-1, 0, 1] days relative to diagnosis
-- Compute derivatives numerically from discrete timepoints using central differences
-- **DO NOT** assume the simulator provides analytical derivatives like `d_dt__V_T.C1`
-
-**Example - Tumor volume doubling time:**
-```python
-def compute_measurement(time, species_dict, ureg):
-    """Compute tumor volume doubling time from growth rate."""
-    import numpy as np
-
-    # time and species are arrays with 3+ points around measurement time
-    tumor = species_dict['V_T.C1']  # Array of tumor cell counts
-
-    # Central difference approximation of derivative at middle timepoint
-    dt = time[1] - time[0]  # Time step (has units)
-    dtumor_dt = (tumor[2] - tumor[0]) / (2 * dt)  # Central difference
-
-    # Instantaneous exponential growth rate
-    k = dtumor_dt / tumor[1]  # 1/day (units propagate correctly)
-
-    # Convert to doubling time
-    ln2 = np.log(2.0) * ureg.dimensionless
-    tvdt = ln2 / k  # Units: dimensionless / (1/day) = day
-
-    return tvdt.to('day')
-```
+**Derivatives:** Use central differences from timepoints. Don't assume analytical derivatives exist.
 
 ### Distribution Code
 
