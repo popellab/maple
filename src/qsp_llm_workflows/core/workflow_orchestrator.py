@@ -141,7 +141,6 @@ class WorkflowOrchestrator:
         reasoning_effort: str = "high",
         progress_callback: Optional[Callable[[str], None]] = None,
         preview_prompts: bool = False,
-        use_pydantic_ai: bool = False,
     ) -> WorkflowResult:
         """
         Run complete extraction workflow from start to finish.
@@ -149,12 +148,11 @@ class WorkflowOrchestrator:
         Args:
             input_csv: Path to input CSV file
             workflow_type: Type of workflow (parameter/test_statistic/calibration_target)
-            immediate: Use Responses API for immediate processing (faster, good for testing)
+            immediate: Use Pydantic AI for immediate processing (faster, good for testing)
             timeout: Maximum seconds to wait for batch completion (uses config default if None)
             reasoning_effort: Reasoning effort level (low/medium/high, default: high)
             progress_callback: Optional callback for progress updates
             preview_prompts: If True, only build and save prompts without sending to API
-            use_pydantic_ai: Use Pydantic AI instead of direct OpenAI API (immediate mode only)
 
         Returns:
             WorkflowResult with execution metadata
@@ -193,9 +191,6 @@ class WorkflowOrchestrator:
 
         # Store preview mode in metadata
         context.set_metadata("preview_prompts", preview_prompts)
-
-        # Store Pydantic AI mode in metadata
-        context.set_metadata("use_pydantic_ai", use_pydantic_ai)
 
         try:
             # Get workflow steps for this mode
