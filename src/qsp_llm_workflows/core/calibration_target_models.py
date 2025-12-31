@@ -438,7 +438,6 @@ class CalibrationTargetHeaders(BaseModel):
     calibration_target_id: str = Field(description="Unique calibration target identifier")
     cancer_type: str = Field(description="Cancer type (e.g., 'PDAC')")
     tags: List[str] = Field(default_factory=list, description="Metadata tags")
-    context_hash: str = Field(description="Hash of model context for provenance")
     derivation_id: Optional[str] = Field(None, description="Unique derivation identifier")
     derivation_timestamp: Optional[str] = Field(None, description="ISO timestamp of derivation")
 
@@ -482,7 +481,7 @@ class CalibrationTarget(BaseModel):
 
     Excludes header fields that are added during unpacking:
     - schema_version, calibration_target_id, cancer_type
-    - tags, context_hash, derivation_id, derivation_timestamp
+    - tags, derivation_id, derivation_timestamp
     """
 
     # --- Observable fields (LLM-generated) ---

@@ -295,7 +295,6 @@ tgfb_baseline,nanomolarity,"def compute_test_statistic(time, species_dict, ureg)
         df = pd.read_csv(output_csv)
         assert len(df) == 1
         assert "scenario_context" in df.columns
-        assert "context_hash" in df.columns
         assert df.iloc[0]["test_statistic_id"] == "tgfb_baseline"
 
     def test_enrichment_fails_with_invalid_units(self, tmp_path, species_json, scenario_yaml):
@@ -344,23 +343,3 @@ treg_cd8_ratio,dimensionless,"def compute_test_statistic(time, species_dict, ure
 
         df = pd.read_csv(output_csv)
         assert len(df) == 2
-
-    def test_context_hash_is_consistent(self, tmp_path, species_json, scenario_yaml):
-        """Test that context_hash is the same for all rows (same scenario)."""
-        input_csv = tmp_path / "input.csv"
-        input_csv.write_text(
-            """test_statistic_id,output_unit,model_output_code
-stat1,nanomolarity,"def compute_test_statistic(time, species_dict, ureg):
-    return species_dict['V_T.TGFb'][0]"
-stat2,nanomolarity,"def compute_test_statistic(time, species_dict, ureg):
-    return species_dict['V_T.CCL2'][0]"
-"""
-        )
-        output_csv = tmp_path / "output.csv"
-
-        enrich_test_statistic_csv(input_csv, scenario_yaml, species_json, output_csv)
-
-        import pandas as pd
-
-        df = pd.read_csv(output_csv)
-        assert df.iloc[0]["context_hash"] == df.iloc[1]["context_hash"]

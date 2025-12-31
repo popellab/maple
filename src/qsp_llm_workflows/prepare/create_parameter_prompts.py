@@ -8,7 +8,6 @@ Required CSV columns:
   - parameter_units: Units of measurement
   - parameter_description: Description/definition of the parameter
   - model_context: JSON containing reactions_and_rules with model usage information
-  - definition_hash: Hash identifier for the parameter definition
 """
 
 import sys
@@ -30,7 +29,6 @@ def main():
         print("  - parameter_units")
         print("  - parameter_description")
         print("  - model_context (JSON)")
-        print("  - definition_hash")
         sys.exit(1)
 
     input_csv = Path(sys.argv[1])

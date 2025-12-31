@@ -284,7 +284,6 @@ def collect_existing_studies(
     cancer_type: str,
     parameter_name: str,
     parameter_storage_dir: Path,
-    context_hash: str = None,
 ) -> str:
     """
     Collect information about existing studies for a given parameter.
@@ -293,7 +292,6 @@ def collect_existing_studies(
         cancer_type: Cancer type for the parameter
         parameter_name: Name of the parameter
         parameter_storage_dir: Path to parameter storage directory (e.g., metadata-storage/parameter_estimates)
-        context_hash: Optional context hash to filter by model context
 
     Returns:
         Formatted string describing existing studies, or empty string if none exist
@@ -309,7 +307,7 @@ def collect_existing_studies(
     if not yaml_files:
         return ""
 
-    # Collect source fields verbatim from all files matching cancer_type and context_hash
+    # Collect source fields verbatim from all files matching cancer_type
     all_sources = []
 
     for yaml_file in sorted(yaml_files):
@@ -328,22 +326,6 @@ def collect_existing_studies(
 
             if not study_data:
                 continue
-
-            # If context_hash provided, filter by it
-            if context_hash:
-                file_context_hash = None
-
-                # Check in model_context.context_hash
-                if "model_context" in study_data and isinstance(study_data["model_context"], dict):
-                    file_context_hash = study_data["model_context"].get("context_hash")
-
-                # Also check top-level context_hash (some schemas have it there)
-                if not file_context_hash and "context_hash" in study_data:
-                    file_context_hash = study_data["context_hash"]
-
-                # Skip if context hash doesn't match
-                if file_context_hash and file_context_hash != context_hash:
-                    continue
 
             # Extract raw source fields (handle multiple schema variants)
             if "data_sources" in study_data and study_data["data_sources"]:

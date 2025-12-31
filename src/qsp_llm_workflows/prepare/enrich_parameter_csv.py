@@ -45,7 +45,6 @@ def main():
             {
                 "cancer_type": args.cancer_type.upper(),
                 "parameter_name": param,
-                "definition_hash": info["hash"],
                 "parameter_units": param_def.get("units", ""),
                 "parameter_description": param_def.get("description", ""),
                 "model_context": json.dumps(

@@ -14,8 +14,6 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Any
 
-from qsp_llm_workflows.core.hash_utils import compute_definition_hash, generate_filename
-
 
 class ModelDefinitionExporter:
     """Exports parameter and species definitions from SimBiology models."""
@@ -334,14 +332,8 @@ class ModelDefinitionExporter:
                 }
             }
 
-            # Compute hash
-            content_hash = compute_definition_hash(definition["parameter_definition"], "parameter")
-            filename = generate_filename(param_name, content_hash)
-
             param_definitions[param_name] = {
                 "definition": definition,
-                "hash": content_hash,
-                "filename": filename,
             }
 
         return param_definitions

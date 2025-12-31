@@ -48,7 +48,6 @@ def load_metadata(input_csv: Path, workflow_type: str) -> Dict:
                 metadata[key] = {
                     "test_statistic_id": key,
                     "cancer_type": row["cancer_type"],
-                    "context_hash": row.get("context_hash", ""),
                     "model_context": row.get("model_context", ""),
                     "scenario_context": row.get("scenario_context", ""),
                     "required_species": row.get("required_species", ""),
@@ -59,7 +58,6 @@ def load_metadata(input_csv: Path, workflow_type: str) -> Dict:
                 metadata[key] = {
                     "calibration_target_id": key,
                     "cancer_type": row["cancer_type"],
-                    "context_hash": row.get("context_hash", ""),
                     "model_context": row.get("model_context", ""),
                     "observable_description": row.get("observable_description", ""),
                 }
@@ -71,7 +69,6 @@ def load_metadata(input_csv: Path, workflow_type: str) -> Dict:
                     "parameter_definition": row.get("parameter_description", ""),
                     "cancer_type": row["cancer_type"],
                     "model_context": row.get("model_context", ""),
-                    "context_hash": row.get("definition_hash", ""),
                 }
 
     return metadata
@@ -93,11 +90,9 @@ def find_next_derivation_number(directory: Path, base_pattern: str) -> int:
     return max_num + 1
 
 
-def generate_derivation_id(
-    param_name: str, cancer_type: str, context_hash: str, deriv_num: int
-) -> str:
-    """Generate derivation_id: {param}_{cancer}_{context_hash}_deriv{num}"""
-    return f"{param_name}_{cancer_type}_{context_hash}_deriv{deriv_num:03d}"
+def generate_derivation_id(param_name: str, cancer_type: str, deriv_num: int) -> str:
+    """Generate derivation_id: {param}_{cancer}_deriv{num}"""
+    return f"{param_name}_{cancer_type}_deriv{deriv_num:03d}"
 
 
 def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> dict:
@@ -106,7 +101,6 @@ def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
         # Calibration targets have their own header structure
         json_data["calibration_target_id"] = metadata["calibration_target_id"]
         json_data["cancer_type"] = metadata["cancer_type"]
-        json_data["context_hash"] = metadata["context_hash"]
         json_data["schema_version"] = "v1"
 
         # Add tags
@@ -125,7 +119,6 @@ def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
         # Test statistics have different header structure
         json_data["test_statistic_id"] = metadata["test_statistic_id"]
         json_data["cancer_type"] = metadata["cancer_type"]
-        json_data["context_hash"] = metadata["context_hash"]
         json_data["model_context"] = metadata.get("model_context", "")
         json_data["scenario_context"] = metadata.get("scenario_context", "")
         json_data["schema_version"] = "v2"
@@ -152,7 +145,6 @@ def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
     else:  # parameter
         param_name = metadata["parameter_name"]
         cancer_type = metadata["cancer_type"]
-        context_hash = metadata["context_hash"]
 
         json_data["parameter_name"] = param_name
         json_data["parameter_units"] = metadata["parameter_units"]
@@ -163,7 +155,6 @@ def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
         tags = ["ai-generated"]
         json_data["tags"] = tags
 
-        json_data["context_hash"] = context_hash
         json_data["schema_version"] = "v3"
 
         # Parse model_context if it's a JSON string
@@ -337,8 +328,8 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
 
             # Generate filename with derivation numbering
             if workflow_type == "test_statistic":
-                # test_stat_id_cancer_hash_deriv001.yaml
-                base = f"{identifier}_{cancer_type}_{meta['context_hash']}"
+                # test_stat_id_cancer_deriv001.yaml
+                base = f"{identifier}_{cancer_type}"
                 deriv_num = find_next_derivation_number(output_dir, base)
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
@@ -347,39 +338,34 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 json_data = move_field_to_top(json_data, "required_species")
                 json_data = move_field_to_top(json_data, "scenario_context")
                 json_data = move_field_to_top(json_data, "model_context")
-                json_data = move_field_to_top(json_data, "context_hash")
                 json_data = move_field_to_top(json_data, "cancer_type")
                 json_data = move_field_to_top(json_data, "test_statistic_id")
                 json_data = move_field_to_top(json_data, "schema_version")
 
             elif workflow_type == "calibration_target":
-                # cal_target_id_cancer_hash_deriv001.yaml
-                base = f"{identifier}_{cancer_type}_{meta['context_hash']}"
+                # cal_target_id_cancer_deriv001.yaml
+                base = f"{identifier}_{cancer_type}"
                 deriv_num = find_next_derivation_number(output_dir, base)
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
                 # Move header fields to top (reverse order since we prepend)
                 json_data = move_field_to_top(json_data, "model_context")
-                json_data = move_field_to_top(json_data, "context_hash")
                 json_data = move_field_to_top(json_data, "tags")
                 json_data = move_field_to_top(json_data, "cancer_type")
                 json_data = move_field_to_top(json_data, "calibration_target_id")
                 json_data = move_field_to_top(json_data, "schema_version")
 
             else:  # parameter
-                # param_cancer_hash_deriv001.yaml (v3 schema)
-                base = f"{identifier}_{cancer_type}_{meta['context_hash']}"
+                # param_cancer_deriv001.yaml (v3 schema)
+                base = f"{identifier}_{cancer_type}"
                 deriv_num = find_next_derivation_number(output_dir, base)
 
                 # Generate derivation_id and add to JSON
-                derivation_id = generate_derivation_id(
-                    identifier, cancer_type, meta["context_hash"], deriv_num
-                )
+                derivation_id = generate_derivation_id(identifier, cancer_type, deriv_num)
                 json_data["derivation_id"] = derivation_id
                 json_data["derivation_timestamp"] = datetime.now().isoformat()
 
                 # Move all header fields to top in correct order (reverse order since we prepend)
-                json_data = move_field_to_top(json_data, "context_hash")
                 json_data = move_field_to_top(json_data, "model_context")
                 json_data = move_field_to_top(json_data, "derivation_timestamp")
                 json_data = move_field_to_top(json_data, "derivation_id")

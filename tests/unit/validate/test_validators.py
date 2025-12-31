@@ -995,7 +995,7 @@ class TestValueConsistencyChecker:
         """Test validator initializes data structures correctly."""
         validator = ValueConsistencyChecker("/tmp")
 
-        assert hasattr(validator, "context_groups")
+        assert hasattr(validator, "derivation_groups")
         assert hasattr(validator, "legacy_values")
         assert hasattr(validator, "all_files")
 

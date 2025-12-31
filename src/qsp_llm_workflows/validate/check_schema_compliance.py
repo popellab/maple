@@ -64,7 +64,6 @@ class SchemaValidator(Validator):
                     "derivation_id",
                     "derivation_timestamp",
                     "model_context",
-                    "context_hash",
                     "test_statistic_id",
                     "scenario_context",
                     "required_species",

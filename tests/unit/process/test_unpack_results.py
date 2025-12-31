@@ -320,7 +320,6 @@ class TestTestStatisticHeaders:
             "schema_version",
             "test_statistic_id",
             "cancer_type",
-            "context_hash",
         ]
         for field in header_fields:
             assert any(line.startswith(f"{field}:") for line in lines[:15])

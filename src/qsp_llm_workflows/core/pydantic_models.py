@@ -97,7 +97,6 @@ class ParameterHeaders(BaseModel):
     derivation_id: Optional[str] = Field(None, description="Unique derivation identifier")
     derivation_timestamp: Optional[str] = Field(None, description="ISO timestamp of derivation")
     model_context: dict = Field(description="Model context (reactions, rules, related parameters)")
-    context_hash: str = Field(description="Hash of model context for provenance")
 
 
 class ParameterMetadata(BaseModel):
@@ -250,7 +249,6 @@ class TestStatisticHeaders(BaseModel):
     required_species: List[str] = Field(description="Required model output species")
     derived_species_description: str = Field(description="Description of derived test statistic")
     tags: List[str] = Field(default_factory=list, description="Metadata tags")
-    context_hash: str = Field(description="Hash of scenario context for provenance")
 
 
 class TestStatistic(BaseModel):
@@ -260,7 +258,7 @@ class TestStatistic(BaseModel):
     Excludes header fields that are added during unpacking:
     - schema_version, test_statistic_id, cancer_type
     - output_unit, model_output_code (user-provided)
-    - scenario_context, model_context, tags, context_hash
+    - scenario_context, model_context, tags
     - required_species, derived_species_description
 
     Note: model_output_code is now a header field (user-provided during CSV enrichment),

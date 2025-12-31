@@ -4,7 +4,7 @@ Check value consistency across related extractions.
 
 Compares new extractions against:
 1. Legacy database values (files with '_legacy' suffix)
-2. Other derivations with same context_hash (same model context, different studies)
+2. Other derivations for the same parameter (different studies)
 
 Reports discrepancies as warnings (does not fail validation).
 
@@ -40,7 +40,7 @@ class ValueConsistencyChecker(Validator):
         self.main_storage_dir = self._get_main_storage_dir()
         self.all_files = []
         self.legacy_values = defaultdict(list)  # param_name -> list of values
-        self.context_groups = defaultdict(list)  # (param_name, context_hash) -> list of values
+        self.derivation_groups = defaultdict(list)  # param_name -> list of values
 
     @property
     def name(self) -> str:
@@ -116,19 +116,14 @@ class ValueConsistencyChecker(Validator):
             if mean_value is None:
                 continue
 
-            # Extract context_hash
-            context_hash = data.get("context_hash", "unknown")
-
             # Determine if this is a legacy file (by directory only)
             is_legacy = self.legacy_dir and str(self.legacy_dir) in filepath
 
             # Store in appropriate collection
             if is_legacy:
-                self.legacy_values[identifier].append(
-                    {"value": mean_value, "filename": filename, "context_hash": context_hash}
-                )
+                self.legacy_values[identifier].append({"value": mean_value, "filename": filename})
             else:
-                self.context_groups[(identifier, context_hash)].append(
+                self.derivation_groups[identifier].append(
                     {"value": mean_value, "filename": filename}
                 )
 
@@ -136,7 +131,7 @@ class ValueConsistencyChecker(Validator):
         if legacy_files:
             print(f"  Found {len(legacy_files)} legacy files")
         print(f"  {len(self.legacy_values)} identifiers with legacy values")
-        print(f"  {len(self.context_groups)} unique (identifier, context_hash) groups")
+        print(f"  {len(self.derivation_groups)} unique identifiers with derivations")
 
     def _get_identifier(self, data: dict, filename: str) -> str:
         """
@@ -209,24 +204,20 @@ class ValueConsistencyChecker(Validator):
 
         return (True, warnings)
 
-    def compare_to_same_context(
-        self, identifier: str, context_hash: str, value: float, filename: str
-    ) -> tuple:
+    def compare_to_other_derivations(self, identifier: str, value: float, filename: str) -> tuple:
         """
-        Compare value to other derivations with same context_hash.
+        Compare value to other derivations for the same parameter.
 
         Returns:
             (has_comparison, warnings) tuple
         """
-        key = (identifier, context_hash)
-
-        if key not in self.context_groups:
+        if identifier not in self.derivation_groups:
             return (False, [])
 
-        same_context_entries = self.context_groups[key]
+        derivation_entries = self.derivation_groups[identifier]
 
         # Exclude self
-        other_entries = [e for e in same_context_entries if e["filename"] != filename]
+        other_entries = [e for e in derivation_entries if e["filename"] != filename]
 
         if not other_entries:
             return (False, [])
@@ -248,7 +239,7 @@ class ValueConsistencyChecker(Validator):
                 else float("inf")
             )
             warnings.append(
-                f"Outside range of same-context derivations ({pct_diff_from_mean:.1f}% from mean): "
+                f"Outside range of other derivations ({pct_diff_from_mean:.1f}% from mean): "
                 f"new={value:.3e}, range=[{min_others:.3e}, {max_others:.3e}], "
                 f"n={len(other_values)}"
             )
@@ -258,7 +249,7 @@ class ValueConsistencyChecker(Validator):
             pct_diff_from_mean = abs(value - mean_others) / abs(mean_others) * 100
             if pct_diff_from_mean > 50:
                 warnings.append(
-                    f"Large difference from same-context mean ({pct_diff_from_mean:.1f}%): "
+                    f"Large difference from other derivations mean ({pct_diff_from_mean:.1f}%): "
                     f"new={value:.3e}, mean={mean_others:.3e}, n={len(other_values)}"
                 )
 
@@ -289,8 +280,6 @@ class ValueConsistencyChecker(Validator):
         if value is None:
             return (True, [])
 
-        context_hash = data.get("context_hash", "unknown")
-
         all_warnings = []
 
         # Compare to legacy
@@ -298,17 +287,17 @@ class ValueConsistencyChecker(Validator):
         if has_legacy and legacy_warnings:
             all_warnings.extend(legacy_warnings)
 
-        # Compare to same context
-        has_context, context_warnings = self.compare_to_same_context(
-            identifier, context_hash, value, filename
+        # Compare to other derivations
+        has_derivations, derivation_warnings = self.compare_to_other_derivations(
+            identifier, value, filename
         )
-        if has_context and context_warnings:
-            all_warnings.extend(context_warnings)
+        if has_derivations and derivation_warnings:
+            all_warnings.extend(derivation_warnings)
 
         # If no comparisons available, note it
-        if not has_legacy and not has_context:
+        if not has_legacy and not has_derivations:
             all_warnings.append(
-                "No comparison values available (first extraction for this context)"
+                "No comparison values available (first extraction for this parameter)"
             )
 
         # Always pass validation (warnings only)

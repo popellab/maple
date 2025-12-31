@@ -70,7 +70,7 @@ class ParameterPromptBuilder(PromptBuilder):
 
     Processes CSV input with embedded parameter definitions and model context, generating
     prompts for comprehensive literature extraction. Requires columns: cancer_type,
-    parameter_name, parameter_units, parameter_description, model_context, definition_hash.
+    parameter_name, parameter_units, parameter_description, model_context.
     """
 
     def get_workflow_type(self) -> str:
@@ -166,7 +166,7 @@ class ParameterPromptBuilder(PromptBuilder):
 
         Args:
             input_csv: CSV file with columns: cancer_type, parameter_name, parameter_units,
-                      parameter_description, model_context (JSON), definition_hash
+                      parameter_description, model_context (JSON)
             parameter_storage_dir: Path to parameter storage directory for checking existing studies
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
 
@@ -187,7 +187,6 @@ class ParameterPromptBuilder(PromptBuilder):
                 units = row.get("parameter_units", "")
                 definition = row.get("parameter_description", "")
                 model_context_json = row.get("model_context", "{}")
-                definition_hash = row.get("definition_hash", "")
 
                 # Format the model context from JSON
                 model_context_block = self.format_model_context(model_context_json)
@@ -198,9 +197,8 @@ class ParameterPromptBuilder(PromptBuilder):
                 )
 
                 # Collect existing studies to avoid re-extracting from same sources
-                # Use definition_hash from CSV (same as context_hash in model_context)
                 existing_studies = collect_existing_studies(
-                    cancer_type, parameter_name, parameter_storage_dir, definition_hash
+                    cancer_type, parameter_name, parameter_storage_dir
                 )
 
                 # Build the prompt using simple prompt builder
@@ -392,16 +390,6 @@ class TestStatisticPromptBuilder(PromptBuilder):
                 scenario_context = row.get("scenario_context", "")
                 required_species = row.get("required_species", "")
                 derived_species_description = row.get("derived_species_description", "")
-
-                # Extract or generate context hash
-                context_hash = row.get("context_hash", "")
-                if not context_hash:
-                    # Auto-generate hash from model_context + scenario_context
-                    # (excludes required_species so all test statistics for same model+scenario share hash)
-                    import hashlib
-
-                    context_str = f"{model_context}_{scenario_context}"
-                    context_hash = hashlib.md5(context_str.encode()).hexdigest()[:8]
 
                 if not model_context.strip():
                     print(f"Warning: Empty model context for {test_statistic_id}, skipping")
