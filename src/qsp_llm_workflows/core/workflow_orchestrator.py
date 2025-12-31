@@ -9,20 +9,16 @@ state through a context object.
 
 import time
 from pathlib import Path
-from typing import Optional, Callable, List
+from typing import Optional, Callable
 from datetime import datetime
 
 from qsp_llm_workflows.core.config import WorkflowConfig
 from qsp_llm_workflows.core.workflow.context import WorkflowContext
-from qsp_llm_workflows.core.workflow.step import WorkflowStep
 from qsp_llm_workflows.core.workflow.steps import (
-    CreateBatchStep,
-    UploadBatchStep,
-    MonitorBatchStep,
-    ProcessImmediateStep,
+    CreatePreviewStep,
+    ProcessPromptsStep,
     UnpackResultsStep,
-    CreateValidationFixBatchStep,
-    ProcessImmediateValidationFixStep,
+    ProcessValidationFixStep,
     UnpackValidationFixResultsStep,
 )
 
@@ -40,8 +36,6 @@ class WorkflowResult:
         """
         self.workflow_type = context.workflow_type
         self.input_csv = str(context.input_csv) if context.input_csv else None
-        self.immediate_mode = context.immediate
-        self.batch_id = context.batch_id
         self.batch_file = str(context.batch_file) if context.batch_file else None
         self.results_file = str(context.results_file) if context.results_file else None
 
@@ -107,37 +101,10 @@ class WorkflowOrchestrator:
         self.config.batch_jobs_dir.mkdir(parents=True, exist_ok=True)
         self.config.to_review_dir.mkdir(parents=True, exist_ok=True)
 
-    def _get_workflow_steps(self, immediate: bool) -> List[WorkflowStep]:
-        """
-        Get workflow steps for execution mode.
-
-        Args:
-            immediate: True for immediate mode, False for batch mode
-
-        Returns:
-            List of workflow steps to execute
-        """
-        if immediate:
-            # Immediate mode: process directly and unpack
-            return [
-                ProcessImmediateStep(),
-                UnpackResultsStep(),
-            ]
-        else:
-            # Batch mode: create, upload, monitor, unpack
-            return [
-                CreateBatchStep(),
-                UploadBatchStep(),
-                MonitorBatchStep(),
-                UnpackResultsStep(),
-            ]
-
     def run_complete_workflow(
         self,
         input_csv: Path,
         workflow_type: str,
-        immediate: bool = False,
-        timeout: Optional[int] = None,
         reasoning_effort: str = "high",
         progress_callback: Optional[Callable[[str], None]] = None,
         preview_prompts: bool = False,
@@ -145,11 +112,11 @@ class WorkflowOrchestrator:
         """
         Run complete extraction workflow from start to finish.
 
+        Uses Pydantic AI for direct processing (no batch mode).
+
         Args:
             input_csv: Path to input CSV file
             workflow_type: Type of workflow (parameter/test_statistic/calibration_target)
-            immediate: Use Pydantic AI for immediate processing (faster, good for testing)
-            timeout: Maximum seconds to wait for batch completion (uses config default if None)
             reasoning_effort: Reasoning effort level (low/medium/high, default: high)
             progress_callback: Optional callback for progress updates
             preview_prompts: If True, only build and save prompts without sending to API
@@ -181,7 +148,6 @@ class WorkflowOrchestrator:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type=workflow_type,
-            immediate=immediate,
             config=config,
             progress_callback=progress_callback,
         )
@@ -193,12 +159,13 @@ class WorkflowOrchestrator:
         context.set_metadata("preview_prompts", preview_prompts)
 
         try:
-            # Get workflow steps for this mode
+            # Select workflow steps
             if preview_prompts:
-                # Preview mode: only create batch file
-                steps = [CreateBatchStep()]
+                # Preview mode: only create preview file
+                steps = [CreatePreviewStep()]
             else:
-                steps = self._get_workflow_steps(immediate)
+                # Normal mode: process with Pydantic AI and unpack results
+                steps = [ProcessPromptsStep(), UnpackResultsStep()]
 
             # Execute steps in sequence
             for step in steps:
@@ -213,38 +180,11 @@ class WorkflowOrchestrator:
             duration = time.time() - start_time
             return WorkflowResult.from_error(context, e, duration)
 
-    def _get_validation_fix_steps(self, immediate: bool) -> List[WorkflowStep]:
-        """
-        Get workflow steps for validation fix mode.
-
-        Args:
-            immediate: True for immediate mode, False for batch mode
-
-        Returns:
-            List of workflow steps to execute
-        """
-        if immediate:
-            # Immediate mode: process directly and unpack to original dir
-            return [
-                ProcessImmediateValidationFixStep(),
-                UnpackValidationFixResultsStep(),
-            ]
-        else:
-            # Batch mode: create, upload, monitor, unpack to original dir
-            return [
-                CreateValidationFixBatchStep(),
-                UploadBatchStep(),
-                MonitorBatchStep(),
-                UnpackValidationFixResultsStep(),
-            ]
-
     def run_validation_fix_workflow(
         self,
         data_dir: Path,
         validation_results_dir: Path,
         workflow_type: str,
-        immediate: bool = False,
-        timeout: Optional[int] = None,
         reasoning_effort: str = "high",
         progress_callback: Optional[Callable[[str], None]] = None,
         preview_prompts: bool = False,
@@ -252,12 +192,12 @@ class WorkflowOrchestrator:
         """
         Run validation fix workflow to correct validation errors.
 
+        Uses Pydantic AI for direct processing (no batch mode).
+
         Args:
             data_dir: Directory containing YAML files with validation errors
             validation_results_dir: Directory containing validation JSON reports
             workflow_type: Type of workflow (parameter/test_statistic)
-            immediate: Use Responses API for immediate processing (faster, good for testing)
-            timeout: Maximum seconds to wait for batch completion (uses config default if None)
             reasoning_effort: Reasoning effort level (low/medium/high, default: high)
             progress_callback: Optional callback for progress updates
             preview_prompts: If True, only build and save prompts without sending to API
@@ -274,7 +214,6 @@ class WorkflowOrchestrator:
         context = WorkflowContext(
             input_csv=None,  # No CSV input for validation fix
             workflow_type=workflow_type,
-            immediate=immediate,
             config=self.config,
             progress_callback=progress_callback,
         )
@@ -287,12 +226,14 @@ class WorkflowOrchestrator:
         context.set_metadata("preview_prompts", preview_prompts)
 
         try:
-            # Get workflow steps for validation fix mode
+            # Select workflow steps
             if preview_prompts:
-                # Preview mode: only create batch file
-                steps = [CreateValidationFixBatchStep()]
+                # Preview mode: only create preview file
+                # Note: Preview for validation fix not currently implemented
+                raise NotImplementedError("Preview mode for validation fix not yet supported")
             else:
-                steps = self._get_validation_fix_steps(immediate)
+                # Normal mode: process with Pydantic AI and unpack to original directory
+                steps = [ProcessValidationFixStep(), UnpackValidationFixResultsStep()]
 
             # Execute steps in sequence
             for step in steps:
