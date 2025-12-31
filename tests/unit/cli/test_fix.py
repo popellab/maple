@@ -48,8 +48,6 @@ class TestFixCLI:
         args = Namespace(
             workflow_type="parameter_estimates",
             dir=str(data_dir),
-            immediate=True,
-            timeout=3600,
             preview_prompts=False,
             validation_results_dir=str(validation_dir),
         )
@@ -69,7 +67,6 @@ class TestFixCLI:
         mock_config_class.assert_called_once()
         call_kwargs = mock_config_class.call_args.kwargs
         assert call_kwargs["openai_api_key"] == "test-api-key"
-        assert call_kwargs["batch_timeout"] == 3600
         # base_dir and storage_dir should be set
         assert "base_dir" in call_kwargs
         assert "storage_dir" in call_kwargs
@@ -79,8 +76,6 @@ class TestFixCLI:
         call_kwargs = mock_orchestrator.run_validation_fix_workflow.call_args.kwargs
         assert call_kwargs["data_dir"] == data_dir
         assert call_kwargs["workflow_type"] == "parameter"  # Converted from parameter_estimates
-        assert call_kwargs["immediate"] is True
-        assert call_kwargs["timeout"] == 3600
         assert "validation_results_dir" in call_kwargs
         assert "progress_callback" in call_kwargs
 
@@ -102,8 +97,6 @@ class TestFixCLI:
         args = Namespace(
             workflow_type="parameter_estimates",
             dir=str(data_dir),
-            immediate=True,
-            timeout=3600,
             preview_prompts=False,
             validation_results_dir=str(nonexistent_validation),
         )
@@ -139,8 +132,6 @@ class TestFixCLI:
         args = Namespace(
             workflow_type="parameter_estimates",
             dir=str(nonexistent_dir),
-            immediate=True,
-            timeout=3600,
             preview_prompts=False,
             validation_results_dir=str(validation_dir),
         )
@@ -195,8 +186,6 @@ class TestFixCLI:
         args = Namespace(
             workflow_type="parameter_estimates",
             dir=str(data_dir),
-            immediate=True,
-            timeout=3600,
             preview_prompts=False,
             validation_results_dir=str(validation_dir),
         )
@@ -252,8 +241,6 @@ class TestFixCLI:
         args = Namespace(
             workflow_type="test_statistics",
             dir=str(data_dir),
-            immediate=True,
-            timeout=7200,
             preview_prompts=False,
             validation_results_dir=str(validation_dir),
         )
@@ -272,4 +259,3 @@ class TestFixCLI:
         # Verify orchestrator was called with test_statistic workflow type
         call_kwargs = mock_orchestrator.run_validation_fix_workflow.call_args.kwargs
         assert call_kwargs["workflow_type"] == "test_statistic"  # Converted from test_statistics
-        assert call_kwargs["timeout"] == 7200

@@ -38,10 +38,3 @@ def test_qsp_export_model_help():
     result = subprocess.run(["qsp-export-model", "--help"], capture_output=True, text=True)
     assert result.returncode == 0
     assert "export" in result.stdout.lower() or "model" in result.stdout.lower()
-
-
-def test_qsp_batch_monitor_help():
-    """Test that qsp-batch-monitor command is available and shows help."""
-    result = subprocess.run(["qsp-batch-monitor", "--help"], capture_output=True, text=True)
-    assert result.returncode == 0
-    assert "monitor" in result.stdout.lower() or "batch" in result.stdout.lower()

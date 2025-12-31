@@ -51,7 +51,6 @@ class TestWorkflowStep:
         context = WorkflowContext(
             input_csv=tmp_path / "input.csv",
             workflow_type="parameter",
-            immediate=True,
             config=Mock(),
         )
 
@@ -77,7 +76,6 @@ class TestWorkflowStep:
         context = WorkflowContext(
             input_csv=tmp_path / "input.csv",
             workflow_type="parameter",
-            immediate=True,
             config=Mock(),
         )
 
@@ -99,7 +97,6 @@ class TestWorkflowStep:
         context = WorkflowContext(
             input_csv=tmp_path / "input.csv",
             workflow_type="parameter",
-            immediate=True,
             config=Mock(),
         )
 

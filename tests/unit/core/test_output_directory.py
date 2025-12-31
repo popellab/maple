@@ -18,50 +18,41 @@ class TestGenerateOutputDirectoryName:
     """Test output directory name generation."""
 
     @freeze_time("2025-11-23 14:30:22")
-    def test_generate_name_immediate_mode(self):
-        """Test generating directory name for immediate mode."""
+    def test_generate_name_parameter(self):
+        """Test generating directory name for parameter workflow."""
         name = generate_output_directory_name(
             workflow_type="parameter",
-            immediate=True,
-            batch_id=None,
         )
 
-        assert name == "20251123_143022_parameter_immediate"
+        assert name == "20251123_143022_parameter"
 
     @freeze_time("2025-11-23 15:45:10")
-    def test_generate_name_batch_mode(self):
-        """Test generating directory name for batch mode."""
+    def test_generate_name_test_statistic(self):
+        """Test generating directory name for test_statistic workflow."""
         name = generate_output_directory_name(
             workflow_type="test_statistic",
-            immediate=False,
-            batch_id="batch_abc123xyz",
         )
 
-        assert name == "20251123_154510_test_statistic_batch_abc123xyz"
+        assert name == "20251123_154510_test_statistic"
 
     @freeze_time("2025-11-23 16:00:00")
-    def test_generate_name_batch_mode_no_id(self):
-        """Test generating directory name for batch mode without batch_id."""
+    def test_generate_name_calibration_target(self):
+        """Test generating directory name for calibration_target workflow."""
         name = generate_output_directory_name(
-            workflow_type="parameter",
-            immediate=False,
-            batch_id=None,
+            workflow_type="calibration_target",
         )
 
-        # Should use "batch" without specific ID
-        assert name == "20251123_160000_parameter_batch"
+        assert name == "20251123_160000_calibration_target"
 
     def test_name_format_components(self):
         """Test that name contains all expected components."""
         name = generate_output_directory_name(
             workflow_type="parameter",
-            immediate=True,
-            batch_id=None,
         )
 
-        # Should have format: YYYYMMDD_HHMMSS_type_mode[_id]
+        # Should have format: YYYYMMDD_HHMMSS_type
         parts = name.split("_")
-        assert len(parts) >= 4
+        assert len(parts) == 3
 
         # First part is date (8 digits)
         assert len(parts[0]) == 8
@@ -72,18 +63,15 @@ class TestGenerateOutputDirectoryName:
         assert parts[1].isdigit()
 
         # Third part is workflow type
-        assert parts[2] in ["parameter", "test_statistic"]
-
-        # Fourth part is mode
-        assert parts[3] in ["immediate", "batch"]
+        assert parts[2] in ["parameter", "test_statistic", "calibration_target"]
 
     def test_different_timestamps_produce_different_names(self):
         """Test that names generated at different times are unique."""
         with freeze_time("2025-11-23 14:30:00"):
-            name1 = generate_output_directory_name("parameter", True)
+            name1 = generate_output_directory_name("parameter")
 
         with freeze_time("2025-11-23 14:30:01"):
-            name2 = generate_output_directory_name("parameter", True)
+            name2 = generate_output_directory_name("parameter")
 
         assert name1 != name2
 
@@ -98,7 +86,6 @@ class TestCreateUniqueOutputDirectory:
         output_dir = create_unique_output_directory(
             base_dir=base_dir,
             workflow_type="parameter",
-            immediate=True,
         )
 
         # Directory should exist
@@ -109,21 +96,21 @@ class TestCreateUniqueOutputDirectory:
         assert output_dir.parent == base_dir
 
         # Name should match expected format
-        assert "parameter_immediate" in output_dir.name
+        assert "parameter" in output_dir.name
+        assert output_dir.name.endswith("_parameter")
 
-    def test_create_directory_with_batch_id(self, tmp_path):
-        """Test creating directory with batch ID."""
+    def test_create_directory_test_statistic(self, tmp_path):
+        """Test creating directory for test statistic workflow."""
         base_dir = tmp_path / "to-review"
 
         output_dir = create_unique_output_directory(
             base_dir=base_dir,
             workflow_type="test_statistic",
-            immediate=False,
-            batch_id="batch_xyz789",
         )
 
         assert output_dir.exists()
-        assert "test_statistic_batch_xyz789" in output_dir.name
+        assert "test_statistic" in output_dir.name
+        assert output_dir.name.endswith("_test_statistic")
 
     def test_creates_base_directory_if_not_exists(self, tmp_path):
         """Test that base directory is created if it doesn't exist."""
@@ -135,7 +122,6 @@ class TestCreateUniqueOutputDirectory:
         output_dir = create_unique_output_directory(
             base_dir=base_dir,
             workflow_type="parameter",
-            immediate=True,
         )
 
         # Both base_dir and output_dir should exist
@@ -147,11 +133,11 @@ class TestCreateUniqueOutputDirectory:
         base_dir = tmp_path / "to-review"
 
         # Create three directories with small delays to ensure unique timestamps
-        dir1 = create_unique_output_directory(base_dir, "parameter", True)
+        dir1 = create_unique_output_directory(base_dir, "parameter")
         time.sleep(1.1)  # Sleep slightly over 1 second
-        dir2 = create_unique_output_directory(base_dir, "parameter", True)
+        dir2 = create_unique_output_directory(base_dir, "parameter")
         time.sleep(1.1)
-        dir3 = create_unique_output_directory(base_dir, "parameter", True)
+        dir3 = create_unique_output_directory(base_dir, "parameter")
 
         # All should be unique
         assert dir1 != dir2
@@ -170,7 +156,6 @@ class TestCreateUniqueOutputDirectory:
         output_dir = create_unique_output_directory(
             base_dir=base_dir,
             workflow_type="parameter",
-            immediate=True,
         )
 
         assert isinstance(output_dir, Path)

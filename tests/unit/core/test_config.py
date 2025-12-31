@@ -32,9 +32,6 @@ class TestWorkflowConfig:
         # Check defaults
         assert config.openai_model == "gpt-5"
         assert config.reasoning_effort == "high"
-        assert config.batch_completion_window == "24h"
-        assert config.batch_timeout == 3600
-        assert config.poll_interval == 30
 
     def test_create_config_with_overrides(self, tmp_path):
         """Test creating config with custom values."""
@@ -46,12 +43,10 @@ class TestWorkflowConfig:
             storage_dir=storage_dir,
             openai_model="gpt-4",
             reasoning_effort="medium",
-            batch_timeout=7200,
         )
 
         assert config.openai_model == "gpt-4"
         assert config.reasoning_effort == "medium"
-        assert config.batch_timeout == 7200
 
     def test_paths_converted_to_path_objects(self, tmp_path):
         """Test that string paths are converted to Path objects."""
@@ -105,20 +100,6 @@ class TestWorkflowConfig:
             )
 
         assert "reasoning_effort" in str(exc_info.value)
-
-    def test_negative_timeout(self, tmp_path):
-        """Test validation of timeout values."""
-        base_dir = tmp_path / "workflows"
-        storage_dir = tmp_path / "storage"
-
-        with pytest.raises(ValidationError) as exc_info:
-            WorkflowConfig(
-                base_dir=base_dir,
-                storage_dir=storage_dir,
-                batch_timeout=-100,
-            )
-
-        assert "batch_timeout" in str(exc_info.value)
 
     def test_config_immutable(self, tmp_path):
         """Test that config is immutable after creation."""
@@ -230,7 +211,6 @@ class TestWorkflowConfig:
 
         assert config.openai_model == "gpt-4"
         assert config.reasoning_effort == "low"
-        assert config.batch_timeout == 7200
 
     def test_to_dict(self, tmp_path):
         """Test converting config to dictionary."""
@@ -245,6 +225,5 @@ class TestWorkflowConfig:
         config_dict = config.model_dump()
 
         assert config_dict["openai_model"] == "gpt-5"
-        assert config_dict["batch_timeout"] == 3600
         # Paths should be serialized
         assert "base_dir" in config_dict

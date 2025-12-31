@@ -20,17 +20,14 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
         )
 
         assert context.input_csv == input_csv
         assert context.workflow_type == "parameter"
-        assert context.immediate is True
         assert context.config == config
         assert context.progress_callback is None
         assert context.batch_file is None
-        assert context.batch_id is None
         assert context.results_file is None
         assert context.output_directory is None
         assert context.file_count == 0
@@ -45,7 +42,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=False,
             config=config,
             progress_callback=callback,
         )
@@ -61,7 +57,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
             progress_callback=callback,
         )
@@ -78,7 +73,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
         )
 
@@ -93,7 +87,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
         )
 
@@ -111,7 +104,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
         )
 
@@ -126,7 +118,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=False,
             config=config,
         )
 
