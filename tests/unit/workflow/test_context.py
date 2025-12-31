@@ -27,7 +27,7 @@ class TestWorkflowContext:
         assert context.workflow_type == "parameter"
         assert context.config == config
         assert context.progress_callback is None
-        assert context.batch_file is None
+        assert context.preview_file is None
         assert context.results_file is None
         assert context.output_directory is None
         assert context.file_count == 0
@@ -122,14 +122,12 @@ class TestWorkflowContext:
         )
 
         # Simulate workflow steps modifying context
-        context.batch_file = tmp_path / "batch.jsonl"
-        context.batch_id = "batch_123"
+        context.preview_file = tmp_path / "preview.txt"
         context.results_file = tmp_path / "results.jsonl"
         context.output_directory = tmp_path / "output"
         context.file_count = 15
 
-        assert context.batch_file == tmp_path / "batch.jsonl"
-        assert context.batch_id == "batch_123"
+        assert context.preview_file == tmp_path / "preview.txt"
         assert context.results_file == tmp_path / "results.jsonl"
         assert context.output_directory == tmp_path / "output"
         assert context.file_count == 15

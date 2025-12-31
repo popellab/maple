@@ -14,24 +14,21 @@ source venv/bin/activate
 pip install -e .
 ```
 
-This gives you several CLI commands: `qsp-extract`, `qsp-validate`, `qsp-fix`, `qsp-enrich-csv`, `qsp-export-model`, and `qsp-batch-monitor`.
+This gives you several CLI commands: `qsp-extract`, `qsp-validate`, `qsp-enrich-csv`, and `qsp-export-model`.
 
 ## Usage
 
-The typical workflow is: prepare an input CSV describing what you need, run extraction, validate the results, and fix any issues.
+The typical workflow is: prepare an input CSV describing what you need, run extraction, and validate the results.
 
 ```bash
 # Extract parameter estimates from literature
-qsp-extract params.csv --type parameter --output-dir metadata-storage --immediate
+qsp-extract params.csv --type parameter --output-dir metadata-storage
 
 # Validate the outputs
 qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
-
-# Fix any validation failures
-qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --immediate
 ```
 
-The `--immediate` flag processes requests via the Responses API for faster turnaround. Without it, requests go through OpenAI's Batch API (cheaper but can take up to 24 hours).
+Extraction uses Pydantic AI to process requests via OpenAI's API.
 
 For detailed setup instructions including API key configuration and input CSV format, see [docs/automated_workflow.md](docs/automated_workflow.md).
 
@@ -47,9 +44,9 @@ Both types go through a 9-validator suite that checks schema compliance, verifie
 
 ```
 src/qsp_llm_workflows/
-├── core/       # Prompt assembly, batch creation, validation utilities
-├── prepare/    # CSV enrichment and batch request generation
-├── run/        # API upload and monitoring
+├── core/       # Prompt generation, workflow orchestration, validation utilities
+├── prepare/    # CSV enrichment and prompt generation
+├── run/        # API request processing
 ├── process/    # Result unpacking
 ├── validate/   # The 9 validators
 ├── cli/        # Command-line entry points

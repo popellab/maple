@@ -205,7 +205,7 @@ class TestWorkflowConfig:
         monkeypatch.setenv("QSP_STORAGE_DIR", str(tmp_path / "storage"))
         monkeypatch.setenv("QSP_MODEL", "gpt-4")
         monkeypatch.setenv("QSP_REASONING_EFFORT", "low")
-        monkeypatch.setenv("QSP_BATCH_TIMEOUT", "7200")
+        monkeypatch.setenv("QSP_WORKFLOW_TIMEOUT", "7200")
 
         config = WorkflowConfig.from_env()
 

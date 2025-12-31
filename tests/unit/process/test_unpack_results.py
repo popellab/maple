@@ -1,7 +1,7 @@
 """
 Unit tests for unpack_results module.
 
-Tests the unpacking logic for both batch and immediate mode responses.
+Tests the unpacking logic for extraction results.
 """
 
 import json
@@ -12,7 +12,7 @@ from qsp_llm_workflows.process.unpack_results import process_results, add_header
 
 
 class TestUnpackResults:
-    """Test unpacking of batch and immediate mode results."""
+    """Test unpacking of extraction results."""
 
     @pytest.fixture
     def output_dir(self, tmp_path):

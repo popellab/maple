@@ -101,7 +101,7 @@ class CreatePreviewStep(WorkflowStep):
             out.write("=" * 80 + "\n")
 
         # Set context fields (for compatibility with unpacker)
-        context.batch_file = preview_file
+        context.preview_file = preview_file
         context.file_count = len(prompts)
 
         context.report_progress(f"✓ Prompt preview created: {preview_file.name}")

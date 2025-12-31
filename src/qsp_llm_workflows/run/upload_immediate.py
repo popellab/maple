@@ -37,7 +37,7 @@ async def process_request(client, request, index, total, pydantic_model):
 
     print(f"Completed {index}/{total}: {request['custom_id']}")
 
-    # Format result to match batch output format
+    # Format result to match standard output format
     result = {
         "custom_id": request["custom_id"],
         "response": {"status_code": 200, "request_id": response.id, "body": response.model_dump()},

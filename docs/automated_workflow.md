@@ -1,6 +1,6 @@
 # Automated Extraction Workflow
 
-This guide walks you through extracting parameter estimates and test statistics from scientific literature using OpenAI's API. The workflow handles batch creation, API upload, monitoring, and result unpacking automatically—you just provide an input CSV and run one command.
+This guide walks you through extracting parameter estimates and test statistics from scientific literature using OpenAI's API via Pydantic AI. The workflow handles prompt generation, processing, and result unpacking automatically—you just provide an input CSV and run one command.
 
 ## First-Time Setup
 
@@ -42,7 +42,7 @@ The extraction needs context about your model. Start by exporting model definiti
 ```bash
 qsp-export-model \
   --matlab-model ../your-model-repo/scripts/model.m \
-  --output batch_jobs/input_data/model_definitions.json
+  --output jobs/input_data/model_definitions.json
 ```
 
 This also creates `species_units.json` with unit information for each model species.
@@ -58,9 +58,9 @@ k_C_death
 ```bash
 qsp-enrich-csv parameter \
   params.csv \
-  batch_jobs/input_data/model_definitions.json \
+  jobs/input_data/model_definitions.json \
   PDAC \
-  -o batch_jobs/input_data/enriched_params.csv
+  -o jobs/input_data/enriched_params.csv
 ```
 
 **For test statistics**, you write the `compute_test_statistic` function directly. This ensures the computation is exactly what you intend:
@@ -80,8 +80,8 @@ Then enrich with scenario context:
 qsp-enrich-csv test_statistic \
   test_stats.csv \
   scenario.yaml \
-  batch_jobs/input_data/species_units.json \
-  -o batch_jobs/input_data/enriched_test_stats.csv
+  jobs/input_data/species_units.json \
+  -o jobs/input_data/enriched_test_stats.csv
 ```
 
 The enrichment validates your code: it checks the function signature, verifies accessed species exist, and confirms the output has the right units.
@@ -90,15 +90,12 @@ The enrichment validates your code: it checks the function signature, verifies a
 
 ```bash
 qsp-extract \
-  batch_jobs/input_data/enriched_params.csv \
+  jobs/input_data/enriched_params.csv \
   --type parameter \
-  --output-dir ../your-model-repo/metadata-storage \
-  --immediate
+  --output-dir ../your-model-repo/metadata-storage
 ```
 
-The `--immediate` flag uses the Responses API for faster turnaround (minutes instead of hours). Without it, requests go through the Batch API, which is cheaper but can take up to 24 hours.
-
-The workflow creates batch requests, uploads them, monitors progress, and unpacks results to `metadata-storage/to-review/`.
+The workflow processes requests via Pydantic AI and unpacks results to `metadata-storage/to-review/`.
 
 ### Step 3: Validate
 
@@ -112,20 +109,12 @@ qsp-validate parameter_estimates \
 # For test statistics (needs species_units.json for unit checking)
 qsp-validate test_statistics \
   --dir ../your-model-repo/metadata-storage/to-review/test_statistics \
-  --species-units-file batch_jobs/input_data/species_units.json
+  --species-units-file jobs/input_data/species_units.json
 ```
 
 The suite runs 9 validators: schema compliance, code execution, DOI resolution, text snippet verification, source reference checks, value consistency, duplicate source detection, model output code validation, and automated snippet source verification.
 
-Results go to `validation-outputs/` as JSON files. If validation finds issues, you can fix them:
-
-```bash
-qsp-fix parameter_estimates \
-  --dir ../your-model-repo/metadata-storage/to-review/parameter_estimates \
-  --immediate
-```
-
-This sends failed files back to OpenAI with the error messages for correction.
+Results go to `validation-outputs/` as JSON files. If validation finds issues, review the JSON reports to understand what needs to be corrected.
 
 ### Step 4: Review and Approve
 
@@ -145,18 +134,16 @@ Delete rejected files or re-run extraction for them.
 
 ```bash
 qsp-extract input.csv --type parameter --output-dir path/to/storage
-qsp-extract input.csv --type test_statistic --output-dir path/to/storage --immediate
+qsp-extract input.csv --type test_statistic --output-dir path/to/storage
 qsp-validate parameter_estimates --dir path/to/files
-qsp-fix parameter_estimates --dir path/to/files --immediate
 ```
 
 **Options:**
 
 | Flag | What it does |
 |------|--------------|
-| `--immediate` | Use Responses API instead of Batch API (faster, costs more) |
-| `--timeout N` | Wait N seconds for batch completion (default: 3600) |
-| `--no-push` | Don't push the review branch to GitHub |
+| `--preview-prompts` | Preview prompts without sending to API |
+| `--reasoning-effort` | Set reasoning effort (low/medium/high, default: high) |
 
 ## Troubleshooting
 
@@ -164,11 +151,9 @@ qsp-fix parameter_estimates --dir path/to/files --immediate
 
 **"OPENAI_API_KEY not found"** — Create the `.env` file in the qsp-llm-workflows directory: `echo "OPENAI_API_KEY=sk-..." > .env`
 
-**Timeout errors** — Use `--immediate` for faster processing, or increase `--timeout` for large batches.
-
 **"Permission denied (publickey)"** — Your SSH keys aren't configured. Run `ssh-keygen -t ed25519` and add the public key to GitHub.
 
-**Validation failures** — Check `validation-outputs/*.json` for details. Use `qsp-fix` to automatically resubmit failures, or fix manually.
+**Validation failures** — Check `validation-outputs/*.json` for details on what needs to be corrected.
 
 ## File Locations
 
@@ -176,9 +161,9 @@ Workflow files are organized as:
 
 ```
 qsp-llm-workflows/
-├── batch_jobs/
+├── jobs/
 │   ├── input_data/           # Your enriched CSVs go here
-│   └── *.jsonl               # Batch request/response files (gitignored)
+│   └── *.jsonl               # Request/response files (gitignored)
 └── validation-outputs/       # Validation reports (gitignored)
 
 your-model-repo/

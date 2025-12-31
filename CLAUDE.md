@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This repository contains LLM workflow automation tools for extracting and validating quantitative systems pharmacology (QSP) metadata from scientific literature using OpenAI's batch API.
+This repository contains LLM workflow automation tools for extracting and validating quantitative systems pharmacology (QSP) metadata from scientific literature using Pydantic AI and OpenAI's API.
 
 **Supported Workflows:**
 - **Parameter extraction**: Extract parameter values, ranges, and statistical distributions with detailed literature tracking
@@ -166,7 +166,7 @@ This creates an enriched CSV with:
 
 ### Automated Workflow (Step 2)
 
-**Single-command automated extraction** - Handles batch creation, upload, monitoring, and unpacking:
+**Single-command automated extraction** - Handles prompt generation, processing, and unpacking:
 
 ```bash
 # Parameter extraction (complete pipeline)
@@ -183,11 +183,10 @@ qsp-extract input.csv --type parameter --output-dir metadata-storage --immediate
 ```
 
 **What the automated workflow does:**
-1. Creates batch requests
-2. Uploads to OpenAI API
-3. Polls until completion (shows progress)
-4. Unpacks results to `<output-dir>/to-review/`
-5. Prints summary with next steps
+1. Generates prompts from input CSV
+2. Processes requests via Pydantic AI (shows progress)
+3. Unpacks results to `<output-dir>/to-review/`
+4. Prints summary with next steps
 
 **After workflow completes, manually run validation:**
 ```bash
@@ -244,9 +243,6 @@ validation:
 ### Other CLI Commands
 
 ```bash
-# Monitor batch job progress
-qsp-batch-monitor batch_abc123
-
 # Export model definitions (from MATLAB script or SimBiology project)
 qsp-export-model --matlab-model model.m --output defs.json
 qsp-export-model --simbiology-project model.sbproj --output defs.json
@@ -263,7 +259,7 @@ qsp-llm-workflows/
 │       ├── __init__.py              # Package version, public API
 │       │
 │       ├── core/                     # Core libraries
-│       │   ├── batch_creator.py     # Base classes for batch creation
+│       │   ├── prompt_builder.py    # Prompt generation
 │       │   ├── prompt_assembly.py   # Modular prompt assembly engine
 │       │   ├── workflow_orchestrator.py  # Workflow automation
 │       │   ├── parameter_utils.py   # Parameter processing
@@ -274,16 +270,14 @@ qsp-llm-workflows/
 │       │   ├── hash_utils.py        # Hashing utilities
 │       │   └── schema_version_detector.py
 │       │
-│       ├── prepare/                  # Batch preparation
-│       │   ├── create_parameter_batch.py
-│       │   ├── create_test_statistic_batch.py
+│       ├── prepare/                  # Prompt generation
+│       │   ├── create_parameter_prompts.py
+│       │   ├── create_test_statistic_prompts.py
 │       │   ├── enrich_parameter_csv.py
 │       │   └── enrich_test_statistic_csv.py
 │       │
-│       ├── run/                      # Batch execution
-│       │   ├── upload_batch.py
-│       │   ├── upload_immediate.py
-│       │   └── batch_monitor.py
+│       ├── run/                      # Request processing
+│       │   └── upload_immediate.py
 │       │
 │       ├── process/                  # Result processing
 │       │   └── unpack_results.py
@@ -303,8 +297,7 @@ qsp-llm-workflows/
 │       │   ├── extract.py           # qsp-extract
 │       │   ├── validate.py          # qsp-validate
 │       │   ├── enrich.py            # qsp-enrich-csv
-│       │   ├── export_model.py      # qsp-export-model
-│       │   └── monitor.py           # qsp-batch-monitor
+│       │   └── export_model.py      # qsp-export-model
 │       │
 │       ├── templates/                # YAML templates (package data)
 │       │   ├── parameter_metadata_template.yaml
@@ -332,14 +325,14 @@ The package uses a generalized prompt assembly system that builds prompts from m
 - **Prompts** (`prompts/`): Base prompt files with placeholders
 - **Templates** (`templates/`): YAML templates and examples
 - **Configs** (`templates/configs/`): Configuration for prompt assembly
-- **Core** (`core/`): Core libraries (batch creation, prompt assembly, workflow orchestration)
+- **Core** (`core/`): Core libraries (prompt generation, workflow orchestration)
 
 ### Data Flow
 
 **Parameter Extraction Workflow:**
 1. **CSV Enrichment**: Simple CSV (parameter names) + model definitions JSON → enriched CSV
-2. **Batch Creation**: System generates batch requests with prompts and context
-3. **LLM Processing**: OpenAI API processes requests and creates structured YAML outputs
+2. **Prompt Generation**: System generates prompts with model context
+3. **LLM Processing**: Pydantic AI processes requests and creates structured YAML outputs
 4. **Unpacking**: Results unpacked to `<output-dir>/to-review/parameter_estimates/`
 5. **Validation**: Automated validation suite checks quality and completeness
 
@@ -351,7 +344,7 @@ The package uses a generalized prompt assembly system that builds prompts from m
      - Validated (all accessed species exist in model)
      - Executed with Pint-wrapped mock data
      - Verified to return correct unit dimensionality
-3. **Batch Creation**: System generates prompts with full context
+3. **Prompt Generation**: System generates prompts with full context
 4. **LLM Processing**: LLM extracts literature values matching the user-defined test statistic
 5. **Unpacking**: Results unpacked to `<output-dir>/to-review/test_statistics/`
 6. **Aggregation**: Distributions pooled using inverse-variance weighting
@@ -399,7 +392,7 @@ ratio.to(ureg.dimensionless)
 - **Resource Management**: Uses `importlib.resources` for robust template/prompt access
 - **No sys.path manipulation**: Clean imports throughout
 - **Library code is library code**: Validation scripts are imported, not called via subprocess
-- **Class-based**: Batch creators inherit from `BatchCreator` base class
+- **Class-based**: Prompt builders inherit from `PromptBuilder` base class
 
 **Code Standards:**
 - **No backward compatibility**: Use clean, modern interfaces without legacy support

@@ -2,7 +2,7 @@
 """
 Direct immediate mode processing via Pydantic AI.
 
-Processes CSV rows directly without creating intermediate batch files.
+Processes CSV rows directly using Pydantic AI.
 Uses Pydantic AI with tool calling for structured outputs (supports discriminated unions).
 """
 
@@ -159,12 +159,12 @@ class ImmediateRequestProcessor:
             reasoning_effort: Reasoning effort level
 
         Returns:
-            List of results in batch-compatible format
+            List of results in standard format
         """
         # Get species_units_file for calibration targets
         species_units_file = None
         if workflow_type == "calibration_target":
-            species_units_file = self.base_dir / "batch_jobs" / "input_data" / "species_units.json"
+            species_units_file = self.base_dir / "jobs" / "input_data" / "species_units.json"
 
         # Generate prompts using prompt builder (DRY principle)
         prompts = self.get_prompts(input_csv, workflow_type, species_units_file, reasoning_effort)
@@ -204,7 +204,7 @@ class ImmediateRequestProcessor:
             reasoning_effort: Reasoning effort level
 
         Returns:
-            List of results in batch-compatible format
+            List of results in standard format
         """
         return asyncio.run(
             self.process_all_requests(input_csv, workflow_type, progress_callback, reasoning_effort)

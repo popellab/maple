@@ -7,7 +7,7 @@ Create a new CLI command that uses Claude Code in headless mode to:
 2. Run automated validation and intelligently address failures
 3. Recommend prompt improvements based on patterns observed
 
-This replaces the simpler `qsp-fix` workflow with a more intelligent, Claude-powered review process.
+This provides an intelligent, Claude-powered review process for extraction quality assurance.
 
 ## User Decisions
 
@@ -287,9 +287,8 @@ Recommendations saved to: review_recommendations.md
 2. Integration test with a sample YAML file
 3. Test each phase independently
 
-## Migration from qsp-fix
+## Workflow Integration
 
-`qsp-fix` remains available for batch fixing without Claude Code.
-`qsp-review` is the recommended path for quality-focused, interactive review.
+`qsp-review` provides quality-focused, interactive review with Claude Code assistance.
 
-Document both in automated_workflow.md with guidance on when to use each.
+Document in automated_workflow.md as the recommended approach for reviewing extractions.

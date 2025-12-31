@@ -34,16 +34,16 @@ class WorkflowResult:
         """
         self.workflow_type = context.workflow_type
         self.input_csv = str(context.input_csv) if context.input_csv else None
-        self.batch_file = str(context.batch_file) if context.batch_file else None
+        self.preview_file = str(context.preview_file) if context.preview_file else None
         self.results_file = str(context.results_file) if context.results_file else None
 
         # In preview mode, output_directory is the preview file path
         # In normal mode, output_directory is the unpacked results directory
         if context.get_metadata("preview_prompts", False):
-            self.output_directory = str(context.batch_file) if context.batch_file else None
+            self.output_directory = str(context.preview_file) if context.preview_file else None
             # Count requests in preview file
-            if context.batch_file and context.batch_file.exists():
-                with open(context.batch_file) as f:
+            if context.preview_file and context.preview_file.exists():
+                with open(context.preview_file) as f:
                     self.file_count = sum(1 for _ in f)
             else:
                 self.file_count = 0
@@ -110,7 +110,7 @@ class WorkflowOrchestrator:
         """
         Run complete extraction workflow from start to finish.
 
-        Uses Pydantic AI for direct processing (no batch mode).
+        Uses Pydantic AI for direct processing.
 
         Args:
             input_csv: Path to input CSV file
@@ -137,9 +137,6 @@ class WorkflowOrchestrator:
                 openai_api_key=config.openai_api_key,
                 openai_model=config.openai_model,
                 reasoning_effort=reasoning_effort,
-                batch_completion_window=config.batch_completion_window,
-                batch_timeout=config.batch_timeout,
-                poll_interval=config.poll_interval,
             )
 
         # Create workflow context

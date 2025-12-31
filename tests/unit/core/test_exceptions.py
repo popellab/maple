@@ -25,12 +25,12 @@ class TestWorkflowException:
 
     def test_create_exception_with_context(self):
         """Test creating exception with context dict."""
-        context = {"batch_id": "batch_123", "step": "upload"}
+        context = {"request_id": "req_123", "step": "upload"}
         exc = WorkflowException("Upload failed", context=context)
 
         assert str(exc) == "Upload failed"
         assert exc.context == context
-        assert exc.context["batch_id"] == "batch_123"
+        assert exc.context["request_id"] == "req_123"
 
     def test_exception_inheritance(self):
         """Test that all custom exceptions inherit from WorkflowException."""

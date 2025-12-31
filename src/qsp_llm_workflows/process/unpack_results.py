@@ -101,7 +101,7 @@ def generate_derivation_id(
 
 
 def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> dict:
-    """Add header fields to JSON data based on batch type."""
+    """Add header fields to JSON data based on workflow type."""
     if workflow_type == "calibration_target":
         # Calibration targets have their own header structure
         json_data["calibration_target_id"] = metadata["calibration_target_id"]
@@ -235,7 +235,7 @@ def convert_to_yaml(json_data: dict) -> str:
 
 def parse_custom_id(custom_id: str) -> Tuple[str, str, str]:
     """
-    Parse custom_id to determine batch type and extract identifiers.
+    Parse custom_id to determine workflow type and extract identifiers.
 
     Returns: (workflow_type, cancer_type, identifier)
     """

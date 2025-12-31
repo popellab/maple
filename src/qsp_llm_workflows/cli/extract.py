@@ -54,7 +54,7 @@ Examples:
     parser.add_argument(
         "--preview-prompts",
         action="store_true",
-        help="Preview prompts without sending to API (saves preview file to batch_jobs/)",
+        help="Preview prompts without sending to API (saves preview file to jobs/)",
     )
 
     args = parser.parse_args()

@@ -1,0 +1,335 @@
+schema_version: v3
+parameter_name: k_C1_death
+parameter_units: 1/day
+parameter_definition: Cancer death rate
+cancer_type: PDAC
+tags:
+- ai-generated
+derivation_id: k_C1_death_PDAC_72aa14b0_deriv001
+derivation_timestamp: '2025-11-21T14:15:11.107402'
+model_context:
+  derived_from_context:
+  - name: k_C1_death
+    description: Cancer death rate
+  reactions_and_rules:
+  - reaction: ''
+    reaction_rate: ''
+    rule: R_Tcell = 0*cell/day+(k_C1_death+k_C1_therapy)*V_T.C1+k_C_Tcell_eff*V_T.C1+k_M1_phago*V_T.C1*V_T.Mac_M1/(V_T.Mac_M1+K_Mac_C*C_total+cell)*(1-H_Mac_C)*(1-H_IL10_phago)
+    rule_type: repeatedAssignment
+    other_parameters:
+    - name: cell
+      description: unit parameter for calculation
+    - name: day
+      description: unit parameter for calculation
+    - name: C_total
+      description: Total number of cancer cells
+    - name: R_Tcell
+      description: Rate of cancer cell death
+    - name: k_C1_therapy
+      description: Therapy-induced death rate
+    - name: k_C_Tcell_eff
+      description: Effective T cell killing rate including all inhibition factors
+    - name: k_M1_phago
+      description: 'Rate of M1 macrophage-mediated killing of cancer cell '
+    - name: H_Mac_C
+      description: 'Hill function for overall checkpoint inhibition on phagocytosis of cancer cell by macrophage '
+    - name: K_Mac_C
+      description: 'Association coefficient for macrophage and cancer cell '
+    - name: H_IL10_phago
+      description: 'Hill function for IL10-mediated inhibition on phagocytosis '
+    other_species:
+    - name: V_T.C1
+      description: Number of cancer cells in tumor
+    - name: V_T.Mac_M1
+      description: Number of M1 macrophage in the tumor compartment
+    - name: V_T
+      description: Tumor compartment (T) volume
+  - reaction: V_T.C1 -> V_T.C_x
+    reaction_rate: k_C1_death*V_T.C1
+    rule: ''
+    rule_type: ''
+    other_parameters: []
+    other_species:
+    - name: V_T.C1
+      description: Number of cancer cells in tumor
+    - name: V_T.C_x
+      description: Dead cancer cells in the tumour compartment
+    - name: V_T
+      description: Tumor compartment (T) volume
+  - reaction: null -> V_T.P0
+    reaction_rate: n_Treg_clones*(P0_C1*(k_C1_death+k_C1_therapy)*C1+P0_C1*0*cell/day)
+    rule: ''
+    rule_type: ''
+    other_parameters:
+    - name: cell
+      description: unit parameter for calculation
+    - name: day
+      description: unit parameter for calculation
+    - name: k_C1_therapy
+      description: Therapy-induced death rate
+    - name: n_Treg_clones
+      description: 'Number of self-antigen-specific T cell clones '
+    - name: P0_C1
+      description: Concentration of P0 in C1
+    other_species:
+    - name: V_T.C1
+      description: Number of cancer cells in tumor
+    - name: V_T.P0
+      description: Concentration of  free antigen (P0) in the LN compartment
+    - name: V_T
+      description: Tumor compartment (T) volume
+  - reaction: null -> V_T.P1
+    reaction_rate: n_CD8_clones*(P1_C1*(k_C1_death+k_C1_therapy)*C1+P1_C1*0*cell/day)
+    rule: ''
+    rule_type: ''
+    other_parameters:
+    - name: cell
+      description: unit parameter for calculation
+    - name: day
+      description: unit parameter for calculation
+    - name: k_C1_therapy
+      description: Therapy-induced death rate
+    - name: n_CD8_clones
+      description: 'Number of tumor-specific T cell clones '
+    - name: P1_C1
+      description: Concentration of P1 in C1
+    other_species:
+    - name: V_T.C1
+      description: Number of cancer cells in tumor
+    - name: V_T.P1
+      description: Concentration of  free antigen (P1) in the LN compartment
+    - name: V_T
+      description: Tumor compartment (T) volume
+context_hash: 72aa14b0
+mathematical_role: First-order per-capita death rate constant for tumor cells (C1) used to model spontaneous cancer cell loss in the tumor compartment.
+parameter_range: positive_reals
+study_overview: We estimate the baseline spontaneous cancer death rate in PDAC by converting the apoptotic index (fraction of TUNEL-positive tumor cells) measured in resected human tumors into a per‑day rate using the duration (‘clearance time’) that apoptotic nuclei remain TUNEL-positive. Primary PDAC cohorts provide apoptotic index (%), and a methodological study provides a 2–3 h TUNEL-positivity window to convert percentage to 1/day rates.
+study_design: Primary data come from immunohistochemistry/TUNEL on human PDAC resections reporting apoptosis index as a percentage of tumor cells. We combine two independent cohorts (n=52 and n=26 PDACs) and propagate uncertainty from the index measurements and from the TUNEL clearance time to derive k_C1_death via Monte Carlo simulation. citeturn6search0turn15view0turn14search1
+parameter_estimates:
+  inputs:
+  - name: AI_Sarela_mean_pct
+    value: 1.38
+    units: '%'
+    description: Mean apoptotic index (TUNEL) in pancreatic adenocarcinoma
+    source_ref: Sarela2002_BJC
+    value_table_or_section: Abstract
+    value_snippet: apoptosis index was 1.38±0.69%.
+    units_table_or_section: Abstract
+    units_snippet: '%'
+  - name: AI_Sarela_sd_pct
+    value: 0.69
+    units: '%'
+    description: Standard deviation of apoptotic index
+    source_ref: Sarela2002_BJC
+    value_table_or_section: Abstract
+    value_snippet: apoptosis index was 1.38±0.69%.
+    units_table_or_section: Abstract
+    units_snippet: '%'
+  - name: AI_Sarela_N_cases
+    value: 52
+    units: cases
+    description: Number of pancreatic adenocarcinomas assessed
+    source_ref: Sarela2002_BJC
+    value_table_or_section: Abstract
+    value_snippet: Immunohistochemistry ... was conducted on 52 pancreatic and 12 ampullary adenocarcinomas.
+    units_table_or_section: Abstract
+    units_snippet: pancreatic ... adenocarcinomas
+  - name: AI_Satoh_highSurvivin_mean_pct
+    value: 0.445
+    units: '%'
+    description: Mean apoptotic index in PDC with high survivin expression
+    source_ref: Satoh2001_Cancer
+    value_table_or_section: Abstract
+    value_snippet: (0.445% +/- 0.150% vs. 0.961% +/- 0.378%; P < 0.0001).
+    units_table_or_section: Abstract
+    units_snippet: '%'
+  - name: AI_Satoh_highSurvivin_sd_pct
+    value: 0.15
+    units: '%'
+    description: Standard deviation for high survivin group
+    source_ref: Satoh2001_Cancer
+    value_table_or_section: Abstract
+    value_snippet: (0.445% +/- 0.150% vs. 0.961% +/- 0.378%; P < 0.0001).
+    units_table_or_section: Abstract
+    units_snippet: '%'
+  - name: AI_Satoh_lowSurvivin_mean_pct
+    value: 0.961
+    units: '%'
+    description: Mean apoptotic index in PDC with low survivin expression
+    source_ref: Satoh2001_Cancer
+    value_table_or_section: Abstract
+    value_snippet: 0.961% +/- 0.378%
+    units_table_or_section: Abstract
+    units_snippet: '%'
+  - name: AI_Satoh_lowSurvivin_sd_pct
+    value: 0.378
+    units: '%'
+    description: Standard deviation for low survivin group
+    source_ref: Satoh2001_Cancer
+    value_table_or_section: Abstract
+    value_snippet: 0.961% +/- 0.378%
+    units_table_or_section: Abstract
+    units_snippet: '%'
+  - name: AI_Satoh_PDC_N_cases
+    value: 26
+    units: cases
+    description: Total number of PDC cases in the Satoh cohort
+    source_ref: Satoh2001_Cancer
+    value_table_or_section: Abstract
+    value_snippet: Survivin expression was observed in 20 of 26 cases of PDC (76.9%)
+    units_table_or_section: Abstract
+    units_snippet: cases
+  - name: TUNEL_clearance_central_hours
+    value: 2.3333333333
+    units: hour
+    description: Central estimate of TUNEL-positive nuclear clearance time (2 h 20 min)
+    source_ref: Thomaidou1997_JNeurosci
+    value_table_or_section: Results
+    value_snippet: the clearance time of TUNEL-positive nuclei was 2 hr and 20 min.
+    units_table_or_section: Results
+    units_snippet: hr ... min
+  - name: TUNEL_clearance_min_hours
+    value: 2.0
+    units: hour
+    description: Lower bound of TUNEL positivity window used for uncertainty (uniform prior)
+    source_ref: Thomaidou1997_JNeurosci
+    value_table_or_section: Results/Discussion
+    value_snippet: the clearance time of TUNEL-positive cells ... is on average 2–3 hr
+    units_table_or_section: Results/Discussion
+    units_snippet: hr
+  - name: TUNEL_clearance_max_hours
+    value: 3.0
+    units: hour
+    description: Upper bound of TUNEL positivity window used for uncertainty (uniform prior)
+    source_ref: Thomaidou1997_JNeurosci
+    value_table_or_section: Results/Discussion
+    value_snippet: the clearance time of TUNEL-positive cells ... is on average 2–3 hr
+    units_table_or_section: Results/Discussion
+    units_snippet: hr
+  derivation_code: |
+    import math, random
+
+    def _trunc_norm(mean, sd, lower, upper):
+        # simple rejection sampler for truncated normal
+        while True:
+            x = random.gauss(mean, sd)
+            if lower <= x <= upper:
+                return x
+
+    def derive_parameter(inputs):
+        # map inputs
+        iv = {d['name']: d['value'] for d in inputs}
+        # Apoptotic index distributions (percent)
+        studies = [
+            {'mean': iv['AI_Sarela_mean_pct'], 'sd': iv['AI_Sarela_sd_pct']},
+            {'mean': iv['AI_Satoh_lowSurvivin_mean_pct'], 'sd': iv['AI_Satoh_lowSurvivin_sd_pct']},
+            {'mean': iv['AI_Satoh_highSurvivin_mean_pct'], 'sd': iv['AI_Satoh_highSurvivin_sd_pct']}
+        ]
+        # TUNEL clearance time (hours) modeled as triangular around central within [min,max]
+        t_min = iv['TUNEL_clearance_min_hours']
+        t_mode = iv['TUNEL_clearance_central_hours']
+        t_max = iv['TUNEL_clearance_max_hours']
+
+        # Monte Carlo settings (fixed for reproducibility if desired)
+        random.seed(2025)
+        n = 100000
+        ks = []
+        for _ in range(n):
+            s = random.choice(studies)
+            ai_pct = _trunc_norm(s['mean'], s['sd'], 0.0, 100.0)
+            t_hours = random.triangular(t_min, t_max, t_mode)
+            t_days = t_hours / 24.0
+            # Convert % to fraction, then divide by time-window to get rate per day
+            k = (ai_pct / 100.0) / t_days
+            ks.append(k)
+        ks.sort()
+        def pct(q):
+            idx = int(q*(n-1))
+            return ks[idx]
+        median = pct(0.5)
+        q1 = pct(0.25)
+        q3 = pct(0.75)
+        iqr = q3 - q1
+        ci95 = [pct(0.025), pct(0.975)]
+        return {'median_param': median, 'iqr_param': iqr, 'ci95_param': ci95}
+  median: 0.095
+  iqr: 0.067
+  ci95:
+  - 0.02
+  - 0.24
+  units: 1/day
+key_assumptions:
+- number: 1
+  text: Apoptotic index (AI) measured by TUNEL on resected PDAC approximates the steady‑state fraction of tumor cells in apoptosis, so the per‑cell death rate equals AI divided by the duration that apoptotic nuclei remain TUNEL‑positive (clearance time).
+- number: 2
+  text: The clearance time for TUNEL‑positive tumor cells in PDAC is similar in magnitude to mammalian tissues where it has been measured (~2–3 h), and we model it with a broad triangular distribution between 2 and 3 h centered at 2 h 20 min to reflect method- and tissue‑dependence.
+- number: 3
+  text: Reported AI values (means±SD) from independent PDAC cohorts can be treated as truncated normal measurements representing between-tumor variability; lacking raw data, equal mixture weighting is used to avoid assuming group sizes for survivin strata.
+- number: 4
+  text: Spontaneous apoptosis measured ex vivo on surgical specimens reflects in vivo baseline death in untreated PDAC and is not materially biased by perioperative factors or pre-analytic handling.
+- number: 5
+  text: Cancer-cell death is modeled as first‑order (per-capita) over the time scale relevant to the QSP model, ignoring spatial intratumoral heterogeneity in apoptosis.
+derivation_explanation: |-
+  1) Extract apoptotic index (%) from two primary PDAC cohorts: Sarela et al. report “apoptosis index was 1.38±0.69%,” and Satoh et al. report 0.445±0.150% (high survivin) and 0.961±0.378% (low survivin). We model each as a truncated normal distribution on [0,100]. citeturn6search0turn15view0
+
+  2) Convert AI (%) to a death rate by dividing by the time a nucleus remains TUNEL-positive. Thomaidou et al. measured a “clearance time of TUNEL-positive nuclei” of 2 h 20 min and state it is “on average 2–3 hr,” which we encode as a triangular distribution with min=2 h, mode=2.33 h, max=3 h. ASSUMPTION 1 and 2. citeturn14search1
+
+  3) For each Monte Carlo draw, randomly choose one study (equal weights; ASSUMPTION 3), sample AI from its truncated normal, sample a clearance time from the triangular distribution, convert hours to days, and compute k = (AI/100)/T_days (units 1/day). ASSUMPTION 5.
+
+  4) Repeat for 100,000 draws with a fixed seed for reproducibility, then report robust statistics: median, IQR (Q3−Q1), and 95% interval (2.5th–97.5th percentiles). This propagates uncertainty from both AI and clearance time (ASSUMPTION 2–3) without relying on parametric asymptotics.
+
+  5) The resulting distribution centers near 0.1 1/day, consistent with PDAC AIs around 0.4–1.4% and a ~2–3 h TUNEL window; higher/lower tails arise from cohort differences and clearance time variability. ASSUMPTION 4.
+key_study_limitations: |-
+  - TUNEL positivity window was quantified in non-PDAC tissue; although widely used, its generalization to PDAC is uncertain and likely method-dependent, directly affecting k (systematic scaling risk). citeturn14search1turn12search2
+  - AI is a cross‑sectional snapshot and may miss temporal fluctuations or regional intratumoral heterogeneity; sampling bias in resection specimens could misestimate average apoptosis.
+  - Satoh et al. provide subgroup AIs by survivin expression without group sizes; equal‑weight mixture may over/under‑represent extreme phenotypes (survivin‑high tumors). citeturn15view0
+  - TUNEL detects DNA fragmentation and can label some non‑apoptotic death modalities; conversely, very rapid clearance can undercount apoptosis, biasing AI low. citeturn12search1
+primary_data_sources:
+- source_tag: Sarela2002_BJC
+  title: Expression of survivin, a novel inhibitor of apoptosis and cell cycle regulatory protein, in pancreatic adenocarcinoma
+  first_author: Sarela
+  year: 2002
+  doi: 10.1038/sj.bjc.6600133
+- source_tag: Satoh2001_Cancer
+  title: Expression of survivin is correlated with cancer cell apoptosis and is involved in the development of human pancreatic duct cell tumors
+  first_author: Satoh
+  year: 2001
+  doi: 10.1002/1097-0142(20010715)92:2<271::AID-CNCR1319>3.0.CO;2-0
+secondary_data_sources: []
+methodological_sources:
+- source_tag: Thomaidou1997_JNeurosci
+  title: Apoptosis and Its Relation to the Cell Cycle in the Developing Cerebral Cortex
+  first_author: Thomaidou
+  year: 1997
+  doi_or_url: 10.1523/JNEUROSCI.17-03-01075.1997
+  used_for: Clearance time (2–3 h) of TUNEL-positive nuclei and justification that clearance time can be used to convert apoptotic index to a rate.
+  method_description: Estimated TUNEL-positive nuclear clearance as 2 h 20 min and noted an average window of 2–3 h; explains using clearance time to infer total cell death over a period from snapshot counts.
+- source_tag: Darzynkiewicz2012_Cytometry
+  title: 'Apoptosis and Beyond: Cytometry in Studies of Programmed Cell Death'
+  first_author: Darzynkiewicz
+  year: 2012
+  doi_or_url: https://pmc.ncbi.nlm.nih.gov/articles/PMC3263828/
+  used_for: Motivation to model uncertainty in the duration of detectable apoptotic features (short, method-dependent time window).
+  method_description: Reviews that apoptosis has a short, variable detection time-window depending on marker/method; supports treating clearance time as uncertain when converting AI to a rate.
+biological_relevance:
+  species_match:
+    value: 1.0
+    justification: Primary measurements are from human PDAC tissues (resected tumors). citeturn6search0turn15view0
+  system_match:
+    value: 0.85
+    justification: Ex vivo histology on human tumor resections (not in vivo longitudinal tracking).
+  overall_confidence:
+    value: 0.75
+    justification: Two independent cohorts with quantitative AIs and a well-documented TUNEL time-window, but clearance time extrapolated from non-PDAC tissue and subgroup sizes unknown.
+  indication_match:
+    value: 1.0
+    justification: Exact target indication (pancreatic ductal adenocarcinoma). citeturn6search0turn15view0
+  regimen_match:
+    value: 1.0
+    justification: Untreated baseline tumors; parameter represents spontaneous death rate (no therapy).
+  biomarker_population_match:
+    value: 0.65
+    justification: Cohorts include mixed PDAC biomarker states (e.g., survivin strata) rather than a defined biomarker-matched subset. citeturn15view0
+  stage_burden_match:
+    value: 0.85
+    justification: Resected PDAC (often stage I–II) approximates but may not fully represent metastatic disease used in some models.

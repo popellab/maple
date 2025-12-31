@@ -188,7 +188,7 @@ class ScientificReviewer:
         if review_result is None:
             return False, None
 
-        # Determine pass/fail (CONCERNs count as not passed in batch mode)
+        # Determine pass/fail (CONCERNs count as not passed)
         overall = review_result.get("overall", "FAIL")
         passed = overall == "PASS"
 
