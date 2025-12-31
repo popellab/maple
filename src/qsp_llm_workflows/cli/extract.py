@@ -69,6 +69,12 @@ Examples:
         help="Preview prompts without sending to API (saves to batch_jobs/prompt_preview.jsonl)",
     )
 
+    parser.add_argument(
+        "--use-pydantic-ai",
+        action="store_true",
+        help="Use Pydantic AI for structured outputs (supports discriminated unions, immediate mode only)",
+    )
+
     args = parser.parse_args()
 
     # Validate input file
@@ -96,6 +102,11 @@ Examples:
     # Create orchestrator
     orchestrator = WorkflowOrchestrator(config)
 
+    # Validate Pydantic AI flag
+    if args.use_pydantic_ai and not args.immediate:
+        print("Error: --use-pydantic-ai requires --immediate mode", file=sys.stderr)
+        sys.exit(1)
+
     try:
         # Run workflow
         if args.preview_prompts:
@@ -104,6 +115,8 @@ Examples:
         else:
             print(f"\nStarting {args.type} extraction workflow...")
         print(f"Mode: {'immediate' if args.immediate else 'batch'}")
+        if args.use_pydantic_ai:
+            print("Using: Pydantic AI (supports discriminated unions)")
         print(f"Input: {args.input_csv}")
         print(f"Reasoning effort: {args.reasoning_effort}")
         print()
@@ -116,6 +129,7 @@ Examples:
             reasoning_effort=args.reasoning_effort,
             progress_callback=print_progress,
             preview_prompts=args.preview_prompts,
+            use_pydantic_ai=args.use_pydantic_ai,
         )
 
         # Print summary

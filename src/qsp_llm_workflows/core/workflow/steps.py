@@ -436,11 +436,16 @@ class ProcessImmediateStep(WorkflowStep):
         return "Process Immediate"
 
     def execute(self, context: WorkflowContext) -> WorkflowContext:
-        """Process requests directly via Responses API."""
+        """Process requests directly via Responses API or Pydantic AI."""
         try:
+            # Check if Pydantic AI mode is enabled (default: False)
+            use_pydantic_ai = context.get_metadata("use_pydantic_ai", False)
+
             # Create immediate processor
             processor = ImmediateRequestProcessor(
-                context.config.base_dir, context.config.openai_api_key
+                context.config.base_dir,
+                context.config.openai_api_key,
+                use_pydantic_ai=use_pydantic_ai,
             )
 
             # Process requests directly from CSV

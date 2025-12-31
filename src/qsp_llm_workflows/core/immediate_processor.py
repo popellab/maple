@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
 """
-Direct immediate mode processing via OpenAI Responses API.
+Direct immediate mode processing via OpenAI Responses API or Pydantic AI.
 
 Processes CSV rows directly without creating intermediate batch files.
+
+Two modes:
+- OpenAI Responses API (default): Direct API calls with response_format
+- Pydantic AI (optional): Uses tool calling for structured outputs, supports discriminated unions
 """
 
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
+
+try:
+    from pydantic_ai import Agent
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+    PYDANTIC_AI_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AI_AVAILABLE = False
 
 from qsp_llm_workflows.core.batch_creator import (
     ParameterBatchCreator,
@@ -23,19 +35,30 @@ from qsp_llm_workflows.core.calibration_target_models import CalibrationTarget
 
 
 class ImmediateRequestProcessor:
-    """Process extraction requests directly via Responses API."""
+    """Process extraction requests directly via OpenAI API or Pydantic AI."""
 
-    def __init__(self, base_dir: Path, api_key: str):
+    def __init__(self, base_dir: Path, api_key: str, use_pydantic_ai: bool = False):
         """
         Initialize immediate request processor.
 
         Args:
             base_dir: Base directory for prompt assembly
             api_key: OpenAI API key
+            use_pydantic_ai: Use Pydantic AI instead of direct OpenAI API (default: False)
         """
         self.base_dir = Path(base_dir)
         self.api_key = api_key
-        self.client = AsyncOpenAI(api_key=api_key)
+        self.use_pydantic_ai = use_pydantic_ai
+
+        # Validate Pydantic AI availability if requested
+        if use_pydantic_ai and not PYDANTIC_AI_AVAILABLE:
+            raise ImportError(
+                "Pydantic AI requested but not available. " "Install with: pip install pydantic-ai"
+            )
+
+        # Initialize OpenAI client (for non-Pydantic AI mode)
+        if not use_pydantic_ai:
+            self.client = AsyncOpenAI(api_key=api_key)
 
         # Initialize batch creators for prompt building (DRY principle)
         self.parameter_creator = ParameterBatchCreator(base_dir)
@@ -127,17 +150,29 @@ class ImmediateRequestProcessor:
             # Get Pydantic model
             pydantic_model = self.get_pydantic_model(workflow_type)
 
-            # Call Responses API with structured outputs
-            response = await self.client.responses.parse(
-                model="gpt-5.2",
-                input=prompt,
-                reasoning={"effort": reasoning_effort},
-                tools=[{"type": "web_search"}],
-                text_format=pydantic_model,
-            )
+            if self.use_pydantic_ai:
+                # Use Pydantic AI (supports discriminated unions via tool calling)
 
-            # Use output_parsed and convert to dict
-            parsed_data = response.output_parsed.model_dump()
+                model = OpenAIResponsesModel("gpt-5.1")
+                settings = OpenAIResponsesModelSettings(openai_reasoning_effort=reasoning_effort)
+                agent = Agent(model, output_type=pydantic_model, model_settings=settings)
+
+                # Run agent with prompt
+                # Note: Pydantic AI doesn't yet support reasoning effort or web_search tools
+                result = await agent.run(prompt)
+                parsed_data = result.output.model_dump()
+                request_id = "pydantic_ai_" + custom_id
+            else:
+                # Use OpenAI Responses API (default)
+                response = await self.client.responses.parse(
+                    model="gpt-5.2",
+                    input=prompt,
+                    reasoning={"effort": reasoning_effort},
+                    tools=[{"type": "web_search"}],
+                    text_format=pydantic_model,
+                )
+                parsed_data = response.output_parsed.model_dump()
+                request_id = response.id
 
             if progress_callback:
                 progress_callback(f"  [{index + 1}] ✓ Completed {item_name}")
@@ -147,7 +182,7 @@ class ImmediateRequestProcessor:
                 "custom_id": custom_id,
                 "response": {
                     "status_code": 200,
-                    "request_id": response.id,
+                    "request_id": request_id,
                     "body": parsed_data,
                 },
                 "error": None,
