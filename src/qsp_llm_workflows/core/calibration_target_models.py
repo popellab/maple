@@ -444,6 +444,10 @@ class CalibrationTargetFooters(BaseModel):
 class CalibrationTargetEstimates(BaseModel):
     """Calibration target estimates with structured inputs and derivation."""
 
+    median: float = Field(description="Median value")
+    iqr: float = Field(description="Interquartile range")
+    ci95: List[float] = Field(description="95% confidence interval [lower, upper]")
+    units: str = Field(description="Units of the observable")
     inputs: List[Input] = Field(description="List of inputs used in derivation")
     distribution_code: str = Field(
         description=(
@@ -466,10 +470,6 @@ class CalibrationTargetEstimates(BaseModel):
             "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
         )
     )
-    median: float = Field(description="Median value")
-    iqr: float = Field(description="Interquartile range")
-    ci95: List[float] = Field(description="95% confidence interval [lower, upper]")
-    units: str = Field(description="Units of the observable")
 
 
 class CalibrationTarget(BaseModel):
