@@ -2,7 +2,7 @@
 Unit tests for header management utilities.
 
 Tests the Pydantic-based header system including:
-- Header models (ParameterHeaders, TestStatisticHeaders)
+- Header models (ParameterFooters, TestStatisticFooters)
 - Split/merge methods on complete models
 - ModelRegistry
 - HeaderManager operations
@@ -15,9 +15,9 @@ import pytest
 
 from qsp_llm_workflows.core.pydantic_models import (
     ParameterMetadata,
-    ParameterHeaders,
+    ParameterFooters,
     TestStatistic,
-    TestStatisticHeaders,
+    TestStatisticFooters,
     ModelRegistry,
     Input,
     ParameterEstimates,
@@ -29,12 +29,12 @@ from qsp_llm_workflows.core.pydantic_models import (
 from qsp_llm_workflows.core.header_utils import HeaderManager
 
 
-class TestParameterHeaders:
-    """Test ParameterHeaders model."""
+class TestParameterFooters:
+    """Test ParameterFooters model."""
 
     def test_create_parameter_headers(self):
-        """Test creating ParameterHeaders instance."""
-        headers = ParameterHeaders(
+        """Test creating ParameterFooters instance."""
+        headers = ParameterFooters(
             parameter_name="k_growth",
             parameter_units="1/day",
             parameter_definition="Growth rate of cancer cells",
@@ -50,8 +50,8 @@ class TestParameterHeaders:
         assert "immediate_mode" in headers.tags
 
     def test_parameter_headers_model_dump(self):
-        """Test converting ParameterHeaders to dict."""
-        headers = ParameterHeaders(
+        """Test converting ParameterFooters to dict."""
+        headers = ParameterFooters(
             parameter_name="k_death",
             parameter_units="1/hour",
             parameter_definition="Death rate",
@@ -68,12 +68,12 @@ class TestParameterHeaders:
         assert data["derivation_id"] is None
 
 
-class TestTestStatisticHeaders:
-    """Test TestStatisticHeaders model."""
+class TestTestStatisticFooters:
+    """Test TestStatisticFooters model."""
 
     def test_create_test_statistic_headers(self):
-        """Test creating TestStatisticHeaders instance."""
-        headers = TestStatisticHeaders(
+        """Test creating TestStatisticFooters instance."""
+        headers = TestStatisticFooters(
             test_statistic_id="tumor_vol_day14",
             cancer_type="PDAC",
             output_unit="millimeter ** 3",
@@ -179,7 +179,7 @@ class TestParameterMetadataSplitMerge:
         # creates an instance with extra fields that aren't part of the model.
         # This test verifies the content fields are properly set.
 
-        headers = ParameterHeaders(
+        headers = ParameterFooters(
             parameter_name="k_growth",
             parameter_units="1/day",
             parameter_definition="Growth rate",
@@ -256,12 +256,12 @@ class TestModelRegistry:
     def test_get_header_model_for_parameter(self):
         """Test getting header model for ParameterMetadata."""
         header_class = ModelRegistry.get_header_model(ParameterMetadata)
-        assert header_class == ParameterHeaders
+        assert header_class == ParameterFooters
 
     def test_get_header_model_for_test_statistic(self):
         """Test getting header model for TestStatistic."""
         header_class = ModelRegistry.get_header_model(TestStatistic)
-        assert header_class == TestStatisticHeaders
+        assert header_class == TestStatisticFooters
 
     def test_get_header_model_unknown_raises(self):
         """Test that unknown model raises KeyError."""
@@ -348,7 +348,7 @@ class TestHeaderManager:
         """Test merging headers and content."""
         manager = HeaderManager()
 
-        headers = ParameterHeaders(
+        headers = ParameterFooters(
             parameter_name="k_death",
             parameter_units="1/hour",
             parameter_definition="Death rate",
@@ -419,7 +419,7 @@ class TestHeaderManager:
         try:
             headers = manager.extract_headers_from_yaml(yaml_path, ParameterMetadata)
 
-            assert isinstance(headers, ParameterHeaders)
+            assert isinstance(headers, ParameterFooters)
             assert headers.parameter_name == "k_test"
             assert headers.cancer_type == "PDAC"
             assert "test" in headers.tags
@@ -453,7 +453,7 @@ class TestHeaderManager:
             headers, content = manager.strip_headers_from_yaml(yaml_path, ParameterMetadata)
 
             # Check headers
-            assert isinstance(headers, ParameterHeaders)
+            assert isinstance(headers, ParameterFooters)
             assert headers.parameter_name == "k_test"
 
             # Check content
@@ -494,7 +494,7 @@ class TestHeaderManager:
         """Test merging headers and content to YAML file."""
         manager = HeaderManager()
 
-        headers = ParameterHeaders(
+        headers = ParameterFooters(
             parameter_name="k_output",
             parameter_units="1/day",
             parameter_definition="Output test",

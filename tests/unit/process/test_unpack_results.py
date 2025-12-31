@@ -8,7 +8,7 @@ import json
 import pytest
 import yaml
 
-from qsp_llm_workflows.process.unpack_results import process_results, add_header_fields
+from qsp_llm_workflows.process.unpack_results import process_results, add_footer_fields
 
 
 class TestUnpackResults:
@@ -178,11 +178,11 @@ biological_relevance:
         return yaml_file
 
 
-class TestTestStatisticHeaders:
+class TestTestStatisticFooters:
     """Test test statistic header handling including required_species."""
 
-    def test_add_header_fields_includes_required_species(self):
-        """Test that add_header_fields parses required_species to list."""
+    def test_add_footer_fields_includes_required_species(self):
+        """Test that add_footer_fields parses required_species to list."""
         json_data = {}
         metadata = {
             "test_statistic_id": "tumor_volume_day14",
@@ -193,7 +193,7 @@ class TestTestStatisticHeaders:
             "derived_species_description": "Tumor volume at day 14",
         }
 
-        result = add_header_fields(json_data, metadata, "test_statistic")
+        result = add_footer_fields(json_data, metadata, "test_statistic")
 
         # Check required_species is parsed to list
         assert "required_species" in result
@@ -206,7 +206,7 @@ class TestTestStatisticHeaders:
         # Check derived_species_description
         assert result["derived_species_description"] == "Tumor volume at day 14"
 
-    def test_add_header_fields_raises_error_for_empty_required_species(self):
+    def test_add_footer_fields_raises_error_for_empty_required_species(self):
         """Test that empty required_species raises ValueError."""
         json_data = {}
         metadata = {
@@ -217,9 +217,9 @@ class TestTestStatisticHeaders:
         }
 
         with pytest.raises(ValueError, match="required_species is required"):
-            add_header_fields(json_data, metadata, "test_statistic")
+            add_footer_fields(json_data, metadata, "test_statistic")
 
-    def test_add_header_fields_raises_error_for_empty_derived_species_description(self):
+    def test_add_footer_fields_raises_error_for_empty_derived_species_description(self):
         """Test that empty derived_species_description raises ValueError."""
         json_data = {}
         metadata = {
@@ -230,7 +230,7 @@ class TestTestStatisticHeaders:
         }
 
         with pytest.raises(ValueError, match="derived_species_description is required"):
-            add_header_fields(json_data, metadata, "test_statistic")
+            add_footer_fields(json_data, metadata, "test_statistic")
 
     def test_test_statistic_unpacking_with_required_species(self, tmp_path):
         """Test full unpacking of test statistic with required_species in header."""
@@ -309,11 +309,11 @@ class TestTestStatisticHeaders:
         # Verify derived_species_description
         assert data["derived_species_description"] == "Tumor volume ratio"
 
-        # Verify header field ordering (required_species should be near top)
+        # Verify footer field ordering (footer fields should be near bottom)
         lines = content.split("\n")
-        header_fields = [
+        footer_fields = [
             "test_statistic_id",
             "cancer_type",
         ]
-        for field in header_fields:
-            assert any(line.startswith(f"{field}:") for line in lines[:15])
+        for field in footer_fields:
+            assert any(line.startswith(f"{field}:") for line in lines[-15:])

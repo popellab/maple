@@ -95,10 +95,10 @@ def generate_derivation_id(param_name: str, cancer_type: str, deriv_num: int) ->
     return f"{param_name}_{cancer_type}_deriv{deriv_num:03d}"
 
 
-def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> dict:
-    """Add header fields to JSON data based on workflow type."""
+def add_footer_fields(json_data: dict, metadata: dict, workflow_type: str) -> dict:
+    """Add footer fields to JSON data based on workflow type."""
     if workflow_type == "calibration_target":
-        # Calibration targets have their own header structure
+        # Calibration targets have their own footer structure
         json_data["calibration_target_id"] = metadata["calibration_target_id"]
         json_data["cancer_type"] = metadata["cancer_type"]
 
@@ -115,7 +115,7 @@ def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
                 json_data["model_context"] = model_context
 
     elif workflow_type == "test_statistic":
-        # Test statistics have different header structure
+        # Test statistics have different footer structure
         json_data["test_statistic_id"] = metadata["test_statistic_id"]
         json_data["cancer_type"] = metadata["cancer_type"]
         json_data["model_context"] = metadata.get("model_context", "")
@@ -162,14 +162,6 @@ def add_header_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
                 json_data["model_context"] = model_context
 
     return json_data
-
-
-def move_field_to_top(data: dict, field_name: str) -> dict:
-    """Move a field to the top of the dictionary."""
-    if field_name in data:
-        value = data.pop(field_name)
-        return {field_name: value, **data}
-    return data
 
 
 def _convert_long_strings_to_block(obj, threshold=BLOCK_SCALAR_THRESHOLD):
@@ -319,8 +311,8 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 print(f"Warning: No metadata for {custom_id}, skipping")
                 continue
 
-            # Add header fields
-            json_data = add_header_fields(json_data, meta, workflow_type)
+            # Add footer fields
+            json_data = add_footer_fields(json_data, meta, workflow_type)
 
             # Generate filename with derivation numbering
             if workflow_type == "test_statistic":
@@ -329,25 +321,11 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 deriv_num = find_next_derivation_number(output_dir, base)
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
-                # Move header fields to top (reverse order since we prepend)
-                json_data = move_field_to_top(json_data, "derived_species_description")
-                json_data = move_field_to_top(json_data, "required_species")
-                json_data = move_field_to_top(json_data, "scenario_context")
-                json_data = move_field_to_top(json_data, "model_context")
-                json_data = move_field_to_top(json_data, "cancer_type")
-                json_data = move_field_to_top(json_data, "test_statistic_id")
-
             elif workflow_type == "calibration_target":
                 # cal_target_id_cancer_deriv001.yaml
                 base = f"{identifier}_{cancer_type}"
                 deriv_num = find_next_derivation_number(output_dir, base)
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"
-
-                # Move header fields to top (reverse order since we prepend)
-                json_data = move_field_to_top(json_data, "model_context")
-                json_data = move_field_to_top(json_data, "tags")
-                json_data = move_field_to_top(json_data, "cancer_type")
-                json_data = move_field_to_top(json_data, "calibration_target_id")
 
             else:  # parameter
                 # param_cancer_deriv001.yaml
@@ -358,16 +336,6 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 derivation_id = generate_derivation_id(identifier, cancer_type, deriv_num)
                 json_data["derivation_id"] = derivation_id
                 json_data["derivation_timestamp"] = datetime.now().isoformat()
-
-                # Move all header fields to top in correct order (reverse order since we prepend)
-                json_data = move_field_to_top(json_data, "model_context")
-                json_data = move_field_to_top(json_data, "derivation_timestamp")
-                json_data = move_field_to_top(json_data, "derivation_id")
-                json_data = move_field_to_top(json_data, "tags")
-                json_data = move_field_to_top(json_data, "cancer_type")
-                json_data = move_field_to_top(json_data, "parameter_definition")
-                json_data = move_field_to_top(json_data, "parameter_units")
-                json_data = move_field_to_top(json_data, "parameter_name")
 
                 filename = f"{derivation_id}.yaml"
 
