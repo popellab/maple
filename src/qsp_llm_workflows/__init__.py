@@ -11,19 +11,19 @@ This package provides tools for:
 __version__ = "0.1.0"
 
 # Public API
-from qsp_llm_workflows.core.batch_creator import (
-    BatchCreator,
-    ParameterBatchCreator,
-    TestStatisticBatchCreator,
-    ValidationFixBatchCreator,
+from qsp_llm_workflows.core.prompt_builder import (
+    PromptBuilder,
+    ParameterPromptBuilder,
+    TestStatisticPromptBuilder,
+    ValidationFixPromptBuilder,
 )
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
 
 __all__ = [
     "__version__",
-    "BatchCreator",
-    "ParameterBatchCreator",
-    "TestStatisticBatchCreator",
-    "ValidationFixBatchCreator",
+    "PromptBuilder",
+    "ParameterPromptBuilder",
+    "TestStatisticPromptBuilder",
+    "ValidationFixPromptBuilder",
     "WorkflowOrchestrator",
 ]

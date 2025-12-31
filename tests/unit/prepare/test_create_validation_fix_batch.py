@@ -1,5 +1,5 @@
 """
-Unit tests for ValidationFixBatchCreator.
+Unit tests for ValidationFixPromptBuilder.
 
 Tests the validation fix batch creation logic in isolation.
 """
@@ -8,12 +8,12 @@ import json
 import pytest
 from unittest.mock import patch
 
-from qsp_llm_workflows.prepare.create_validation_fix_batch import ValidationFixBatchCreator
+from qsp_llm_workflows.prepare.create_validation_fix_batch import ValidationFixPromptBuilder
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 
 
-class TestValidationFixBatchCreator:
-    """Test ValidationFixBatchCreator."""
+class TestValidationFixPromptBuilder:
+    """Test ValidationFixPromptBuilder."""
 
     @pytest.fixture
     def validation_report_data(self):
@@ -183,7 +183,7 @@ biological_relevance:
         """Test loading validation reports and grouping errors by file."""
         # Setup
         output_file = tmp_path / "output.jsonl"
-        creator = ValidationFixBatchCreator(
+        creator = ValidationFixPromptBuilder(
             data_dir=str(tmp_path / "data"),
             validation_results_dir=str(setup_validation_reports),
             output_file=str(output_file),
@@ -206,7 +206,7 @@ biological_relevance:
     def test_load_validation_reports_skips_master_summary(self, tmp_path, setup_validation_reports):
         """Test that master summary is skipped when loading reports."""
         output_file = tmp_path / "output.jsonl"
-        creator = ValidationFixBatchCreator(
+        creator = ValidationFixPromptBuilder(
             data_dir=str(tmp_path / "data"),
             validation_results_dir=str(setup_validation_reports),
             output_file=str(output_file),
@@ -239,7 +239,7 @@ biological_relevance:
             json.dump(report_data, f)
 
         output_file = tmp_path / "output.jsonl"
-        creator = ValidationFixBatchCreator(
+        creator = ValidationFixPromptBuilder(
             data_dir=str(tmp_path / "data"),
             validation_results_dir=str(validation_dir),
             output_file=str(output_file),
@@ -265,7 +265,7 @@ biological_relevance:
         mock_build_prompt.return_value = "assembled prompt"
 
         output_file = tmp_path / "output.jsonl"
-        creator = ValidationFixBatchCreator(
+        creator = ValidationFixPromptBuilder(
             data_dir=str(setup_yaml_files),
             validation_results_dir=str(setup_validation_reports),
             output_file=str(output_file),
@@ -277,8 +277,9 @@ biological_relevance:
 
         # Verify
         assert len(requests) == 2
-        assert all(req["method"] == "POST" for req in requests)
-        assert all(req["url"] == "/v1/responses" for req in requests)
+        assert all("custom_id" in req for req in requests)
+        assert all("prompt" in req for req in requests)
+        assert all("pydantic_model" in req for req in requests)
 
         # Check custom IDs (should have "fix_" prefix)
         custom_ids = [req["custom_id"] for req in requests]
@@ -295,7 +296,7 @@ biological_relevance:
         validation_dir.mkdir()
 
         output_file = tmp_path / "output.jsonl"
-        creator = ValidationFixBatchCreator(
+        creator = ValidationFixPromptBuilder(
             data_dir=str(setup_yaml_files),
             validation_results_dir=str(validation_dir),
             output_file=str(output_file),
@@ -373,7 +374,7 @@ biological_relevance:
         )
 
         output_file = tmp_path / "output.jsonl"
-        creator = ValidationFixBatchCreator(
+        creator = ValidationFixPromptBuilder(
             data_dir=str(setup_yaml_files),
             validation_results_dir=str(setup_validation_reports),
             output_file=str(output_file),
@@ -391,7 +392,7 @@ biological_relevance:
     def test_parameter_workflow_type(self, tmp_path):
         """Test that parameter workflow type is correctly determined."""
         output_file = tmp_path / "output.jsonl"
-        creator = ValidationFixBatchCreator(
+        creator = ValidationFixPromptBuilder(
             data_dir=str(tmp_path),
             validation_results_dir=str(tmp_path),
             output_file=str(output_file),
@@ -403,7 +404,7 @@ biological_relevance:
     def test_test_statistic_workflow_type(self, tmp_path):
         """Test that test_statistic workflow type is correctly determined."""
         output_file = tmp_path / "output.jsonl"
-        creator = ValidationFixBatchCreator(
+        creator = ValidationFixPromptBuilder(
             data_dir=str(tmp_path),
             validation_results_dir=str(tmp_path),
             output_file=str(output_file),
@@ -417,7 +418,7 @@ biological_relevance:
         output_file = tmp_path / "output.jsonl"
 
         with pytest.raises(ValueError, match="Unknown model class"):
-            ValidationFixBatchCreator(
+            ValidationFixPromptBuilder(
                 data_dir=str(tmp_path),
                 validation_results_dir=str(tmp_path),
                 output_file=str(output_file),

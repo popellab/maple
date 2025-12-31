@@ -14,7 +14,7 @@ import yaml
 from pathlib import Path
 from typing import Dict, List
 
-from qsp_llm_workflows.core.batch_creator import BatchCreator
+from qsp_llm_workflows.core.prompt_builder import PromptBuilder
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 from qsp_llm_workflows.core.prompts import build_validation_fix_prompt
 from qsp_llm_workflows.core.header_utils import HeaderManager
@@ -22,7 +22,7 @@ from qsp_llm_workflows.core.header_utils import HeaderManager
 logger = logging.getLogger(__name__)
 
 
-class ValidationFixBatchCreator(BatchCreator):
+class ValidationFixPromptBuilder(PromptBuilder):
     """
     Create batch requests to fix files with validation errors.
     """
@@ -45,7 +45,7 @@ class ValidationFixBatchCreator(BatchCreator):
             model_class: Pydantic model class (ParameterMetadata or TestStatistic)
             **kwargs: Additional config options
         """
-        super().__init__(Path(data_dir).parent)  # BatchCreator only takes base_dir
+        super().__init__(Path(data_dir).parent)  # PromptBuilder only takes base_dir
         self.data_dir = Path(data_dir)
         self.validation_results_dir = Path(validation_results_dir)
         self.output_file = Path(output_file)
@@ -104,8 +104,8 @@ class ValidationFixBatchCreator(BatchCreator):
 
         return errors_by_file
 
-    def get_batch_type(self) -> str:
-        """Get batch type identifier for file naming."""
+    def get_workflow_type(self) -> str:
+        """Get workflow type identifier for file naming."""
         return f"validation_fix_{self.workflow_type}"
 
     def process(self) -> List[Dict]:
@@ -169,11 +169,11 @@ class ValidationFixBatchCreator(BatchCreator):
 
             # Create request with "fix_" prefix for custom_id
             # The unpacker expects validation fix IDs to start with "fix_"
-            request = self.create_request(
-                custom_id=f"fix_{filename.replace('.yaml', '')}",
-                prompt=prompt,
-                pydantic_model=self.model_class,
-            )
+            request = {
+                "custom_id": f"fix_{filename.replace('.yaml', '')}",
+                "prompt": prompt,
+                "pydantic_model": self.model_class,
+            }
 
             requests.append(request)
 
@@ -203,7 +203,7 @@ def main():
     model_class = ParameterMetadata if args.workflow_type == "parameter" else TestStatistic
 
     # Create batch
-    creator = ValidationFixBatchCreator(
+    creator = ValidationFixPromptBuilder(
         data_dir=args.data_dir,
         validation_results_dir=args.validation_results_dir,
         output_file=args.output,

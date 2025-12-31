@@ -14,7 +14,7 @@ Required CSV columns:
 import sys
 from pathlib import Path
 
-from qsp_llm_workflows.core.batch_creator import ParameterBatchCreator
+from qsp_llm_workflows.core.prompt_builder import ParameterPromptBuilder
 from qsp_llm_workflows.core.resource_utils import get_package_root
 
 
@@ -41,7 +41,7 @@ def main():
         sys.exit(1)
 
     # Create batch creator and process
-    creator = ParameterBatchCreator(base_dir)
+    creator = ParameterPromptBuilder(base_dir)
     output_path = creator.run(None, input_csv)  # Use default output path
 
     print(f"Batch file created: {output_path}")

@@ -22,10 +22,10 @@ try:
 except ImportError:
     PYDANTIC_AI_AVAILABLE = False
 
-from qsp_llm_workflows.core.batch_creator import (
-    ParameterBatchCreator,
-    TestStatisticBatchCreator,
-    CalibrationTargetBatchCreator,
+from qsp_llm_workflows.core.prompt_builder import (
+    ParameterPromptBuilder,
+    TestStatisticPromptBuilder,
+    CalibrationTargetPromptBuilder,
 )
 from qsp_llm_workflows.core.pydantic_models import (
     ParameterMetadata,
@@ -61,9 +61,9 @@ class ImmediateRequestProcessor:
             self.client = AsyncOpenAI(api_key=api_key)
 
         # Initialize batch creators for prompt building (DRY principle)
-        self.parameter_creator = ParameterBatchCreator(base_dir)
-        self.test_statistic_creator = TestStatisticBatchCreator(base_dir)
-        self.calibration_target_creator = CalibrationTargetBatchCreator(base_dir)
+        self.parameter_creator = ParameterPromptBuilder(base_dir)
+        self.test_statistic_creator = TestStatisticPromptBuilder(base_dir)
+        self.calibration_target_creator = CalibrationTargetPromptBuilder(base_dir)
 
     def get_batch_requests(
         self,

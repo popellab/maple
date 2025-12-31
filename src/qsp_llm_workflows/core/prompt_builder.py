@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Base class for creating batch requests for different types of LLM processing tasks.
+Base class for creating prompts for different types of LLM processing tasks.
 
-This module provides a common framework for generating OpenAI batch API requests
+This module provides a common framework for generating OpenAI prompt assembly requests
 with consistent patterns for request creation, file output, and error handling.
 """
 
@@ -10,10 +10,8 @@ import json
 import yaml
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Type
-from pydantic import BaseModel
+from typing import Dict, List, Any, Optional
 
-from openai.lib._pydantic import to_strict_json_schema
 
 from qsp_llm_workflows.core.prompts import (
     build_parameter_extraction_prompt,
@@ -25,97 +23,27 @@ from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatis
 from qsp_llm_workflows.core.calibration_target_models import CalibrationTarget
 
 
-class BatchCreator(ABC):
+class PromptBuilder(ABC):
     """
-    Abstract base class for creating OpenAI batch API requests.
+    Abstract base class for creating OpenAI prompt assembly requests.
 
-    Provides common functionality for request creation, file I/O, and batch processing
+    Provides common functionality for request creation, prompt assembly
     while allowing subclasses to implement specific logic for different prompt types.
     """
 
     def __init__(self, base_dir: Path):
         """
-        Initialize the batch creator.
+        Initialize the prompt builder.
 
         Args:
             base_dir: Base directory of the project (used for relative path resolution)
         """
         self.base_dir = Path(base_dir)
 
-    def create_request(
-        self, custom_id: str, prompt: str, pydantic_model: Type[BaseModel], **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Create a standardized batch API request with structured outputs.
-
-        Args:
-            custom_id: Unique identifier for this request
-            prompt: The prompt text to send to the model
-            pydantic_model: Pydantic model class for structured output
-            **kwargs: Additional request parameters (model, reasoning effort, etc.)
-
-        Returns:
-            Dictionary representing a batch API request
-        """
-        # Set defaults
-        model = kwargs.get("model", "gpt-5")
-        reasoning_effort = kwargs.get("reasoning_effort", "high")
-
-        # Convert Pydantic model to strict JSON schema for batch API
-        schema_name = pydantic_model.__name__.lower()
-        schema = to_strict_json_schema(pydantic_model)
-
-        request = {
-            "custom_id": custom_id,
-            "method": "POST",
-            "url": "/v1/responses",
-            "body": {
-                "model": model,
-                "input": prompt,
-                "reasoning": {"effort": reasoning_effort},
-                "text": {
-                    "format": {
-                        "type": "json_schema",
-                        "name": schema_name,
-                        "strict": True,
-                        "schema": schema,
-                    }
-                },
-            },
-        }
-
-        return request
-
-    def write_batch_file(self, requests: List[Dict], output_path: Path) -> None:
-        """
-        Write batch requests to JSONL file.
-
-        Args:
-            requests: List of batch request dictionaries
-            output_path: Path where to write the JSONL file
-        """
-        # Create parent directories if they don't exist
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(output_path, "w", encoding="utf-8") as f:
-            for request in requests:
-                f.write(json.dumps(request) + "\n")
-
-        print(f"Created {len(requests)} requests in {output_path}")
-
-    def get_default_output_path(self) -> Path:
-        """
-        Get the default output path for this batch creator type.
-
-        Returns:
-            Default path for batch request files
-        """
-        return self.base_dir / "batch_jobs" / f"{self.get_batch_type()}_requests.jsonl"
-
     @abstractmethod
-    def get_batch_type(self) -> str:
+    def get_workflow_type(self) -> str:
         """
-        Get the type identifier for this batch creator.
+        Get the type identifier for this prompt builder.
 
         Used for default file naming and logging.
 
@@ -127,55 +55,27 @@ class BatchCreator(ABC):
     @abstractmethod
     def process(self, *args, **kwargs) -> List[Dict[str, Any]]:
         """
-        Process input data and generate batch requests.
+        Process input data and generate prompts.
 
         This method should be implemented by subclasses to handle their specific
         input processing and prompt generation logic.
 
         Returns:
-            List of batch request dictionaries ready for API submission
+            List of prompt dictionaries with keys: custom_id, prompt, pydantic_model
         """
         pass
 
-    def run(self, output_path: Optional[Path] = None, *args, **kwargs) -> Path:
-        """
-        Execute the complete batch creation process.
 
-        Args:
-            output_path: Optional output path (uses default if not provided)
-            *args, **kwargs: Arguments passed to the process() method
-
-        Returns:
-            Path to the created batch file
-        """
-        # Generate requests
-        requests = self.process(*args, **kwargs)
-
-        # Determine output path
-        if output_path is None:
-            output_path = self.get_default_output_path()
-        else:
-            output_path = Path(output_path)
-
-        # Write batch file
-        self.write_batch_file(requests, output_path)
-
-        # Log batch type information
-        print(f"Batch type: {self.get_batch_type()}")
-
-        return output_path
-
-
-class ParameterBatchCreator(BatchCreator):
+class ParameterPromptBuilder(PromptBuilder):
     """
-    Creates batch requests for parameter extraction from scientific literature.
+    Creates prompts for parameter extraction from scientific literature.
 
     Processes CSV input with embedded parameter definitions and model context, generating
     prompts for comprehensive literature extraction. Requires columns: cancer_type,
     parameter_name, parameter_units, parameter_description, model_context, definition_hash.
     """
 
-    def get_batch_type(self) -> str:
+    def get_workflow_type(self) -> str:
         return "parameter"
 
     def format_model_context(self, model_context_json: str) -> str:
@@ -265,7 +165,7 @@ class ParameterBatchCreator(BatchCreator):
         reasoning_effort: str = "high",
     ) -> List[Dict[str, Any]]:
         """
-        Process parameter extraction inputs and generate batch requests.
+        Process parameter extraction inputs and generate prompts.
 
         Args:
             input_csv: CSV file with columns: cancer_type, parameter_name, parameter_units,
@@ -314,25 +214,30 @@ class ParameterBatchCreator(BatchCreator):
                     used_primary_studies=existing_studies,
                 )
 
-                # Create batch request with structured outputs
+                # Create prompt dict
                 custom_id = f"{cancer_type}_{parameter_name}_{i}"
-                request = self.create_request(
-                    custom_id, prompt, ParameterMetadata, reasoning_effort=reasoning_effort
-                )
+                # Create simple prompt dict
+
+                request = {
+                    "custom_id": custom_id,
+                    "prompt": prompt,
+                    "pydantic_model": ParameterMetadata,
+                }
+
                 requests.append(request)
 
         return requests
 
 
-class TestStatisticBatchCreator(BatchCreator):
+class TestStatisticPromptBuilder(PromptBuilder):
     """
-    Creates batch requests for test statistic generation from biological expectations.
+    Creates prompts for test statistic generation from biological expectations.
 
     Processes CSV input with test statistic descriptions and biological expectations, generating
     prompts that create comprehensive test statistic definitions for QSP model validation.
     """
 
-    def get_batch_type(self) -> str:
+    def get_workflow_type(self) -> str:
         return "test_stat"
 
     def _get_default_species_units(self) -> Dict[str, str]:
@@ -451,7 +356,7 @@ class TestStatisticBatchCreator(BatchCreator):
         reasoning_effort: str = "high",
     ) -> List[Dict[str, Any]]:
         """
-        Process test statistic inputs and generate batch requests.
+        Process test statistic inputs and generate prompts.
 
         Args:
             input_csv: CSV file with test_statistic_id and biological expectation columns
@@ -552,25 +457,30 @@ class TestStatisticBatchCreator(BatchCreator):
                     used_primary_studies="",  # No used studies tracking for test statistics yet
                 )
 
-                # Create batch request with structured outputs
+                # Create prompt dict
                 custom_id = f"test_stat_{test_statistic_id}_{i}"
-                request = self.create_request(
-                    custom_id, prompt, TestStatistic, reasoning_effort=reasoning_effort
-                )
+                # Create simple prompt dict
+
+                request = {
+                    "custom_id": custom_id,
+                    "prompt": prompt,
+                    "pydantic_model": TestStatistic,
+                }
+
                 requests.append(request)
 
         return requests
 
 
-class CalibrationTargetBatchCreator(BatchCreator):
+class CalibrationTargetPromptBuilder(PromptBuilder):
     """
-    Creates batch requests for calibration target extraction from scientific literature.
+    Creates prompts for calibration target extraction from scientific literature.
 
     Processes CSV input with observable descriptions and model context, generating
     prompts to extract raw observables with experimental context for Bayesian inference.
     """
 
-    def get_batch_type(self) -> str:
+    def get_workflow_type(self) -> str:
         return "calibration_target"
 
     def process(
@@ -580,7 +490,7 @@ class CalibrationTargetBatchCreator(BatchCreator):
         reasoning_effort: str = "high",
     ) -> List[Dict[str, Any]]:
         """
-        Process calibration target inputs and generate batch requests.
+        Process calibration target inputs and generate prompts.
 
         Args:
             input_csv: CSV file with columns: calibration_target_id, cancer_type,
@@ -658,19 +568,24 @@ class CalibrationTargetBatchCreator(BatchCreator):
                     or "None - this is the first extraction",
                 )
 
-                # Create batch request with structured outputs
+                # Create prompt dict
                 custom_id = f"cal_target_{calibration_target_id}_{i}"
-                request = self.create_request(
-                    custom_id, prompt, CalibrationTarget, reasoning_effort=reasoning_effort
-                )
+                # Create simple prompt dict
+
+                request = {
+                    "custom_id": custom_id,
+                    "prompt": prompt,
+                    "pydantic_model": CalibrationTarget,
+                }
+
                 requests.append(request)
 
         return requests
 
 
-class ValidationFixBatchCreator(BatchCreator):
+class ValidationFixPromptBuilder(PromptBuilder):
     """
-    Creates batch requests to fix validation errors in YAML files.
+    Creates prompts to fix validation errors in YAML files.
 
     Loads YAMLs with validation failures and creates prompts asking
     LLM to fix the specific errors while preserving all other content.
@@ -683,7 +598,7 @@ class ValidationFixBatchCreator(BatchCreator):
 
         self.header_manager = HeaderManager(base_dir)
 
-    def get_batch_type(self) -> str:
+    def get_workflow_type(self) -> str:
         return "validation_fix"
 
     def _extract_filename_from_item(self, item: str) -> str:
@@ -963,7 +878,7 @@ Return the corrected metadata as JSON inside a ```json code fence. The unpacker 
         self, validation_dir: Path, yaml_dir: Path, template_path: Path
     ) -> List[Dict[str, Any]]:
         """
-        Process validation results and generate fix batch requests.
+        Process validation results and generate fix prompts.
 
         Args:
             validation_dir: Directory with validation JSON files

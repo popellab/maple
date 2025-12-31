@@ -31,7 +31,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from qsp_llm_workflows.core.batch_creator import TestStatisticBatchCreator
+from qsp_llm_workflows.core.prompt_builder import TestStatisticPromptBuilder
 from qsp_llm_workflows.core.resource_utils import get_package_root
 
 
@@ -78,7 +78,7 @@ def main():
     base_dir = get_package_root()
 
     # Create batch creator
-    creator = TestStatisticBatchCreator(base_dir)
+    creator = TestStatisticPromptBuilder(base_dir)
 
     # Process and create batch requests
     try:

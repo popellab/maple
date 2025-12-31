@@ -27,7 +27,7 @@ from qsp_llm_workflows.core.exceptions import (
 class TestCreateBatchStep:
     """Test CreateBatchStep."""
 
-    @patch("qsp_llm_workflows.core.workflow.steps.ParameterBatchCreator")
+    @patch("qsp_llm_workflows.core.workflow.steps.ParameterPromptBuilder")
     def test_create_parameter_batch(self, mock_creator_class, tmp_path):
         """Test creating parameter batch."""
         # Setup
@@ -63,7 +63,7 @@ class TestCreateBatchStep:
             None, input_csv, expected_storage_dir, reasoning_effort=config.reasoning_effort
         )
 
-    @patch("qsp_llm_workflows.core.workflow.steps.TestStatisticBatchCreator")
+    @patch("qsp_llm_workflows.core.workflow.steps.TestStatisticPromptBuilder")
     def test_create_test_statistic_batch(self, mock_creator_class, tmp_path):
         """Test creating test statistic batch."""
         # Setup
@@ -115,7 +115,7 @@ class TestCreateBatchStep:
         step = CreateBatchStep()
         assert step.name == "Create Batch"
 
-    @patch("qsp_llm_workflows.core.workflow.steps.ParameterBatchCreator")
+    @patch("qsp_llm_workflows.core.workflow.steps.ParameterPromptBuilder")
     def test_preview_mode_creates_preview_file(self, mock_creator_class, tmp_path):
         """Test that preview mode creates a human-readable preview file."""
         # Setup
@@ -297,7 +297,7 @@ class TestUnpackResultsStep:
 class TestCreateValidationFixBatchStep:
     """Test CreateValidationFixBatchStep."""
 
-    @patch("qsp_llm_workflows.core.workflow.steps.ValidationFixBatchCreator")
+    @patch("qsp_llm_workflows.core.workflow.steps.ValidationFixPromptBuilder")
     def test_create_validation_fix_batch(self, mock_creator_class, tmp_path):
         """Test creating validation fix batch for parameter workflow."""
         # Setup
@@ -378,7 +378,7 @@ class TestCreateValidationFixBatchStep:
         step = CreateValidationFixBatchStep()
         assert step.name == "Create Validation Fix Batch"
 
-    @patch("qsp_llm_workflows.core.workflow.steps.ValidationFixBatchCreator")
+    @patch("qsp_llm_workflows.core.workflow.steps.ValidationFixPromptBuilder")
     def test_preview_mode_creates_preview_file(self, mock_creator_class, tmp_path):
         """Test that preview mode creates a human-readable preview file."""
         # Setup
@@ -439,7 +439,7 @@ class TestProcessImmediateValidationFixStep:
     """Test ProcessImmediateValidationFixStep."""
 
     @patch("qsp_llm_workflows.core.workflow.steps.AsyncOpenAI")
-    @patch("qsp_llm_workflows.core.workflow.steps.ValidationFixBatchCreator")
+    @patch("qsp_llm_workflows.core.workflow.steps.ValidationFixPromptBuilder")
     def test_process_validation_fixes(self, mock_creator_class, mock_openai_class, tmp_path):
         """Test processing validation fixes via Responses API."""
         # Setup
@@ -514,7 +514,7 @@ class TestProcessImmediateValidationFixStep:
             text_format=ParameterMetadata,  # Direct Pydantic model
         )
 
-    @patch("qsp_llm_workflows.core.workflow.steps.ValidationFixBatchCreator")
+    @patch("qsp_llm_workflows.core.workflow.steps.ValidationFixPromptBuilder")
     def test_no_validation_errors(self, mock_creator_class, tmp_path):
         """Test handling when no validation errors exist."""
         # Setup

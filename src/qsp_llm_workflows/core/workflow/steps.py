@@ -14,10 +14,10 @@ from openai import OpenAI, AsyncOpenAI
 
 from qsp_llm_workflows.core.workflow.step import WorkflowStep
 from qsp_llm_workflows.core.workflow.context import WorkflowContext
-from qsp_llm_workflows.core.batch_creator import (
-    ParameterBatchCreator,
-    TestStatisticBatchCreator,
-    CalibrationTargetBatchCreator,
+from qsp_llm_workflows.core.prompt_builder import (
+    ParameterPromptBuilder,
+    TestStatisticPromptBuilder,
+    CalibrationTargetPromptBuilder,
 )
 from qsp_llm_workflows.core.immediate_processor import ImmediateRequestProcessor
 from qsp_llm_workflows.core.output_directory import create_unique_output_directory
@@ -30,7 +30,7 @@ from qsp_llm_workflows.core.exceptions import (
     ResultsUnpackError,
 )
 from qsp_llm_workflows.process.unpack_results import process_results
-from qsp_llm_workflows.prepare.create_validation_fix_batch import ValidationFixBatchCreator
+from qsp_llm_workflows.prepare.create_validation_fix_batch import ValidationFixPromptBuilder
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 
 logger = logging.getLogger(__name__)
@@ -49,11 +49,11 @@ class CreateBatchStep(WorkflowStep):
 
         # Select appropriate batch creator
         if context.workflow_type == "parameter":
-            creator = ParameterBatchCreator(context.config.base_dir)
+            creator = ParameterPromptBuilder(context.config.base_dir)
         elif context.workflow_type == "test_statistic":
-            creator = TestStatisticBatchCreator(context.config.base_dir)
+            creator = TestStatisticPromptBuilder(context.config.base_dir)
         elif context.workflow_type == "calibration_target":
-            creator = CalibrationTargetBatchCreator(context.config.base_dir)
+            creator = CalibrationTargetPromptBuilder(context.config.base_dir)
         else:
             logger.error("Unknown workflow type: %s", context.workflow_type)
             raise BatchCreationError(
@@ -201,7 +201,7 @@ class CreateValidationFixBatchStep(WorkflowStep):
                 / f"validation_fix_{context.workflow_type}_{timestamp}_requests.jsonl"
             )
 
-            creator = ValidationFixBatchCreator(
+            creator = ValidationFixPromptBuilder(
                 data_dir=str(data_dir),
                 validation_results_dir=str(validation_results_dir),
                 output_file=str(output_file),
@@ -650,7 +650,7 @@ class ProcessImmediateValidationFixStep(WorkflowStep):
 
         try:
             # Create validation fix batch creator to get requests
-            creator = ValidationFixBatchCreator(
+            creator = ValidationFixPromptBuilder(
                 data_dir=str(data_dir),
                 validation_results_dir=str(validation_results_dir),
                 output_file="temp.jsonl",  # Not used, but required by constructor
