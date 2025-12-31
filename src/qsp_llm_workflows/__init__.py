@@ -4,7 +4,7 @@ QSP LLM Workflows - Automated extraction of QSP metadata from scientific literat
 This package provides tools for:
 - Parameter extraction from literature
 - Test statistic extraction and validation
-- Automated batch processing via OpenAI API
+- Automated extraction processing via Pydantic AI
 - Validation and quality control
 """
 
@@ -15,7 +15,6 @@ from qsp_llm_workflows.core.prompt_builder import (
     PromptBuilder,
     ParameterPromptBuilder,
     TestStatisticPromptBuilder,
-    ValidationFixPromptBuilder,
 )
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
 
@@ -24,6 +23,5 @@ __all__ = [
     "PromptBuilder",
     "ParameterPromptBuilder",
     "TestStatisticPromptBuilder",
-    "ValidationFixPromptBuilder",
     "WorkflowOrchestrator",
 ]

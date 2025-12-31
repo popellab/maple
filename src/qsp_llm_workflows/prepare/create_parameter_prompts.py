@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Create batch requests for parameter extraction using the new class-based batch creator system.
+Create prompts for parameter extraction using the class-based prompt builder system.
 
 Required CSV columns:
   - cancer_type: Cancer type or indication
@@ -22,7 +22,7 @@ def main():
     base_dir = get_package_root()
 
     if len(sys.argv) != 2:
-        print("Usage: create_parameter_batch.py input.csv")
+        print("Usage: create_parameter_prompts.py input.csv")
         print("")
         print("Required CSV columns:")
         print("  - cancer_type")
@@ -40,11 +40,11 @@ def main():
         print(f"Error: File not found: {input_csv}")
         sys.exit(1)
 
-    # Create batch creator and process
+    # Create prompt builder and process
     creator = ParameterPromptBuilder(base_dir)
     output_path = creator.run(None, input_csv)  # Use default output path
 
-    print(f"Batch file created: {output_path}")
+    print(f"Prompt file created: {output_path}")
 
 
 if __name__ == "__main__":

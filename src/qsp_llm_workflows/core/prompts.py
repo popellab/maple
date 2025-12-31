@@ -127,27 +127,3 @@ def build_calibration_target_prompt(
     prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
 
     return prompt
-
-
-def build_validation_fix_prompt(
-    yaml_content: str,
-    validation_errors: str,
-) -> str:
-    """
-    Build validation fix prompt with substitutions.
-
-    Args:
-        yaml_content: The original YAML content that failed validation
-        validation_errors: Detailed validation error messages
-
-    Returns:
-        Complete prompt with all placeholders replaced
-    """
-    # Load base prompt
-    prompt = read_prompt("validation_fix_prompt.md")
-
-    # Substitute placeholders
-    prompt = prompt.replace("{{YAML_CONTENT}}", yaml_content)
-    prompt = prompt.replace("{{VALIDATION_ERRORS}}", validation_errors)
-
-    return prompt

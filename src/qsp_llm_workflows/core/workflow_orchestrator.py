@@ -18,8 +18,6 @@ from qsp_llm_workflows.core.workflow.steps import (
     CreatePreviewStep,
     ProcessPromptsStep,
     UnpackResultsStep,
-    ProcessValidationFixStep,
-    UnpackValidationFixResultsStep,
 )
 
 
@@ -39,11 +37,11 @@ class WorkflowResult:
         self.batch_file = str(context.batch_file) if context.batch_file else None
         self.results_file = str(context.results_file) if context.results_file else None
 
-        # In preview mode, output_directory is the batch file path
+        # In preview mode, output_directory is the preview file path
         # In normal mode, output_directory is the unpacked results directory
         if context.get_metadata("preview_prompts", False):
             self.output_directory = str(context.batch_file) if context.batch_file else None
-            # Count requests in batch file
+            # Count requests in preview file
             if context.batch_file and context.batch_file.exists():
                 with open(context.batch_file) as f:
                     self.file_count = sum(1 for _ in f)
@@ -98,7 +96,7 @@ class WorkflowOrchestrator:
         self.config = config
 
         # Ensure directories exist
-        self.config.batch_jobs_dir.mkdir(parents=True, exist_ok=True)
+        self.config.jobs_dir.mkdir(parents=True, exist_ok=True)
         self.config.to_review_dir.mkdir(parents=True, exist_ok=True)
 
     def run_complete_workflow(
@@ -166,74 +164,6 @@ class WorkflowOrchestrator:
             else:
                 # Normal mode: process with Pydantic AI and unpack results
                 steps = [ProcessPromptsStep(), UnpackResultsStep()]
-
-            # Execute steps in sequence
-            for step in steps:
-                context = step.execute(context)
-
-            # Success!
-            duration = time.time() - start_time
-            return WorkflowResult(context, duration)
-
-        except Exception as e:
-            # Failure
-            duration = time.time() - start_time
-            return WorkflowResult.from_error(context, e, duration)
-
-    def run_validation_fix_workflow(
-        self,
-        data_dir: Path,
-        validation_results_dir: Path,
-        workflow_type: str,
-        reasoning_effort: str = "high",
-        progress_callback: Optional[Callable[[str], None]] = None,
-        preview_prompts: bool = False,
-    ) -> WorkflowResult:
-        """
-        Run validation fix workflow to correct validation errors.
-
-        Uses Pydantic AI for direct processing (no batch mode).
-
-        Args:
-            data_dir: Directory containing YAML files with validation errors
-            validation_results_dir: Directory containing validation JSON reports
-            workflow_type: Type of workflow (parameter/test_statistic)
-            reasoning_effort: Reasoning effort level (low/medium/high, default: high)
-            progress_callback: Optional callback for progress updates
-            preview_prompts: If True, only build and save prompts without sending to API
-
-        Returns:
-            WorkflowResult with execution metadata
-
-        Raises:
-            Exception: If any workflow step fails
-        """
-        start_time = time.time()
-
-        # Create workflow context (no input CSV needed for validation fix)
-        context = WorkflowContext(
-            input_csv=None,  # No CSV input for validation fix
-            workflow_type=workflow_type,
-            config=self.config,
-            progress_callback=progress_callback,
-        )
-
-        # Store validation fix metadata
-        context.set_metadata("data_dir", data_dir)
-        context.set_metadata("validation_results_dir", validation_results_dir)
-        context.set_metadata("reasoning_effort", reasoning_effort)
-        context.set_metadata("started_at", datetime.now().isoformat())
-        context.set_metadata("preview_prompts", preview_prompts)
-
-        try:
-            # Select workflow steps
-            if preview_prompts:
-                # Preview mode: only create preview file
-                # Note: Preview for validation fix not currently implemented
-                raise NotImplementedError("Preview mode for validation fix not yet supported")
-            else:
-                # Normal mode: process with Pydantic AI and unpack to original directory
-                steps = [ProcessValidationFixStep(), UnpackValidationFixResultsStep()]
 
             # Execute steps in sequence
             for step in steps:

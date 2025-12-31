@@ -82,12 +82,12 @@ k_C_death
 # Option 1: Export from MATLAB script
 qsp-export-model \
   --matlab-model ../your-model-repo/scripts/your_model_file.m \
-  --output batch_jobs/input_data/model_definitions.json
+  --output jobs/input_data/model_definitions.json
 
 # Option 2: Export from SimBiology project file (faster if already compiled)
 qsp-export-model \
   --simbiology-project ../your-model-repo/models/your_model.sbproj \
-  --output batch_jobs/input_data/model_definitions.json
+  --output jobs/input_data/model_definitions.json
 ```
 
 **Enrich with model definitions**:
@@ -95,9 +95,9 @@ qsp-export-model \
 # Enrich simple CSV with model definitions
 qsp-enrich-csv parameter \
   simple_input.csv \
-  batch_jobs/input_data/model_definitions.json \
+  jobs/input_data/model_definitions.json \
   YOUR_CANCER_TYPE \
-  -o batch_jobs/input_data/enriched_extraction_input.csv
+  -o jobs/input_data/enriched_extraction_input.csv
 ```
 
 This creates an enriched CSV with:
@@ -134,8 +134,8 @@ tumor_volume_day14,millimeter ** 3,"def compute_test_statistic(time, species_dic
 # Export model definitions AND species_units.json
 qsp-export-model \
   --matlab-model ../your-model-repo/scripts/your_model_file.m \
-  --output batch_jobs/input_data/model_definitions.json
-# This also creates batch_jobs/input_data/species_units.json containing:
+  --output jobs/input_data/model_definitions.json
+# This also creates jobs/input_data/species_units.json containing:
 # - Species units (e.g., V_T.CD8: cell, V_T.TGFb: nanomolarity)
 # - Parameter units (e.g., initial_tumour_diameter: centimeter)
 # - Compartment volumes (e.g., V_T: milliliter, V_C: liter)
@@ -147,8 +147,8 @@ qsp-export-model \
 qsp-enrich-csv test_statistic \
   test_stats_input.csv \
   scenario.yaml \
-  batch_jobs/input_data/species_units.json \
-  -o batch_jobs/input_data/test_statistic_input.csv
+  jobs/input_data/species_units.json \
+  -o jobs/input_data/test_statistic_input.csv
 ```
 
 **Validation during enrichment:**
@@ -197,51 +197,10 @@ qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_esti
 # For test statistics (requires species_units.json for unit validation)
 qsp-validate test_statistics \
   --dir metadata-storage/to-review/test_statistics \
-  --species-units-file batch_jobs/input_data/species_units.json
+  --species-units-file jobs/input_data/species_units.json
 ```
 
 See `docs/automated_workflow.md` for complete documentation.
-
-### Validation Fix Workflow
-
-**Automated validation fixing** - Sends failed YAMLs back to OpenAI for correction:
-
-```bash
-# Run validation first
-qsp-validate test_statistics --dir metadata-storage/to-review/test_statistics
-
-# If failures detected, run fix workflow
-qsp-fix test_statistics --dir metadata-storage/to-review/test_statistics --immediate
-
-# For parameter estimates
-qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
-qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --immediate
-
-# With custom timeout for Batch API (default: 3600s)
-qsp-fix test_statistics --dir metadata-storage/to-review/test_statistics --timeout 7200
-```
-
-**What the validation fix workflow does:**
-1. Loads validation JSON reports and aggregates errors by file
-2. Creates fix batch requests with YAMLs + error lists + template
-3. Uploads to OpenAI API
-4. Monitors until completion
-5. Unpacks fixed YAMLs (overwrites originals in to-review/)
-6. Prompts to re-run validation
-
-**Important notes:**
-- Original files are backed up in git history before overwriting
-- Single fix attempt per run (prevents wasting API calls on unfixable errors)
-- After fixes complete, re-run `qsp-validate` to verify
-- Manual review recommended for persistent failures
-- **Use `--immediate` flag for faster processing** (good for testing, batch API can take up to 24 hours)
-
-**Validation types that can be fixed:**
-- Schema compliance (missing fields, wrong types)
-- Source references (missing source_ref fields)
-- Code execution (debugging R/Python code)
-- Text snippets (verifying value_snippet contains values)
-- DOI resolution (fixing malformed DOIs)
 
 ### Validation Suite
 
@@ -291,9 +250,6 @@ qsp-batch-monitor batch_abc123
 # Export model definitions (from MATLAB script or SimBiology project)
 qsp-export-model --matlab-model model.m --output defs.json
 qsp-export-model --simbiology-project model.sbproj --output defs.json
-
-# Custom validation results directory for qsp-fix (useful for testing)
-qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --validation-results-dir custom/path/validation_results
 ```
 
 ## Package Structure
@@ -346,7 +302,6 @@ qsp-llm-workflows/
 │       ├── cli/                      # CLI entry points
 │       │   ├── extract.py           # qsp-extract
 │       │   ├── validate.py          # qsp-validate
-│       │   ├── fix.py               # qsp-fix
 │       │   ├── enrich.py            # qsp-enrich-csv
 │       │   ├── export_model.py      # qsp-export-model
 │       │   └── monitor.py           # qsp-batch-monitor

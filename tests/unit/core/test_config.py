@@ -61,8 +61,8 @@ class TestWorkflowConfig:
         assert isinstance(config.base_dir, Path)
         assert isinstance(config.storage_dir, Path)
 
-    def test_batch_jobs_dir_property(self, tmp_path):
-        """Test batch_jobs_dir computed property."""
+    def test_jobs_dir_property(self, tmp_path):
+        """Test jobs_dir computed property."""
         base_dir = tmp_path / "workflows"
         storage_dir = tmp_path / "storage"
 
@@ -71,8 +71,8 @@ class TestWorkflowConfig:
             storage_dir=storage_dir,
         )
 
-        expected = base_dir / "batch_jobs"
-        assert config.batch_jobs_dir == expected
+        expected = base_dir / "jobs"
+        assert config.jobs_dir == expected
 
     def test_to_review_dir_property(self, tmp_path):
         """Test to_review_dir computed property."""

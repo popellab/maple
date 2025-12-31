@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Create batch requests for test statistic generation from biological expectations.
+Create prompts for test statistic generation from biological expectations.
 
 This script processes a CSV file containing biological expectations and generates
-OpenAI batch API requests to create test statistic definitions for QSP model
+prompts to create test statistic definitions for QSP model
 validation based on literature data.
 
 Input CSV format:
@@ -20,11 +20,11 @@ Optional model context CSV format:
 - Compartment: Model compartment
 
 Usage:
-    python scripts/prepare/create_test_statistic_batch.py input.csv [model_context.csv]
+    python scripts/prepare/create_test_statistic_prompts.py input.csv [model_context.csv]
 
 Examples:
-    python scripts/prepare/create_test_statistic_batch.py test_statistics.csv
-    python scripts/prepare/create_test_statistic_batch.py test_statistics.csv model_variables.csv
+    python scripts/prepare/create_test_statistic_prompts.py test_statistics.csv
+    python scripts/prepare/create_test_statistic_prompts.py test_statistics.csv model_variables.csv
 """
 
 import argparse
@@ -37,7 +37,7 @@ from qsp_llm_workflows.core.resource_utils import get_package_root
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Create test statistic batch requests from CSV input",
+        description="Create test statistic prompts from CSV input",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -59,7 +59,7 @@ def main():
         "-o",
         "--output",
         type=Path,
-        help="Output path for batch requests JSONL file (default: batch_jobs/test_statistic_requests.jsonl)",
+        help="Output path for prompts JSONL file (default: jobs/test_statistic_requests.jsonl)",
     )
 
     args = parser.parse_args()
@@ -77,10 +77,10 @@ def main():
     # Get package root directory (contains templates/)
     base_dir = get_package_root()
 
-    # Create batch creator
+    # Create prompt builder
     creator = TestStatisticPromptBuilder(base_dir)
 
-    # Process and create batch requests
+    # Process and generate prompts
     try:
         print(f"Processing test statistic input from {args.input_csv}")
         if args.model_context_csv:
@@ -92,14 +92,10 @@ def main():
             model_context_csv=args.model_context_csv,
         )
 
-        print(f"✓ Test statistic batch requests created: {output_path}")
-        print("Next steps:")
-        print(f"  1. Upload batch: python scripts/run/upload_batch.py {output_path}")
-        print("  2. Monitor progress: python scripts/run/batch_monitor.py <batch_id>")
-        print("  3. Process results when complete")
+        print(f"✓ Test statistic prompts created: {output_path}")
 
     except Exception as e:
-        print(f"Error creating batch requests: {e}")
+        print(f"Error creating prompts: {e}")
         sys.exit(1)
 
 

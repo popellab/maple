@@ -48,7 +48,6 @@ dev = [
 # Main workflow commands
 qsp-extract = "qsp_llm_workflows.cli.extract:main"
 qsp-validate = "qsp_llm_workflows.cli.validate:main"
-qsp-fix = "qsp_llm_workflows.cli.fix:main"
 qsp-review = "qsp_llm_workflows.cli.review:main"
 
 # Individual tools

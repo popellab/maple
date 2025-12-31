@@ -54,9 +54,9 @@ class WorkflowConfig(BaseModel):
         return v
 
     @property
-    def batch_jobs_dir(self) -> Path:
-        """Get batch jobs directory path."""
-        return self.base_dir / "batch_jobs"
+    def jobs_dir(self) -> Path:
+        """Get jobs directory path."""
+        return self.base_dir / "jobs"
 
     @property
     def to_review_dir(self) -> Path:

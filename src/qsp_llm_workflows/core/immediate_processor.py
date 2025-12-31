@@ -89,7 +89,7 @@ class ImmediateRequestProcessor:
             progress_callback: Optional callback for progress updates
 
         Returns:
-            Result dictionary in batch-compatible format
+            Result dictionary in workflow-compatible format
         """
         custom_id = request["custom_id"]
         prompt = request["prompt"]
@@ -115,7 +115,6 @@ class ImmediateRequestProcessor:
             if progress_callback:
                 progress_callback(f"  [{index + 1}] ✓ Completed {item_name}")
 
-            # Return in simple format (unpacker will handle both batch and immediate formats)
             return {
                 "custom_id": custom_id,
                 "response": {
@@ -130,7 +129,6 @@ class ImmediateRequestProcessor:
             if progress_callback:
                 progress_callback(f"  [{index + 1}] ✗ Failed {item_name}: {e}")
 
-            # Return error in batch-compatible format
             return {
                 "custom_id": custom_id,
                 "response": {
