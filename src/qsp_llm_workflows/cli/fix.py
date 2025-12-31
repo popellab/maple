@@ -22,11 +22,12 @@ def load_api_key() -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fix validation errors by re-submitting to OpenAI",
+        description="Fix validation errors by re-submitting to OpenAI using Pydantic AI",
         epilog="""
 Examples:
-    qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --immediate
-    qsp-fix test_statistics --dir metadata-storage/to-review/test_statistics --timeout 7200
+    qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates
+    qsp-fix test_statistics --dir metadata-storage/to-review/test_statistics
+    qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --preview-prompts
         """,
     )
 
@@ -44,22 +45,9 @@ Examples:
     )
 
     parser.add_argument(
-        "--immediate",
-        action="store_true",
-        help="Use immediate mode (Responses API) instead of batch API",
-    )
-
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=3600,
-        help="Timeout in seconds for batch monitoring (default: 3600)",
-    )
-
-    parser.add_argument(
         "--preview-prompts",
         action="store_true",
-        help="Preview prompts without sending to API (saves to batch_jobs/prompt_preview.jsonl)",
+        help="Preview prompts without sending to API (saves preview file to batch_jobs/)",
     )
 
     parser.add_argument(
@@ -121,7 +109,6 @@ Examples:
         base_dir=base_dir,
         storage_dir=storage_dir,
         openai_api_key=api_key,
-        batch_timeout=args.timeout,
     )
 
     # Create orchestrator
@@ -132,19 +119,16 @@ Examples:
     if args.preview_prompts:
         print("VALIDATION FIX WORKFLOW - PREVIEW MODE")
     else:
-        print("VALIDATION FIX WORKFLOW")
+        print("VALIDATION FIX WORKFLOW (Pydantic AI)")
     print("=" * 60)
     print(f"\nData directory: {data_dir}")
     print(f"Validation results: {validation_results_dir}")
-    print(f"Mode: {'Immediate (Responses API)' if args.immediate else 'Batch API'}")
     print()
 
     result = orchestrator.run_validation_fix_workflow(
         data_dir=data_dir,
         validation_results_dir=validation_results_dir,
         workflow_type=workflow_type,
-        immediate=args.immediate,
-        timeout=args.timeout,
         progress_callback=print,
         preview_prompts=args.preview_prompts,
     )

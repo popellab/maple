@@ -19,12 +19,12 @@ def print_progress(message: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run automated extraction workflow",
+        description="Run automated extraction workflow using Pydantic AI",
         epilog="""
 Examples:
     qsp-extract input.csv --type parameter --output-dir metadata-storage
-    qsp-extract input.csv --type test_statistic --output-dir metadata-storage --immediate
-    qsp-extract input.csv --type parameter --output-dir ../project-repo/metadata --timeout 7200
+    qsp-extract input.csv --type test_statistic --output-dir metadata-storage
+    qsp-extract input.csv --type parameter --output-dir metadata-storage --preview-prompts
         """,
     )
 
@@ -45,18 +45,6 @@ Examples:
     )
 
     parser.add_argument(
-        "--immediate",
-        action="store_true",
-        help="Use immediate mode (Responses API) instead of batch API",
-    )
-
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        help="Timeout in seconds for batch monitoring (default: from config or 3600)",
-    )
-
-    parser.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],
         default="high",
@@ -66,13 +54,7 @@ Examples:
     parser.add_argument(
         "--preview-prompts",
         action="store_true",
-        help="Preview prompts without sending to API (saves to batch_jobs/prompt_preview.jsonl)",
-    )
-
-    parser.add_argument(
-        "--use-pydantic-ai",
-        action="store_true",
-        help="Use Pydantic AI for structured outputs (supports discriminated unions, immediate mode only)",
+        help="Preview prompts without sending to API (saves preview file to batch_jobs/)",
     )
 
     args = parser.parse_args()
@@ -102,21 +84,13 @@ Examples:
     # Create orchestrator
     orchestrator = WorkflowOrchestrator(config)
 
-    # Validate Pydantic AI flag
-    if args.use_pydantic_ai and not args.immediate:
-        print("Error: --use-pydantic-ai requires --immediate mode", file=sys.stderr)
-        sys.exit(1)
-
     try:
         # Run workflow
         if args.preview_prompts:
             print("\n=== PREVIEW MODE ===")
             print(f"Building prompts for {args.type} extraction workflow...")
         else:
-            print(f"\nStarting {args.type} extraction workflow...")
-        print(f"Mode: {'immediate' if args.immediate else 'batch'}")
-        if args.use_pydantic_ai:
-            print("Using: Pydantic AI (supports discriminated unions)")
+            print(f"\nStarting {args.type} extraction workflow (Pydantic AI)...")
         print(f"Input: {args.input_csv}")
         print(f"Reasoning effort: {args.reasoning_effort}")
         print()
@@ -124,12 +98,9 @@ Examples:
         result = orchestrator.run_complete_workflow(
             input_csv=Path(args.input_csv),
             workflow_type=args.type,
-            immediate=args.immediate,
-            timeout=args.timeout,
             reasoning_effort=args.reasoning_effort,
             progress_callback=print_progress,
             preview_prompts=args.preview_prompts,
-            use_pydantic_ai=args.use_pydantic_ai,
         )
 
         # Print summary
