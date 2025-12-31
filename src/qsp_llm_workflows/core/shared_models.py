@@ -37,3 +37,23 @@ class WeightScore(BaseModel):
 
     value: float = Field(description="Rubric value (0-1)")
     justification: str = Field(description="Justification for this value")
+
+
+class Source(BaseModel):
+    """A bibliographic source (primary data)."""
+
+    source_tag: str = Field(description="Unique tag for referencing")
+    title: str = Field(description="Full title")
+    first_author: str = Field(description="First author last name")
+    year: int = Field(description="Publication year")
+    doi: Optional[str] = Field(None, description="DOI (or null)")
+
+
+class SecondarySource(BaseModel):
+    """A secondary data source (reference values, textbooks)."""
+
+    source_tag: str = Field(description="Unique tag for referencing")
+    title: str = Field(description="Full title")
+    first_author: str = Field(description="First author last name")
+    year: int = Field(description="Publication year")
+    doi_or_url: Optional[str] = Field(None, description="DOI or URL (or null)")

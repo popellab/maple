@@ -14,27 +14,13 @@ from qsp_llm_workflows.core.calibration_target_models import (
     CalibrationTarget,
     CalibrationTargetFooters,
 )
-from qsp_llm_workflows.core.shared_models import Input, KeyAssumption, WeightScore
-
-
-class Source(BaseModel):
-    """A bibliographic source (primary or secondary data)."""
-
-    source_tag: str = Field(description="Unique tag for referencing")
-    title: str = Field(description="Full title")
-    first_author: str = Field(description="First author last name")
-    year: int = Field(description="Publication year")
-    doi: Optional[str] = Field(None, description="DOI (or null)")
-
-
-class SecondarySource(BaseModel):
-    """A secondary data source (reference values, textbooks)."""
-
-    source_tag: str = Field(description="Unique tag for referencing")
-    title: str = Field(description="Full title")
-    first_author: str = Field(description="First author last name")
-    year: int = Field(description="Publication year")
-    doi_or_url: Optional[str] = Field(None, description="DOI or URL (or null)")
+from qsp_llm_workflows.core.shared_models import (
+    Input,
+    KeyAssumption,
+    SecondarySource,
+    Source,
+    WeightScore,
+)
 
 
 # ============================================================================

@@ -14,7 +14,12 @@ from typing import Annotated, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
-from qsp_llm_workflows.core.shared_models import Input, KeyAssumption
+from qsp_llm_workflows.core.shared_models import (
+    Input,
+    KeyAssumption,
+    Source,
+    SecondarySource,
+)
 
 
 # ============================================================================
@@ -392,31 +397,6 @@ class ExperimentalContext(BaseModel):
     system: System = Field(description="Experimental system")
     treatment: TreatmentContext = Field(description="Treatment context")
     stage: Stage = Field(description="Disease stage")
-
-
-# ============================================================================
-# Source Models
-# ============================================================================
-
-
-class Source(BaseModel):
-    """A bibliographic source (primary data)."""
-
-    source_tag: str = Field(description="Unique tag for referencing")
-    title: str = Field(description="Full title")
-    first_author: str = Field(description="First author last name")
-    year: int = Field(description="Publication year")
-    doi: Optional[str] = Field(None, description="DOI (or null)")
-
-
-class SecondarySource(BaseModel):
-    """A secondary data source (reference values, textbooks)."""
-
-    source_tag: str = Field(description="Unique tag for referencing")
-    title: str = Field(description="Full title")
-    first_author: str = Field(description="First author last name")
-    year: int = Field(description="Publication year")
-    doi_or_url: Optional[str] = Field(None, description="DOI or URL (or null)")
 
 
 # ============================================================================

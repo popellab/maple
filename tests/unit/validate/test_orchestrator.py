@@ -10,7 +10,7 @@ import yaml
 
 from qsp_llm_workflows.validate.validator import Validator
 from qsp_llm_workflows.validate.orchestrator import ValidationOrchestrator, ValidationResult
-from qsp_llm_workflows.validate.validation_utils import ValidationReport
+from qsp_llm_workflows.core.validation_utils import ValidationReport
 from qsp_llm_workflows.validate.tag_validation_results import tag_files_individually
 
 
