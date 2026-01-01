@@ -55,13 +55,73 @@ Find observables that match this context as closely as possible. Document the ac
 - Surgical resection: timing, fraction removed, affected species
 - Leave empty list for baseline/natural measurements
 
-**Measurements** (at least ONE required):
-- **timing_type**: `at_diagnosis` (most common) or `biomarker_triggered`
-- **timepoints**: Days relative to timing event. Single point `[0.0]` for direct measurements, multiple points `[-1.0, 0.0, 1.0]` for derivatives
-- **required_species**: Model species needed for computation
+**Measurements** (at least ONE required, all biomarker-triggered):
+
+All measurements MUST be **biomarker-triggered** - anchored to an observable biological state, NOT arbitrary time points. This ensures:
+- **Biological interpretability**: "When tumor reaches resectable size" vs. vague "at diagnosis"
+- **Simulation reproducibility**: Unambiguous instructions for when to query the model
+- **Reality**: There is no absolute "time zero" in biology
+
+**Required fields for ALL measurements:**
+- **timing_type**: Always `"biomarker_triggered"`
+- **biomarker_species**: Model species to monitor (e.g., `"V_T.C1"` for tumor cells)
+- **threshold**: Threshold value in natural units of biomarker_species (extract from paper or document as assumption)
+- **comparison**: `">"` (exceeds threshold) or `"<"` (falls below threshold)
+- **timepoints**: Days relative to trigger. `[0.0]` for single point, `[-1.0, 0.0, 1.0]` for derivatives
+- **required_species**: Model species needed for measurement computation
 - **computation_code**: Python function `compute_measurement(time, species_dict, ureg)` returning Pint Quantity
 
-For biomarker-triggered timing, also specify: `biomarker_species`, `threshold`, `comparison` ('>' or '<')
+**Common biomarker choices:**
+
+1. **Tumor burden** (most common for untreated/baseline measurements):
+   ```yaml
+   biomarker_species: V_T.C1  # Tumor cell count
+   threshold: 5e8  # cells (~500 mm³ resectable tumor)
+   comparison: ">"
+   ```
+   **Use when:** Paper states "at resection", "in established tumors", "at detectable disease", "treatment-naive baseline"
+   **Threshold source:** Extract from paper if stated ("resection at mean tumor volume of 500 mm³") OR document as modeling assumption
+
+2. **Treatment response** (tumor shrinkage):
+   ```yaml
+   biomarker_species: V_T.C1
+   threshold: 0.5  # Fraction of baseline (if model tracks baseline)
+   comparison: "<"
+   ```
+   **Use when:** Paper states "at partial response", "when tumor <50% baseline"
+
+3. **Circulating biomarker level**:
+   ```yaml
+   biomarker_species: V_P.IL2  # Serum IL-2
+   threshold: 100.0  # pg/mL (in species natural units)
+   comparison: ">"
+   ```
+   **Use when:** Paper states "in high IL-2 patients", "when cytokine activated"
+
+**How to determine threshold:**
+- **Best**: Extract from paper ("Resection performed when tumor reached mean volume of 500 ± 150 mm³")
+- **If not stated**: Use modeling assumption and add to `inputs` with `source_ref: "modeling_assumption"`
+- **Be explicit**: Describe threshold in measurement description ("Threshold represents typical resectable PDAC burden")
+
+**Common patterns:**
+
+*Untreated baseline measurement:*
+```yaml
+# Paper: "CD8+ density in treatment-naive resected PDAC"
+biomarker_species: V_T.C1
+threshold: 5e8  # cells
+comparison: ">"
+timepoints: [0.0]
+```
+
+*Multiple timepoints around trigger:*
+```yaml
+# Paper: "Cytokine kinetics around tumor establishment"
+biomarker_species: V_T.C1
+threshold: 1e8  # cells (tumor establishment)
+comparison: ">"
+timepoints: [-7.0, 0.0, 7.0]  # Week before, at, week after
+```
 
 **Derivatives:** Use central differences from timepoints. Don't assume analytical derivatives exist.
 

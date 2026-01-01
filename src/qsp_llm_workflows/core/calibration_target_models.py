@@ -10,7 +10,7 @@ See docs/calibration_target_design.md for full specification.
 """
 
 from enum import Enum
-from typing import Annotated, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -95,13 +95,17 @@ class SurgicalResection(BaseModel):
 
 class Measurement(BaseModel):
     """
-    Base measurement specification.
+    Measurement specification: when and what to measure from the model.
 
-    Defines when and what to measure from the model to create model-derived
-    observable for comparison with calibration target literature estimate.
+    Defines the timing (relative to a biomarker threshold) and computation
+    for extracting a model-derived observable that can be compared to the
+    literature-derived calibration target.
 
-    Note: timing_type is defined in subclasses as discriminator.
+    All measurements are biomarker-triggered to ensure biological interpretability
+    and simulation reproducibility. There is no absolute "time zero" in biology.
     """
+
+    timing_type: Literal["biomarker_triggered"] = "biomarker_triggered"
 
     required_species: List[str] = Field(
         description=(
@@ -124,58 +128,37 @@ class Measurement(BaseModel):
         )
     )
 
-
-class DiagnosisMeasurement(Measurement):
-    """
-    Measurement relative to diagnosis.
-
-    In clinical settings, 'time zero' is ambiguous (birth? first tumor cell? diagnosis?).
-    This timing type anchors measurements to diagnosis - typically defined by tumor
-    reaching detectable size via imaging (CT/MRI) or clinical presentation.
-    """
-
-    timing_type: Literal["at_diagnosis"] = "at_diagnosis"
-
-    timepoints: List[float] = Field(
-        description=(
-            "Days relative to diagnosis to sample model output. "
-            "For single-point measurements: [0.0] = at diagnosis. "
-            "For derivatives/rates: [-1.0, 0.0, 1.0] = 1 day before/at/after diagnosis. "
-            "Positive = after diagnosis, negative = before diagnosis."
-        )
-    )
-
-
-class BiomarkerMeasurement(Measurement):
-    """Measurement relative to biomarker threshold crossing."""
-
-    timing_type: Literal["biomarker_triggered"] = "biomarker_triggered"
-
     biomarker_species: str = Field(
         description=(
             "Model species to monitor for trigger (SimBiology format). "
-            "E.g., 'V_T.C1' for tumor cells, 'V_T.TGFb' for TGF-beta concentration."
+            "E.g., 'V_T.C1' for tumor cells, 'V_T.TGFb' for TGF-beta concentration. "
+            "Common triggers: tumor burden (V_T.C1), circulating biomarkers, immune cell counts."
         )
     )
+
     threshold: float = Field(
         description=(
             "Threshold value that triggers measurement when crossed. "
             "Value should be in the natural units of biomarker_species (from species_units.json). "
-            "E.g., if biomarker is 'V_T.C1' (cells), threshold might be 1e9 for 1 billion cells."
+            "E.g., if biomarker is 'V_T.C1' (cells), threshold might be 5e8 for resectable tumor. "
+            "Extract from paper when possible, otherwise document as modeling assumption in inputs."
         )
     )
+
     comparison: Literal[">", "<"] = Field(
         description=(
             "Comparison operator: '>' (greater than) or '<' (less than). "
-            "E.g., '>' triggers when biomarker exceeds threshold, '<' triggers when it falls below."
+            "E.g., '>' triggers when biomarker exceeds threshold, '<' triggers when it falls below. "
+            "For tumor burden: '>' = tumor reaches size. For response: '<' = tumor shrinks below."
         )
     )
+
     timepoints: List[float] = Field(
         description=(
             "Days relative to trigger event to sample model output. "
             "For single-point: [0.0] = at trigger. "
             "For post-trigger tracking: [0.0, 7.0, 14.0] = at trigger, +7d, +14d. "
-            "For derivatives: [-1.0, 0.0, 1.0] = window around trigger."
+            "For derivatives: [-1.0, 0.0, 1.0] = window around trigger for finite differences."
         )
     )
 
@@ -193,13 +176,10 @@ class Scenario(BaseModel):
     interventions: List[Union[DrugDosing, SurgicalResection]] = Field(
         description="List of interventions applied during the experiment"
     )
-    measurements: List[
-        Annotated[
-            Union[DiagnosisMeasurement, BiomarkerMeasurement], Field(discriminator="timing_type")
-        ]
-    ] = Field(
+    measurements: List[Measurement] = Field(
         description=(
             "List of measurement events specifying when and what to measure from model. "
+            "All measurements are biomarker-triggered (relative to observable biological state). "
             "Creates model-derived observables for comparison with calibration target. "
             "Must contain at least one measurement."
         )
