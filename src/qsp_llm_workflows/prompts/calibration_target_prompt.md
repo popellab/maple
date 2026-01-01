@@ -65,7 +65,9 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
 **Required fields for ALL measurements:**
 - **timing_type**: Always `"biomarker_triggered"`
 - **biomarker_species**: Model species to monitor (e.g., `"V_T.C1"` for tumor cells)
-- **threshold**: Threshold value in natural units of biomarker_species (extract from paper or document as assumption)
+- **threshold**: Threshold value (MUST extract from paper - see threshold tracking requirements below)
+- **threshold_units**: Units of threshold (must match paper's reported units)
+- **threshold_input_name**: Name of input providing threshold with source tracking
 - **comparison**: `">"` (exceeds threshold) or `"<"` (falls below threshold)
 - **timepoints**: Days relative to trigger. `[0.0]` for single point, `[-1.0, 0.0, 1.0]` for derivatives
 - **required_species**: Model species needed for measurement computation
@@ -191,14 +193,26 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
   - Set `threshold` and `threshold_units` to match paper's reported units
 
 **Threshold source tracking (REQUIRED):**
-- Extract threshold from paper ("Resection at mean tumor volume of 500 mm³")
+
+**CRITICAL: The threshold value MUST be extracted from the paper, NOT assumed.**
+
+- **ALWAYS extract threshold from paper** - look for explicit statements about when measurements were taken:
+  - "Tumors resected at mean volume of 500 mm³"
+  - "Biopsies taken when tumor reached 1 cm diameter"
+  - "Analysis performed in high IL-2 patients (>100 pg/mL)"
+  - "At clinical presentation" (then extract typical presentation volume/size)
+- **NEVER use `modeling_assumption` for threshold values** - if the paper doesn't state the threshold explicitly:
+  - Look for implicit information (e.g., "resectable tumors" → find typical resection criteria)
+  - Use cohort characteristics (e.g., "newly diagnosed patients" → extract median tumor size at diagnosis from results)
+  - Search for companion papers describing the experimental protocol
+  - **Only as absolute last resort**: Document the assumption AND explain why the paper doesn't provide this information
 - Add to `inputs` list with full source tracking:
   - `name`: Descriptive name (referenced by `threshold_input_name`)
-  - `value`: Same as `threshold` field
+  - `value`: Same as `threshold` field (MUST be from paper)
   - `units`: Same as `threshold_units` field
-  - `source_ref`: Reference to paper or "modeling_assumption"
-  - `value_snippet`: Verbatim quote containing threshold value
-- **Document conversions**: Cell density, diameter→volume formulas, etc. as inputs with sources
+  - `source_ref`: Reference to paper (almost never "modeling_assumption")
+  - `value_snippet`: Verbatim quote containing threshold value (REQUIRED if from paper)
+- **Document conversions**: Cell density, diameter→volume formulas, etc. as inputs with sources (modeling assumptions OK here)
 
 **Common patterns:**
 
