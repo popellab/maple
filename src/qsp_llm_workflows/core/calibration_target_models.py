@@ -136,19 +136,44 @@ class Measurement(BaseModel):
         )
     )
 
+    threshold_computation_code: str = Field(
+        description=(
+            "Python code to convert biomarker_species to threshold comparison space. "
+            "Function signature: compute_threshold_value(species_dict, ureg) -> Pint Quantity. "
+            "For identity mapping (threshold in biomarker natural units):\n"
+            "def compute_threshold_value(species_dict, ureg):\n"
+            "    return species_dict['V_T.C1']  # Return raw species value\n"
+            "For conversion (e.g., cells → volume):\n"
+            "def compute_threshold_value(species_dict, ureg):\n"
+            "    tumor_cells = species_dict['V_T.C1']\n"
+            "    cell_density = 1e9 * (ureg.cell / ureg.mm**3)\n"
+            "    volume = tumor_cells / cell_density\n"
+            "    return volume.to(ureg.mm**3)"
+        )
+    )
+
     threshold: float = Field(
         description=(
             "Threshold value that triggers measurement when crossed. "
-            "Value should be in the natural units of biomarker_species (from species_units.json). "
-            "E.g., if biomarker is 'V_T.C1' (cells), threshold might be 5e8 for resectable tumor. "
-            "Extract from paper when possible, otherwise document as modeling assumption in inputs."
+            "Units specified by threshold_units field. "
+            "Extract from paper when possible ('resection at 500 mm³'), "
+            "otherwise document as modeling assumption in inputs."
+        )
+    )
+
+    threshold_units: str = Field(
+        description=(
+            "Units of threshold value (must be Pint-parseable). "
+            "If threshold_computation_code provided: units of that code's output. "
+            "If threshold_computation_code is None: must match natural units of biomarker_species. "
+            "Examples: 'millimeter**3' (volume), 'cell' (count), 'nanomolarity' (concentration)."
         )
     )
 
     comparison: Literal[">", "<"] = Field(
         description=(
             "Comparison operator: '>' (greater than) or '<' (less than). "
-            "E.g., '>' triggers when biomarker exceeds threshold, '<' triggers when it falls below. "
+            "E.g., '>' triggers when computed value exceeds threshold, '<' when it falls below. "
             "For tumor burden: '>' = tumor reaches size. For response: '<' = tumor shrinks below."
         )
     )
