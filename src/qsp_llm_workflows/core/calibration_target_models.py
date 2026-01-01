@@ -172,6 +172,15 @@ class Measurement(BaseModel):
         )
     )
 
+    threshold_input_name: str = Field(
+        description=(
+            "Name of input that provides the threshold value with source tracking. "
+            "Must reference an input in the inputs list. "
+            "That input must have matching value and units as threshold/threshold_units fields. "
+            "Ensures threshold values are traceable to paper sources."
+        )
+    )
+
     comparison: Literal[">", "<"] = Field(
         description=(
             "Comparison operator: '>' (greater than) or '<' (less than). "

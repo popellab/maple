@@ -84,7 +84,15 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
          return species_dict['V_T.C1']
    threshold: 5e8  # cells
    threshold_units: cell
+   threshold_input_name: tumor_burden_at_resection
    comparison: ">"
+   inputs:
+     - name: tumor_burden_at_resection
+       value: 5.0e8
+       units: cell
+       description: "Tumor cell count at resection"
+       source_ref: smith_2020
+       value_snippet: "Tumors resected at approximately 5×10⁸ cells"
    ```
 
    *Common case - paper reports volume, need conversion:*
@@ -99,6 +107,7 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
          return volume.to(ureg.mm**3)
    threshold: 500.0  # mm³ (from paper: "resection at 500 mm³")
    threshold_units: millimeter**3
+   threshold_input_name: resection_tumor_volume
    comparison: ">"
    inputs:
      - name: resection_tumor_volume
@@ -129,6 +138,7 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
          return (tumor_cells / cell_density).to(ureg.mm**3)
    threshold: 250.0  # mm³ (50% of 500 mm³ baseline)
    threshold_units: millimeter**3
+   threshold_input_name: partial_response_threshold
    comparison: "<"
    inputs:
      - name: partial_response_threshold
@@ -156,6 +166,7 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
          return species_dict['V_P.IL2']
    threshold: 100.0  # pg/mL
    threshold_units: picogram/milliliter
+   threshold_input_name: high_il2_threshold
    comparison: ">"
    inputs:
      - name: high_il2_threshold
@@ -171,7 +182,8 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
 **Threshold specification rules:**
 
 - **Always provide `threshold_computation_code`** - even for identity mappings (makes intent explicit)
-- **`threshold` must match a corresponding input value** - add input to `inputs` list with source tracking
+- **Set `threshold_input_name`** - must reference an input in the `inputs` list
+- **Referenced input must have matching value/units** - same as `threshold`/`threshold_units` fields
 - **If paper reports threshold in biomarker's natural units**: Use identity mapping (return species_dict['...'])
 - **If paper reports threshold in different units** (common for tumor size):
   - Provide conversion code: biomarker → threshold space
@@ -181,6 +193,7 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
 **Threshold source tracking (REQUIRED):**
 - Extract threshold from paper ("Resection at mean tumor volume of 500 mm³")
 - Add to `inputs` list with full source tracking:
+  - `name`: Descriptive name (referenced by `threshold_input_name`)
   - `value`: Same as `threshold` field
   - `units`: Same as `threshold_units` field
   - `source_ref`: Reference to paper or "modeling_assumption"
@@ -200,6 +213,7 @@ threshold_computation_code: |
       return (tumor_cells / cell_density).to(ureg.mm**3)
 threshold: 500.0
 threshold_units: millimeter**3
+threshold_input_name: resection_tumor_volume
 comparison: ">"
 timepoints: [0.0]
 inputs:
@@ -225,6 +239,7 @@ threshold_computation_code: |
       return species_dict['V_T.C1']  # Identity - threshold in cells
 threshold: 1.0e8
 threshold_units: cell
+threshold_input_name: tumor_establishment_threshold
 comparison: ">"
 timepoints: [-7.0, 0.0, 7.0]  # Week before, at, week after
 inputs:
