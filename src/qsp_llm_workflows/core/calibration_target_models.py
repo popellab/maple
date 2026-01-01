@@ -139,16 +139,18 @@ class Measurement(BaseModel):
     threshold_computation_code: str = Field(
         description=(
             "Python code to convert biomarker_species to threshold comparison space. "
-            "Function signature: compute_threshold_value(species_dict, ureg) -> Pint Quantity. "
+            "Function signature: compute_threshold_value(species_dict, inputs, ureg) -> Pint Quantity. "
+            "Arguments: species_dict (model species), inputs (dict of Pint Quantities from inputs list), ureg. "
             "For identity mapping (threshold in biomarker natural units):\n"
-            "def compute_threshold_value(species_dict, ureg):\n"
+            "def compute_threshold_value(species_dict, inputs, ureg):\n"
             "    return species_dict['V_T.C1']  # Return raw species value\n"
             "For conversion (e.g., cells → volume):\n"
-            "def compute_threshold_value(species_dict, ureg):\n"
+            "def compute_threshold_value(species_dict, inputs, ureg):\n"
             "    tumor_cells = species_dict['V_T.C1']\n"
-            "    cell_density = 1e9 * (ureg.cell / ureg.mm**3)\n"
+            "    cell_density = inputs['cell_packing_density']  # From inputs list\n"
             "    volume = tumor_cells / cell_density\n"
-            "    return volume.to(ureg.mm**3)"
+            "    return volume.to(ureg.mm**3)\n"
+            "All constants must come from inputs list with source tracking."
         )
     )
 
