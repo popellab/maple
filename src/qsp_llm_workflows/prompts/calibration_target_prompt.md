@@ -62,17 +62,6 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
 - **Simulation reproducibility**: Unambiguous instructions for when to query the model
 - **Reality**: There is no absolute "time zero" in biology
 
-**Required fields for ALL measurements:**
-- **timing_type**: Always `"biomarker_triggered"`
-- **biomarker_species**: Model species to monitor (e.g., `"V_T.C1"` for tumor cells)
-- **threshold**: Threshold value (MUST extract from paper - see threshold tracking requirements below)
-- **threshold_units**: Units of threshold (must match paper's reported units)
-- **threshold_input_name**: Name of input providing threshold with source tracking
-- **comparison**: `">"` (exceeds threshold) or `"<"` (falls below threshold)
-- **timepoints**: Days relative to trigger. `[0.0]` for single point, `[-1.0, 0.0, 1.0]` for derivatives
-- **required_species**: Model species needed for measurement computation
-- **computation_code**: Python function `compute_measurement(time, species_dict, ureg)` returning Pint Quantity
-
 **Biomarker trigger selection (CRITICAL):**
 
 The `biomarker_species` determines **WHEN** to measure, NOT **WHAT** to measure.
@@ -111,26 +100,6 @@ inputs:
     description: "Typical solid tumor cell packing density"
     source_ref: modeling_assumption
     value_snippet: null
-```
-
-**Example 2: Identity mapping (threshold in biomarker natural units)**
-```yaml
-biomarker_species: V_T.C1  # Tumor cell count (natural units: cells)
-threshold_computation_code: |
-  def compute_threshold_value(species_dict, inputs, ureg):
-      # Identity mapping - use raw cell count
-      return species_dict['V_T.C1']
-threshold: 1.0e8
-threshold_units: cell
-threshold_input_name: tumor_establishment_threshold
-comparison: ">"
-inputs:
-  - name: tumor_establishment_threshold
-    value: 1.0e8
-    units: cell
-    description: "Tumor cell count at establishment"
-    source_ref: jones_2021
-    value_snippet: "tumor establishment defined as 10^8 cells"
 ```
 
 **Threshold specification:**
