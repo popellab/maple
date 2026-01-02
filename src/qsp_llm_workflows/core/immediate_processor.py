@@ -10,7 +10,7 @@ import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, WebSearchTool
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 from qsp_llm_workflows.core.prompt_builder import (
@@ -105,7 +105,12 @@ class ImmediateRequestProcessor:
             # Use Pydantic AI (supports discriminated unions via tool calling)
             model = OpenAIResponsesModel("gpt-5.1")
             settings = OpenAIResponsesModelSettings(openai_reasoning_effort=reasoning_effort)
-            agent = Agent(model, output_type=pydantic_model, model_settings=settings)
+            agent = Agent(
+                model,
+                output_type=pydantic_model,
+                model_settings=settings,
+                builtin_tools=[WebSearchTool()],
+            )
 
             # Run agent with prompt
             result = await agent.run(prompt)

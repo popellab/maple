@@ -73,113 +73,65 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
 - **required_species**: Model species needed for measurement computation
 - **computation_code**: Python function `compute_measurement(time, species_dict, ureg)` returning Pint Quantity
 
-**Common biomarker choices:**
+**Biomarker trigger selection (CRITICAL):**
 
-1. **Tumor burden** (most common for untreated/baseline measurements):
+The `biomarker_species` determines **WHEN** to measure, NOT **WHAT** to measure.
 
-   *Simple case - threshold in natural units (cells):*
-   ```yaml
-   biomarker_species: V_T.C1  # Tumor cell count (natural units: cells)
-   threshold_computation_code: |
-     def compute_threshold_value(species_dict, inputs, ureg):
-         # Identity mapping - use raw cell count
-         return species_dict['V_T.C1']
-   threshold: 5e8  # cells
-   threshold_units: cell
-   threshold_input_name: tumor_burden_at_resection
-   comparison: ">"
-   inputs:
-     - name: tumor_burden_at_resection
-       value: 5.0e8
-       units: cell
-       description: "Tumor cell count at resection"
-       source_ref: smith_2020
-       value_snippet: "Tumors resected at approximately 5×10⁸ cells"
-   ```
+- **Use clinical/standard triggers**: Tumor burden, treatment response, clinical milestones
+- **DON'T use the measured observable as the trigger**: If measuring a cytokine concentration, trigger on tumor size or treatment timepoint, not the cytokine level itself
+- **Clinical logic**: "At resection when tumor reaches threshold volume, measure the observable" ✓
+- **Wrong (circular)**: "When observable X exceeds threshold, measure observable X" ✗
 
-   *Common case - paper reports volume, need conversion:*
-   ```yaml
-   biomarker_species: V_T.C1  # Tumor cell count
-   threshold_computation_code: |
-     def compute_threshold_value(species_dict, inputs, ureg):
-         """Convert tumor cells to volume for threshold comparison."""
-         tumor_cells = species_dict['V_T.C1']
-         cell_density = inputs['cell_packing_density']
-         volume = tumor_cells / cell_density
-         return volume.to(ureg.mm**3)
-   threshold: 500.0  # mm³ (from paper: "resection at 500 mm³")
-   threshold_units: millimeter**3
-   threshold_input_name: resection_tumor_volume
-   comparison: ">"
-   inputs:
-     - name: resection_tumor_volume
-       value: 500.0
-       units: millimeter**3
-       description: "Tumor volume at time of resection"
-       source_ref: smith_2020
-       value_table_or_section: "Methods"
-       value_snippet: "Tumors were resected at mean volume of 500 mm³"
-     - name: cell_packing_density
-       value: 1.0e9
-       units: cell / millimeter**3
-       description: "Typical solid tumor cell packing density"
-       source_ref: modeling_assumption
-       value_snippet: null
-   ```
-   **Use when:** Paper states "at resection", "in established tumors", "at detectable disease"
-   **Threshold source:** Extract from paper ("resection at mean tumor volume of 500 mm³") OR document as modeling assumption
+**Most common trigger**: Tumor burden (V_T.C1) at resection/diagnosis/establishment.
 
-2. **Treatment response** (tumor shrinkage):
-   ```yaml
-   biomarker_species: V_T.C1
-   threshold_computation_code: |
-     def compute_threshold_value(species_dict, inputs, ureg):
-         """Compute tumor volume for response criteria."""
-         tumor_cells = species_dict['V_T.C1']
-         cell_density = inputs['cell_packing_density']
-         return (tumor_cells / cell_density).to(ureg.mm**3)
-   threshold: 250.0  # mm³ (50% of 500 mm³ baseline)
-   threshold_units: millimeter**3
-   threshold_input_name: partial_response_threshold
-   comparison: "<"
-   inputs:
-     - name: partial_response_threshold
-       value: 250.0
-       units: millimeter**3
-       description: "Tumor volume threshold for partial response"
-       source_ref: recist_criteria
-       value_table_or_section: "RECIST 1.1 guidelines"
-       value_snippet: "Partial response defined as 50% reduction from baseline 500 mm³"
-     - name: cell_packing_density
-       value: 1.0e9
-       units: cell / millimeter**3
-       description: "Typical solid tumor cell packing density"
-       source_ref: modeling_assumption
-       value_snippet: null
-   ```
-   **Use when:** Paper states "at partial response", "when tumor shrinks below X mm³"
+**Example 1: Tumor burden trigger (most common - with unit conversion)**
+```yaml
+biomarker_species: V_T.C1  # Tumor cell count
+threshold_computation_code: |
+  def compute_threshold_value(species_dict, inputs, ureg):
+      """Convert tumor cells to volume for threshold comparison."""
+      tumor_cells = species_dict['V_T.C1']
+      cell_density = inputs['cell_packing_density']
+      volume = tumor_cells / cell_density
+      return volume.to(ureg.mm**3)
+threshold: 500.0
+threshold_units: millimeter**3
+threshold_input_name: resection_tumor_volume
+comparison: ">"
+inputs:
+  - name: resection_tumor_volume
+    value: 500.0
+    units: millimeter**3
+    description: "Tumor volume at time of resection"
+    source_ref: smith_2020
+    value_snippet: "Tumors were resected at mean volume of 500 mm³"
+  - name: cell_packing_density
+    value: 1.0e9
+    units: cell / millimeter**3
+    description: "Typical solid tumor cell packing density"
+    source_ref: modeling_assumption
+    value_snippet: null
+```
 
-3. **Circulating biomarker level** (identity mapping):
-   ```yaml
-   biomarker_species: V_P.IL2  # Serum IL-2 (natural units: pg/mL)
-   threshold_computation_code: |
-     def compute_threshold_value(species_dict, inputs, ureg):
-         # Identity mapping - use raw IL-2 concentration
-         return species_dict['V_P.IL2']
-   threshold: 100.0  # pg/mL
-   threshold_units: picogram/milliliter
-   threshold_input_name: high_il2_threshold
-   comparison: ">"
-   inputs:
-     - name: high_il2_threshold
-       value: 100.0
-       units: picogram / milliliter
-       description: "IL-2 concentration threshold for high expressors"
-       source_ref: jones_2019
-       value_table_or_section: "Results, patient stratification"
-       value_snippet: "High IL-2 patients defined as >100 pg/mL serum concentration"
-   ```
-   **Use when:** Paper states "in high IL-2 patients", "when cytokine >100 pg/mL"
+**Example 2: Identity mapping (threshold in biomarker natural units)**
+```yaml
+biomarker_species: V_T.C1  # Tumor cell count (natural units: cells)
+threshold_computation_code: |
+  def compute_threshold_value(species_dict, inputs, ureg):
+      # Identity mapping - use raw cell count
+      return species_dict['V_T.C1']
+threshold: 1.0e8
+threshold_units: cell
+threshold_input_name: tumor_establishment_threshold
+comparison: ">"
+inputs:
+  - name: tumor_establishment_threshold
+    value: 1.0e8
+    units: cell
+    description: "Tumor cell count at establishment"
+    source_ref: jones_2021
+    value_snippet: "tumor establishment defined as 10^8 cells"
+```
 
 **Threshold specification rules:**
 
@@ -214,58 +166,9 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
   - `value_snippet`: Verbatim quote containing threshold value (REQUIRED if from paper)
 - **Document conversions**: Cell density, diameter→volume formulas, etc. as inputs with sources (modeling assumptions OK here)
 
-**Common patterns:**
-
-*Untreated baseline measurement:*
-```yaml
-# Paper: "CD8+ density in treatment-naive resected PDAC at 500 mm³"
-biomarker_species: V_T.C1
-threshold_computation_code: |
-  def compute_threshold_value(species_dict, inputs, ureg):
-      tumor_cells = species_dict['V_T.C1']
-      cell_density = inputs['cell_packing_density']
-      return (tumor_cells / cell_density).to(ureg.mm**3)
-threshold: 500.0
-threshold_units: millimeter**3
-threshold_input_name: resection_tumor_volume
-comparison: ">"
-timepoints: [0.0]
-inputs:
-  - name: resection_tumor_volume
-    value: 500.0
-    units: millimeter**3
-    description: "Tumor volume at resection"
-    source_ref: smith_2020
-    value_snippet: "resected at 500 mm³"
-  - name: cell_packing_density
-    value: 1.0e9
-    units: cell / millimeter**3
-    source_ref: modeling_assumption
-    value_snippet: null
-```
-
-*Multiple timepoints around trigger:*
-```yaml
-# Paper: "Cytokine kinetics around tumor establishment (1e8 cells)"
-biomarker_species: V_T.C1
-threshold_computation_code: |
-  def compute_threshold_value(species_dict, inputs, ureg):
-      return species_dict['V_T.C1']  # Identity - threshold in cells
-threshold: 1.0e8
-threshold_units: cell
-threshold_input_name: tumor_establishment_threshold
-comparison: ">"
-timepoints: [-7.0, 0.0, 7.0]  # Week before, at, week after
-inputs:
-  - name: tumor_establishment_threshold
-    value: 1.0e8
-    units: cell
-    description: "Tumor cell count at establishment"
-    source_ref: jones_2021
-    value_snippet: "tumor establishment defined as 10^8 cells"
-```
-
-**Derivatives:** Use central differences from timepoints. Don't assume analytical derivatives exist.
+**Notes:**
+- **Derivatives**: Use central differences from timepoints. Don't assume analytical derivatives exist.
+- **Multiple timepoints**: Use `timepoints: [-7.0, 0.0, 7.0]` for kinetics around trigger event.
 
 ### Distribution Code
 
