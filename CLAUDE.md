@@ -13,6 +13,7 @@ This repository contains LLM workflow automation tools for extracting and valida
 **Supported Workflows:**
 - **Parameter extraction**: Extract parameter values, ranges, and statistical distributions with detailed literature tracking
 - **Test statistics**: Create validation constraints from experimental data with uncertainty quantification
+- **Quick estimates**: Rapid batch estimation for calibration targets (CSV in → CSV out, single LLM request)
 
 All extracted metadata is stored in a user-specified output directory (e.g., `metadata-storage/`) with flat file structures for easy access.
 
@@ -240,6 +241,38 @@ validation:
   validated_at: '2025-11-03T10:30:00'
 ```
 
+### Quick Estimate Workflow
+
+**Simple batch workflow for rapid calibration target estimates** - CSV in, single LLM request, CSV out.
+
+**Input CSV structure:**
+```csv
+calibration_target_id,cancer_type,observable_description,model_species,model_indication,model_compartment,model_system,model_treatment_history,model_stage_burden,relevant_compartments
+cd8_tumor_density_baseline,PDAC,"CD8+ T cell density in untreated PDAC tumors at baseline",human,PDAC,tumor.primary,clinical.resection,treatment_naive,resectable,V_T
+```
+
+**Run quick estimate:**
+```bash
+qsp-quick-estimate input.csv -o output.csv
+```
+
+**Output CSV contains:**
+- `calibration_target_id`: Target ID from input
+- `estimate`: Numeric value
+- `units`: Pint-parseable units (e.g., `cell / millimeter**2`, `nanomolarity`)
+- `uncertainty`: Uncertainty value if available
+- `uncertainty_type`: Type of uncertainty (`se`, `sd`, `ci95`, `range`, `iqr`, `other`)
+- `value_snippet`: Exact text from paper
+- `paper_name`: Full paper title
+- `doi`: Paper DOI
+- `threshold_description`: Human-readable context description
+
+**Key features:**
+- **Single LLM request** for all targets (not one per row)
+- **Strict model context matching** enforced in prompt (species, indication, system)
+- **Fast turnaround** for initial scoping and ballpark estimates
+- No validation suite or YAML unpacking (quick and simple)
+
 ### Other CLI Commands
 
 ```bash
@@ -267,7 +300,8 @@ qsp-llm-workflows/
 │       │   ├── validation_utils.py  # Validation utilities
 │       │   ├── resource_utils.py    # Package resource access
 │       │   ├── header_utils.py      # Header field management
-│       │   └── schema_version_detector.py
+│       │   ├── schema_version_detector.py
+│       │   └── quick_estimate_models.py  # Quick estimate Pydantic models
 │       │
 │       ├── prepare/                  # Prompt generation
 │       │   ├── create_parameter_prompts.py
@@ -296,7 +330,8 @@ qsp-llm-workflows/
 │       │   ├── extract.py           # qsp-extract
 │       │   ├── validate.py          # qsp-validate
 │       │   ├── enrich.py            # qsp-enrich-csv
-│       │   └── export_model.py      # qsp-export-model
+│       │   ├── export_model.py      # qsp-export-model
+│       │   └── quick_estimate.py    # qsp-quick-estimate
 │       │
 │       ├── templates/                # YAML templates (package data)
 │       │   ├── parameter_metadata_template.yaml
