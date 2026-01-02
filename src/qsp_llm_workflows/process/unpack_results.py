@@ -190,8 +190,28 @@ def _convert_long_strings_to_block(obj, threshold=BLOCK_SCALAR_THRESHOLD):
         return obj
 
 
+def _sanitize_null_bytes(obj):
+    """
+    Recursively replace null bytes (\x00) with ** in all strings.
+
+    LLM sometimes outputs null bytes instead of ^ when copying from PDFs with superscripts.
+    Replace with ** which is Pint's exponentiation syntax (mm**2 instead of mm^2).
+    """
+    if isinstance(obj, str):
+        return obj.replace('\x00', '**')
+    elif isinstance(obj, dict):
+        return {k: _sanitize_null_bytes(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_null_bytes(item) for item in obj]
+    else:
+        return obj
+
+
 def convert_to_yaml(json_data: dict) -> str:
     """Convert JSON to YAML with proper formatting using ruamel.yaml."""
+    # Sanitize null bytes from LLM output
+    json_data = _sanitize_null_bytes(json_data)
+
     # Convert long strings to block scalars
     processed_data = _convert_long_strings_to_block(json_data)
 
