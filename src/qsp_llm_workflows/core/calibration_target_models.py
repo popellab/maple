@@ -11,8 +11,9 @@ See docs/calibration_target_design.md for full specification.
 
 from enum import Enum
 from typing import List, Literal, Optional, Union
+import warnings
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from qsp_llm_workflows.core.shared_models import (
     Input,
@@ -559,3 +560,52 @@ class CalibrationTarget(BaseModel):
             Complete CalibrationTarget instance
         """
         return cls(**{**headers.model_dump(), **content})
+
+    @model_validator(mode="after")
+    def validate_threshold_inputs(self) -> "CalibrationTarget":
+        """
+        Validate that threshold_input_name references exist and match threshold values.
+
+        Checks:
+        1. Each measurement's threshold_input_name exists in inputs list
+        2. Referenced input has matching value and units
+        3. Warns if threshold input uses modeling_assumption
+        """
+        inputs_dict = {inp.name: inp for inp in self.calibration_target_estimates.inputs}
+
+        for measurement in self.scenario.measurements:
+            threshold_input_name = measurement.threshold_input_name
+
+            # Check 1: Input exists
+            if threshold_input_name not in inputs_dict:
+                raise ValueError(
+                    f"Measurement threshold_input_name '{threshold_input_name}' not found in inputs list. "
+                    f"Available inputs: {list(inputs_dict.keys())}"
+                )
+
+            threshold_input = inputs_dict[threshold_input_name]
+
+            # Check 2: Value and units match
+            if abs(threshold_input.value - measurement.threshold) > 1e-9:
+                raise ValueError(
+                    f"Threshold input '{threshold_input_name}' value ({threshold_input.value}) "
+                    f"does not match measurement threshold ({measurement.threshold})"
+                )
+
+            if threshold_input.units != measurement.threshold_units:
+                raise ValueError(
+                    f"Threshold input '{threshold_input_name}' units ('{threshold_input.units}') "
+                    f"do not match measurement threshold_units ('{measurement.threshold_units}')"
+                )
+
+            # Check 3: Warn if modeling_assumption
+            if threshold_input.source_ref == "modeling_assumption":
+                warnings.warn(
+                    f"Threshold input '{threshold_input_name}' uses 'modeling_assumption' as source_ref. "
+                    f"Threshold values should be extracted from papers, not assumed. "
+                    f"This defeats the purpose of literature extraction.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+        return self
