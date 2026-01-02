@@ -41,12 +41,7 @@ class WorkflowResult:
         # In normal mode, output_directory is the unpacked results directory
         if context.get_metadata("preview_prompts", False):
             self.output_directory = str(context.preview_file) if context.preview_file else None
-            # Count requests in preview file
-            if context.preview_file and context.preview_file.exists():
-                with open(context.preview_file) as f:
-                    self.file_count = sum(1 for _ in f)
-            else:
-                self.file_count = 0
+            self.file_count = context.file_count
         else:
             self.output_directory = (
                 str(context.output_directory) if context.output_directory else None
