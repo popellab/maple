@@ -96,7 +96,13 @@ class ImmediateRequestProcessor:
         pydantic_model = request["pydantic_model"]
 
         # Extract item name from custom_id for logging
-        item_name = custom_id.split("_")[-2] if "_" in custom_id else f"item_{index}"
+        # Format: cal_target_{id}_{i} or parameter_{name}_{cancer}_{i} or test_stat_{id}_{i}
+        parts = custom_id.split("_")
+        if len(parts) >= 3:
+            # Remove prefix (first 2 parts) and suffix (last part which is index)
+            item_name = "_".join(parts[2:-1])
+        else:
+            item_name = f"item_{index}"
 
         if progress_callback:
             progress_callback(f"  [{index + 1}] Processing {item_name}...")
