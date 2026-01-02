@@ -11,7 +11,6 @@ See docs/calibration_target_design.md for full specification.
 
 from enum import Enum
 from typing import List, Literal, Optional, Union
-import warnings
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -598,14 +597,12 @@ class CalibrationTarget(BaseModel):
                     f"do not match measurement threshold_units ('{measurement.threshold_units}')"
                 )
 
-            # Check 3: Warn if modeling_assumption
+            # Check 3: Reject if modeling_assumption
             if threshold_input.source_ref == "modeling_assumption":
-                warnings.warn(
+                raise ValueError(
                     f"Threshold input '{threshold_input_name}' uses 'modeling_assumption' as source_ref. "
-                    f"Threshold values should be extracted from papers, not assumed. "
-                    f"This defeats the purpose of literature extraction.",
-                    UserWarning,
-                    stacklevel=2,
+                    f"Threshold values MUST be extracted from the same paper as the calibration target, not assumed. "
+                    f"Search the paper for patient demographics, cohort characteristics, or enrollment criteria."
                 )
 
         return self
