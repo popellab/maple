@@ -38,11 +38,12 @@ Find observables that match this context as closely as possible. Document the ac
 
 ## Task
 
-1. Find 1 peer-reviewed paper reporting this observable in {{CANCER_TYPE}}
-2. Extract measurement with uncertainty (mean ± SD/SE, 95% CI, IQR, or range)
-3. Specify the experimental scenario (interventions + measurement timing/location)
-4. Document experimental context (species, compartment, system, treatment history, stage)
-5. Provide verbatim text snippets for all extracted values
+{{PRIMARY_SOURCE_TITLE}}
+
+1. Extract measurement with uncertainty (mean ± SD/SE, 95% CI, IQR, or range)
+2. Specify the experimental scenario (interventions + measurement timing/location)
+3. Document experimental context (species, compartment, system, treatment history, stage)
+4. Provide verbatim text snippets for all extracted values
 
 ---
 
@@ -102,15 +103,6 @@ inputs:
     value_snippet: null
 ```
 
-**Threshold specification:**
-
-- **Always provide `threshold_computation_code`** - even for identity mappings (makes intent explicit)
-- **If paper reports threshold in biomarker's natural units**: Use identity mapping (return species_dict['...'])
-- **If paper reports threshold in different units** (common for tumor size):
-  - Provide conversion code: biomarker → threshold space
-  - Reference conversion factors from `inputs` (with proper source tracking)
-  - Set `threshold` and `threshold_units` to match paper's reported units
-
 **Threshold source tracking:**
 
 **CRITICAL: Extract threshold from paper, NOT assumptions.**
@@ -135,7 +127,8 @@ Add threshold as an input with source tracking (`threshold_input_name` reference
 ### Distribution Code
 
 **CRITICAL:**
-- **NO magic numbers** - every constant comes through `inputs` with source traceability
+- **Extract biological/experimental values via inputs** with source traceability (measurements, conversion factors, reference values)
+- **Universal constants are OK as literals**: percentiles (2.5, 25, 75, 97.5), mathematical constants (2, π), MC sample sizes (10000)
 - **Use MC methods** (parametric bootstrap), NOT analytical approximations
 - **Use Pint units** - inputs are pre-converted Pint Quantities, return Pint Quantities
 - Function signature: `derive_distribution(inputs, ureg)` returns dict with `median_obs`, `iqr_obs`, `ci95_obs`
@@ -175,32 +168,12 @@ def derive_distribution(inputs, ureg):
     }
 ```
 
-**Anti-patterns to AVOID:**
-```python
-# BAD: Converting to dimensionless and stripping units early
-mean = inputs['treg_fraction_mean'].to(ureg.dimensionless).magnitude  # Loses unit checking!
-sd = inputs['treg_fraction_sd'].to(ureg.dimensionless).magnitude
-# ... calculations with bare floats ...
-# Easy to mix incompatible quantities without Pint catching errors
-
-# GOOD: Keep as Quantities, only extract magnitude when necessary
-mean = inputs['treg_fraction_mean']  # Keep as Quantity
-samples = rng.normal(mean.magnitude, sd.magnitude, N) * mean.units  # Extract only for RNG
-```
-
 ### Source Requirements
 
 - **Primary source (singular)**: One paper, real DOI that resolves
 - **No reuse**: Avoid studies already used for this observable: {{USED_PRIMARY_STUDIES}}
 - **Verbatim snippets**: Exact quotes containing values (automatically verified)
-- **Secondary sources**: Reference values, conversion factors (can be multiple)
-
-### Experimental Context Enums
-
-Use exact enum values for:
-- **Indication**: PDAC, melanoma, NSCLC, breast, colorectal, RCC, etc.
-- **Compartment**: tumor.primary, tumor.metastatic_lesion, lymph_node.tumor_draining, blood.PBMC, etc.
-- **System**: clinical.resection, clinical.core_biopsy, animal_in_vivo.orthotopic, ex_vivo.organoid, etc.
+- **Secondary sources**: Reference values, conversion factors (can be multiple). Threshold and calibration target MUST come from the same primary source.
 
 ---
 
@@ -213,8 +186,7 @@ Use exact enum values for:
 4. Pan-cancer or non-cancer reference (last resort, document limitations)
 
 **Never acceptable:**
-- Cell lines for clinical observables
-- Mouse data without species scaling
+- In vitro data for clinical observables
 - Pure assumptions without literature anchor
 
 ---
