@@ -56,6 +56,15 @@ For EACH calibration target, you must:
 - If you cannot find a study matching the model context, explain this clearly in threshold_description
 - Do NOT substitute data from different cancer types unless absolutely necessary
 
+**VALIDATION REQUIREMENTS** (responses will be automatically validated):
+1. **DOI must be valid and resolve**: Use real DOIs from actual papers (format: 10.xxxx/journal.year.id)
+   - Verify DOI exists before submitting - search PubMed, Google Scholar, or journal websites
+   - Common DOI prefixes: 10.1038 (Nature), 10.1126 (Science), 10.1371 (PLOS), 10.1200 (JCO)
+2. **Paper title must match DOI**: Use the EXACT title from the paper (will be cross-checked with CrossRef)
+   - Copy the title character-for-character from the paper or CrossRef metadata
+3. **Estimate value must appear in snippet**: The numeric value MUST be present in the value_snippet
+   - Include enough context so the number is clearly visible in the snippet text
+
 **Units formatting**:
 - Use Pint-parseable format: 'cell / millimeter**2', 'nanomolarity', 'day', etc.
 - Use ** for exponents (not ^)
@@ -65,6 +74,7 @@ For EACH calibration target, you must:
 {targets_text}
 
 Search the literature and provide estimates for ALL targets. Strictly prioritize studies matching the model context.
+If you cannot find valid sources that pass validation, explain the difficulty in threshold_description.
 """
     return prompt
 
@@ -92,7 +102,7 @@ async def process_quick_estimates(input_csv: Path, output_csv: Path, api_key: st
         output_type=QuickEstimateResponse,
         model_settings=settings,
         builtin_tools=[WebSearchTool()],
-        retries=3,
+        retries=7,  # Increased for validation requirements
     )
 
     result = await agent.run(prompt)
