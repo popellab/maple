@@ -25,13 +25,11 @@ class QuickTargetEstimate(BaseModel):
     units: str = Field(
         description="Units of the estimate (Pint-parseable, e.g., 'cell / millimeter**2', 'nanomolarity', 'day')"
     )
-    uncertainty: Optional[float] = Field(
-        None,
-        description="Uncertainty value if reported (e.g., standard error, standard deviation, range width)",
+    uncertainty: float = Field(
+        description="Uncertainty value (e.g., standard error, standard deviation, range width). REQUIRED - extract from paper."
     )
-    uncertainty_type: Optional[str] = Field(
-        None,
-        description="Type of uncertainty: 'se' (standard error), 'sd' (standard deviation), 'ci95' (95% confidence interval), 'range' (min-max range), 'iqr' (interquartile range), or 'other'",
+    uncertainty_type: str = Field(
+        description="Type of uncertainty: 'se' (standard error), 'sd' (standard deviation), 'ci95' (95% confidence interval), 'range' (min-max range), 'iqr' (interquartile range), or 'other'. REQUIRED."
     )
     value_snippet: str = Field(description="Exact text snippet from paper containing the value")
     paper_name: str = Field(description="Full paper title")

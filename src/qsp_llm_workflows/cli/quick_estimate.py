@@ -44,7 +44,7 @@ def build_prompt(csv_rows: list[dict]) -> str:
 
 For EACH calibration target, you must:
 1. Search the literature for papers that MATCH the model context (species, indication, system, treatment history, stage)
-2. Extract a numeric estimate value with units and uncertainty if available
+2. Extract a numeric estimate value with units AND uncertainty (both required)
 3. Find the exact text snippet containing that value
 4. Record the paper title and DOI
 5. Describe the measurement threshold/context in words
