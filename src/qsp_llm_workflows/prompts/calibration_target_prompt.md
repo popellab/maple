@@ -39,7 +39,6 @@ Find observables that match this context as closely as possible. Document the ac
 ## Task
 
 {{PRIMARY_SOURCE_TITLE}}
-
 1. Extract measurement with uncertainty (mean ± SD/SE, 95% CI, IQR, or range)
 2. Specify the experimental scenario (interventions + measurement timing/location)
 3. Document experimental context (species, compartment, system, treatment history, stage)

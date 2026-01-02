@@ -481,7 +481,8 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
             input_csv: CSV file with columns: calibration_target_id, cancer_type,
                       observable_description, model_species, model_indication,
                       model_compartment, model_system, model_treatment_history,
-                      model_stage_burden, relevant_compartments, used_primary_studies (optional)
+                      model_stage_burden, relevant_compartments, used_primary_studies (optional),
+                      primary_source_title (optional)
             species_units_file: Optional JSON file mapping species -> units
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
 
@@ -512,6 +513,7 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
                 model_stage_burden = row.get("model_stage_burden", "")
                 relevant_compartments = row.get("relevant_compartments", "")
                 used_primary_studies = row.get("used_primary_studies", "")
+                primary_source_title = row.get("primary_source_title", "")
 
                 if not observable_description.strip():
                     print(
@@ -550,6 +552,7 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
                     model_species_with_units=filtered_species_text,
                     used_primary_studies=used_primary_studies
                     or "None - this is the first extraction",
+                    primary_source_title=primary_source_title,
                 )
 
                 # Create prompt dict

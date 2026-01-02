@@ -92,6 +92,7 @@ def build_calibration_target_prompt(
     model_stage_burden: str,
     model_species_with_units: str,
     used_primary_studies: str = "",
+    primary_source_title: str = "",
 ) -> str:
     """
     Build calibration target extraction prompt with substitutions.
@@ -107,12 +108,24 @@ def build_calibration_target_prompt(
         model_stage_burden: Model stage/burden (e.g., "resectable")
         model_species_with_units: Formatted list of available model species with units
         used_primary_studies: Formatted list of already-used primary studies (optional)
+        primary_source_title: Title of specific paper to extract from (optional, skips web search)
 
     Returns:
         Complete prompt with all placeholders replaced
     """
     # Load base prompt
     prompt = read_prompt("calibration_target_prompt.md")
+
+    # Build source instruction based on whether a specific source is provided
+    if primary_source_title and primary_source_title.strip():
+        source_instruction = (
+            f"**Extract from this specific paper:** {primary_source_title}\n\n"
+            f"Do NOT search for other papers. Use ONLY this source as your primary data source.\n\n"
+        )
+    else:
+        source_instruction = (
+            f"**Find 1 peer-reviewed paper** reporting this observable in {cancer_type}.\n\n"
+        )
 
     # Substitute placeholders
     prompt = prompt.replace("{{OBSERVABLE_DESCRIPTION}}", observable_description)
@@ -125,5 +138,6 @@ def build_calibration_target_prompt(
     prompt = prompt.replace("{{MODEL_STAGE_BURDEN}}", model_stage_burden)
     prompt = prompt.replace("{{MODEL_SPECIES_WITH_UNITS}}", model_species_with_units)
     prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
+    prompt = prompt.replace("{{PRIMARY_SOURCE_TITLE}}", source_instruction)
 
     return prompt
