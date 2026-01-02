@@ -104,20 +104,24 @@ inputs:
 
 **Threshold source tracking:**
 
-**CRITICAL: Extract threshold from paper, NOT assumptions.**
+**CRITICAL: Threshold must come from the SAME paper as the calibration target, NOT modeling assumptions or other literature.**
 
-Look for explicit statements about when measurements were taken:
-- "Tumors resected at mean volume of 500 mm³"
-- "Biopsies taken when tumor reached 1 cm diameter"
-- "Analysis performed in high IL-2 patients (>100 pg/mL)"
-- "At clinical presentation" (then extract typical presentation volume/size)
+The threshold defines WHEN the observable was measured. Extract it from the primary source:
 
-If not explicitly stated, look for implicit information:
-- Cohort characteristics (e.g., "newly diagnosed patients" → extract median tumor size at diagnosis)
-- Experimental protocol details (e.g., "resectable tumors" → find typical resection criteria)
-- Companion papers describing methods
+**Direct statements:**
+- "Tumors resected at mean volume of 500 mm³" → extract 500 mm³ from this paper
+- "Biopsies at 1 cm diameter" → extract 1 cm from this paper
+- "High IL-2 patients (>100 pg/mL)" → extract 100 pg/mL from this paper
 
-Add threshold as an input with source tracking (`threshold_input_name` references it). Conversion factors (cell density, diameter→volume formulas) can use `modeling_assumption` as source.
+**Temporal phrases - find threshold in the same paper:**
+- "At clinical presentation" → search this paper for patient demographics (median tumor size at presentation)
+- "At diagnosis" → extract from this paper's cohort characteristics table
+- "At enrollment" → find in this paper's methods (enrollment criteria)
+
+**If threshold not in paper:**
+The paper may not be suitable for extraction. The threshold is part of the experimental context and must be documented in the primary source.
+
+Conversion factors (cell density, geometric formulas) can use `modeling_assumption`. Threshold values cannot.
 
 **Notes:**
 - **Derivatives**: Use central differences from timepoints. Don't assume analytical derivatives exist.
