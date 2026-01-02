@@ -133,38 +133,31 @@ inputs:
     value_snippet: "tumor establishment defined as 10^8 cells"
 ```
 
-**Threshold specification rules:**
+**Threshold specification:**
 
 - **Always provide `threshold_computation_code`** - even for identity mappings (makes intent explicit)
-- **Set `threshold_input_name`** - must reference an input in the `inputs` list
-- **Referenced input must have matching value/units** - same as `threshold`/`threshold_units` fields
 - **If paper reports threshold in biomarker's natural units**: Use identity mapping (return species_dict['...'])
 - **If paper reports threshold in different units** (common for tumor size):
   - Provide conversion code: biomarker → threshold space
   - Reference conversion factors from `inputs` (with proper source tracking)
   - Set `threshold` and `threshold_units` to match paper's reported units
 
-**Threshold source tracking (REQUIRED):**
+**Threshold source tracking:**
 
-**CRITICAL: The threshold value MUST be extracted from the paper, NOT assumed.**
+**CRITICAL: Extract threshold from paper, NOT assumptions.**
 
-- **ALWAYS extract threshold from paper** - look for explicit statements about when measurements were taken:
-  - "Tumors resected at mean volume of 500 mm³"
-  - "Biopsies taken when tumor reached 1 cm diameter"
-  - "Analysis performed in high IL-2 patients (>100 pg/mL)"
-  - "At clinical presentation" (then extract typical presentation volume/size)
-- **NEVER use `modeling_assumption` for threshold values** - if the paper doesn't state the threshold explicitly:
-  - Look for implicit information (e.g., "resectable tumors" → find typical resection criteria)
-  - Use cohort characteristics (e.g., "newly diagnosed patients" → extract median tumor size at diagnosis from results)
-  - Search for companion papers describing the experimental protocol
-  - **Only as absolute last resort**: Document the assumption AND explain why the paper doesn't provide this information
-- Add to `inputs` list with full source tracking:
-  - `name`: Descriptive name (referenced by `threshold_input_name`)
-  - `value`: Same as `threshold` field (MUST be from paper)
-  - `units`: Same as `threshold_units` field
-  - `source_ref`: Reference to paper (almost never "modeling_assumption")
-  - `value_snippet`: Verbatim quote containing threshold value (REQUIRED if from paper)
-- **Document conversions**: Cell density, diameter→volume formulas, etc. as inputs with sources (modeling assumptions OK here)
+Look for explicit statements about when measurements were taken:
+- "Tumors resected at mean volume of 500 mm³"
+- "Biopsies taken when tumor reached 1 cm diameter"
+- "Analysis performed in high IL-2 patients (>100 pg/mL)"
+- "At clinical presentation" (then extract typical presentation volume/size)
+
+If not explicitly stated, look for implicit information:
+- Cohort characteristics (e.g., "newly diagnosed patients" → extract median tumor size at diagnosis)
+- Experimental protocol details (e.g., "resectable tumors" → find typical resection criteria)
+- Companion papers describing methods
+
+Add threshold as an input with source tracking (`threshold_input_name` references it). Conversion factors (cell density, diameter→volume formulas) can use `modeling_assumption` as source.
 
 **Notes:**
 - **Derivatives**: Use central differences from timepoints. Don't assume analytical derivatives exist.
