@@ -116,6 +116,7 @@ class ImmediateRequestProcessor:
                 output_type=pydantic_model,
                 model_settings=settings,
                 builtin_tools=[WebSearchTool()],
+                retries=3,
             )
 
             # Run agent with prompt

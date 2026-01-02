@@ -198,7 +198,7 @@ def _sanitize_null_bytes(obj):
     Replace with ** which is Pint's exponentiation syntax (mm**2 instead of mm^2).
     """
     if isinstance(obj, str):
-        return obj.replace('\x00', '**')
+        return obj.replace("\x00", "**")
     elif isinstance(obj, dict):
         return {k: _sanitize_null_bytes(v) for k, v in obj.items()}
     elif isinstance(obj, list):
