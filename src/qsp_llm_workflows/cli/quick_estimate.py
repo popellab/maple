@@ -42,11 +42,13 @@ def build_prompt(csv_rows: list[dict]) -> str:
 
 **IMPORTANT**: You must provide estimates for ALL {len(csv_rows)} calibration targets listed below.
 
+**PAPER REUSE STRATEGY**: Prefer comprehensive PDAC characterization studies that report multiple measurements. If a single high-quality paper contains data for several calibration targets, use it for all applicable targets. This is preferred over using different papers for each target (as long as data quality is sufficient).
+
 For EACH calibration target, you must:
-1. Search the literature for papers that MATCH the model context (species, indication, system, treatment history, stage)
+1. Search for papers that MATCH the model context (species, indication, system, treatment history, stage)
 2. Extract a numeric estimate value with units AND uncertainty (both required)
 3. Find the exact text snippet containing that value
-4. Record the paper title and DOI
+4. Record the paper title and DOI (reuse papers across targets when possible)
 5. Describe the measurement threshold/context in words
 
 **CRITICAL MATCHING REQUIREMENTS**:

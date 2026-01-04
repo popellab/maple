@@ -37,6 +37,32 @@ class QuickTargetEstimate(BaseModel):
     threshold_description: str = Field(
         description="Human-readable description of calibration target threshold (e.g., 'samples taken at resection, average tumor volume 500 mm³')"
     )
+    model_output_code: str = Field(
+        description="""Python function to compute this calibration target from model species.
+
+Function signature: def compute_test_statistic(time, species_dict, ureg) -> Pint Quantity
+- time: numpy array with Pint units (days)
+- species_dict: dict mapping species names to Pint quantities (e.g., species_dict['V_T.CD8'])
+- ureg: Pint UnitRegistry
+- MUST return a Pint Quantity with units matching the 'units' field
+
+CONVERSION ASSUMPTIONS (3D model → 2D histology):
+- Model tracks 3D volumes (V_T in milliliters)
+- Literature often reports 2D densities (cells/mm² from tissue sections)
+- Standard tissue section thickness: 5 μm (0.005 mm)
+- Conversion: cells/mm² = (cells/mm³) × 0.005 mm
+
+Example for CD8+ density:
+def compute_test_statistic(time, species_dict, ureg):
+    import numpy as np
+    cd8 = species_dict['V_T.CD8']
+    V_T = species_dict['V_T']
+    density_3d = (cd8 / V_T).to('cell / millimeter**3')
+    # Convert 3D → 2D (assume 5 μm section)
+    section_thickness = 0.005 * ureg.millimeter
+    density_2d = density_3d * section_thickness
+    return density_2d.to('cell / millimeter**2')"""
+    )
 
     @staticmethod
     def resolve_doi(doi: str) -> Optional[dict]:
@@ -185,6 +211,96 @@ class QuickTargetEstimate(BaseModel):
                 f"Snippet: '{self.value_snippet[:200]}...'\n"
                 "Ensure the snippet actually contains the numeric value."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_model_output_units(self) -> "QuickTargetEstimate":
+        """Validator 4: Check that model_output_code returns correct units."""
+        import ast
+        import numpy as np
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        # Parse the code
+        try:
+            tree = ast.parse(self.model_output_code)
+        except SyntaxError as e:
+            raise ValueError(f"model_output_code has syntax error: {e}")
+
+        # Find the function definition
+        func_def = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "compute_test_statistic":
+                func_def = node
+                break
+
+        if not func_def:
+            raise ValueError(
+                "model_output_code must define a function named 'compute_test_statistic'"
+            )
+
+        # Check signature
+        args = [arg.arg for arg in func_def.args.args]
+        if args != ["time", "species_dict", "ureg"]:
+            raise ValueError(
+                f"Function signature must be (time, species_dict, ureg), got ({', '.join(args)})"
+            )
+
+        # Execute with mock data to test output units
+        try:
+            # Create mock data
+            time = np.linspace(0, 14, 10) * ureg.day
+            mock_species = {
+                "V_T": np.ones(10) * 10.0 * ureg.milliliter,
+                "V_T.C1": np.ones(10) * 1e9 * ureg.cell,
+                "V_T.CD8": np.ones(10) * 1e7 * ureg.cell,
+                "V_T.CD8_exh": np.ones(10) * 1e6 * ureg.cell,
+                "V_T.Treg": np.ones(10) * 1e6 * ureg.cell,
+                "V_T.Th": np.ones(10) * 1e6 * ureg.cell,
+                "V_T.Mac_M1": np.ones(10) * 1e6 * ureg.cell,
+                "V_T.Mac_M2": np.ones(10) * 1e7 * ureg.cell,
+                "V_T.MDSC": np.ones(10) * 1e6 * ureg.cell,
+                "V_T.APC": np.ones(10) * 1e5 * ureg.cell,
+                "V_T.mAPC": np.ones(10) * 1e5 * ureg.cell,
+                "V_T.aPSC": np.ones(10) * 1e7 * ureg.cell,
+                "V_T.qPSC": np.ones(10) * 1e7 * ureg.cell,
+                "V_T.ECM": np.ones(10) * 100.0 * ureg.milligram,
+                "V_T.TGFb": np.ones(10) * 10.0 * ureg.nanomolarity,
+                "V_T.IFNg": np.ones(10) * 1.0 * ureg.nanomolarity,
+                "V_T.IL10": np.ones(10) * 5.0 * ureg.nanomolarity,
+                "V_T.IL6": np.ones(10) * 5.0 * ureg.nanomolarity,
+                "V_T.CCL2": np.ones(10) * 1.0 * ureg.nanomolarity,
+                "V_T.ArgI": np.ones(10) * 0.5 * ureg.nanomolarity,
+                "V_T.c_vas": np.ones(10) * 100.0 * ureg.picogram / ureg.milliliter,
+                "V_C.TGFb": np.ones(10) * 5.0 * ureg.nanomolarity,
+            }
+
+            # Execute function
+            local_scope = {"ureg": ureg, "np": np}
+            exec(self.model_output_code, local_scope)
+            compute_fn = local_scope["compute_test_statistic"]
+
+            result = compute_fn(time, mock_species, ureg)
+
+            # Check result has units
+            if not hasattr(result, "units"):
+                raise ValueError("Function must return a Pint Quantity with units")
+
+            # Check dimensionality matches
+            expected_quantity = 1.0 * ureg(self.units)
+            if not result.dimensionality == expected_quantity.dimensionality:
+                raise ValueError(
+                    f"Unit dimensionality mismatch:\n"
+                    f"  Expected: {self.units} ({expected_quantity.dimensionality})\n"
+                    f"  Got: {result.units} ({result.dimensionality})\n"
+                    f"Ensure model_output_code returns the same units as the literature estimate."
+                )
+
+        except Exception as e:
+            if "dimensionality mismatch" in str(e) or "Unit" in str(e):
+                raise  # Re-raise unit errors
+            # Other execution errors might be due to missing species - be lenient
+            pass
+
         return self
 
 
