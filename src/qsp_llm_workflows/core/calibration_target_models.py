@@ -609,14 +609,20 @@ class CalibrationTarget(BaseModel):
         Create mock species data from species_units dict.
 
         Args:
-            species_units: Dict mapping species names to unit strings
+            species_units: Dict mapping species names to unit info (str or dict with 'units' key)
             ureg: Pint UnitRegistry
 
         Returns:
             Dict mapping species names to mock Pint quantities
         """
         mock_species = {}
-        for species, unit_str in species_units.items():
+        for species, unit_info in species_units.items():
+            # Handle both old format (string) and new format (dict with 'units' key)
+            if isinstance(unit_info, dict):
+                unit_str = unit_info.get("units", "dimensionless")
+            else:
+                unit_str = unit_info
+
             # Infer reasonable mock values based on unit type
             if "cell" in unit_str:
                 value = 1e6
