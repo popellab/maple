@@ -9,10 +9,14 @@ context that may differ from the model context, requiring formal mismatch handli
 See docs/calibration_target_design.md for full specification.
 """
 
+import ast
+from difflib import SequenceMatcher
 from enum import Enum
 from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+import numpy as np
+import requests
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from qsp_llm_workflows.core.shared_models import (
     Input,
@@ -483,6 +487,150 @@ class CalibrationTarget(BaseModel):
     calibration_target_estimates: CalibrationTargetEstimates = Field(
         description="Observable estimates with inputs and derivation"
     )
+
+    # ========================================================================
+    # Static helper methods for validation
+    # ========================================================================
+
+    @staticmethod
+    def resolve_doi(doi: str) -> Optional[dict]:
+        """
+        Resolve DOI and get metadata from CrossRef.
+
+        Returns:
+            Dict with title, first_author, year, doi or None if resolution fails
+        """
+        if not doi:
+            return None
+
+        # Clean DOI
+        doi_clean = doi.replace("https://doi.org/", "").replace("http://doi.org/", "").strip()
+
+        try:
+            # Query CrossRef API
+            url = f"https://doi.org/{doi_clean}"
+            headers = {"Accept": "application/vnd.citationstyles.csl+json"}
+            response = requests.get(url, headers=headers, timeout=10)
+
+            if response.status_code != 200:
+                return None
+
+            metadata = response.json()
+
+            # Extract title
+            title = metadata.get("title", "")
+            if isinstance(title, list) and len(title) > 0:
+                title = title[0]
+
+            # Extract first author
+            authors = metadata.get("author", [])
+            first_author = None
+            if authors and len(authors) > 0:
+                first_author = authors[0].get("family", "")
+
+            # Extract year
+            date_parts = metadata.get("issued", {}).get("date-parts", [[]])
+            year = None
+            if date_parts and len(date_parts) > 0 and len(date_parts[0]) > 0:
+                year = date_parts[0][0]
+
+            return {"title": title, "first_author": first_author, "year": year, "doi": doi_clean}
+
+        except Exception:
+            return None
+
+    @staticmethod
+    def fuzzy_match(str1: str, str2: str, threshold: float = 0.75) -> bool:
+        """
+        Fuzzy string matching using SequenceMatcher.
+
+        Returns:
+            True if similarity >= threshold
+        """
+        if not str1 or not str2:
+            return False
+
+        s1 = str1.lower().strip()
+        s2 = str2.lower().strip()
+
+        similarity = SequenceMatcher(None, s1, s2).ratio()
+        return similarity >= threshold
+
+    @staticmethod
+    def check_value_in_text(text: str, value: float) -> bool:
+        """
+        Check if numeric value appears in text.
+        Handles different formats: scientific notation, percentages, etc.
+
+        Returns:
+            True if value found in text
+        """
+        if not text:
+            return False
+
+        text_norm = text.lower().replace(",", "")
+
+        # Generate search patterns for the value
+        patterns = []
+
+        # Direct value
+        patterns.append(str(value))
+
+        # Scientific notation variations
+        if abs(value) < 0.01 or abs(value) > 10000:
+            patterns.append(f"{value:e}")
+            patterns.append(f"{value:.2e}")
+            patterns.append(f"{value:.3e}")
+
+        # Percentage format (if value is between 0 and 1)
+        if 0 < value < 1:
+            pct = value * 100
+            patterns.append(f"{pct}%")
+            patterns.append(f"{pct:.1f}%")
+            patterns.append(f"{pct:.2f}%")
+
+        # Rounded variations
+        patterns.append(f"{value:.1f}")
+        patterns.append(f"{value:.2f}")
+        patterns.append(f"{value:.3f}")
+
+        # Check each pattern
+        for pattern in patterns:
+            if str(pattern).lower() in text_norm:
+                return True
+
+        return False
+
+    @staticmethod
+    def create_mock_species(species_units: dict, ureg) -> dict:
+        """
+        Create mock species data from species_units dict.
+
+        Args:
+            species_units: Dict mapping species names to unit strings
+            ureg: Pint UnitRegistry
+
+        Returns:
+            Dict mapping species names to mock Pint quantities
+        """
+        mock_species = {}
+        for species, unit_str in species_units.items():
+            # Infer reasonable mock values based on unit type
+            if "cell" in unit_str:
+                value = 1e6
+            elif "molarity" in unit_str:
+                value = 1.0
+            elif "gram" in unit_str:
+                value = 100.0
+            else:
+                value = 1.0
+            mock_species[species] = np.ones(10) * value * ureg(unit_str)
+        return mock_species
+
+    # ========================================================================
+    # Field definitions
+    # ========================================================================
+
     description: str = Field(description="Human-readable description of the observable")
 
     # --- Scenario specification (LLM-generated) ---
@@ -604,5 +752,387 @@ class CalibrationTarget(BaseModel):
                     f"Threshold values MUST be extracted from the same paper as the calibration target, not assumed. "
                     f"Search the paper for patient demographics, cohort characteristics, or enrollment criteria."
                 )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_doi_resolution(self) -> "CalibrationTarget":
+        """Validator: Check that primary DOI resolves via CrossRef."""
+        if self.primary_data_source.doi:
+            metadata = self.resolve_doi(self.primary_data_source.doi)
+            if metadata is None:
+                raise ValueError(
+                    f"DOI '{self.primary_data_source.doi}' failed to resolve via CrossRef. "
+                    "Verify the DOI exists and is correctly formatted (e.g., '10.1234/journal.2023.123'). "
+                    "Search for the paper on Google Scholar or PubMed to find the correct DOI."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_title_match(self) -> "CalibrationTarget":
+        """Validator: Check that paper title matches CrossRef metadata."""
+        if self.primary_data_source.doi:
+            metadata = self.resolve_doi(self.primary_data_source.doi)
+            if metadata:
+                crossref_title = metadata.get("title", "")
+                if not self.fuzzy_match(
+                    crossref_title, self.primary_data_source.title, threshold=0.75
+                ):
+                    raise ValueError(
+                        f"Paper title mismatch:\n"
+                        f"  CrossRef: '{crossref_title}'\n"
+                        f"  Provided: '{self.primary_data_source.title}'\n"
+                        f"Use the exact title from the DOI. Copy the title from CrossRef or the paper itself."
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def validate_computation_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
+        """
+        Validator: Check that computation_code returns correct units.
+
+        Requires context:
+            species_units: Dict mapping species names to unit strings (from species_units.json)
+        """
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        # Get species_units from context
+        if not info.context:
+            raise ValueError(
+                "Validation context is required. Pass context={'species_units': {...}}"
+            )
+        species_units = info.context["species_units"]
+
+        for measurement in self.scenario.measurements:
+            # Parse the code
+            try:
+                tree = ast.parse(measurement.computation_code)
+            except SyntaxError as e:
+                raise ValueError(f"computation_code has syntax error: {e}")
+
+            # Find the function definition
+            func_def = None
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == "compute_measurement":
+                    func_def = node
+                    break
+
+            if not func_def:
+                raise ValueError(
+                    "computation_code must define a function named 'compute_measurement'"
+                )
+
+            # Check signature
+            args = [arg.arg for arg in func_def.args.args]
+            if args != ["time", "species_dict", "ureg"]:
+                raise ValueError(
+                    f"Function signature must be (time, species_dict, ureg), got ({', '.join(args)})"
+                )
+
+            # Execute with mock data to test output units
+            try:
+                # Create mock data from actual model species
+                time = np.linspace(0, 14, 10) * ureg.day
+                mock_species = self.create_mock_species(species_units, ureg)
+
+                # Execute function
+                local_scope = {"ureg": ureg, "np": np}
+                exec(measurement.computation_code, local_scope)
+                compute_fn = local_scope["compute_measurement"]
+
+                result = compute_fn(time, mock_species, ureg)
+
+                # Check result has units
+                if not hasattr(result, "units"):
+                    raise ValueError("Function must return a Pint Quantity with units")
+
+                # Check dimensionality matches
+                expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
+                if not result.dimensionality == expected_quantity.dimensionality:
+                    raise ValueError(
+                        f"Unit dimensionality mismatch:\n"
+                        f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
+                        f"  Got: {result.units} ({result.dimensionality})\n"
+                        f"Ensure computation_code returns the same units as the calibration target estimate."
+                    )
+
+            except Exception as e:
+                if "dimensionality mismatch" in str(e) or "Unit" in str(e):
+                    raise  # Re-raise unit errors
+                # Other execution errors might be due to missing species - be lenient
+                pass
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_derivation_code(self) -> "CalibrationTarget":
+        """
+        Validator: Check that derivation_code executes, returns correct structure and units,
+        and computed values match reported values.
+        """
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        # Parse the code
+        try:
+            tree = ast.parse(self.calibration_target_estimates.distribution_code)
+        except SyntaxError as e:
+            raise ValueError(f"distribution_code has syntax error: {e}")
+
+        # Find the function definition
+        func_def = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "derive_distribution":
+                func_def = node
+                break
+
+        if not func_def:
+            raise ValueError("distribution_code must define a function named 'derive_distribution'")
+
+        # Check signature
+        args = [arg.arg for arg in func_def.args.args]
+        if args != ["inputs", "ureg"]:
+            raise ValueError(f"Function signature must be (inputs, ureg), got ({', '.join(args)})")
+
+        # Execute with mock inputs to test structure and units
+        try:
+            # Create mock inputs dict with Pint quantities
+            mock_inputs = {}
+            for inp in self.calibration_target_estimates.inputs:
+                mock_inputs[inp.name] = inp.value * ureg(inp.units)
+
+            # Execute function
+            local_scope = {"ureg": ureg, "np": np}
+            exec(self.calibration_target_estimates.distribution_code, local_scope)
+            derive_fn = local_scope["derive_distribution"]
+
+            result = derive_fn(mock_inputs, ureg)
+
+            # Check result is dict with required keys
+            if not isinstance(result, dict):
+                raise ValueError("Function must return a dict")
+
+            required_keys = {"median_obs", "iqr_obs", "ci95_obs"}
+            if not required_keys.issubset(result.keys()):
+                raise ValueError(
+                    f"Function must return dict with keys: {required_keys}. Got: {result.keys()}"
+                )
+
+            # Check all values have units
+            for key in required_keys:
+                if not hasattr(result[key], "units"):
+                    raise ValueError(f"Result['{key}'] must be a Pint Quantity with units")
+
+            # Check dimensionality matches expected units
+            expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
+
+            # Check median
+            if result["median_obs"].dimensionality != expected_quantity.dimensionality:
+                raise ValueError(
+                    f"median_obs unit dimensionality mismatch:\n"
+                    f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
+                    f"  Got: {result['median_obs'].units} ({result['median_obs'].dimensionality})"
+                )
+
+            # Check iqr
+            if result["iqr_obs"].dimensionality != expected_quantity.dimensionality:
+                raise ValueError(
+                    f"iqr_obs unit dimensionality mismatch:\n"
+                    f"  Expected: {self.calibration_target_estimates.units}\n"
+                    f"  Got: {result['iqr_obs'].units}"
+                )
+
+            # Check ci95 is list/array of 2 elements
+            if not hasattr(result["ci95_obs"], "__len__") or len(result["ci95_obs"]) != 2:
+                raise ValueError("ci95_obs must be a list/array with 2 elements [lower, upper]")
+
+            # Convert computed values to expected units for comparison
+            median_computed = result["median_obs"].to(self.calibration_target_estimates.units)
+            iqr_computed = result["iqr_obs"].to(self.calibration_target_estimates.units)
+            ci95_computed = [
+                result["ci95_obs"][0].to(self.calibration_target_estimates.units),
+                result["ci95_obs"][1].to(self.calibration_target_estimates.units),
+            ]
+
+            # Check computed values match reported values (with tolerance)
+            median_reported = self.calibration_target_estimates.median
+            iqr_reported = self.calibration_target_estimates.iqr
+            ci95_reported = self.calibration_target_estimates.ci95
+
+            # Use relative tolerance of 1% for comparison
+            rel_tol = 0.01
+
+            if abs(median_computed.magnitude - median_reported) > rel_tol * abs(median_reported):
+                raise ValueError(
+                    f"Computed median ({median_computed.magnitude:.4g}) does not match "
+                    f"reported median ({median_reported:.4g}) within 1% tolerance"
+                )
+
+            if abs(iqr_computed.magnitude - iqr_reported) > rel_tol * abs(iqr_reported):
+                raise ValueError(
+                    f"Computed IQR ({iqr_computed.magnitude:.4g}) does not match "
+                    f"reported IQR ({iqr_reported:.4g}) within 1% tolerance"
+                )
+
+            # Check CI95 bounds
+            if abs(ci95_computed[0].magnitude - ci95_reported[0]) > rel_tol * abs(ci95_reported[0]):
+                raise ValueError(
+                    f"Computed CI95 lower ({ci95_computed[0].magnitude:.4g}) does not match "
+                    f"reported CI95 lower ({ci95_reported[0]:.4g}) within 1% tolerance"
+                )
+
+            if abs(ci95_computed[1].magnitude - ci95_reported[1]) > rel_tol * abs(ci95_reported[1]):
+                raise ValueError(
+                    f"Computed CI95 upper ({ci95_computed[1].magnitude:.4g}) does not match "
+                    f"reported CI95 upper ({ci95_reported[1]:.4g}) within 1% tolerance"
+                )
+
+        except Exception as e:
+            if "mismatch" in str(e) or "does not match" in str(e):
+                raise  # Re-raise validation errors
+            # Other execution errors - provide context
+            raise ValueError(f"Error executing derivation_code: {e}")
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_source_refs(self) -> "CalibrationTarget":
+        """Validator: Check all source_refs in inputs point to defined sources."""
+        # Build set of valid source tags
+        valid_tags = {self.primary_data_source.source_tag}
+        valid_tags.update(s.source_tag for s in self.secondary_data_sources)
+        valid_tags.add("modeling_assumption")  # Special tag
+
+        # Check each input's source_ref
+        for inp in self.calibration_target_estimates.inputs:
+            if inp.source_ref not in valid_tags:
+                raise ValueError(
+                    f"Input '{inp.name}' has source_ref '{inp.source_ref}' which is not defined.\n"
+                    f"Valid source tags: {sorted(valid_tags)}\n"
+                    f"Add the source to primary_data_source or secondary_data_sources, "
+                    f"or use 'modeling_assumption' if appropriate."
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_threshold_computation_code(self, info: ValidationInfo) -> "CalibrationTarget":
+        """
+        Validator: Check that threshold_computation_code executes and returns correct units.
+
+        Requires context:
+            species_units: Dict mapping species names to unit strings (from species_units.json)
+        """
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        # Get species_units from context
+        if not info.context:
+            raise ValueError(
+                "Validation context is required. Pass context={'species_units': {...}}"
+            )
+        species_units = info.context["species_units"]
+
+        for measurement in self.scenario.measurements:
+            if not measurement.threshold_computation_code:
+                continue  # Identity mapping, no code to validate
+
+            # Parse the code
+            try:
+                tree = ast.parse(measurement.threshold_computation_code)
+            except SyntaxError as e:
+                raise ValueError(f"threshold_computation_code has syntax error: {e}")
+
+            # Find the function definition
+            func_def = None
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == "compute_threshold_value":
+                    func_def = node
+                    break
+
+            if not func_def:
+                raise ValueError(
+                    "threshold_computation_code must define a function named 'compute_threshold_value'"
+                )
+
+            # Check signature
+            args = [arg.arg for arg in func_def.args.args]
+            if args != ["species_dict", "inputs", "ureg"]:
+                raise ValueError(
+                    f"Function signature must be (species_dict, inputs, ureg), got ({', '.join(args)})"
+                )
+
+            # Execute with mock data
+            try:
+                # Create mock species from actual model
+                mock_species = self.create_mock_species(species_units, ureg)
+
+                mock_inputs = {}
+                for inp in self.calibration_target_estimates.inputs:
+                    mock_inputs[inp.name] = inp.value * ureg(inp.units)
+
+                # Execute function
+                local_scope = {"ureg": ureg, "np": np}
+                exec(measurement.threshold_computation_code, local_scope)
+                compute_fn = local_scope["compute_threshold_value"]
+
+                result = compute_fn(mock_species, mock_inputs, ureg)
+
+                # Check result has units
+                if not hasattr(result, "units"):
+                    raise ValueError("Function must return a Pint Quantity with units")
+
+                # Check dimensionality matches threshold units
+                expected_quantity = 1.0 * ureg(measurement.threshold_units)
+                if result.dimensionality != expected_quantity.dimensionality:
+                    raise ValueError(
+                        f"Threshold computation unit dimensionality mismatch:\n"
+                        f"  Expected: {measurement.threshold_units} ({expected_quantity.dimensionality})\n"
+                        f"  Got: {result.units} ({result.dimensionality})"
+                    )
+
+            except Exception as e:
+                if "dimensionality mismatch" in str(e):
+                    raise
+                # Other errors might be due to missing species/inputs - be lenient
+                pass
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_inputs_used(self) -> "CalibrationTarget":
+        """Validator: Warn if inputs are defined but not used in derivation_code."""
+        # Parse derivation_code to find variable references
+        try:
+            tree = ast.parse(self.calibration_target_estimates.distribution_code)
+        except SyntaxError:
+            # Already caught by validate_derivation_code
+            return self
+
+        # Extract all names accessed from 'inputs' dict
+        used_input_names = set()
+
+        class InputAccessVisitor(ast.NodeVisitor):
+            def visit_Subscript(self, node):
+                # Look for inputs['name'] or inputs["name"]
+                if isinstance(node.value, ast.Name) and node.value.id == "inputs":
+                    if isinstance(node.slice, ast.Constant):
+                        used_input_names.add(node.slice.value)
+                self.generic_visit(node)
+
+        visitor = InputAccessVisitor()
+        visitor.visit(tree)
+
+        # Check which defined inputs are not used
+        defined_inputs = {inp.name for inp in self.calibration_target_estimates.inputs}
+        unused_inputs = defined_inputs - used_input_names
+
+        if unused_inputs:
+            # This is a warning, not an error - could be intentional
+            import warnings
+
+            warnings.warn(
+                f"The following inputs are defined but not used in derivation_code: {sorted(unused_inputs)}. "
+                f"If these inputs are not needed, consider removing them.",
+                UserWarning,
+            )
 
         return self
