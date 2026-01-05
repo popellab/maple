@@ -563,6 +563,7 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
                     "custom_id": custom_id,
                     "prompt": prompt,
                     "pydantic_model": CalibrationTarget,
+                    "validation_context": {"species_units": all_species_units},
                 }
 
                 requests.append(request)

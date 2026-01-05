@@ -12,7 +12,7 @@ See docs/calibration_target_design.md for full specification.
 import ast
 from difflib import SequenceMatcher
 from enum import Enum
-from typing import List, Literal, Optional, Union
+from typing import List, Optional, Type
 
 import numpy as np
 import requests
@@ -27,103 +27,95 @@ from qsp_llm_workflows.core.shared_models import (
 
 
 # ============================================================================
-# Scenario Models (Interventions and Measurements)
+# Helper Functions
 # ============================================================================
 
 
-class DrugDosing(BaseModel):
+def enum_field_description(enum_class: Type[Enum], base_description: str = "") -> str:
     """
-    Drug dosing intervention.
+    Generate field description with enum options automatically included.
 
-    Maps to schedule_dosing() and SimBiology dosing schedules.
+    Args:
+        enum_class: The Enum class to extract options from
+        base_description: Optional base description text
+
+    Returns:
+        Description string with valid options listed
     """
+    options = [f"'{member.value}'" for member in enum_class]
+    options_str = ", ".join(options)
 
-    agent: str = Field(
-        description=(
-            "Drug name (e.g., 'anti_PD1', 'gemcitabine', 'nivolumab'). "
-            "Maps to '{agent}_dose' and '{agent}_schedule' in dosing config."
-        )
-    )
-    dose: float = Field(description="Dose amount per administration")
-    dose_units: str = Field(
-        description=(
-            "Dose units (e.g., 'mg/kg', 'mg/m2', 'mg', 'cells'). "
-            "For mg/kg or mg/m2, patient_weight or patient_bsa must be provided."
-        )
-    )
-    schedule: List[float] = Field(
-        description=(
-            "Dosing timepoints in days (e.g., [0, 7, 14] for doses on days 0, 7, and 14). "
-            "Explicit timepoint list for maximum flexibility. "
-            "Converts to SimBiology dose schedule; "
-            "for qspio: can generate from [start, interval, repeat] pattern if regular."
-        )
-    )
-    patient_weight: Optional[float] = Field(
-        None, description="Patient weight in kg (required for mg/kg dosing)"
-    )
-    patient_bsa: Optional[float] = Field(
-        None, description="Patient body surface area in m^2 (required for mg/m2 dosing)"
-    )
+    if base_description:
+        return f"{base_description}. Valid options: {options_str}"
+    else:
+        return f"Valid options: {options_str}"
 
 
-class SurgicalResection(BaseModel):
+# ============================================================================
+# Scenario Models (Interventions and Measurements)
+# ============================================================================
+# NOTE: Simplified to text descriptions - executable code deferred to manual implementation
+
+
+class Intervention(BaseModel):
     """
-    Surgical resection intervention.
+    Text description of intervention (deferred executable code to later).
 
-    Fractional removal of cells from specified compartments at a single timepoint.
+    For now, we capture the essential information in text form.
+    Later, this can be converted to executable DrugDosing/SurgicalResection/etc.
     """
 
-    timing: float = Field(description="Day when resection occurs (e.g., 14.0 for day 14)")
-    fraction_removed: float = Field(
-        ge=0.0,
-        le=1.0,
+    intervention_description: str = Field(
         description=(
-            "Fraction of cells removed (0.0 to 1.0). "
-            "E.g., 0.9 for 90% debulking, leaving 10% residual disease. "
-            "Applied multiplicatively: new_count = old_count * (1 - fraction_removed)."
-        ),
-    )
-    affected_species: List[str] = Field(
-        description=(
-            "List of model species affected by resection (e.g., ['V_T.C1', 'V_T.Treg']). "
-            "Typically includes tumor cells and immune cells in tumor compartment."
+            "Complete text description of the intervention including:\n"
+            "- What: Agent/procedure name\n"
+            "- How much: Dose and units (mg/kg, mg/m2, etc.)\n"
+            "- When: Schedule/timing (e.g., 'every 2 weeks starting day 0', 'day 14 resection')\n"
+            "- Additional details: Patient weight/BSA if relevant, fraction removed for resection\n\n"
+            "Examples:\n"
+            "- 'Anti-PD-1 antibody 3 mg/kg IV every 2 weeks starting day 0 (patient weight 70 kg)'\n"
+            "- 'Surgical resection on day 14, removing 90% of tumor burden'\n"
+            "- 'Gemcitabine 1000 mg/m2 on days 0, 7, 14 (patient BSA 1.8 m2)'\n"
+            "- 'No intervention (natural disease progression)'"
         )
     )
-
-
-# TODO: Add RadiationTherapy intervention schema
-# TODO: Add CellTransferTherapy intervention schema
-# TODO: Add TumorInoculation intervention schema
 
 
 class Measurement(BaseModel):
     """
-    Measurement specification: when and what to measure from the model.
+    Measurement specification with executable code for WHAT to measure and text description for WHEN.
 
-    Defines the timing (relative to a biomarker threshold) and computation
-    for extracting a model-derived observable that can be compared to the
-    literature-derived calibration target.
-
-    All measurements are biomarker-triggered to ensure biological interpretability
-    and simulation reproducibility. There is no absolute "time zero" in biology.
+    - measurement_code defines WHAT observable to compute from simulation
+    - threshold_description describes WHEN the measurement occurs (text only for now)
     """
 
-    timing_type: Literal["biomarker_triggered"] = "biomarker_triggered"
+    measurement_description: str = Field(
+        description=(
+            "Text description of WHAT is being measured and HOW:\n"
+            "- Observable: What biological quantity (e.g., 'CD8+ T cell density', 'tumor volume')\n"
+            "- Method: How it's measured (e.g., 'via IHC', 'via imaging', 'via flow cytometry')\n"
+            "- Location: Where in the body (e.g., 'in primary tumor tissue', 'in peripheral blood')\n"
+            "- Units: Expected units (e.g., 'cells/mm²', 'millimeter³', 'nanomolarity')\n\n"
+            "Example: 'CD8+ T cell density measured via IHC in tumor tissue sections, reported as cells/mm²'"
+        )
+    )
 
     measurement_species: List[str] = Field(
         description=(
-            "Model species needed to compute the measurement (SimBiology format). "
-            "E.g., ['V_T.CD8', 'V_T.C1'] for CD8-to-tumor ratio measurement."
+            "List of species accessed by measurement_code.\n"
+            "Format: 'compartment.species' (e.g., ['V_T.CD8', 'V_T.C1']).\n"
+            "Must match species names in model."
         )
     )
 
     measurement_code: str = Field(
         description=(
-            "📊 WHAT TO MEASURE: Python code defining compute_measurement(time, species_dict, ureg). "
-            "Converts model species to observable matching calibration target. "
-            "This is what gets compared to literature values. "
-            "Must return Pint Quantity for comparison. "
+            "Python function that computes the observable from simulation output.\n\n"
+            "Function signature: compute_measurement(time, species_dict, ureg)\n"
+            "- time: numpy array with time values (Pint Quantity with day units)\n"
+            "- species_dict: dict mapping species names to numpy arrays (Pint Quantities)\n"
+            "- ureg: Pint UnitRegistry for unit conversions\n\n"
+            "Must return a Pint Quantity with units matching calibration_target_estimates.units.\n\n"
             "Example:\n"
             "def compute_measurement(time, species_dict, ureg):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
@@ -133,74 +125,17 @@ class Measurement(BaseModel):
         )
     )
 
-    trigger_species: str = Field(
+    threshold_description: str = Field(
         description=(
-            "⏰ WHEN TO MEASURE: Model species that triggers the measurement (SimBiology format). "
-            "NOT the same as what you're measuring! "
-            "E.g., 'V_T.C1' (tumor burden) triggers measurement of CD8 density. "
-            "Common triggers: tumor size at resection, treatment timepoint, clinical milestone."
-        )
-    )
-
-    threshold_conversion_code: str = Field(
-        description=(
-            "Python code to convert trigger_species to threshold comparison space. "
-            "Function signature: compute_threshold_value(species_dict, inputs, ureg) -> Pint Quantity.\n\n"
-            "COMMON CASE (identity mapping - trigger in natural units):\n"
-            "def compute_threshold_value(species_dict, inputs, ureg):\n"
-            "    return species_dict['V_T.TGFb']  # Direct concentration comparison\n\n"
-            "CONVERSION CASE (cells → volume):\n"
-            "def compute_threshold_value(species_dict, inputs, ureg):\n"
-            "    tumor_cells = species_dict['V_T.C1']\n"
-            "    cell_density = inputs['cell_packing_density']  # From inputs list\n"
-            "    volume = tumor_cells / cell_density\n"
-            "    return volume.to(ureg.mm**3)\n\n"
-            "All conversion factors must come from inputs list with source tracking."
-        )
-    )
-
-    threshold: float = Field(
-        description=(
-            "Threshold value that triggers measurement when crossed. "
-            "Units specified by threshold_units field. "
-            "Extract from paper when possible ('resection at 500 mm³'), "
-            "otherwise document as modeling assumption in inputs."
-        )
-    )
-
-    threshold_units: str = Field(
-        description=(
-            "Units of threshold value (must be Pint-parseable). "
-            "If threshold_conversion_code provided: units of that code's output. "
-            "If threshold_conversion_code is None: must match natural units of trigger_species. "
-            "Examples: 'millimeter**3' (volume), 'cell' (count), 'nanomolarity' (concentration)."
-        )
-    )
-
-    threshold_input_name: str = Field(
-        description=(
-            "Name of input that provides the threshold value with source tracking. "
-            "Must reference an input in the inputs list with matching value/units. "
-            "⚠️ CRITICAL: Threshold value MUST come from primary source, NOT modeling_assumption. "
-            "Extract from paper (e.g., 'resected at 500 mm³', 'enrolled at 1 cm diameter'). "
-            "Conversion factors (cell_density, geometric constants) CAN use modeling_assumption."
-        )
-    )
-
-    comparison: Literal[">", "<"] = Field(
-        description=(
-            "Comparison operator: '>' (greater than) or '<' (less than). "
-            "E.g., '>' triggers when computed value exceeds threshold, '<' when it falls below. "
-            "For tumor burden: '>' = tumor reaches size. For response: '<' = tumor shrinks below."
-        )
-    )
-
-    timepoints: List[float] = Field(
-        description=(
-            "Days relative to trigger event to sample model output. "
-            "For single-point: [0.0] = at trigger. "
-            "For post-trigger tracking: [0.0, 7.0, 14.0] = at trigger, +7d, +14d. "
-            "For derivatives: [-1.0, 0.0, 1.0] = window around trigger for finite differences."
+            "Text description of WHEN the measurement occurs:\n"
+            "- Trigger: What biological/clinical event triggers measurement\n"
+            "- Threshold: Specific value if stated (e.g., 'when tumor reaches 500 mm³', 'at 1e9 cells')\n"
+            "- Context: Clinical context (e.g., 'at resection', 'at diagnosis', 'baseline')\n\n"
+            "Examples:\n"
+            "- 'At tumor resection when tumor burden reaches approximately 1e9 cells (~500 mm³)'\n"
+            "- 'At baseline/diagnosis before any treatment (tumor burden ~1e9 cells)'\n"
+            "- '7 days after first anti-PD-1 dose when tumor begins responding'\n"
+            "- 'At clinical presentation (median tumor volume 450 mm³ in study cohort)'"
         )
     )
 
@@ -213,17 +148,20 @@ class Scenario(BaseModel):
     """
 
     description: str = Field(
-        description="Human-readable description of the scenario (e.g., 'Anti-PD-1 monotherapy with resection')"
+        description="Human-readable description of the scenario (e.g., 'Baseline PDAC tumor at resection, treatment-naive')"
     )
-    interventions: List[Union[DrugDosing, SurgicalResection]] = Field(
-        description="List of interventions applied during the experiment"
+    interventions: List[Intervention] = Field(
+        description=(
+            "List of interventions applied during the experiment. "
+            "May be empty list for natural/untreated state measurements. "
+            "Use single entry with 'No intervention (natural disease progression)' for clarity."
+        )
     )
     measurements: List[Measurement] = Field(
         description=(
-            "List of measurement events specifying when and what to measure from model. "
-            "All measurements are biomarker-triggered (relative to observable biological state). "
-            "Creates model-derived observables for comparison with calibration target. "
-            "Must contain at least one measurement."
+            "List of measurement specifications (what and when to measure). "
+            "Must contain at least one measurement. "
+            "Each measurement describes the observable and the clinical/biological context."
         )
     )
 
@@ -390,15 +328,30 @@ class System(str, Enum):
 class Stage(BaseModel):
     """Disease stage with extent and burden."""
 
-    extent: StageExtent = Field(description="Disease extent")
-    burden: StageBurden = Field(description="Disease burden")
+    extent: StageExtent = Field(
+        description=enum_field_description(StageExtent, "Disease extent")
+    )
+    burden: StageBurden = Field(
+        description=enum_field_description(
+            StageBurden, "Disease burden (tumor size/volume category)"
+        )
+    )
 
 
 class TreatmentContext(BaseModel):
     """Treatment context with history and current status."""
 
-    history: List[TreatmentHistory] = Field(description="Treatment history (select all that apply)")
-    status: TreatmentStatus = Field(description="Current treatment status")
+    history: List[TreatmentHistory] = Field(
+        description=enum_field_description(
+            TreatmentHistory, "Treatment history (select all that apply)"
+        )
+    )
+    status: TreatmentStatus = Field(
+        description=enum_field_description(
+            TreatmentStatus,
+            "Current treatment status. Use 'off_treatment' for untreated/baseline measurements",
+        )
+    )
     specifier: Optional[str] = Field(None, description="Optional drug name or class specifier")
 
 
@@ -410,13 +363,22 @@ class ExperimentalContext(BaseModel):
     encoded in enum values (e.g., Compartment.TUMOR_PRIMARY = "tumor.primary").
     """
 
-    species: Species = Field(description="Species")
+    species: Species = Field(description=enum_field_description(Species, "Species"))
     mouse_subspecifier: Optional[MouseSubspecifier] = Field(
-        None, description="Optional mouse subspecifier (only if species is mouse)"
+        None,
+        description=enum_field_description(
+            MouseSubspecifier, "Optional mouse subspecifier (only if species is mouse)"
+        ),
     )
-    indication: Indication = Field(description="Cancer indication")
-    compartment: Compartment = Field(description="Anatomical compartment")
-    system: System = Field(description="Experimental system")
+    indication: Indication = Field(
+        description=enum_field_description(Indication, "Cancer indication")
+    )
+    compartment: Compartment = Field(
+        description=enum_field_description(Compartment, "Anatomical compartment")
+    )
+    system: System = Field(
+        description=enum_field_description(System, "Experimental system")
+    )
     treatment: TreatmentContext = Field(description="Treatment context")
     stage: Stage = Field(description="Disease stage")
 
@@ -446,18 +408,43 @@ class CalibrationTargetFooters(BaseModel):
 class CalibrationTargetEstimates(BaseModel):
     """Calibration target estimates with structured inputs and derivation."""
 
-    median: float = Field(description="Median value")
-    iqr: float = Field(description="Interquartile range")
-    ci95: List[float] = Field(description="95% confidence interval [lower, upper]")
+    median: float = Field(
+        description=(
+            "COMPUTED median value from distribution_code. "
+            "Set this to the output of derive_distribution()['median_obs'].magnitude. "
+            "This is NOT necessarily the median reported in the paper (which goes in inputs)."
+        )
+    )
+    iqr: float = Field(
+        description=(
+            "COMPUTED interquartile range from distribution_code. "
+            "Set this to the output of derive_distribution()['iqr_obs'].magnitude. "
+            "This is NOT necessarily the IQR reported in the paper (which goes in inputs)."
+        )
+    )
+    ci95: List[float] = Field(
+        description=(
+            "COMPUTED 95% confidence interval [lower, upper] from distribution_code. "
+            "Set this to the output of derive_distribution()['ci95_obs'] as [lower.magnitude, upper.magnitude]. "
+            "Papers rarely report CI95 - derive from mean/SD or median/IQR via Monte Carlo."
+        )
+    )
     units: str = Field(description="Units of the observable")
-    inputs: List[Input] = Field(description="List of inputs used in derivation")
+    inputs: List[Input] = Field(
+        description=(
+            "List of inputs used in derivation. "
+            "These are the VALUES REPORTED IN THE PAPER (mean, SD, median, IQR, etc.) "
+            "that are used to DERIVE the distribution via Monte Carlo."
+        )
+    )
     distribution_code: str = Field(
         description=(
             "Python code defining a derive_distribution(inputs, ureg) function. "
             "inputs is a dict mapping input names to Pint Quantities. "
             "Must return dict with Pint Quantities: median_obs, iqr_obs, ci95_obs ([lower, upper]). "
-            "CRITICAL: NO magic numbers allowed - every coefficient, multiplier, or constant must come from inputs. "
-            "CRITICAL: Use MC methods (parametric bootstrap) for distribution estimates, NOT analytical approximations.\n"
+            "Extract biological/experimental values via inputs with source traceability. "
+            "Universal constants OK as literals: percentiles (2.5, 25, 75, 97.5), mathematical constants (π, 2), MC sample sizes (10000). "
+            "Use MC methods (parametric bootstrap) for distribution estimates, NOT analytical approximations.\n"
             "Example (parametric bootstrap from literature):\n"
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
@@ -716,52 +703,11 @@ class CalibrationTarget(BaseModel):
         """
         return cls(**{**headers.model_dump(), **content})
 
-    @model_validator(mode="after")
-    def validate_threshold_inputs(self) -> "CalibrationTarget":
-        """
-        Validate that threshold_input_name references exist and match threshold values.
-
-        Checks:
-        1. Each measurement's threshold_input_name exists in inputs list
-        2. Referenced input has matching value and units
-        3. Warns if threshold input uses modeling_assumption
-        """
-        inputs_dict = {inp.name: inp for inp in self.calibration_target_estimates.inputs}
-
-        for measurement in self.scenario.measurements:
-            threshold_input_name = measurement.threshold_input_name
-
-            # Check 1: Input exists
-            if threshold_input_name not in inputs_dict:
-                raise ValueError(
-                    f"Measurement threshold_input_name '{threshold_input_name}' not found in inputs list. "
-                    f"Available inputs: {list(inputs_dict.keys())}"
-                )
-
-            threshold_input = inputs_dict[threshold_input_name]
-
-            # Check 2: Value and units match
-            if abs(threshold_input.value - measurement.threshold) > 1e-9:
-                raise ValueError(
-                    f"Threshold input '{threshold_input_name}' value ({threshold_input.value}) "
-                    f"does not match measurement threshold ({measurement.threshold})"
-                )
-
-            if threshold_input.units != measurement.threshold_units:
-                raise ValueError(
-                    f"Threshold input '{threshold_input_name}' units ('{threshold_input.units}') "
-                    f"do not match measurement threshold_units ('{measurement.threshold_units}')"
-                )
-
-            # Check 3: Reject if modeling_assumption
-            if threshold_input.source_ref == "modeling_assumption":
-                raise ValueError(
-                    f"Threshold input '{threshold_input_name}' uses 'modeling_assumption' as source_ref. "
-                    f"Threshold values MUST be extracted from the same paper as the calibration target, not assumed. "
-                    f"Search the paper for patient demographics, cohort characteristics, or enrollment criteria."
-                )
-
-        return self
+    # DISABLED: Simplified measurement structure - executable code deferred to manual implementation
+    # @model_validator(mode="after")
+    # def validate_threshold_inputs(self) -> "CalibrationTarget":
+    #     """Validator disabled for simplified measurement structure."""
+    #     return self
 
     @model_validator(mode="after")
     def validate_doi_resolution(self) -> "CalibrationTarget":
@@ -797,7 +743,7 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_measurement_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
         """
-        Validator: Check that measurement_code returns correct units.
+        Validator: Check that measurement_code executes and returns correct units.
 
         Requires context:
             species_units: Dict mapping species names to unit strings (from species_units.json)
@@ -837,10 +783,12 @@ class CalibrationTarget(BaseModel):
                     f"Function signature must be (time, species_dict, ureg), got ({', '.join(args)})"
                 )
 
-            # Execute with mock data to test output units
+            # Execute with mock data
             try:
-                # Create mock data from actual model species
-                time = np.linspace(0, 14, 10) * ureg.day
+                # Create mock time array
+                mock_time = np.linspace(0, 14, 100) * ureg.day
+
+                # Create mock species from actual model
                 mock_species = self.create_mock_species(species_units, ureg)
 
                 # Execute function
@@ -848,26 +796,25 @@ class CalibrationTarget(BaseModel):
                 exec(measurement.measurement_code, local_scope)
                 compute_fn = local_scope["compute_measurement"]
 
-                result = compute_fn(time, mock_species, ureg)
+                result = compute_fn(mock_time, mock_species, ureg)
 
                 # Check result has units
                 if not hasattr(result, "units"):
                     raise ValueError("Function must return a Pint Quantity with units")
 
-                # Check dimensionality matches
+                # Check dimensionality matches calibration target units
                 expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
-                if not result.dimensionality == expected_quantity.dimensionality:
+                if result.dimensionality != expected_quantity.dimensionality:
                     raise ValueError(
-                        f"Unit dimensionality mismatch:\n"
+                        f"Measurement code unit dimensionality mismatch:\n"
                         f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
-                        f"  Got: {result.units} ({result.dimensionality})\n"
-                        f"Ensure measurement_code returns the same units as the calibration target estimate."
+                        f"  Got: {result.units} ({result.dimensionality})"
                     )
 
             except Exception as e:
-                if "dimensionality mismatch" in str(e) or "Unit" in str(e):
-                    raise  # Re-raise unit errors
-                # Other execution errors might be due to missing species - be lenient
+                if "dimensionality mismatch" in str(e):
+                    raise
+                # Other errors might be due to missing species - be lenient
                 pass
 
         return self
@@ -1025,7 +972,7 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_species_exist(self, info: ValidationInfo) -> "CalibrationTarget":
         """
-        Validator: Check that trigger_species and measurement_species exist in model.
+        Validator: Check that measurement_species exist in model.
 
         Requires context:
             species_units: Dict mapping species names to unit strings (from species_units.json)
@@ -1039,14 +986,6 @@ class CalibrationTarget(BaseModel):
         available_species = set(species_units.keys())
 
         for measurement in self.scenario.measurements:
-            # Check trigger_species exists
-            if measurement.trigger_species not in available_species:
-                raise ValueError(
-                    f"trigger_species '{measurement.trigger_species}' not found in model.\n"
-                    f"Available species: {sorted(available_species)}\n"
-                    f"Check species name format (should be compartment.species, e.g., 'V_T.C1', 'V_T.CD8')"
-                )
-
             # Check all measurement_species exist
             for species in measurement.measurement_species:
                 if species not in available_species:
@@ -1058,99 +997,15 @@ class CalibrationTarget(BaseModel):
 
         return self
 
-    @model_validator(mode="after")
-    def validate_threshold_conversion_code(self, info: ValidationInfo) -> "CalibrationTarget":
-        """
-        Validator: Check that threshold_conversion_code executes and returns correct units.
-
-        Requires context:
-            species_units: Dict mapping species names to unit strings (from species_units.json)
-        """
-        from qsp_llm_workflows.core.unit_registry import ureg
-
-        # Get species_units from context
-        if not info.context:
-            raise ValueError(
-                "Validation context is required. Pass context={'species_units': {...}}"
-            )
-        species_units = info.context["species_units"]
-
-        for measurement in self.scenario.measurements:
-            if not measurement.threshold_conversion_code:
-                continue  # Identity mapping, no code to validate
-
-            # Parse the code
-            try:
-                tree = ast.parse(measurement.threshold_conversion_code)
-            except SyntaxError as e:
-                raise ValueError(f"threshold_conversion_code has syntax error: {e}")
-
-            # Find the function definition
-            func_def = None
-            for node in ast.walk(tree):
-                if isinstance(node, ast.FunctionDef) and node.name == "compute_threshold_value":
-                    func_def = node
-                    break
-
-            if not func_def:
-                raise ValueError(
-                    "threshold_conversion_code must define a function named 'compute_threshold_value'"
-                )
-
-            # Check signature
-            args = [arg.arg for arg in func_def.args.args]
-            if args != ["species_dict", "inputs", "ureg"]:
-                raise ValueError(
-                    f"Function signature must be (species_dict, inputs, ureg), got ({', '.join(args)})"
-                )
-
-            # Execute with mock data
-            try:
-                # Create mock species from actual model
-                mock_species = self.create_mock_species(species_units, ureg)
-
-                mock_inputs = {}
-                for inp in self.calibration_target_estimates.inputs:
-                    mock_inputs[inp.name] = inp.value * ureg(inp.units)
-
-                # Execute function
-                local_scope = {"ureg": ureg, "np": np}
-                exec(measurement.threshold_conversion_code, local_scope)
-                compute_fn = local_scope["compute_threshold_value"]
-
-                result = compute_fn(mock_species, mock_inputs, ureg)
-
-                # Check result has units
-                if not hasattr(result, "units"):
-                    raise ValueError("Function must return a Pint Quantity with units")
-
-                # Check dimensionality matches threshold units
-                expected_quantity = 1.0 * ureg(measurement.threshold_units)
-                if result.dimensionality != expected_quantity.dimensionality:
-                    raise ValueError(
-                        f"Threshold computation unit dimensionality mismatch:\n"
-                        f"  Expected: {measurement.threshold_units} ({expected_quantity.dimensionality})\n"
-                        f"  Got: {result.units} ({result.dimensionality})"
-                    )
-
-            except Exception as e:
-                if "dimensionality mismatch" in str(e):
-                    raise
-                # Other errors might be due to missing species/inputs - be lenient
-                pass
-
-        return self
+    # DISABLED: Simplified measurement structure - executable code deferred to manual implementation
+    # @model_validator(mode="after")
+    # def validate_threshold_conversion_code(self, info: ValidationInfo) -> "CalibrationTarget":
+    #     """Validator disabled for simplified measurement structure."""
+    #     return self
 
     @model_validator(mode="after")
     def validate_inputs_used(self) -> "CalibrationTarget":
-        """Validator: Warn if inputs are defined but not used in derivation_code."""
-        # Parse derivation_code to find variable references
-        try:
-            tree = ast.parse(self.calibration_target_estimates.distribution_code)
-        except SyntaxError:
-            # Already caught by validate_derivation_code
-            return self
-
+        """Validator: Warn if inputs are defined but not used in distribution_code (simplified for text-based measurements)."""
         # Extract all names accessed from 'inputs' dict
         used_input_names = set()
 
@@ -1162,8 +1017,14 @@ class CalibrationTarget(BaseModel):
                         used_input_names.add(node.slice.value)
                 self.generic_visit(node)
 
-        visitor = InputAccessVisitor()
-        visitor.visit(tree)
+        # Parse distribution_code to find variable references
+        try:
+            tree = ast.parse(self.calibration_target_estimates.distribution_code)
+            visitor = InputAccessVisitor()
+            visitor.visit(tree)
+        except SyntaxError:
+            # Already caught by validate_derivation_code
+            pass
 
         # Check which defined inputs are not used
         defined_inputs = {inp.name for inp in self.calibration_target_estimates.inputs}
@@ -1174,7 +1035,7 @@ class CalibrationTarget(BaseModel):
             import warnings
 
             warnings.warn(
-                f"The following inputs are defined but not used in derivation_code: {sorted(unused_inputs)}. "
+                f"The following inputs are defined but not used in distribution_code: {sorted(unused_inputs)}. "
                 f"If these inputs are not needed, consider removing them.",
                 UserWarning,
             )

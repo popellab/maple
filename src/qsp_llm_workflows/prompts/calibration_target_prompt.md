@@ -15,11 +15,74 @@ A biological observable measured in a **specific experimental scenario**, used t
 **Critical concept:** Each observable has an **experimental context** (species, indication, compartment, system, treatment) that may differ from the **model context**.
 
 **Your task:**
-1. **Find the closest match** to the model context (specified below) when searching literature
+1. **Find data that matches the model context** (specified below) as closely as possible
 2. **Document the experimental context accurately** - mismatches will be quantified later via formal distance metrics
-3. Prefer exact matches (same species, indication, compartment, system), but accept reasonable mismatches when necessary
+3. Follow the strict matching requirements below
 
-Example: For a human PDAC model, prefer human PDAC data > mouse PDAC data > related adenocarcinoma data > other solid tumors.
+---
+
+## Strict Matching Requirements
+
+**CRITICAL - The following MUST match exactly (NO exceptions):**
+
+1. **Species** - Use ONLY the exact species specified (e.g., human for human models). NEVER substitute mouse, rat, or other species.
+
+2. **Indication** - Use ONLY the exact cancer type specified (e.g., PDAC). NEVER substitute related cancers or pan-cancer data.
+
+3. **Compartment** - Use ONLY the exact compartment (e.g., tumor.primary, blood.peripheral). NEVER substitute serum for tissue or peripheral blood for tumor-infiltrating cells.
+
+4. **Source** - Use ONLY in vivo patient data (biopsies, resections, blood draws). NEVER use cell culture, organoids, or in vitro measurements.
+
+5. **Measurement Type** - Use ONLY direct measurements with absolute units. NEVER use statistical effect sizes (hazard ratios, odds ratios) or fold-changes as calibration values.
+
+**Acceptable flexibility (document mismatches):**
+- System (clinical.resection vs clinical.biopsy) - document timing differences
+- Treatment history (treatment_naive vs post-treatment) - document and justify
+- Measurement modality (IHC vs flow cytometry) - if measuring same quantity
+
+**If strict requirements cannot be met:**
+- Do NOT fabricate or substitute incompatible data
+- Note the limitation in your response
+
+---
+
+## Validation Requirements
+
+**Your response will be automatically validated. Ensure the following requirements are met to avoid validation failures:**
+
+### 1. DOI Must Be Valid and Resolve
+- Use real DOIs from actual papers (format: `10.xxxx/journal.year.id`)
+- Verify DOI exists before submitting - search PubMed, Google Scholar, or journal websites
+- Common DOI prefixes: `10.1038` (Nature), `10.1126` (Science), `10.1371` (PLOS), `10.1200` (JCO)
+- **Validation:** DOI will be resolved via CrossRef API
+
+### 2. Paper Title Must Match DOI Metadata
+- Use the EXACT title from the paper (will be cross-checked with CrossRef)
+- Copy the title character-for-character from the paper or CrossRef metadata
+- **Validation:** Title similarity must be ≥75% match with CrossRef
+
+### 3. Code Must Execute Without Errors
+- `measurement_code` and `distribution_code` will both be executed with mock data
+- Syntax errors or runtime errors will cause validation failure
+- **Validation:** Code is executed with mock species data and Pint unit registry
+
+### 4. Measurement Code Units Must Match
+- `measurement_code` output units must match `calibration_target_estimates.units`
+- **Validation:** Pint dimensional analysis checks measurement code output
+
+### 5. Computed Values Must Match Reported Values
+- `distribution_code` computed median/IQR/CI95 must match reported values within 1% tolerance
+- **Validation:** Code is executed and outputs compared to reported statistics
+
+### 6. Text Snippets Must Contain Declared Values
+- Each `value_snippet` must contain the actual numeric value being reported
+- Include enough context so the number is clearly visible in snippet text
+- **Validation:** Automated string matching checks snippet content
+
+### 7. All Source References Must Be Defined
+- Every `source_ref` must point to either `primary_data_source.source_tag` or a `secondary_data_sources` entry
+- Exception: `modeling_assumption` is valid for conversion factors and thresholds
+- **Validation:** Cross-reference checking against defined sources
 
 ---
 
@@ -50,185 +113,130 @@ Find observables that match this context as closely as possible. Document the ac
 
 ### Scenario Specification
 
-**Interventions** (may be empty for untreated state):
-- Drug dosing: specify agent, dose + units, schedule timepoints, patient weight/BSA if needed
-- Surgical resection: timing, fraction removed, affected species
-- Leave empty list for baseline/natural measurements
+**Interventions** (may be empty list for untreated state):
 
-**Measurements** (at least ONE required, all biomarker-triggered):
+Provide a text description for each intervention including:
+- **What**: Agent/procedure name
+- **How much**: Dose and units (mg/kg, mg/m², etc.)
+- **When**: Schedule/timing
+- **Additional details**: Patient weight/BSA if relevant
 
-All measurements MUST be **biomarker-triggered** - anchored to an observable biological state, NOT arbitrary time points. This ensures:
-- **Biological interpretability**: "When tumor reaches resectable size" vs. vague "at diagnosis"
-- **Simulation reproducibility**: Unambiguous instructions for when to query the model
-- **Reality**: There is no absolute "time zero" in biology
+**Examples:**
+- "Anti-PD-1 antibody 3 mg/kg IV every 2 weeks starting on day 0"
+- "Surgical resection on day 14, removing 90% of tumor burden"
+- "No intervention (natural disease progression)" → use empty list `[]`
 
-**Biomarker trigger selection (CRITICAL):**
+**Measurements** (at least ONE required):
 
-⏰ **`trigger_species`** determines **WHEN** to measure
-📊 **`measurement_code`** determines **WHAT** to measure
+Each measurement requires:
 
-**These are usually DIFFERENT species!**
+1. **measurement_description** (text) - Describes WHAT is being measured and HOW:
+   - Observable: What biological quantity
+   - Method: How it's measured (e.g., "via IHC", "by flow cytometry")
+   - Location: Where in the body
+   - Units: Expected units
 
-- **Use clinical/standard triggers**: Tumor burden, treatment response, clinical milestones
-- **DON'T use the measured observable as the trigger**: If measuring a cytokine concentration, trigger on tumor size or treatment timepoint, not the cytokine level itself
-- **Clinical logic**: ⏰ "When tumor reaches 500 mm³" → 📊 "measure CD8 density" ✓
-- **Wrong (circular)**: ⏰ "When CD8 exceeds threshold" → 📊 "measure CD8" ✗
+2. **measurement_species** (list) - Species accessed by measurement_code:
+   - Format: `['compartment.species']` (e.g., `['V_T.CD8', 'V_T.C1']`)
+   - Must match species names in model
 
-**Most common triggers**:
-1. Tumor burden (V_T.C1) at resection/diagnosis/establishment
-2. Biomarker concentration reaching clinical threshold
-3. Treatment milestone (post-infusion, post-resection)
+3. **measurement_code** (executable Python) - Computes observable from simulation:
+   - Function signature: `compute_measurement(time, species_dict, ureg)`
+   - `time`: numpy array with day units (Pint Quantity)
+   - `species_dict`: dict mapping species names to numpy arrays (Pint Quantities)
+   - `ureg`: Pint UnitRegistry for conversions
+   - Must return Pint Quantity with units matching `calibration_target_estimates.units`
 
-**Example 1: Simple identity mapping (trigger in natural units)**
+4. **threshold_description** (text) - Describes WHEN the measurement occurs:
+   - Trigger: What biological/clinical event triggers measurement
+   - Threshold: Specific value if stated in paper
+   - Context: Clinical context (resection, diagnosis, enrollment, etc.)
+
+**Example measurement:**
 ```yaml
-trigger_species: V_T.TGFb  # TGF-beta concentration
-threshold_conversion_code: |
-  def compute_threshold_value(species_dict, inputs, ureg):
-      """Identity mapping - threshold in trigger's natural units."""
-      return species_dict['V_T.TGFb']
-threshold: 100.0
-threshold_units: nanomolarity
-threshold_input_name: high_tgfb_threshold
-comparison: ">"
-timepoints: [0.0]
-inputs:
-  - name: high_tgfb_threshold
-    value: 100.0
-    units: nanomolarity
-    description: "High TGF-beta threshold from cohort stratification"
-    source_ref: smith_2020
-    value_snippet: "High TGF-β patients defined as >100 ng/mL serum concentration"
+measurements:
+  - measurement_description: "CD8+ T cell density measured via IHC in tumor tissue sections, reported as dimensionless ratio"
+    measurement_species: ['V_T.CD8', 'V_T.C1']
+    measurement_code: |
+      def compute_measurement(time, species_dict, ureg):
+          """Compute CD8/tumor ratio at baseline (single timepoint)."""
+          cd8 = species_dict['V_T.CD8']
+          tumor = species_dict['V_T.C1']
+          ratio = cd8 / tumor
+          return ratio.to(ureg.dimensionless)
+    threshold_description: "At tumor resection when tumor burden reaches ~1e9 cells (~500 mm³)"
 ```
 
-**Example 2: Unit conversion (tumor burden trigger with cells → volume)**
-```yaml
-trigger_species: V_T.C1  # Tumor cell count
-threshold_conversion_code: |
-  def compute_threshold_value(species_dict, inputs, ureg):
-      """Convert tumor cells to volume for threshold comparison."""
-      tumor_cells = species_dict['V_T.C1']
-      cell_density = inputs['cell_packing_density']
-      volume = tumor_cells / cell_density
-      return volume.to(ureg.mm**3)
-threshold: 500.0
-threshold_units: millimeter**3
-threshold_input_name: resection_tumor_volume
-comparison: ">"
-inputs:
-  - name: resection_tumor_volume
-    value: 500.0
-    units: millimeter**3
-    description: "Tumor volume at time of resection"
-    source_ref: smith_2020
-    value_snippet: "Tumors were resected at mean volume of 500 mm³"
-  - name: cell_packing_density
-    value: 1.0e9
-    units: cell / millimeter**3
-    description: "Typical solid tumor cell packing density"
-    source_ref: modeling_assumption
-    value_snippet: null
-```
-
-**Threshold source tracking:**
-
-**⚠️ CRITICAL RULE: Threshold value MUST come from the SAME paper as the calibration target.**
-
-The threshold defines WHEN the observable was measured. It is part of the experimental context, not a modeling choice.
-
-**What MUST come from the primary paper:**
-- ✅ Threshold values (tumor size at resection, enrollment criteria, cohort stratification cutoffs)
-
-**What CAN use modeling_assumption:**
-- ✅ Conversion factors (cell packing density, geometric constants)
-- ✅ Universal constants (π, 2, percentiles)
-
-**Extract threshold from the primary source:**
-
-**Direct statements:**
-- "Tumors resected at mean volume of 500 mm³" → extract 500 mm³ from this paper
-- "Biopsies at 1 cm diameter" → extract 1 cm from this paper
-- "High IL-2 patients (>100 pg/mL)" → extract 100 pg/mL from this paper
-
-**Temporal phrases - find threshold in the same paper:**
-- "At clinical presentation" → search this paper for patient demographics (median tumor size at presentation)
-- "At diagnosis" → extract from this paper's cohort characteristics table
-- "At enrollment" → find in this paper's methods (enrollment criteria)
-
-**If threshold not in paper:**
-The paper may not be suitable for extraction. The threshold is part of the experimental context and must be documented in the primary source.
-
-**Remember the rule:**
-- ❌ Threshold values → NEVER modeling_assumption
-- ✅ Conversion factors → CAN use modeling_assumption
-
-**Notes:**
-- **Derivatives**: Use central differences from timepoints. Don't assume analytical derivatives exist.
-- **Multiple timepoints**: Use `timepoints: [-7.0, 0.0, 7.0]` for kinetics around trigger event.
+**Key principles for measurement_code:**
+- Keep Pint units throughout calculation (see Pint Golden Rule below)
+- Access only species listed in `measurement_species`
+- Return scalar or array Pint Quantity
+- Handle time array properly (index if single timepoint needed)
 
 ### Distribution Code
 
-**CRITICAL:**
-- **Extract biological/experimental values via inputs** with source traceability (measurements, conversion factors, reference values)
-- **Universal constants are OK as literals**: percentiles (2.5, 25, 75, 97.5), mathematical constants (2, π), MC sample sizes (10000)
+**Data Flow (CRITICAL to understand):**
+
+1. **Paper reports** statistics (mean, SD, median, IQR, range, etc.) → Put these in `inputs[]`
+2. **distribution_code** uses inputs to run Monte Carlo → Produces median, IQR, CI95
+3. **calibration_target_estimates** contains the COMPUTED values (from step 2), NOT the paper's reported values
+
+**Example:** Paper reports "150 ± 25 cells/mm²" but doesn't report median/IQR/CI95:
+- `inputs`: `[{name: "mean", value: 150}, {name: "sd", value: 25}]` ← Paper's values
+- `distribution_code`: Runs MC sampling from normal(150, 25)
+- `calibration_target_estimates.median`: 149.94 ← Computed from MC, matches code output
+- `calibration_target_estimates.iqr`: 33.59 ← Computed from MC, matches code output
+- `calibration_target_estimates.ci95`: [100.79, 199.35] ← Computed from MC
+
+**Validation:** Code is executed and outputs must match declared median/iqr/ci95 within 1% tolerance.
+
+**Requirements:**
+- **Extract biological/experimental values via inputs** with source traceability
+- **Universal constants OK as literals**: percentiles (2.5, 25, 75, 97.5), mathematical constants (π, 2), MC sample sizes (10000)
 - **Use MC methods** (parametric bootstrap), NOT analytical approximations
 - **Use Pint units** - inputs are pre-converted Pint Quantities, return Pint Quantities
 - Function signature: `derive_distribution(inputs, ureg)` returns dict with `median_obs`, `iqr_obs`, `ci95_obs`
 
 **GOLDEN RULE: Keep values tethered to their units throughout calculations.**
 
-Let Pint propagate units through your entire calculation. This catches dimensional errors automatically. **Never extract `.magnitude` early - only when absolutely necessary (e.g., for lognormal distribution parameters).**
-
-**Good example (fraction with unit validation):**
 ```python
 def derive_distribution(inputs, ureg):
+    import numpy as np
     # Inputs are already Pint Quantities - use directly
-    treg_fraction_mean = inputs['treg_fraction_mean']  # e.g., 0.15 dimensionless
-    treg_fraction_sd = inputs['treg_fraction_sd']  # e.g., 0.03 dimensionless
+    mean = inputs['cd8_density_mean']
+    sd = inputs['cd8_density_sd']
     n_samples = int(inputs['n_mc_samples'].magnitude)  # Only extract for integer conversion
 
-    # Bounds stay as Quantities
-    lower_bound = inputs['lower_bound_fraction']  # 0.0 dimensionless
-    upper_bound = inputs['upper_bound_fraction']  # 1.0 dimensionless
-
-    # Monte Carlo with truncated normal - extract magnitude only for distribution
+    # Extract magnitude only for numpy functions, reattach units immediately
     rng = np.random.default_rng(42)
-    samples = rng.normal(
-        treg_fraction_mean.magnitude,  # Extract for distribution params
-        treg_fraction_sd.magnitude,
-        size=n_samples
-    ) * treg_fraction_mean.units  # Reattach units immediately!
-
-    # Clip with Pint Quantities - units validated automatically
-    samples = np.clip(samples, lower_bound, upper_bound)
+    samples = rng.normal(mean.magnitude, sd.magnitude, n_samples) * mean.units
 
     # Return Quantities - validator checks dimensionality
     return {
         'median_obs': np.median(samples),
         'iqr_obs': np.percentile(samples, 75) - np.percentile(samples, 25),
-        'ci95_obs': [np.percentile(samples, 2.5), np.percentile(samples, 97.5)]
+        'ci95_obs': np.percentile(samples, [2.5, 97.5])
     }
 ```
+
+**Key principle:** Extract `.magnitude` ONLY when absolutely necessary (numpy distribution functions, integer conversion), then immediately reattach units.
 
 ### Source Requirements
 
 - **Primary source (singular)**: One paper, real DOI that resolves
 - **No reuse**: Avoid studies already used for this observable: {{USED_PRIMARY_STUDIES}}
 - **Verbatim snippets**: Exact quotes containing values (automatically verified)
-- **Secondary sources**: Reference values, conversion factors (can be multiple). Threshold and calibration target MUST come from the same primary source.
+- **Secondary sources**: Reference values, conversion factors (can be multiple)
 
 ---
 
 ## Source Hierarchy
 
-**Prefer (in order):**
-1. Same indication + compartment + system (e.g., PDAC tumor IHC)
-2. Same indication + adjacent compartment OR different modality
-3. Related indication + same compartment (document mismatch justification)
-4. Pan-cancer or non-cancer reference (last resort, document limitations)
+**Priority order (given that species/indication/compartment MUST match exactly):**
 
-**Never acceptable:**
-- In vitro data for clinical observables
-- Pure assumptions without literature anchor
+1. **Ideal:** Exact match on all contexts (species, indication, compartment, system, treatment status)
+2. **Acceptable:** Core match (species/indication/compartment), minor variations in system or treatment (document differences)
+3. **Never:** Different species, indication, compartment, or in vitro data (violates strict requirements)
 
 ---
 

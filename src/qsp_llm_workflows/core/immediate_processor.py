@@ -6,12 +6,15 @@ Processes CSV rows directly using Pydantic AI.
 Uses Pydantic AI with tool calling for structured outputs (supports discriminated unions).
 """
 
+from pydantic_ai._agent_graph import build_validation_context
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from pydantic_ai import Agent, WebSearchTool
+from pydantic_ai import Agent, WebSearchTool, CodeExecutionTool
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+import logfire
 
 from qsp_llm_workflows.core.prompt_builder import (
     ParameterPromptBuilder,
@@ -109,14 +112,24 @@ class ImmediateRequestProcessor:
 
         try:
             # Use Pydantic AI (supports discriminated unions via tool calling)
-            model = OpenAIResponsesModel("gpt-5.1")
-            settings = OpenAIResponsesModelSettings(openai_reasoning_effort=reasoning_effort)
+            logfire.configure()  
+            logfire.instrument_pydantic_ai()  
+            model = OpenAIResponsesModel("gpt-5")
+            settings = OpenAIResponsesModelSettings(
+                    openai_reasoning_effort='low',
+                    openai_reasoning_summary='detailed',
+                # openai_reasoning_effort=reasoning_effort
+                )
+            # Get validation context from request (for species_units)
+            validation_context = request.get("validation_context", {})
+
             agent = Agent(
                 model,
                 output_type=pydantic_model,
                 model_settings=settings,
-                builtin_tools=[WebSearchTool()],
-                retries=3,
+                builtin_tools=[WebSearchTool(),CodeExecutionTool()],
+                validation_context=validation_context,
+                retries=2,  # Increased for validation requirements
             )
 
             # Run agent with prompt
