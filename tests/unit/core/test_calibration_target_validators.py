@@ -2,11 +2,23 @@
 """
 Tests for CalibrationTarget model validators.
 
-Tests all 9 validators with:
+Tests all 11 active validators with:
 - 1 golden test: Valid data passes all validators
-- 1 positive test: modeling_assumption allowed for thresholds
-- 7 negative tests: Validators fail on invalid data
-- 1 warning test: Unused inputs emit warning
+- 8 negative tests: Validators fail on invalid data
+  - DOI resolution fails
+  - Title mismatch fails
+  - Wrong measurement code units fails
+  - Scalar measurement code return fails (time series length)
+  - Wrong-length array measurement code return fails (time series length)
+  - Derivation code value mismatch fails
+  - Undefined source reference fails
+  - Missing species fails
+- 5 warning tests: Scientific best practices
+  - Clipping suggests lognormal distribution
+  - Large variance should be documented
+  - Normal distribution inappropriate for size data
+  - Conversion factors should be documented
+  - Unused inputs emit warning
 """
 
 import copy
@@ -40,10 +52,15 @@ def golden_calibration_target_data():
         "description": "CD8+ T cell density in PDAC tumor at resection",
         "scenario": {
             "description": "Baseline PDAC tumor at resection",
-            "interventions": [],
+            "interventions": [
+                {"intervention_description": "No intervention (natural disease progression)"}
+            ],
             "measurements": [
                 {
-                    "timing_type": "biomarker_triggered",
+                    "measurement_description": (
+                        "CD8+ T cell density measured via IHC in tumor tissue sections, "
+                        "reported as dimensionless ratio (CD8+ cells / tumor cells)"
+                    ),
                     "measurement_species": ["V_T.CD8", "V_T.C1"],
                     "measurement_code": (
                         "def compute_measurement(time, species_dict, ureg):\n"
@@ -52,16 +69,9 @@ def golden_calibration_target_data():
                         "    ratio = cd8 / tumor\n"
                         "    return ratio.to(ureg.dimensionless)"
                     ),
-                    "trigger_species": "V_T.C1",
-                    "threshold_conversion_code": (
-                        "def compute_threshold_value(species_dict, inputs, ureg):\n"
-                        "    return species_dict['V_T.C1']"
+                    "threshold_description": (
+                        "At tumor resection when tumor burden reaches approximately 1e9 cells (~500 mm³)"
                     ),
-                    "threshold": 1e9,
-                    "threshold_units": "cell",
-                    "threshold_input_name": "resection_tumor_burden",
-                    "comparison": ">",
-                    "timepoints": [0.0],
                 }
             ],
         },
@@ -110,15 +120,6 @@ def golden_calibration_target_data():
                     "source_ref": "modeling_assumption",
                     "value_table_or_section": None,
                     "value_snippet": None,
-                },
-                {
-                    "name": "resection_tumor_burden",
-                    "value": 1e9,
-                    "units": "cell",
-                    "description": "Tumor burden at resection",
-                    "source_ref": "smith_2020",
-                    "value_table_or_section": "Methods section",
-                    "value_snippet": "Tumors resected at ~1e9 cells",
                 },
             ],
             "distribution_code": (
@@ -205,26 +206,6 @@ class TestCalibrationTargetGolden:
 class TestCalibrationTargetValidators:
     """Tests for individual CalibrationTarget validators."""
 
-    def test_validate_threshold_inputs_allows_modeling_assumption(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Validator should allow threshold sourced from modeling_assumption (relaxed for broader coverage)."""
-        data = copy.deepcopy(golden_calibration_target_data)
-        # Change threshold input source to modeling_assumption
-        data["calibration_target_estimates"]["inputs"][3]["source_ref"] = "modeling_assumption"
-        data["calibration_target_estimates"]["inputs"][3]["value_snippet"] = None
-
-        # Should now pass validation (relaxed requirement)
-        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
-
-        assert target is not None
-        # Verify the threshold input uses modeling_assumption
-        threshold_input = next(
-            inp for inp in target.calibration_target_estimates.inputs
-            if inp.name == "resection_tumor_burden"
-        )
-        assert threshold_input.source_ref == "modeling_assumption"
-
     def test_validate_doi_resolution_fails_on_invalid_doi(
         self, mock_crossref_failure, species_units, golden_calibration_target_data
     ):
@@ -258,9 +239,7 @@ class TestCalibrationTargetValidators:
             data = copy.deepcopy(golden_calibration_target_data)
 
             with pytest.raises(ValidationError) as exc_info:
-                CalibrationTarget.model_validate(
-                    data, context={"species_units": species_units}
-                )
+                CalibrationTarget.model_validate(data, context={"species_units": species_units})
 
             error_str = str(exc_info.value).lower()
             assert "title mismatch" in error_str or "mismatch" in error_str
@@ -316,30 +295,16 @@ class TestCalibrationTargetValidators:
         """Validator should reject species not in model."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Reference species that doesn't exist in species_units
-        data["scenario"]["measurements"][0]["trigger_species"] = "V_T.NonexistentSpecies"
+        data["scenario"]["measurements"][0]["measurement_species"] = [
+            "V_T.CD8",
+            "V_T.NonexistentSpecies",
+        ]
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
 
         error_str = str(exc_info.value)
         assert "not found in model" in error_str and "NonexistentSpecies" in error_str
-
-    def test_validate_threshold_conversion_code_fails_on_wrong_units(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Validator should reject threshold_conversion_code with wrong output units."""
-        data = copy.deepcopy(golden_calibration_target_data)
-        # Change conversion code to return wrong units (nanomolar instead of cell)
-        data["scenario"]["measurements"][0]["threshold_conversion_code"] = (
-            "def compute_threshold_value(species_dict, inputs, ureg):\n"
-            "    return 100.0 * ureg.nanomolar"
-        )
-
-        with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
-
-        error_str = str(exc_info.value).lower()
-        assert "dimensionality mismatch" in error_str or "threshold" in error_str
 
     def test_validate_inputs_used_warns_on_unused_inputs(
         self, species_units, golden_calibration_target_data, mock_crossref_success
@@ -359,10 +324,169 @@ class TestCalibrationTargetValidators:
             }
         )
 
-        with pytest.warns(UserWarning, match="not used in derivation_code"):
+        with pytest.warns(UserWarning, match="not used in distribution_code"):
             target = CalibrationTarget.model_validate(
                 data, context={"species_units": species_units}
             )
 
         assert target is not None
-        assert len(target.calibration_target_estimates.inputs) == 5
+        assert len(target.calibration_target_estimates.inputs) == 4  # 3 original + 1 unused
+
+    def test_validate_measurement_code_fails_on_scalar_return(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should reject measurement_code that returns a scalar instead of array."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Change measurement_code to return scalar (using time indexing)
+        data["scenario"]["measurements"][0]["measurement_code"] = (
+            "def compute_measurement(time, species_dict, ureg):\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    ratio = cd8[-1] / tumor[-1]  # Returns scalar (last timepoint)\n"
+            "    return ratio.to(ureg.dimensionless)"
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value).lower()
+        assert "returned a scalar" in error_str or "time indexing" in error_str
+
+    def test_validate_measurement_code_fails_on_wrong_length_array(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should reject measurement_code that returns array with wrong length."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Change measurement_code to return wrong-length array
+        data["scenario"]["measurements"][0]["measurement_code"] = (
+            "def compute_measurement(time, species_dict, ureg):\n"
+            "    import numpy as np\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    # Return only first 5 timepoints (wrong length)\n"
+            "    ratio = cd8[:5] / tumor[:5]\n"
+            "    return ratio.to(ureg.dimensionless)"
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value).lower()
+        assert "wrong length" in error_str or "time series" in error_str
+
+    def test_validate_clipping_suggests_lognormal(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should warn when distribution_code uses clipping."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Add clipping to distribution_code
+        data["calibration_target_estimates"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    np.random.seed(42)\n"
+            "    mean = inputs['cd8_density_mean']\n"
+            "    sd = inputs['cd8_density_sd']\n"
+            "    n = int(inputs['n_mc_samples'].magnitude)\n"
+            "    samples = np.random.normal(mean.magnitude, sd.magnitude, n)\n"
+            "    samples = np.clip(samples, 0.01, None) * mean.units  # Clipping!\n"
+            "    median_obs = np.median(samples)\n"
+            "    iqr_obs = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
+            "    ci95_obs = np.percentile(samples, [2.5, 97.5])\n"
+            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+        )
+
+        with pytest.warns(UserWarning, match="clipping.*lognormal"):
+            target = CalibrationTarget.model_validate(
+                data, context={"species_units": species_units}
+            )
+
+        assert target is not None
+
+    def test_validate_large_variance_documented(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should warn when CV > 50% is not documented in limitations."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Make SD very large (CV = 2.0 = 200%)
+        data["calibration_target_estimates"]["inputs"][1]["value"] = 300.0  # SD = 300, mean = 150
+
+        # Update expected values to match what distribution_code will produce with new SD
+        # (Must match code output within 1% or derivation validator will fail first)
+        data["calibration_target_estimates"]["median"] = 149.94
+        data["calibration_target_estimates"]["iqr"] = 403.10
+        data["calibration_target_estimates"]["ci95"] = [-438.01, 737.89]
+
+        # Don't mention variance in limitations
+        data["key_study_limitations"] = "Small sample size from single center"
+
+        with pytest.warns(UserWarning, match="Large coefficient of variation"):
+            target = CalibrationTarget.model_validate(
+                data, context={"species_units": species_units}
+            )
+
+        assert target is not None
+
+    def test_validate_distribution_choice_for_size_data(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should warn when using normal distribution for size data."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Change units to size data (centimeter)
+        data["calibration_target_estimates"]["units"] = "centimeter"
+
+        # Also update measurement_code to return centimeter (to avoid unit mismatch error)
+        data["scenario"]["measurements"][0]["measurement_code"] = (
+            "def compute_measurement(time, species_dict, ureg):\n"
+            "    import numpy as np\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    # Hypothetical size calculation returning pure centimeters\n"
+            "    # Use .magnitude to strip cell units, then apply centimeter\n"
+            "    size = (cd8.magnitude + tumor.magnitude) * 1e-6 * ureg.centimeter\n"
+            "    return size"
+        )
+
+        # Use normal distribution (not lognormal)
+        data["calibration_target_estimates"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    np.random.seed(42)\n"
+            "    mean = inputs['cd8_density_mean']\n"
+            "    sd = inputs['cd8_density_sd']\n"
+            "    n = int(inputs['n_mc_samples'].magnitude)\n"
+            "    samples = np.random.normal(mean.magnitude, sd.magnitude, n) * ureg.centimeter\n"
+            "    median_obs = np.median(samples)\n"
+            "    iqr_obs = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
+            "    ci95_obs = np.percentile(samples, [2.5, 97.5])\n"
+            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+        )
+
+        with pytest.warns(UserWarning, match="normal distribution for size.*lognormal"):
+            target = CalibrationTarget.model_validate(
+                data, context={"species_units": species_units}
+            )
+
+        assert target is not None
+
+    def test_validate_conversion_factors_documented(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should warn when measurement_code has undocumented magic numbers."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Add magic number (cell size) to measurement_code without documenting
+        data["scenario"]["measurements"][0]["measurement_code"] = (
+            "def compute_measurement(time, species_dict, ureg):\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    # Magic number: 10 = cell radius in micrometers (UNDOCUMENTED)\n"
+            "    cell_volume = 10 * ureg.micrometer  # This should trigger warning\n"
+            "    ratio = cd8 / tumor\n"
+            "    return ratio.to(ureg.dimensionless)"
+        )
+
+        with pytest.warns(UserWarning, match="numeric literals.*conversion factors"):
+            target = CalibrationTarget.model_validate(
+                data, context={"species_units": species_units}
+            )
+
+        assert target is not None

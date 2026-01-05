@@ -140,17 +140,19 @@ Each measurement requires:
    - Format: `['compartment.species']` (e.g., `['V_T.CD8', 'V_T.C1']`)
    - Must match species names in model
 
-3. **measurement_code** (executable Python) - Computes observable from simulation:
+3. **measurement_code** (executable Python) - Computes observable from species time series:
    - Function signature: `compute_measurement(time, species_dict, ureg)`
    - `time`: numpy array with day units (Pint Quantity)
-   - `species_dict`: dict mapping species names to numpy arrays (Pint Quantities)
+   - `species_dict`: dict mapping species names to numpy arrays (Pint Quantities, one value per timepoint)
    - `ureg`: Pint UnitRegistry for conversions
-   - Must return Pint Quantity with units matching `calibration_target_estimates.units`
+   - Must return Pint Quantity (scalar or array) with units matching `calibration_target_estimates.units`
+   - **IMPORTANT**: Do NOT include time filtering logic (e.g., "use last timepoint"). This function computes WHAT to measure. WHEN to measure is handled via threshold_description.
 
 4. **threshold_description** (text) - Describes WHEN the measurement occurs:
-   - Trigger: What biological/clinical event triggers measurement
-   - Threshold: Specific value if stated in paper
-   - Context: Clinical context (resection, diagnosis, enrollment, etc.)
+   - **What triggers measurement**: The biological or clinical event/condition that prompts observation
+   - **Timing context**: When in disease progression or treatment timeline
+   - **Avoid circular reasoning**: Don't define timing by the observable being measured (e.g., don't say "when tumor reaches X cm" if measuring tumor size)
+   - **Be specific about causality**: Distinguish between biological thresholds (disease progression) and clinical decisions (institutional protocols, symptom-triggered interventions)
 
 **Example measurement:**
 ```yaml
@@ -159,19 +161,19 @@ measurements:
     measurement_species: ['V_T.CD8', 'V_T.C1']
     measurement_code: |
       def compute_measurement(time, species_dict, ureg):
-          """Compute CD8/tumor ratio at baseline (single timepoint)."""
-          cd8 = species_dict['V_T.CD8']
-          tumor = species_dict['V_T.C1']
-          ratio = cd8 / tumor
-          return ratio.to(ureg.dimensionless)
+          """Compute CD8/tumor ratio (element-wise over time series)."""
+          cd8 = species_dict['V_T.CD8']  # Array of CD8 values over time
+          tumor = species_dict['V_T.C1']  # Array of tumor values over time
+          ratio = cd8 / tumor  # Element-wise division
+          return ratio.to(ureg.dimensionless)  # Returns array
     threshold_description: "At tumor resection when tumor burden reaches ~1e9 cells (~500 mm³)"
 ```
 
 **Key principles for measurement_code:**
 - Keep Pint units throughout calculation (see Pint Golden Rule below)
 - Access only species listed in `measurement_species`
-- Return scalar or array Pint Quantity
-- Handle time array properly (index if single timepoint needed)
+- Return Pint Quantity (typically array with one value per timepoint)
+- Do NOT include time filtering logic - compute over entire time series
 
 ### Distribution Code
 
@@ -220,6 +222,53 @@ def derive_distribution(inputs, ureg):
 ```
 
 **Key principle:** Extract `.magnitude` ONLY when absolutely necessary (numpy distribution functions, integer conversion), then immediately reattach units.
+
+### Choosing Probability Distributions
+
+**CRITICAL:** Select the distribution family that matches the measurement type to avoid non-physical values and bias.
+
+**Size/Volume/Mass Measurements (always positive, often right-skewed):**
+- **Prefer lognormal distribution** for tumor diameter/volume, cell counts, organ weights, concentrations
+- Normal distributions often yield negative draws → require clipping → **introduces bias**
+- If paper reports mean ± SD for size data, convert to lognormal parameters:
+  ```python
+  # Convert normal(mean, sd) to lognormal parameters
+  mu_log = np.log(mean.magnitude**2 / np.sqrt(mean.magnitude**2 + sd.magnitude**2))
+  sigma_log = np.sqrt(np.log(1 + sd.magnitude**2 / mean.magnitude**2))
+  samples = rng.lognormal(mu_log, sigma_log, n_samples) * mean.units
+  ```
+- **Red flag:** If you need `np.clip()` to avoid negatives, you probably need lognormal
+- Document in key_assumptions if using normal for size data (explain why clipping is justified)
+
+**Proportions/Fractions (bounded 0-1):**
+- Use Beta distribution or logit-normal for percentages, response rates, cell fractions
+
+**Count Data:**
+- Poisson or negative binomial for event counts, discrete measurements
+
+**Symmetric Continuous Data:**
+- Normal distribution appropriate for measurements without natural bounds (e.g., change scores, log-ratios)
+
+### Conversion Factors and Uncertainty Propagation
+
+When `measurement_code` includes conversion factors (cells → volume, IHC score → density, cellularity adjustments):
+
+1. **Document all conversion assumptions in `key_assumptions`**
+   - Cell sizes, tissue densities, cellularity fractions, spherical approximations
+   - Include numeric values and cite sources
+
+2. **Extract uncertain conversion factors as inputs**
+   - If cellularity varies widely (e.g., 10-50% in PDAC stroma), consider sampling in `distribution_code`
+   - If cell size has reported uncertainty, propagate it through the calculation
+   - **Example:** Sample cellularity from uniform(0.15, 0.35) rather than fixing at 0.25
+
+3. **Cite sources for conversion factors**
+   - Use `secondary_data_sources` for literature-based conversion values (cell sizes, densities)
+   - Use `modeling_assumption` only for well-established physical constants
+
+4. **Assess impact of conversion uncertainty**
+   - Note in `key_study_limitations` if conversion assumptions dominate uncertainty
+   - **Example:** "Cellularity varies 10-50% in PDAC; assuming fixed 25% introduces unquantified error"
 
 ### Source Requirements
 

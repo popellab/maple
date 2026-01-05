@@ -110,18 +110,27 @@ class Measurement(BaseModel):
 
     measurement_code: str = Field(
         description=(
-            "Python function that computes the observable from simulation output.\n\n"
+            "Python function that computes the observable from species time series.\n\n"
             "Function signature: compute_measurement(time, species_dict, ureg)\n"
             "- time: numpy array with time values (Pint Quantity with day units)\n"
-            "- species_dict: dict mapping species names to numpy arrays (Pint Quantities)\n"
+            "- species_dict: dict mapping species names to numpy arrays (Pint Quantities, one value per timepoint)\n"
             "- ureg: Pint UnitRegistry for unit conversions\n\n"
-            "Must return a Pint Quantity with units matching calibration_target_estimates.units.\n\n"
-            "Example:\n"
+            "Must return a Pint Quantity (scalar or array) with units matching calibration_target_estimates.units.\n\n"
+            "IMPORTANT: Do NOT include time filtering logic (e.g., 'use last timepoint' or 'at t=14').\n"
+            "This function computes WHAT to measure from the time series.\n"
+            "WHEN to measure is handled separately via threshold_description.\n\n"
+            "The function may use multiple timepoints (e.g., for derivatives), but should not decide which timepoint to evaluate.\n\n"
+            "Example (simple ratio):\n"
             "def compute_measurement(time, species_dict, ureg):\n"
-            "    cd8 = species_dict['V_T.CD8']\n"
+            "    cd8 = species_dict['V_T.CD8']  # Array of values over time\n"
+            "    tumor = species_dict['V_T.C1']  # Array of values over time\n"
+            "    ratio = cd8 / tumor  # Element-wise division\n"
+            "    return ratio.to(ureg.dimensionless)  # Returns array\n\n"
+            "Example (derivative):\n"
+            "def compute_measurement(time, species_dict, ureg):\n"
             "    tumor = species_dict['V_T.C1']\n"
-            "    ratio = cd8 / tumor\n"
-            "    return ratio.to(ureg.dimensionless)"
+            "    growth_rate = np.gradient(tumor.magnitude, time.magnitude) * (tumor.units / time.units)\n"
+            "    return growth_rate.to(ureg.cell / ureg.day)  # Returns array"
         )
     )
 
@@ -328,9 +337,7 @@ class System(str, Enum):
 class Stage(BaseModel):
     """Disease stage with extent and burden."""
 
-    extent: StageExtent = Field(
-        description=enum_field_description(StageExtent, "Disease extent")
-    )
+    extent: StageExtent = Field(description=enum_field_description(StageExtent, "Disease extent"))
     burden: StageBurden = Field(
         description=enum_field_description(
             StageBurden, "Disease burden (tumor size/volume category)"
@@ -376,9 +383,7 @@ class ExperimentalContext(BaseModel):
     compartment: Compartment = Field(
         description=enum_field_description(Compartment, "Anatomical compartment")
     )
-    system: System = Field(
-        description=enum_field_description(System, "Experimental system")
-    )
+    system: System = Field(description=enum_field_description(System, "Experimental system"))
     treatment: TreatmentContext = Field(description="Treatment context")
     stage: Stage = Field(description="Disease stage")
 
@@ -591,13 +596,14 @@ class CalibrationTarget(BaseModel):
         return False
 
     @staticmethod
-    def create_mock_species(species_units: dict, ureg) -> dict:
+    def create_mock_species(species_units: dict, ureg, n_timepoints: int = 100) -> dict:
         """
         Create mock species data from species_units dict.
 
         Args:
             species_units: Dict mapping species names to unit info (str or dict with 'units' key)
             ureg: Pint UnitRegistry
+            n_timepoints: Number of timepoints in time series (default 100)
 
         Returns:
             Dict mapping species names to mock Pint quantities
@@ -619,7 +625,7 @@ class CalibrationTarget(BaseModel):
                 value = 100.0
             else:
                 value = 1.0
-            mock_species[species] = np.ones(10) * value * ureg(unit_str)
+            mock_species[species] = np.ones(n_timepoints) * value * ureg(unit_str)
         return mock_species
 
     # ========================================================================
@@ -654,7 +660,15 @@ class CalibrationTarget(BaseModel):
         description="List of key assumptions with numbers and text"
     )
     key_study_limitations: str = Field(
-        description="Important limitations and their impact on reliability"
+        description=(
+            "Important limitations and their impact on reliability. Address:\n"
+            "- Sample size and statistical power\n"
+            "- Population generalizability (single center, specific subtype, demographics)\n"
+            "- Large variance/uncertainty (if CV > 50% or wide CI, explain biological vs methodological sources)\n"
+            "- Distributional assumptions (if using normal for size data, acknowledge potential bias)\n"
+            "- Conversion factor uncertainties (cellularity, cell size, geometric assumptions)\n"
+            "- Measurement timing ambiguity (if unclear what triggered observation)"
+        )
     )
 
     # --- Sources (LLM-generated) ---
@@ -788,8 +802,10 @@ class CalibrationTarget(BaseModel):
                 # Create mock time array
                 mock_time = np.linspace(0, 14, 100) * ureg.day
 
-                # Create mock species from actual model
-                mock_species = self.create_mock_species(species_units, ureg)
+                # Create mock species from actual model (with matching length)
+                mock_species = self.create_mock_species(
+                    species_units, ureg, n_timepoints=len(mock_time)
+                )
 
                 # Execute function
                 local_scope = {"ureg": ureg, "np": np}
@@ -811,8 +827,32 @@ class CalibrationTarget(BaseModel):
                         f"  Got: {result.units} ({result.dimensionality})"
                     )
 
+                # Check result has same length as time series (no time indexing)
+                if hasattr(result, "magnitude"):
+                    result_magnitude = result.magnitude
+                    # Handle both scalar and array results
+                    if np.isscalar(result_magnitude):
+                        raise ValueError(
+                            f"Measurement code returned a scalar, but should return an array with same length as time series.\n"
+                            f"  Expected length: {len(mock_time)}\n"
+                            f"  Got: scalar value\n"
+                            f"Do NOT use time indexing (e.g., species[-1] or species[0]) in measurement_code.\n"
+                            f"Compute the observable over the entire time series."
+                        )
+                    elif len(result_magnitude) != len(mock_time):
+                        raise ValueError(
+                            f"Measurement code returned array with wrong length:\n"
+                            f"  Expected: {len(mock_time)} (same as time series)\n"
+                            f"  Got: {len(result_magnitude)}\n"
+                            f"Do NOT use time indexing. Compute over entire time series."
+                        )
+
             except Exception as e:
-                if "dimensionality mismatch" in str(e):
+                if (
+                    "dimensionality mismatch" in str(e)
+                    or "returned a scalar" in str(e)
+                    or "wrong length" in str(e)
+                ):
                     raise
                 # Other errors might be due to missing species - be lenient
                 pass
@@ -1002,6 +1042,197 @@ class CalibrationTarget(BaseModel):
     # def validate_threshold_conversion_code(self, info: ValidationInfo) -> "CalibrationTarget":
     #     """Validator disabled for simplified measurement structure."""
     #     return self
+
+    @model_validator(mode="after")
+    def validate_clipping_suggests_lognormal(self) -> "CalibrationTarget":
+        """
+        Validator (WARNING): Check if distribution_code uses clipping.
+
+        Clipping to avoid negative values suggests size/volume data that
+        should use lognormal distribution instead of normal.
+        """
+        import warnings
+
+        code = self.calibration_target_estimates.distribution_code
+
+        # Check for clipping patterns
+        clipping_patterns = ["np.clip", "np.maximum", "np.minimum", "max(0", "min("]
+        if any(pattern in code for pattern in clipping_patterns):
+            warnings.warn(
+                "distribution_code uses clipping (np.clip/np.maximum/etc) to avoid negative values. "
+                "This suggests size/volume/mass data that may be better modeled with a lognormal distribution. "
+                "Normal distributions for positive-only data introduce bias when clipped. "
+                "Consider converting mean±SD to lognormal parameters: "
+                "μ_log = ln(mean²/√(mean²+sd²)), σ_log = √(ln(1+sd²/mean²))",
+                UserWarning,
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_large_variance_documented(self) -> "CalibrationTarget":
+        """
+        Validator (WARNING): Check if large variance is documented in limitations.
+
+        CV > 50% suggests substantial variability that should be explained.
+        """
+        import warnings
+
+        # Find mean and SD/SE inputs
+        mean_input = None
+        std_input = None
+
+        for inp in self.calibration_target_estimates.inputs:
+            name_lower = inp.name.lower()
+            if "mean" in name_lower and mean_input is None:
+                mean_input = inp
+            if any(x in name_lower for x in ["sd", "std", "se", "stderr", "stdev"]):
+                std_input = inp
+
+        if mean_input and std_input and mean_input.value != 0:
+            # Calculate CV (coefficient of variation)
+            cv = abs(std_input.value / mean_input.value)
+
+            if cv > 0.5:  # CV > 50%
+                # Check if limitations mention variance/uncertainty
+                limitations_lower = self.key_study_limitations.lower()
+                variance_keywords = [
+                    "variance",
+                    "variability",
+                    "uncertain",
+                    "cv",
+                    "wide",
+                    "heterogen",
+                    "variation",
+                    "spread",
+                    "dispersion",
+                ]
+
+                if not any(keyword in limitations_lower for keyword in variance_keywords):
+                    warnings.warn(
+                        f"Large coefficient of variation (CV = {cv:.1%}) detected but not discussed in key_study_limitations. "
+                        f"Consider explaining whether this reflects biological variability, measurement error, "
+                        f"or heterogeneous population. High variance may indicate need for stratification or "
+                        f"alternative distributional assumptions (e.g., lognormal).",
+                        UserWarning,
+                    )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_distribution_choice_for_size_data(self) -> "CalibrationTarget":
+        """
+        Validator (WARNING): Check if normal distribution used for size data.
+
+        Size/volume/mass measurements are typically lognormal, not normal.
+        """
+        import warnings
+
+        units = self.calibration_target_estimates.units.lower()
+        code = self.calibration_target_estimates.distribution_code
+
+        # Check if units suggest size/volume/mass
+        size_units = ["meter", "liter", "gram", "cell", "mole", "molarity"]
+        is_size_data = any(unit in units for unit in size_units) and units != "dimensionless"
+
+        # Check if using normal distribution (but not lognormal)
+        uses_normal = ("normal(" in code or "randn" in code) and "lognormal" not in code
+
+        if is_size_data and uses_normal:
+            warnings.warn(
+                f"Using normal distribution for size/volume/mass data (units: {units}). "
+                f"These measurements are typically lognormally distributed. "
+                f"Normal distributions can produce non-physical negative values requiring clipping. "
+                f"Consider using lognormal distribution instead.",
+                UserWarning,
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_conversion_factors_documented(self) -> "CalibrationTarget":
+        """
+        Validator (WARNING): Check that conversion factors are documented.
+
+        Magic numbers in measurement_code should be in inputs or key_assumptions.
+        """
+        import warnings
+
+        # Universal constants to ignore (only truly fundamental values)
+        UNIVERSAL_CONSTANTS = {
+            # Basic integers
+            0,
+            1,
+            2,
+            3,
+            4,
+            # Mathematical constants
+            np.pi,
+            3.14159,
+            3.141592653589793,
+            np.e,
+            2.71828,
+            2.718281828459045,
+            # Common fractions
+            0.5,
+            0.25,
+            0.75,
+            # Statistical percentiles (standard)
+            2.5,
+            25,
+            50,
+            75,
+            97.5,
+            0.025,
+            0.25,
+            0.5,
+            0.75,
+            0.975,
+        }
+
+        for measurement in self.scenario.measurements:
+            code = measurement.measurement_code
+
+            # Extract numeric literals from code
+            try:
+                tree = ast.parse(code)
+                literals = []
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                        val = node.value
+                        # Skip universal constants (with tolerance for floating point)
+                        if not any(abs(val - c) < 1e-6 for c in UNIVERSAL_CONSTANTS):
+                            literals.append(val)
+            except SyntaxError:
+                # If code doesn't parse, skip this check
+                continue
+
+            if literals:
+                # Check if these appear in inputs or assumptions
+                input_values = {inp.value for inp in self.calibration_target_estimates.inputs}
+                assumption_texts = " ".join(a.text for a in self.key_assumptions)
+
+                undocumented = []
+                for lit in literals:
+                    # Check if value appears in inputs (with tolerance)
+                    in_inputs = any(abs(lit - v) < 1e-6 for v in input_values)
+                    # Check if value appears in assumption text
+                    in_assumptions = (
+                        str(lit) in assumption_texts or f"{lit:.0e}" in assumption_texts
+                    )
+
+                    if not (in_inputs or in_assumptions):
+                        undocumented.append(lit)
+
+                if undocumented:
+                    warnings.warn(
+                        f"measurement_code contains numeric literals {undocumented} that may be conversion factors. "
+                        f"Document these in either inputs (with source_ref) or key_assumptions. "
+                        f"Examples: cell sizes (µm), cellularity fractions, density values, geometric conversion factors.",
+                        UserWarning,
+                    )
+
+        return self
 
     @model_validator(mode="after")
     def validate_inputs_used(self) -> "CalibrationTarget":

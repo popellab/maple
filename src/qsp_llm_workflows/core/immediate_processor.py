@@ -6,7 +6,6 @@ Processes CSV rows directly using Pydantic AI.
 Uses Pydantic AI with tool calling for structured outputs (supports discriminated unions).
 """
 
-from pydantic_ai._agent_graph import build_validation_context
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -112,14 +111,14 @@ class ImmediateRequestProcessor:
 
         try:
             # Use Pydantic AI (supports discriminated unions via tool calling)
-            logfire.configure()  
-            logfire.instrument_pydantic_ai()  
+            logfire.configure()
+            logfire.instrument_pydantic_ai()
             model = OpenAIResponsesModel("gpt-5")
             settings = OpenAIResponsesModelSettings(
-                    openai_reasoning_effort='low',
-                    openai_reasoning_summary='detailed',
+                openai_reasoning_effort="low",
+                openai_reasoning_summary="detailed",
                 # openai_reasoning_effort=reasoning_effort
-                )
+            )
             # Get validation context from request (for species_units)
             validation_context = request.get("validation_context", {})
 
@@ -127,7 +126,7 @@ class ImmediateRequestProcessor:
                 model,
                 output_type=pydantic_model,
                 model_settings=settings,
-                builtin_tools=[WebSearchTool(),CodeExecutionTool()],
+                builtin_tools=[WebSearchTool(), CodeExecutionTool()],
                 validation_context=validation_context,
                 retries=2,  # Increased for validation requirements
             )
