@@ -64,19 +64,46 @@ All measurements MUST be **biomarker-triggered** - anchored to an observable bio
 
 **Biomarker trigger selection (CRITICAL):**
 
-The `biomarker_species` determines **WHEN** to measure, NOT **WHAT** to measure.
+⏰ **`trigger_species`** determines **WHEN** to measure
+📊 **`measurement_code`** determines **WHAT** to measure
+
+**These are usually DIFFERENT species!**
 
 - **Use clinical/standard triggers**: Tumor burden, treatment response, clinical milestones
 - **DON'T use the measured observable as the trigger**: If measuring a cytokine concentration, trigger on tumor size or treatment timepoint, not the cytokine level itself
-- **Clinical logic**: "At resection when tumor reaches threshold volume, measure the observable" ✓
-- **Wrong (circular)**: "When observable X exceeds threshold, measure observable X" ✗
+- **Clinical logic**: ⏰ "When tumor reaches 500 mm³" → 📊 "measure CD8 density" ✓
+- **Wrong (circular)**: ⏰ "When CD8 exceeds threshold" → 📊 "measure CD8" ✗
 
-**Most common trigger**: Tumor burden (V_T.C1) at resection/diagnosis/establishment.
+**Most common triggers**:
+1. Tumor burden (V_T.C1) at resection/diagnosis/establishment
+2. Biomarker concentration reaching clinical threshold
+3. Treatment milestone (post-infusion, post-resection)
 
-**Example 1: Tumor burden trigger (most common - with unit conversion)**
+**Example 1: Simple identity mapping (trigger in natural units)**
 ```yaml
-biomarker_species: V_T.C1  # Tumor cell count
-threshold_computation_code: |
+trigger_species: V_T.TGFb  # TGF-beta concentration
+threshold_conversion_code: |
+  def compute_threshold_value(species_dict, inputs, ureg):
+      """Identity mapping - threshold in trigger's natural units."""
+      return species_dict['V_T.TGFb']
+threshold: 100.0
+threshold_units: nanomolarity
+threshold_input_name: high_tgfb_threshold
+comparison: ">"
+timepoints: [0.0]
+inputs:
+  - name: high_tgfb_threshold
+    value: 100.0
+    units: nanomolarity
+    description: "High TGF-beta threshold from cohort stratification"
+    source_ref: smith_2020
+    value_snippet: "High TGF-β patients defined as >100 ng/mL serum concentration"
+```
+
+**Example 2: Unit conversion (tumor burden trigger with cells → volume)**
+```yaml
+trigger_species: V_T.C1  # Tumor cell count
+threshold_conversion_code: |
   def compute_threshold_value(species_dict, inputs, ureg):
       """Convert tumor cells to volume for threshold comparison."""
       tumor_cells = species_dict['V_T.C1']
@@ -104,9 +131,18 @@ inputs:
 
 **Threshold source tracking:**
 
-**CRITICAL: Threshold must come from the SAME paper as the calibration target, NOT modeling assumptions or other literature.**
+**⚠️ CRITICAL RULE: Threshold value MUST come from the SAME paper as the calibration target.**
 
-The threshold defines WHEN the observable was measured. Extract it from the primary source:
+The threshold defines WHEN the observable was measured. It is part of the experimental context, not a modeling choice.
+
+**What MUST come from the primary paper:**
+- ✅ Threshold values (tumor size at resection, enrollment criteria, cohort stratification cutoffs)
+
+**What CAN use modeling_assumption:**
+- ✅ Conversion factors (cell packing density, geometric constants)
+- ✅ Universal constants (π, 2, percentiles)
+
+**Extract threshold from the primary source:**
 
 **Direct statements:**
 - "Tumors resected at mean volume of 500 mm³" → extract 500 mm³ from this paper
@@ -121,7 +157,9 @@ The threshold defines WHEN the observable was measured. Extract it from the prim
 **If threshold not in paper:**
 The paper may not be suitable for extraction. The threshold is part of the experimental context and must be documented in the primary source.
 
-Conversion factors (cell density, geometric formulas) can use `modeling_assumption`. Threshold values cannot.
+**Remember the rule:**
+- ❌ Threshold values → NEVER modeling_assumption
+- ✅ Conversion factors → CAN use modeling_assumption
 
 **Notes:**
 - **Derivatives**: Use central differences from timepoints. Don't assume analytical derivatives exist.

@@ -111,17 +111,18 @@ class Measurement(BaseModel):
 
     timing_type: Literal["biomarker_triggered"] = "biomarker_triggered"
 
-    required_species: List[str] = Field(
+    measurement_species: List[str] = Field(
         description=(
-            "Model species required for measurement (SimBiology format). "
+            "Model species needed to compute the measurement (SimBiology format). "
             "E.g., ['V_T.CD8', 'V_T.C1'] for CD8-to-tumor ratio measurement."
         )
     )
 
-    computation_code: str = Field(
+    measurement_code: str = Field(
         description=(
-            "Python code defining compute_measurement(time, species_dict, ureg). "
+            "📊 WHAT TO MEASURE: Python code defining compute_measurement(time, species_dict, ureg). "
             "Converts model species to observable matching calibration target. "
+            "This is what gets compared to literature values. "
             "Must return Pint Quantity for comparison. "
             "Example:\n"
             "def compute_measurement(time, species_dict, ureg):\n"
@@ -132,29 +133,29 @@ class Measurement(BaseModel):
         )
     )
 
-    biomarker_species: str = Field(
+    trigger_species: str = Field(
         description=(
-            "Model species to monitor for trigger (SimBiology format). "
-            "E.g., 'V_T.C1' for tumor cells, 'V_T.TGFb' for TGF-beta concentration. "
-            "Common triggers: tumor burden (V_T.C1), circulating biomarkers, immune cell counts."
+            "⏰ WHEN TO MEASURE: Model species that triggers the measurement (SimBiology format). "
+            "NOT the same as what you're measuring! "
+            "E.g., 'V_T.C1' (tumor burden) triggers measurement of CD8 density. "
+            "Common triggers: tumor size at resection, treatment timepoint, clinical milestone."
         )
     )
 
-    threshold_computation_code: str = Field(
+    threshold_conversion_code: str = Field(
         description=(
-            "Python code to convert biomarker_species to threshold comparison space. "
-            "Function signature: compute_threshold_value(species_dict, inputs, ureg) -> Pint Quantity. "
-            "Arguments: species_dict (model species), inputs (dict of Pint Quantities from inputs list), ureg. "
-            "For identity mapping (threshold in biomarker natural units):\n"
+            "Python code to convert trigger_species to threshold comparison space. "
+            "Function signature: compute_threshold_value(species_dict, inputs, ureg) -> Pint Quantity.\n\n"
+            "COMMON CASE (identity mapping - trigger in natural units):\n"
             "def compute_threshold_value(species_dict, inputs, ureg):\n"
-            "    return species_dict['V_T.C1']  # Return raw species value\n"
-            "For conversion (e.g., cells → volume):\n"
+            "    return species_dict['V_T.TGFb']  # Direct concentration comparison\n\n"
+            "CONVERSION CASE (cells → volume):\n"
             "def compute_threshold_value(species_dict, inputs, ureg):\n"
             "    tumor_cells = species_dict['V_T.C1']\n"
             "    cell_density = inputs['cell_packing_density']  # From inputs list\n"
             "    volume = tumor_cells / cell_density\n"
-            "    return volume.to(ureg.mm**3)\n"
-            "All constants must come from inputs list with source tracking."
+            "    return volume.to(ureg.mm**3)\n\n"
+            "All conversion factors must come from inputs list with source tracking."
         )
     )
 
@@ -170,8 +171,8 @@ class Measurement(BaseModel):
     threshold_units: str = Field(
         description=(
             "Units of threshold value (must be Pint-parseable). "
-            "If threshold_computation_code provided: units of that code's output. "
-            "If threshold_computation_code is None: must match natural units of biomarker_species. "
+            "If threshold_conversion_code provided: units of that code's output. "
+            "If threshold_conversion_code is None: must match natural units of trigger_species. "
             "Examples: 'millimeter**3' (volume), 'cell' (count), 'nanomolarity' (concentration)."
         )
     )
@@ -179,9 +180,10 @@ class Measurement(BaseModel):
     threshold_input_name: str = Field(
         description=(
             "Name of input that provides the threshold value with source tracking. "
-            "Must reference an input in the inputs list. "
-            "That input must have matching value and units as threshold/threshold_units fields. "
-            "Ensures threshold values are traceable to paper sources."
+            "Must reference an input in the inputs list with matching value/units. "
+            "⚠️ CRITICAL: Threshold value MUST come from primary source, NOT modeling_assumption. "
+            "Extract from paper (e.g., 'resected at 500 mm³', 'enrolled at 1 cm diameter'). "
+            "Conversion factors (cell_density, geometric constants) CAN use modeling_assumption."
         )
     )
 
@@ -787,9 +789,9 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_computation_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
+    def validate_measurement_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
         """
-        Validator: Check that computation_code returns correct units.
+        Validator: Check that measurement_code returns correct units.
 
         Requires context:
             species_units: Dict mapping species names to unit strings (from species_units.json)
@@ -806,9 +808,9 @@ class CalibrationTarget(BaseModel):
         for measurement in self.scenario.measurements:
             # Parse the code
             try:
-                tree = ast.parse(measurement.computation_code)
+                tree = ast.parse(measurement.measurement_code)
             except SyntaxError as e:
-                raise ValueError(f"computation_code has syntax error: {e}")
+                raise ValueError(f"measurement_code has syntax error: {e}")
 
             # Find the function definition
             func_def = None
@@ -819,7 +821,7 @@ class CalibrationTarget(BaseModel):
 
             if not func_def:
                 raise ValueError(
-                    "computation_code must define a function named 'compute_measurement'"
+                    "measurement_code must define a function named 'compute_measurement'"
                 )
 
             # Check signature
@@ -837,7 +839,7 @@ class CalibrationTarget(BaseModel):
 
                 # Execute function
                 local_scope = {"ureg": ureg, "np": np}
-                exec(measurement.computation_code, local_scope)
+                exec(measurement.measurement_code, local_scope)
                 compute_fn = local_scope["compute_measurement"]
 
                 result = compute_fn(time, mock_species, ureg)
@@ -853,7 +855,7 @@ class CalibrationTarget(BaseModel):
                         f"Unit dimensionality mismatch:\n"
                         f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
                         f"  Got: {result.units} ({result.dimensionality})\n"
-                        f"Ensure computation_code returns the same units as the calibration target estimate."
+                        f"Ensure measurement_code returns the same units as the calibration target estimate."
                     )
 
             except Exception as e:
@@ -1015,9 +1017,45 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_threshold_computation_code(self, info: ValidationInfo) -> "CalibrationTarget":
+    def validate_species_exist(self, info: ValidationInfo) -> "CalibrationTarget":
         """
-        Validator: Check that threshold_computation_code executes and returns correct units.
+        Validator: Check that trigger_species and measurement_species exist in model.
+
+        Requires context:
+            species_units: Dict mapping species names to unit strings (from species_units.json)
+        """
+        # Get species_units from context
+        if not info.context:
+            raise ValueError(
+                "Validation context is required. Pass context={'species_units': {...}}"
+            )
+        species_units = info.context["species_units"]
+        available_species = set(species_units.keys())
+
+        for measurement in self.scenario.measurements:
+            # Check trigger_species exists
+            if measurement.trigger_species not in available_species:
+                raise ValueError(
+                    f"trigger_species '{measurement.trigger_species}' not found in model.\n"
+                    f"Available species: {sorted(available_species)}\n"
+                    f"Check species name format (should be compartment.species, e.g., 'V_T.C1', 'V_T.CD8')"
+                )
+
+            # Check all measurement_species exist
+            for species in measurement.measurement_species:
+                if species not in available_species:
+                    raise ValueError(
+                        f"measurement_species '{species}' not found in model.\n"
+                        f"Available species: {sorted(available_species)}\n"
+                        f"Check species name format (should be compartment.species, e.g., 'V_T.C1', 'V_T.CD8')"
+                    )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_threshold_conversion_code(self, info: ValidationInfo) -> "CalibrationTarget":
+        """
+        Validator: Check that threshold_conversion_code executes and returns correct units.
 
         Requires context:
             species_units: Dict mapping species names to unit strings (from species_units.json)
@@ -1032,14 +1070,14 @@ class CalibrationTarget(BaseModel):
         species_units = info.context["species_units"]
 
         for measurement in self.scenario.measurements:
-            if not measurement.threshold_computation_code:
+            if not measurement.threshold_conversion_code:
                 continue  # Identity mapping, no code to validate
 
             # Parse the code
             try:
-                tree = ast.parse(measurement.threshold_computation_code)
+                tree = ast.parse(measurement.threshold_conversion_code)
             except SyntaxError as e:
-                raise ValueError(f"threshold_computation_code has syntax error: {e}")
+                raise ValueError(f"threshold_conversion_code has syntax error: {e}")
 
             # Find the function definition
             func_def = None
@@ -1050,7 +1088,7 @@ class CalibrationTarget(BaseModel):
 
             if not func_def:
                 raise ValueError(
-                    "threshold_computation_code must define a function named 'compute_threshold_value'"
+                    "threshold_conversion_code must define a function named 'compute_threshold_value'"
                 )
 
             # Check signature
@@ -1071,7 +1109,7 @@ class CalibrationTarget(BaseModel):
 
                 # Execute function
                 local_scope = {"ureg": ureg, "np": np}
-                exec(measurement.threshold_computation_code, local_scope)
+                exec(measurement.threshold_conversion_code, local_scope)
                 compute_fn = local_scope["compute_threshold_value"]
 
                 result = compute_fn(mock_species, mock_inputs, ureg)
