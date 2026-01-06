@@ -848,10 +848,12 @@ class CalibrationTarget(BaseModel):
                         )
 
             except Exception as e:
+                error_str = str(e)
                 if (
-                    "dimensionality mismatch" in str(e)
-                    or "returned a scalar" in str(e)
-                    or "wrong length" in str(e)
+                    "dimensionality mismatch" in error_str
+                    or "returned a scalar" in error_str
+                    or "wrong length" in error_str
+                    or "Cannot convert" in error_str  # Catch unit conversion errors
                 ):
                     raise
                 # Other errors might be due to missing species - be lenient
@@ -1317,7 +1319,7 @@ class CalibrationTarget(BaseModel):
                     # Get unit from species_units (handle both dict and string formats)
                     species_info = species_units.get(species_name, "cell")
                     if isinstance(species_info, dict):
-                        unit_str = species_info.get('units', 'cell')
+                        unit_str = species_info.get("units", "cell")
                     else:
                         unit_str = species_info
                     mock_species[species_name] = base * ureg(unit_str)
@@ -1405,7 +1407,7 @@ class CalibrationTarget(BaseModel):
         # \x0E-\x1F: SHIFT OUT through UNIT SEPARATOR
         # \x7F: DEL
         # \x80-\x9F: Unicode control characters
-        control_char_pattern = re.compile(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x80-\x9F]')
+        control_char_pattern = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x80-\x9F]")
 
         def check_string(value: str, field_path: str) -> None:
             """Check a string for control characters."""
