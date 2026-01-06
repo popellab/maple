@@ -1272,3 +1272,179 @@ class CalibrationTarget(BaseModel):
             )
 
         return self
+
+    @model_validator(mode="after")
+    def validate_scale_consistency(self, info: ValidationInfo) -> "CalibrationTarget":
+        """
+        Validator: Check that measurement_code output scale matches calibration target scale.
+
+        Executes measurement_code with mock species data spanning wide range and checks
+        if output range is compatible with calibration_target_estimates range.
+
+        Catches scale mismatches like ratio (0-1) vs score (0-3) before calibration.
+
+        Requires context:
+            species_units: Dict mapping species names to unit strings (from species_units.json)
+        """
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        # Get species_units from context
+        if not info.context:
+            raise ValueError(
+                "Validation context is required. Pass context={'species_units': {...}}"
+            )
+        species_units = info.context["species_units"]
+
+        # Get calibration target range
+        estimates = self.calibration_target_estimates
+        target_median = estimates.median
+        target_ci95 = estimates.ci95
+        target_min = float(min(target_ci95))
+        target_max = float(max(target_ci95))
+
+        # Execute measurement_code and check output range
+        for measurement in self.scenario.measurements:
+            try:
+                # Create mock time array (wide range to explore measurement_code behavior)
+                mock_time = np.linspace(0, 100, 50) * ureg.day
+
+                # Create mock species with wide value range
+                mock_species = {}
+                for species_name in measurement.measurement_species:
+                    # Generate values spanning many orders of magnitude
+                    base = np.logspace(0, 8, len(mock_time))
+
+                    # Get unit from species_units (handle both dict and string formats)
+                    species_info = species_units.get(species_name, "cell")
+                    if isinstance(species_info, dict):
+                        unit_str = species_info.get('units', 'cell')
+                    else:
+                        unit_str = species_info
+                    mock_species[species_name] = base * ureg(unit_str)
+
+                # Execute measurement_code
+                local_scope = {"ureg": ureg, "np": np}
+                exec(measurement.measurement_code, local_scope)
+                compute_fn = local_scope["compute_measurement"]
+
+                result = compute_fn(mock_time, mock_species, ureg)
+
+                # Get code output range
+                code_min = float(np.min(result.magnitude))
+                code_max = float(np.max(result.magnitude))
+                code_median = float(np.median(result.magnitude))
+
+                # Check for scale mismatch patterns
+                # Pattern 1: Code outputs ratio (0-1) but target is score (>2)
+                if code_max <= 1.5 and target_max > 2.0:
+                    raise ValueError(
+                        f"Scale mismatch detected - likely ratio (0-1) vs score (0-N) mismatch:\n"
+                        f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
+                        f"  • Measurement code:   median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
+                        f"The measurement_code outputs values on 0-1 scale (likely a ratio/fraction),\n"
+                        f"but calibration target is on a larger scale (likely a 0-N score).\n"
+                        f"Fix: Either scale the calibration target down to 0-1, or scale the measurement_code up to 0-N."
+                    )
+
+                # Pattern 2: Code outputs score (>2) but target is ratio (0-1)
+                if code_max > 2.0 and target_max <= 1.5:
+                    raise ValueError(
+                        f"Scale mismatch detected - likely score (0-N) vs ratio (0-1) mismatch:\n"
+                        f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
+                        f"  • Measurement code:   median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
+                        f"The measurement_code outputs values on 0-N scale (likely a score),\n"
+                        f"but calibration target is on 0-1 scale (likely a ratio/fraction).\n"
+                        f"Fix: Either scale the calibration target up to 0-N, or scale the measurement_code down to 0-1."
+                    )
+
+                # Pattern 3: Ranges don't overlap and differ by >10x
+                tolerance = 10.0
+                if code_median > 0 and target_median > 0:
+                    median_ratio = max(target_median, code_median) / min(target_median, code_median)
+
+                    # Check if ranges don't overlap
+                    ranges_overlap = not (code_max < target_min or code_min > target_max)
+
+                    if not ranges_overlap and median_ratio > tolerance:
+                        raise ValueError(
+                            f"Scale mismatch detected - output scale differs by {median_ratio:.1f}x:\n"
+                            f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
+                            f"  • Measurement code:   median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
+                            f"The measurement_code output is on a different scale than the calibration target.\n"
+                            f"Check for missing unit conversions or scaling factors."
+                        )
+
+            except ValueError:
+                # Re-raise validation errors
+                raise
+            except Exception:
+                # Other errors (e.g., complex mock data requirements) - be lenient
+                # The measurement_code might use logic we can't easily mock
+                pass
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_no_control_characters(self) -> "CalibrationTarget":
+        """
+        Validator: Check for control characters in all string fields.
+
+        Control characters (especially in titles, descriptions, snippets) can cause
+        YAML parsing failures and other issues. This validator detects them early.
+
+        Checks for:
+        - ASCII control characters (0x00-0x1F) except tab (0x09), LF (0x0A), CR (0x0D)
+        - DEL character (0x7F)
+        - Unicode control characters (U+0080-U+009F)
+        """
+        import re
+
+        # Pattern to match control characters (excluding valid whitespace)
+        # \x00-\x08: NUL through BACKSPACE
+        # \x0B-\x0C: VERTICAL TAB, FORM FEED
+        # \x0E-\x1F: SHIFT OUT through UNIT SEPARATOR
+        # \x7F: DEL
+        # \x80-\x9F: Unicode control characters
+        control_char_pattern = re.compile(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x80-\x9F]')
+
+        def check_string(value: str, field_path: str) -> None:
+            """Check a string for control characters."""
+            match = control_char_pattern.search(value)
+            if match:
+                char_code = ord(match.group(0))
+                char_hex = f"0x{char_code:02X}"
+                # Get position in string
+                pos = match.start()
+                # Get context around the control character
+                context_start = max(0, pos - 20)
+                context_end = min(len(value), pos + 20)
+                context = value[context_start:context_end]
+                # Replace control char with placeholder for display
+                context_display = context.replace(match.group(0), f"[{char_hex}]")
+
+                raise ValueError(
+                    f"Control character {char_hex} found in field '{field_path}' at position {pos}.\n"
+                    f"Context: ...{context_display}...\n"
+                    f"Control characters cause YAML parsing failures and must be removed.\n"
+                    f"Common causes: copying from PDFs, word processors, or web pages with special formatting.\n"
+                    f"Fix: Re-type the text or use a plain text editor to remove invisible characters."
+                )
+
+        def walk_and_check(obj, path: str = "") -> None:
+            """Recursively walk through the object and check all strings."""
+            if isinstance(obj, str):
+                check_string(obj, path)
+            elif isinstance(obj, dict):
+                for key, value in obj.items():
+                    walk_and_check(value, f"{path}.{key}" if path else key)
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    walk_and_check(item, f"{path}[{i}]")
+            elif hasattr(obj, "model_dump"):
+                # Pydantic model - convert to dict and recurse
+                walk_and_check(obj.model_dump(), path)
+
+        # Check all fields in the model
+        walk_and_check(self.model_dump(), "CalibrationTarget")
+
+        return self

@@ -31,6 +31,10 @@ echo "OPENAI_API_KEY=sk-your-key-here" > .env
 
 Verify with `qsp-extract --help`—you should see usage information.
 
+### Optional: Logfire for Debugging
+
+For debugging and monitoring LLM workflows, see [Pydantic AI Logfire integration](https://ai.pydantic.dev/logfire/#using-logfire). Provides real-time visibility into prompts, responses, validation errors, and token usage.
+
 ## The Workflow
 
 Every extraction follows the same pattern: prepare input → run extraction → validate → review.

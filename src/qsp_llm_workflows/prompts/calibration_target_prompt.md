@@ -84,6 +84,16 @@ A biological observable measured in a **specific experimental scenario**, used t
 - Exception: `modeling_assumption` is valid for conversion factors and thresholds
 - **Validation:** Cross-reference checking against defined sources
 
+### 8. Measurement Code Output Scale Must Match Calibration Target Scale
+- Ensure measurement_code output range is on the same scale as calibration_target_estimates
+- Example: Don't mix 0-1 ratios with 0-N scores - they must use consistent scaling
+- **Validation:** Code executed with mock data; output range compared to target range
+
+### 9. Avoid Control Characters
+- Do not include control characters in any text fields (causes YAML parsing errors)
+- Common source: copying from PDFs or word processors with invisible formatting
+- **Validation:** All text fields scanned for control characters
+
 ---
 
 ## Model Context (Target to Match)
