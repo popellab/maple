@@ -187,7 +187,7 @@ class TestCalibrationTargetGolden:
     def test_golden_yaml_passes_all_validators(
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
-        """Test that golden YAML passes all 9 validators."""
+        """Test that golden YAML passes all 11 validators (including scale/control char)."""
         target = CalibrationTarget.model_validate(
             golden_calibration_target_data, context={"species_units": species_units}
         )
@@ -195,7 +195,7 @@ class TestCalibrationTargetGolden:
         assert target is not None
         assert target.description == "CD8+ T cell density in PDAC tumor at resection"
         assert len(target.scenario.measurements) == 1
-        assert target.calibration_target_estimates.median == 149.94
+        assert target.calibration_target_estimates.median == pytest.approx(0.1494, rel=0.01)
 
 
 # ============================================================================
@@ -407,14 +407,15 @@ class TestCalibrationTargetValidators:
     ):
         """Validator should warn when CV > 50% is not documented in limitations."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Make SD very large (CV = 2.0 = 200%)
-        data["calibration_target_estimates"]["inputs"][1]["value"] = 300.0  # SD = 300, mean = 150
+        # Make SD very large relative to mean (CV = 100% = 1.0)
+        # mean = 0.15, SD = 0.15 gives CV = 100%
+        data["calibration_target_estimates"]["inputs"][1]["value"] = 0.15  # SD = 0.15, mean = 0.15
 
         # Update expected values to match what distribution_code will produce with new SD
         # (Must match code output within 1% or derivation validator will fail first)
-        data["calibration_target_estimates"]["median"] = 149.94
-        data["calibration_target_estimates"]["iqr"] = 403.10
-        data["calibration_target_estimates"]["ci95"] = [-438.01, 737.89]
+        data["calibration_target_estimates"]["median"] = 0.1494
+        data["calibration_target_estimates"]["iqr"] = 0.2019
+        data["calibration_target_estimates"]["ci95"] = [-0.1440, 0.4434]
 
         # Don't mention variance in limitations
         data["key_study_limitations"] = "Small sample size from single center"
@@ -431,8 +432,15 @@ class TestCalibrationTargetValidators:
     ):
         """Validator should warn when using normal distribution for size data."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Change units to size data (centimeter)
+        # Change units to size data (centimeter) and update values to be in cm range
         data["calibration_target_estimates"]["units"] = "centimeter"
+        data["calibration_target_estimates"]["inputs"][0]["units"] = "centimeter"
+        data["calibration_target_estimates"]["inputs"][1]["units"] = "centimeter"
+        data["calibration_target_estimates"]["inputs"][0]["value"] = 1.5  # mean 1.5 cm
+        data["calibration_target_estimates"]["inputs"][1]["value"] = 0.25  # SD 0.25 cm
+        data["calibration_target_estimates"]["median"] = 1.4994
+        data["calibration_target_estimates"]["iqr"] = 0.3359
+        data["calibration_target_estimates"]["ci95"] = [1.0079, 1.9935]
 
         # Also update measurement_code to return centimeter (to avoid unit mismatch error)
         data["scenario"]["measurements"][0]["measurement_code"] = (
@@ -440,10 +448,10 @@ class TestCalibrationTargetValidators:
             "    import numpy as np\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
-            "    # Hypothetical size calculation returning pure centimeters\n"
-            "    # Use .magnitude to strip cell units, then apply centimeter\n"
-            "    size = (cd8.magnitude + tumor.magnitude) * 1e-6 * ureg.centimeter\n"
-            "    return size"
+            "    # Hypothetical tumor diameter in centimeters\n"
+            "    # Scale cell counts to reasonable diameter range (1-2 cm)\n"
+            "    diameter_cm = 1.5 + 0.0 * (cd8 / tumor).magnitude  # ~1.5 cm\n"
+            "    return diameter_cm * ureg.centimeter"
         )
 
         # Use normal distribution (not lognormal)
@@ -490,3 +498,69 @@ class TestCalibrationTargetValidators:
             )
 
         assert target is not None
+
+    def test_validate_dimensionality_error(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should catch Pint DimensionalityError (e.g., day² → day)."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Create code that produces dimensional mismatch
+        data["scenario"]["measurements"][0]["measurement_code"] = (
+            "def compute_measurement(time, species_dict, ureg):\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    # Intentional dimension error: time squared can't convert to dimensionless\n"
+            "    bad_value = (time * time).to(ureg.dimensionless)  # day² → dimensionless fails\n"
+            "    ratio = cd8 / tumor\n"
+            "    return ratio.to(ureg.dimensionless)"
+        )
+
+        with pytest.raises(ValidationError, match="unit error"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+    def test_validate_undefined_unit_error(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should catch Pint UndefinedUnitError for unknown units."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Create code that uses undefined unit
+        data["scenario"]["measurements"][0]["measurement_code"] = (
+            "def compute_measurement(time, species_dict, ureg):\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    # Intentional undefined unit error\n"
+            "    bad_value = 5.0 * ureg.foobar  # 'foobar' is not a defined unit\n"
+            "    ratio = cd8 / tumor\n"
+            "    return ratio.to(ureg.dimensionless)"
+        )
+
+        with pytest.raises(ValidationError, match="unit error"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+    def test_validate_scale_mismatch_ratio_vs_score(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should catch scale mismatch: 0-1 ratio code vs 0-3 score target."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # measurement_code returns 0-1 ratio (already does this)
+        # But change calibration target to 0-3 score scale
+        data["calibration_target_estimates"]["median"] = 2.42
+        data["calibration_target_estimates"]["iqr"] = 0.50
+        data["calibration_target_estimates"]["ci95"] = [1.69, 3.15]
+        # Update inputs to match
+        data["calibration_target_estimates"]["inputs"][0]["value"] = 2.42
+        data["calibration_target_estimates"]["inputs"][1]["value"] = 0.37
+
+        with pytest.raises(ValidationError, match="Scale mismatch"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+    def test_validate_control_characters(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should catch control characters in text fields."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Add control character to description
+        data["description"] = "CD8+ T cell\x03 density in PDAC"  # ETX control character
+
+        with pytest.raises(ValidationError, match="Control character"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
