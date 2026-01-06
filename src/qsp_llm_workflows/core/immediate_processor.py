@@ -13,13 +13,19 @@ from typing import List, Dict, Any, Optional
 from pydantic_ai import Agent, WebSearchTool, CodeExecutionTool
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-import logfire
-
 from qsp_llm_workflows.core.prompt_builder import (
     ParameterPromptBuilder,
     TestStatisticPromptBuilder,
     CalibrationTargetPromptBuilder,
 )
+
+# Optional logfire instrumentation (comes with pydantic-ai)
+try:
+    import logfire
+
+    LOGFIRE_AVAILABLE = True
+except ImportError:
+    LOGFIRE_AVAILABLE = False
 
 
 class ImmediateRequestProcessor:
@@ -35,6 +41,11 @@ class ImmediateRequestProcessor:
         """
         self.base_dir = Path(base_dir)
         self.api_key = api_key
+
+        # Setup logfire once (optional instrumentation for debugging)
+        if LOGFIRE_AVAILABLE:
+            logfire.configure()
+            logfire.instrument_pydantic_ai()
 
         # Initialize prompt builders for prompt building (DRY principle)
         self.parameter_creator = ParameterPromptBuilder(base_dir)
@@ -111,12 +122,10 @@ class ImmediateRequestProcessor:
 
         try:
             # Use Pydantic AI (supports discriminated unions via tool calling)
-            logfire.configure()
-            logfire.instrument_pydantic_ai()
-            model = OpenAIResponsesModel("gpt-5")
+            model = OpenAIResponsesModel("gpt-5.1")
             settings = OpenAIResponsesModelSettings(
                 openai_reasoning_effort="low",
-                openai_reasoning_summary="detailed",
+                openai_reasoning_summary="concise",
                 # openai_reasoning_effort=reasoning_effort
             )
             # Get validation context from request (for species_units)
@@ -171,6 +180,7 @@ class ImmediateRequestProcessor:
         input_csv: Path,
         workflow_type: str,
         progress_callback: Optional[callable] = None,
+        result_callback: Optional[callable] = None,
         reasoning_effort: str = "high",
     ) -> List[Dict[str, Any]]:
         """
@@ -180,6 +190,7 @@ class ImmediateRequestProcessor:
             input_csv: Path to input CSV file
             workflow_type: "parameter", "test_statistic", or "calibration_target"
             progress_callback: Optional callback for progress updates
+            result_callback: Optional callback called immediately as each result completes
             reasoning_effort: Reasoning effort level
 
         Returns:
@@ -202,8 +213,15 @@ class ImmediateRequestProcessor:
             for i, prompt in enumerate(prompts)
         ]
 
-        # Process concurrently
-        results = await asyncio.gather(*tasks)
+        # Process concurrently, calling result_callback as each completes
+        results = []
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            results.append(result)
+
+            # Call result_callback immediately if provided (for streaming unpack)
+            if result_callback:
+                result_callback(result)
 
         if progress_callback:
             success_count = sum(1 for r in results if r.get("error") is None)
@@ -216,6 +234,7 @@ class ImmediateRequestProcessor:
         input_csv: Path,
         workflow_type: str,
         progress_callback: Optional[callable] = None,
+        result_callback: Optional[callable] = None,
         reasoning_effort: str = "high",
     ) -> List[Dict[str, Any]]:
         """
@@ -225,11 +244,14 @@ class ImmediateRequestProcessor:
             input_csv: Path to input CSV file
             workflow_type: "parameter", "test_statistic", or "calibration_target"
             progress_callback: Optional callback for progress updates
+            result_callback: Optional callback called immediately as each result completes
             reasoning_effort: Reasoning effort level
 
         Returns:
             List of results in standard format
         """
         return asyncio.run(
-            self.process_all_requests(input_csv, workflow_type, progress_callback, reasoning_effort)
+            self.process_all_requests(
+                input_csv, workflow_type, progress_callback, result_callback, reasoning_effort
+            )
         )

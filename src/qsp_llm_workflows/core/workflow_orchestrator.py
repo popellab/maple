@@ -17,7 +17,6 @@ from qsp_llm_workflows.core.workflow.context import WorkflowContext
 from qsp_llm_workflows.core.workflow.steps import (
     CreatePreviewStep,
     ProcessPromptsStep,
-    UnpackResultsStep,
 )
 
 
@@ -154,8 +153,9 @@ class WorkflowOrchestrator:
                 # Preview mode: only create preview file
                 steps = [CreatePreviewStep()]
             else:
-                # Normal mode: process with Pydantic AI and unpack results
-                steps = [ProcessPromptsStep(), UnpackResultsStep()]
+                # Normal mode: process with Pydantic AI (with streaming unpacking)
+                # UnpackResultsStep no longer needed - unpacking happens during processing
+                steps = [ProcessPromptsStep()]
 
             # Execute steps in sequence
             for step in steps:

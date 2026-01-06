@@ -21,7 +21,11 @@ from qsp_llm_workflows.core.exceptions import (
     ImmediateProcessingError,
     ResultsUnpackError,
 )
-from qsp_llm_workflows.process.unpack_results import process_results
+from qsp_llm_workflows.process.unpack_results import (
+    process_results,
+    unpack_single_result,
+    load_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,30 +113,62 @@ class CreatePreviewStep(WorkflowStep):
 
 
 class ProcessPromptsStep(WorkflowStep):
-    """Process requests directly via Pydantic AI."""
+    """Process requests directly via Pydantic AI with streaming unpacking."""
 
     @property
     def name(self) -> str:
         return "Process Prompts"
 
     def execute(self, context: WorkflowContext) -> WorkflowContext:
-        """Process requests directly via Pydantic AI."""
+        """Process requests directly via Pydantic AI with streaming unpacking."""
         try:
+            # Create unique output directory for streaming unpacking
+            output_dir = create_unique_output_directory(
+                base_dir=context.config.to_review_dir,
+                workflow_type=context.workflow_type,
+            )
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            context.report_progress(f"Unpacking results to {output_dir.name}/...")
+
+            # Load metadata once before processing
+            metadata = load_metadata(context.input_csv, context.workflow_type)
+
+            # Track unpacked files
+            unpacked_count = [0]  # Use list for closure mutation
+
+            # Define streaming unpacker callback
+            def unpack_result(result):
+                """Unpack each result immediately as it completes."""
+                try:
+                    output_path = unpack_single_result(
+                        result,
+                        output_dir,
+                        context.workflow_type,
+                        metadata,
+                        progress_callback=None,  # Don't print individual messages
+                    )
+                    if output_path:
+                        unpacked_count[0] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to unpack result: {e}")
+
             # Create immediate processor
             processor = ImmediateRequestProcessor(
                 context.config.base_dir,
                 context.config.openai_api_key,
             )
 
-            # Process requests directly from CSV
+            # Process requests with streaming unpacker
             results = processor.run(
                 context.input_csv,
                 context.workflow_type,
-                context.progress_callback,
+                progress_callback=context.progress_callback,
+                result_callback=unpack_result,  # Unpack as each completes
                 reasoning_effort=context.config.reasoning_effort,
             )
 
-            # Write results to file (for unpacker compatibility)
+            # Write results to file (for audit trail and debugging)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             results_file = (
                 context.config.jobs_dir
@@ -143,7 +179,12 @@ class ProcessPromptsStep(WorkflowStep):
                 for result in results:
                     f.write(json.dumps(result) + "\n")
 
+            # Set context fields
             context.results_file = results_file
+            context.output_directory = output_dir
+            context.file_count = unpacked_count[0]
+
+            context.report_progress(f"✓ Unpacked {unpacked_count[0]} files to {output_dir.name}/")
             context.report_progress(f"✓ Results saved: {results_file.name}")
 
             return context

@@ -253,6 +253,126 @@ def parse_custom_id(custom_id: str) -> Tuple[str, str, str]:
         return ("parameter", parts[0], "_".join(parts[1:-1]))
 
 
+def unpack_single_result(
+    result: dict,
+    output_dir: Path,
+    workflow_type: str,
+    metadata: Dict,
+    progress_callback: Optional[callable] = None,
+) -> Optional[Path]:
+    """
+    Unpack a single result to YAML file immediately.
+
+    Args:
+        result: Single result dictionary from processor
+        output_dir: Output directory for YAML files
+        workflow_type: "parameter", "test_statistic", or "calibration_target"
+        metadata: Pre-loaded metadata dictionary
+        progress_callback: Optional callback for progress updates
+
+    Returns:
+        Path to created YAML file, or None if unpacking failed
+    """
+    custom_id = result["custom_id"]
+
+    # Parse custom_id
+    _, cancer_type, identifier = parse_custom_id(custom_id)
+
+    # Get response content
+    body = result["response"]["body"]
+
+    # Check if this is response format (has "output" key) or direct format (direct JSON)
+    if "output" in body:
+        # Response format: extract from output[type=message].content[0].text
+        try:
+            output_items = body["output"]
+            message_item = next(item for item in output_items if item.get("type") == "message")
+            content = message_item["content"][0]["text"]
+
+            # Extract JSON from markdown code fence
+            json_content = extract_json_from_content(content)
+            if not json_content:
+                if progress_callback:
+                    progress_callback(f"Error: No JSON found for {custom_id}")
+                return None
+
+            json_data = json.loads(json_content)
+        except (KeyError, StopIteration, json.JSONDecodeError) as e:
+            if progress_callback:
+                progress_callback(f"Error: Could not extract content for {custom_id}: {e}")
+            return None
+    else:
+        # Immediate format: extract from output_parsed field
+        try:
+            if "output_parsed" in body:
+                json_data = body["output_parsed"]
+            else:
+                # Fallback for older format without output_parsed wrapper
+                json_data = body
+        except Exception as e:
+            if progress_callback:
+                progress_callback(f"Error: Invalid immediate format for {custom_id}: {e}")
+            return None
+
+    # Look up metadata for extraction workflows
+    if workflow_type == "test_statistic":
+        meta = metadata.get(identifier)
+        if meta:
+            cancer_type = meta["cancer_type"]
+    elif workflow_type == "calibration_target":
+        meta = metadata.get(identifier)
+        if meta:
+            cancer_type = meta["cancer_type"]
+    else:
+        meta = metadata.get((cancer_type, identifier))
+
+    if not meta:
+        if progress_callback:
+            progress_callback(f"Warning: No metadata for {custom_id}, skipping")
+        return None
+
+    # Add footer fields
+    json_data = add_footer_fields(json_data, meta, workflow_type)
+
+    # Generate filename with derivation numbering
+    if workflow_type == "test_statistic":
+        # test_stat_id_cancer_deriv001.yaml
+        base = f"{identifier}_{cancer_type}"
+        deriv_num = find_next_derivation_number(output_dir, base)
+        filename = f"{base}_deriv{deriv_num:03d}.yaml"
+
+    elif workflow_type == "calibration_target":
+        # cal_target_id_cancer_deriv001.yaml
+        base = f"{identifier}_{cancer_type}"
+        deriv_num = find_next_derivation_number(output_dir, base)
+        filename = f"{base}_deriv{deriv_num:03d}.yaml"
+
+    else:  # parameter
+        # param_cancer_deriv001.yaml
+        base = f"{identifier}_{cancer_type}"
+        deriv_num = find_next_derivation_number(output_dir, base)
+
+        # Generate derivation_id and add to JSON
+        derivation_id = generate_derivation_id(identifier, cancer_type, deriv_num)
+        json_data["derivation_id"] = derivation_id
+        json_data["derivation_timestamp"] = datetime.now().isoformat()
+
+        filename = f"{derivation_id}.yaml"
+
+    # Convert to YAML
+    yaml_content = convert_to_yaml(json_data)
+
+    # Write file
+    output_path = output_dir / filename
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(yaml_content)
+
+    if progress_callback:
+        progress_callback(f"Saved: {filename}")
+
+    return output_path
+
+
 def process_results(results_file: Path, output_dir: Path, input_csv: Path = None):
     """Process extraction results and write YAML files."""
     output_dir.mkdir(parents=True, exist_ok=True)
