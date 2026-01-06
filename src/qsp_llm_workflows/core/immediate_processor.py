@@ -9,6 +9,7 @@ Uses Pydantic AI with tool calling for structured outputs (supports discriminate
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor
 
 from pydantic_ai import Agent, WebSearchTool, CodeExecutionTool
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -57,7 +58,7 @@ class ImmediateRequestProcessor:
         input_csv: Path,
         workflow_type: str,
         species_units_file: Optional[Path] = None,
-        reasoning_effort: str = "high",
+        reasoning_effort: str = "low",
     ) -> List[Dict[str, Any]]:
         """
         Generate prompts using appropriate prompt builder.
@@ -124,9 +125,7 @@ class ImmediateRequestProcessor:
             # Use Pydantic AI (supports discriminated unions via tool calling)
             model = OpenAIResponsesModel("gpt-5.1")
             settings = OpenAIResponsesModelSettings(
-                openai_reasoning_effort="low",
-                openai_reasoning_summary="concise",
-                # openai_reasoning_effort=reasoning_effort
+                openai_reasoning_summary="concise", openai_reasoning_effort=reasoning_effort
             )
             # Get validation context from request (for species_units)
             validation_context = request.get("validation_context", {})
@@ -181,7 +180,7 @@ class ImmediateRequestProcessor:
         workflow_type: str,
         progress_callback: Optional[callable] = None,
         result_callback: Optional[callable] = None,
-        reasoning_effort: str = "high",
+        reasoning_effort: str = "low",
     ) -> List[Dict[str, Any]]:
         """
         Process all requests from CSV file using Pydantic AI.
@@ -214,14 +213,21 @@ class ImmediateRequestProcessor:
         ]
 
         # Process concurrently, calling result_callback as each completes
+        # Use thread executor to prevent blocking I/O in callback from blocking event loop
         results = []
+        executor = ThreadPoolExecutor(max_workers=1)
+        loop = asyncio.get_event_loop()
+
         for coro in asyncio.as_completed(tasks):
             result = await coro
             results.append(result)
 
-            # Call result_callback immediately if provided (for streaming unpack)
+            # Call result_callback in thread to avoid blocking event loop
             if result_callback:
-                result_callback(result)
+                await loop.run_in_executor(executor, result_callback, result)
+
+        # Shutdown executor
+        executor.shutdown(wait=True)
 
         if progress_callback:
             success_count = sum(1 for r in results if r.get("error") is None)
@@ -235,7 +241,7 @@ class ImmediateRequestProcessor:
         workflow_type: str,
         progress_callback: Optional[callable] = None,
         result_callback: Optional[callable] = None,
-        reasoning_effort: str = "high",
+        reasoning_effort: str = "low",
     ) -> List[Dict[str, Any]]:
         """
         Synchronous wrapper for async processing via Pydantic AI.

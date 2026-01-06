@@ -47,8 +47,8 @@ Examples:
     parser.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],
-        default="high",
-        help="Reasoning effort level for OpenAI API (default: high)",
+        default="low",
+        help="Reasoning effort level for OpenAI API (default: low)",
     )
 
     parser.add_argument(
