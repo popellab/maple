@@ -27,6 +27,149 @@ from qsp_llm_workflows.core.shared_models import (
 
 
 # ============================================================================
+# Custom Exception Classes
+# ============================================================================
+
+
+class CalibrationTargetValidationError(ValueError):
+    """Base class for all calibration target validation errors that should propagate."""
+
+    pass
+
+
+# Code structure errors
+class CodeSyntaxError(CalibrationTargetValidationError):
+    """Code has syntax errors."""
+
+    pass
+
+
+class CodeStructureError(CalibrationTargetValidationError):
+    """Code structure is invalid (wrong function name, signature, etc)."""
+
+    pass
+
+
+# Unit/dimensionality errors
+class UnitValidationError(CalibrationTargetValidationError):
+    """Base class for unit-related validation errors."""
+
+    pass
+
+
+class MissingUnitsError(UnitValidationError):
+    """Return value missing Pint units."""
+
+    pass
+
+
+class DimensionalityMismatchError(UnitValidationError):
+    """Unit dimensionality doesn't match expected."""
+
+    pass
+
+
+class UnitConversionError(UnitValidationError):
+    """Pint unit conversion/operation failed."""
+
+    pass
+
+
+# Return value errors
+class ReturnValueError(CalibrationTargetValidationError):
+    """Base class for return value structure errors."""
+
+    pass
+
+
+class ScalarReturnError(ReturnValueError):
+    """Function returned scalar when array was expected."""
+
+    pass
+
+
+class ArrayLengthError(ReturnValueError):
+    """Array has wrong length."""
+
+    pass
+
+
+class ReturnStructureError(ReturnValueError):
+    """Return value has wrong structure (not dict, missing keys, etc)."""
+
+    pass
+
+
+# Data consistency errors
+class DataConsistencyError(CalibrationTargetValidationError):
+    """Base class for data consistency errors."""
+
+    pass
+
+
+class ComputedValueMismatchError(DataConsistencyError):
+    """Computed values don't match reported values."""
+
+    pass
+
+
+class ScaleMismatchError(DataConsistencyError):
+    """Scale mismatch between code output and calibration target."""
+
+    pass
+
+
+# Reference/lookup errors
+class ReferenceError(CalibrationTargetValidationError):
+    """Base class for reference lookup errors."""
+
+    pass
+
+
+class DOIResolutionError(ReferenceError):
+    """DOI failed to resolve."""
+
+    pass
+
+
+class PaperTitleMismatchError(ReferenceError):
+    """Paper title doesn't match CrossRef metadata."""
+
+    pass
+
+
+class SourceRefError(ReferenceError):
+    """source_ref not defined in sources."""
+
+    pass
+
+
+class SpeciesNotFoundError(ReferenceError):
+    """Species not found in model."""
+
+    pass
+
+
+# Content validation errors
+class ContentValidationError(CalibrationTargetValidationError):
+    """Base class for content validation errors."""
+
+    pass
+
+
+class ControlCharacterError(ContentValidationError):
+    """Control characters found in text."""
+
+    pass
+
+
+class EmptyScenarioError(ContentValidationError):
+    """Scenario has no measurements."""
+
+    pass
+
+
+# ============================================================================
 # Helper Functions
 # ============================================================================
 
@@ -179,7 +322,7 @@ class Scenario(BaseModel):
     def validate_at_least_one_measurement(cls, v: List[Measurement]) -> List[Measurement]:
         """Ensure at least one measurement is specified."""
         if len(v) < 1:
-            raise ValueError("Scenario must include at least one measurement")
+            raise EmptyScenarioError("Scenario must include at least one measurement")
         return v
 
 
@@ -729,7 +872,7 @@ class CalibrationTarget(BaseModel):
         if self.primary_data_source.doi:
             metadata = self.resolve_doi(self.primary_data_source.doi)
             if metadata is None:
-                raise ValueError(
+                raise DOIResolutionError(
                     f"DOI '{self.primary_data_source.doi}' failed to resolve via CrossRef. "
                     "Verify the DOI exists and is correctly formatted (e.g., '10.1234/journal.2023.123'). "
                     "Search for the paper on Google Scholar or PubMed to find the correct DOI."
@@ -746,7 +889,7 @@ class CalibrationTarget(BaseModel):
                 if not self.fuzzy_match(
                     crossref_title, self.primary_data_source.title, threshold=0.75
                 ):
-                    raise ValueError(
+                    raise PaperTitleMismatchError(
                         f"Paper title mismatch:\n"
                         f"  CrossRef: '{crossref_title}'\n"
                         f"  Provided: '{self.primary_data_source.title}'\n"
@@ -777,7 +920,7 @@ class CalibrationTarget(BaseModel):
             try:
                 tree = ast.parse(measurement.measurement_code)
             except SyntaxError as e:
-                raise ValueError(f"measurement_code has syntax error: {e}")
+                raise CodeSyntaxError(f"measurement_code has syntax error: {e}")
 
             # Find the function definition
             func_def = None
@@ -787,14 +930,14 @@ class CalibrationTarget(BaseModel):
                     break
 
             if not func_def:
-                raise ValueError(
+                raise CodeStructureError(
                     "measurement_code must define a function named 'compute_measurement'"
                 )
 
             # Check signature
             args = [arg.arg for arg in func_def.args.args]
             if args != ["time", "species_dict", "ureg"]:
-                raise ValueError(
+                raise CodeStructureError(
                     f"Function signature must be (time, species_dict, ureg), got ({', '.join(args)})"
                 )
 
@@ -817,12 +960,12 @@ class CalibrationTarget(BaseModel):
 
                 # Check result has units
                 if not hasattr(result, "units"):
-                    raise ValueError("Function must return a Pint Quantity with units")
+                    raise MissingUnitsError("Function must return a Pint Quantity with units")
 
                 # Check dimensionality matches calibration target units
                 expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
                 if result.dimensionality != expected_quantity.dimensionality:
-                    raise ValueError(
+                    raise DimensionalityMismatchError(
                         f"Measurement code unit dimensionality mismatch:\n"
                         f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
                         f"  Got: {result.units} ({result.dimensionality})"
@@ -833,7 +976,7 @@ class CalibrationTarget(BaseModel):
                     result_magnitude = result.magnitude
                     # Handle both scalar and array results
                     if np.isscalar(result_magnitude):
-                        raise ValueError(
+                        raise ScalarReturnError(
                             f"Measurement code returned a scalar, but should return an array with same length as time series.\n"
                             f"  Expected length: {len(mock_time)}\n"
                             f"  Got: scalar value\n"
@@ -841,7 +984,7 @@ class CalibrationTarget(BaseModel):
                             f"Compute the observable over the entire time series."
                         )
                     elif len(result_magnitude) != len(mock_time):
-                        raise ValueError(
+                        raise ArrayLengthError(
                             f"Measurement code returned array with wrong length:\n"
                             f"  Expected: {len(mock_time)} (same as time series)\n"
                             f"  Got: {len(result_magnitude)}\n"
@@ -853,24 +996,16 @@ class CalibrationTarget(BaseModel):
                 pint.UndefinedUnitError,
                 pint.OffsetUnitCalculusError,
             ) as e:
-                # Re-raise Pint unit errors - these are validation failures
-                raise ValueError(
+                # Wrap Pint unit errors in our custom exception
+                raise UnitConversionError(
                     f"Measurement code has unit error: {str(e)}\n"
                     f"Check that all unit operations are dimensionally consistent."
                 ) from e
-            except ValueError as e:
-                # Re-raise our custom validation errors (scalar, wrong length, etc.)
-                error_str = str(e)
-                if (
-                    "dimensionality mismatch" in error_str
-                    or "returned a scalar" in error_str
-                    or "wrong length" in error_str
-                ):
-                    raise
-                # Other ValueErrors might be from complex logic - be lenient
-                pass
+            except CalibrationTargetValidationError:
+                # Re-raise all our custom validation errors
+                raise
             except Exception:
-                # Other errors might be due to missing species or complex mock data requirements
+                # Other errors might be from complex logic or missing species
                 # Be lenient - actual execution will catch these
                 pass
 
@@ -888,7 +1023,7 @@ class CalibrationTarget(BaseModel):
         try:
             tree = ast.parse(self.calibration_target_estimates.distribution_code)
         except SyntaxError as e:
-            raise ValueError(f"distribution_code has syntax error: {e}")
+            raise CodeSyntaxError(f"distribution_code has syntax error: {e}")
 
         # Find the function definition
         func_def = None
@@ -898,12 +1033,16 @@ class CalibrationTarget(BaseModel):
                 break
 
         if not func_def:
-            raise ValueError("distribution_code must define a function named 'derive_distribution'")
+            raise CodeStructureError(
+                "distribution_code must define a function named 'derive_distribution'"
+            )
 
         # Check signature
         args = [arg.arg for arg in func_def.args.args]
         if args != ["inputs", "ureg"]:
-            raise ValueError(f"Function signature must be (inputs, ureg), got ({', '.join(args)})")
+            raise CodeStructureError(
+                f"Function signature must be (inputs, ureg), got ({', '.join(args)})"
+            )
 
         # Execute with mock inputs to test structure and units
         try:
@@ -921,25 +1060,25 @@ class CalibrationTarget(BaseModel):
 
             # Check result is dict with required keys
             if not isinstance(result, dict):
-                raise ValueError("Function must return a dict")
+                raise ReturnStructureError("Function must return a dict")
 
             required_keys = {"median_obs", "iqr_obs", "ci95_obs"}
             if not required_keys.issubset(result.keys()):
-                raise ValueError(
+                raise ReturnStructureError(
                     f"Function must return dict with keys: {required_keys}. Got: {result.keys()}"
                 )
 
             # Check all values have units
             for key in required_keys:
                 if not hasattr(result[key], "units"):
-                    raise ValueError(f"Result['{key}'] must be a Pint Quantity with units")
+                    raise MissingUnitsError(f"Result['{key}'] must be a Pint Quantity with units")
 
             # Check dimensionality matches expected units
             expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
 
             # Check median
             if result["median_obs"].dimensionality != expected_quantity.dimensionality:
-                raise ValueError(
+                raise DimensionalityMismatchError(
                     f"median_obs unit dimensionality mismatch:\n"
                     f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
                     f"  Got: {result['median_obs'].units} ({result['median_obs'].dimensionality})"
@@ -947,7 +1086,7 @@ class CalibrationTarget(BaseModel):
 
             # Check iqr
             if result["iqr_obs"].dimensionality != expected_quantity.dimensionality:
-                raise ValueError(
+                raise DimensionalityMismatchError(
                     f"iqr_obs unit dimensionality mismatch:\n"
                     f"  Expected: {self.calibration_target_estimates.units}\n"
                     f"  Got: {result['iqr_obs'].units}"
@@ -955,7 +1094,9 @@ class CalibrationTarget(BaseModel):
 
             # Check ci95 is list/array of 2 elements
             if not hasattr(result["ci95_obs"], "__len__") or len(result["ci95_obs"]) != 2:
-                raise ValueError("ci95_obs must be a list/array with 2 elements [lower, upper]")
+                raise ReturnStructureError(
+                    "ci95_obs must be a list/array with 2 elements [lower, upper]"
+                )
 
             # Convert computed values to expected units for comparison
             median_computed = result["median_obs"].to(self.calibration_target_estimates.units)
@@ -974,35 +1115,36 @@ class CalibrationTarget(BaseModel):
             rel_tol = 0.01
 
             if abs(median_computed.magnitude - median_reported) > rel_tol * abs(median_reported):
-                raise ValueError(
+                raise ComputedValueMismatchError(
                     f"Computed median ({median_computed.magnitude:.4g}) does not match "
                     f"reported median ({median_reported:.4g}) within 1% tolerance"
                 )
 
             if abs(iqr_computed.magnitude - iqr_reported) > rel_tol * abs(iqr_reported):
-                raise ValueError(
+                raise ComputedValueMismatchError(
                     f"Computed IQR ({iqr_computed.magnitude:.4g}) does not match "
                     f"reported IQR ({iqr_reported:.4g}) within 1% tolerance"
                 )
 
             # Check CI95 bounds
             if abs(ci95_computed[0].magnitude - ci95_reported[0]) > rel_tol * abs(ci95_reported[0]):
-                raise ValueError(
+                raise ComputedValueMismatchError(
                     f"Computed CI95 lower ({ci95_computed[0].magnitude:.4g}) does not match "
                     f"reported CI95 lower ({ci95_reported[0]:.4g}) within 1% tolerance"
                 )
 
             if abs(ci95_computed[1].magnitude - ci95_reported[1]) > rel_tol * abs(ci95_reported[1]):
-                raise ValueError(
+                raise ComputedValueMismatchError(
                     f"Computed CI95 upper ({ci95_computed[1].magnitude:.4g}) does not match "
                     f"reported CI95 upper ({ci95_reported[1]:.4g}) within 1% tolerance"
                 )
 
+        except CalibrationTargetValidationError:
+            # Re-raise all our custom validation errors
+            raise
         except Exception as e:
-            if "mismatch" in str(e) or "does not match" in str(e):
-                raise  # Re-raise validation errors
-            # Other execution errors - provide context
-            raise ValueError(f"Error executing derivation_code: {e}")
+            # Other execution errors - wrap in generic validation error
+            raise CalibrationTargetValidationError(f"Error executing derivation_code: {e}") from e
 
         return self
 
@@ -1017,7 +1159,7 @@ class CalibrationTarget(BaseModel):
         # Check each input's source_ref
         for inp in self.calibration_target_estimates.inputs:
             if inp.source_ref not in valid_tags:
-                raise ValueError(
+                raise SourceRefError(
                     f"Input '{inp.name}' has source_ref '{inp.source_ref}' which is not defined.\n"
                     f"Valid source tags: {sorted(valid_tags)}\n"
                     f"Add the source to primary_data_source or secondary_data_sources, "
@@ -1046,7 +1188,7 @@ class CalibrationTarget(BaseModel):
             # Check all measurement_species exist
             for species in measurement.measurement_species:
                 if species not in available_species:
-                    raise ValueError(
+                    raise SpeciesNotFoundError(
                         f"measurement_species '{species}' not found in model.\n"
                         f"Available species: {sorted(available_species)}\n"
                         f"Check species name format (should be compartment.species, e.g., 'V_T.C1', 'V_T.CD8')"
@@ -1354,7 +1496,7 @@ class CalibrationTarget(BaseModel):
                 # Check for scale mismatch patterns
                 # Pattern 1: Code outputs ratio (0-1) but target is score (>2)
                 if code_max <= 1.5 and target_max > 2.0:
-                    raise ValueError(
+                    raise ScaleMismatchError(
                         f"Scale mismatch detected - likely ratio (0-1) vs score (0-N) mismatch:\n"
                         f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
                         f"  • Measurement code:   median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
@@ -1365,7 +1507,7 @@ class CalibrationTarget(BaseModel):
 
                 # Pattern 2: Code outputs score (>2) but target is ratio (0-1)
                 if code_max > 2.0 and target_max <= 1.5:
-                    raise ValueError(
+                    raise ScaleMismatchError(
                         f"Scale mismatch detected - likely score (0-N) vs ratio (0-1) mismatch:\n"
                         f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
                         f"  • Measurement code:   median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
@@ -1383,7 +1525,7 @@ class CalibrationTarget(BaseModel):
                     ranges_overlap = not (code_max < target_min or code_min > target_max)
 
                     if not ranges_overlap and median_ratio > tolerance:
-                        raise ValueError(
+                        raise ScaleMismatchError(
                             f"Scale mismatch detected - output scale differs by {median_ratio:.1f}x:\n"
                             f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
                             f"  • Measurement code:   median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
@@ -1391,8 +1533,8 @@ class CalibrationTarget(BaseModel):
                             f"Check for missing unit conversions or scaling factors."
                         )
 
-            except ValueError:
-                # Re-raise validation errors
+            except CalibrationTargetValidationError:
+                # Re-raise all our custom validation errors
                 raise
             except Exception:
                 # Other errors (e.g., complex mock data requirements) - be lenient
@@ -1439,7 +1581,7 @@ class CalibrationTarget(BaseModel):
                 # Replace control char with placeholder for display
                 context_display = context.replace(match.group(0), f"[{char_hex}]")
 
-                raise ValueError(
+                raise ControlCharacterError(
                     f"Control character {char_hex} found in field '{field_path}' at position {pos}.\n"
                     f"Context: ...{context_display}...\n"
                     f"Control characters cause YAML parsing failures and must be removed.\n"
