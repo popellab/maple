@@ -763,6 +763,7 @@ class CalibrationTarget(BaseModel):
             species_units: Dict mapping species names to unit strings (from species_units.json)
         """
         from qsp_llm_workflows.core.unit_registry import ureg
+        import pint
 
         # Get species_units from context
         if not info.context:
@@ -847,16 +848,30 @@ class CalibrationTarget(BaseModel):
                             f"Do NOT use time indexing. Compute over entire time series."
                         )
 
-            except Exception as e:
+            except (
+                pint.DimensionalityError,
+                pint.UndefinedUnitError,
+                pint.OffsetUnitCalculusError,
+            ) as e:
+                # Re-raise Pint unit errors - these are validation failures
+                raise ValueError(
+                    f"Measurement code has unit error: {str(e)}\n"
+                    f"Check that all unit operations are dimensionally consistent."
+                ) from e
+            except ValueError as e:
+                # Re-raise our custom validation errors (scalar, wrong length, etc.)
                 error_str = str(e)
                 if (
                     "dimensionality mismatch" in error_str
                     or "returned a scalar" in error_str
                     or "wrong length" in error_str
-                    or "Cannot convert" in error_str  # Catch unit conversion errors
                 ):
                     raise
-                # Other errors might be due to missing species - be lenient
+                # Other ValueErrors might be from complex logic - be lenient
+                pass
+            except Exception:
+                # Other errors might be due to missing species or complex mock data requirements
+                # Be lenient - actual execution will catch these
                 pass
 
         return self
