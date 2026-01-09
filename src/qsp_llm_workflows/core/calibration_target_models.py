@@ -12,7 +12,7 @@ See docs/calibration_target_design.md for full specification.
 import ast
 from difflib import SequenceMatcher
 from enum import Enum
-from typing import List, Optional, Type
+from typing import List, Literal, Optional, Type
 
 import numpy as np
 import requests
@@ -119,6 +119,12 @@ class ScaleMismatchError(DataConsistencyError):
     pass
 
 
+class HardcodedConstantError(DataConsistencyError):
+    """Hardcoded numeric constant with units found in measurement_code."""
+
+    pass
+
+
 # Reference/lookup errors
 class ReferenceError(CalibrationTargetValidationError):
     """Base class for reference lookup errors."""
@@ -194,6 +200,62 @@ def enum_field_description(enum_class: Type[Enum], base_description: str = "") -
         return f"Valid options: {options_str}"
 
 
+def _get_typical_species_value(unit_str: str) -> float:
+    """
+    Get a typical biological value for a species based on its unit.
+
+    Returns a reasonable order-of-magnitude value for mock data generation
+    in scale validation. These values represent typical magnitudes for
+    different biological quantities in QSP models.
+
+    Args:
+        unit_str: Pint-parseable unit string (e.g., 'cell', 'nanomolar', 'mg/mL')
+
+    Returns:
+        A representative float value for that unit type
+    """
+    unit_lower = unit_str.lower()
+
+    # Cell counts (tumor typically has 1e6-1e9 cells)
+    if "cell" in unit_lower:
+        return 1e6
+
+    # Concentrations
+    if "nanomolar" in unit_lower or "nm" in unit_lower:
+        return 10.0  # 10 nM
+    if "micromolar" in unit_lower or "um" in unit_lower:
+        return 0.1  # 0.1 μM
+    if "molar" in unit_lower:
+        return 1e-9  # 1 nM in molar
+    if "pg/ml" in unit_lower or "pg / ml" in unit_lower:
+        return 100.0  # 100 pg/mL
+    if "ng/ml" in unit_lower or "ng / ml" in unit_lower:
+        return 10.0  # 10 ng/mL
+    if "mg/ml" in unit_lower or "mg / ml" in unit_lower:
+        return 1.0  # 1 mg/mL
+
+    # Volumes
+    if "ml" in unit_lower or "milliliter" in unit_lower:
+        return 1.0  # 1 mL
+    if "liter" in unit_lower:
+        return 0.001  # 1 mL in liters
+
+    # Masses
+    if "mg" in unit_lower or "milligram" in unit_lower:
+        return 10.0  # 10 mg
+    if "gram" in unit_lower:
+        return 0.01  # 10 mg in grams
+
+    # Areas
+    if "mm^2" in unit_lower or "mm**2" in unit_lower:
+        return 100.0  # 100 mm²
+    if "mm^3" in unit_lower or "mm**3" in unit_lower:
+        return 500.0  # 500 mm³ (~1 cm diameter tumor)
+
+    # Default: moderate value that won't cause extreme outputs
+    return 100.0
+
+
 # ============================================================================
 # Scenario Models (Interventions and Measurements)
 # ============================================================================
@@ -220,6 +282,97 @@ class Intervention(BaseModel):
             "- 'Surgical resection on day 14, removing 90% of tumor burden'\n"
             "- 'Gemcitabine 1000 mg/m2 on days 0, 7, 14 (patient BSA 1.8 m2)'\n"
             "- 'No intervention (natural disease progression)'"
+        )
+    )
+
+
+# Support types for measurement output constraints
+SupportType = Literal["positive", "non_negative", "unit_interval", "positive_unbounded", "real"]
+
+
+class MeasurementMapping(BaseModel):
+    """
+    Documents how literature measurements map to model species.
+
+    Forces explicit thinking about what the literature actually measures
+    and how it corresponds to model species.
+    """
+
+    literature_measures: str = Field(
+        description=(
+            "What the literature measurement actually captures.\n"
+            "Be specific about the experimental technique and what it detects.\n\n"
+            "Examples:\n"
+            "- 'Total CD8+ T cells via anti-CD8 antibody staining (detects all CD8+ regardless of exhaustion)'\n"
+            "- 'PD-1+CD8+ T cells via dual-marker flow cytometry (detects exhausted subset only)'\n"
+            "- 'Collagen I/III protein by mass spectrometry (does not distinguish collagen subtypes)'"
+        )
+    )
+
+    model_species_included: List[str] = Field(
+        description=(
+            "Model species that should be summed/combined to match the literature measurement.\n"
+            "Must match entries in measurement_species."
+        )
+    )
+
+    model_species_excluded: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Model species deliberately excluded from the measurement and why.\n"
+            "Document species that exist in the model but are NOT part of this measurement."
+        ),
+    )
+
+    mapping_rationale: str = Field(
+        description=(
+            "Explanation of why this mapping is appropriate.\n"
+            "Address any assumptions about what the experimental technique captures."
+        )
+    )
+
+
+class MeasurementConstant(BaseModel):
+    """
+    A constant used in measurement_code with explicit biological justification.
+
+    All numeric constants with units that appear in measurement_code must be declared
+    here. This prevents arbitrary magic numbers and forces explicit documentation
+    of biological assumptions.
+    """
+
+    name: str = Field(
+        description=(
+            "Variable name used in measurement_code to access this constant.\n"
+            "Must be a valid Python identifier (e.g., 'area_per_cancer_cell', 'normal_ecm_concentration')."
+        )
+    )
+
+    value: float = Field(description="Numeric value of the constant (without units).")
+
+    units: str = Field(
+        description=(
+            "Pint-parseable unit string (e.g., 'mm**2/cell', 'mg/mL', 'dimensionless').\n"
+            "The constant will be passed to measurement_code as a Pint Quantity."
+        )
+    )
+
+    biological_basis: str = Field(
+        description=(
+            "Explanation of where this value comes from biologically.\n"
+            "Must include the reasoning or calculation, not just the value.\n\n"
+            "Examples:\n"
+            "- 'Cancer cell diameter ~17 μm → cross-sectional area = π×(8.5 μm)² = 227 μm² = 2.27e-4 mm²'\n"
+            "- 'Normal pancreas ECM concentration ~23 mg/mL, derived from PDAC being ~2.6× elevated (60 mg/mL baseline)'\n"
+            "- 'T cell diameter ~7 μm → area = π×(3.5 μm)² = 38.5 μm² = 3.85e-5 mm²'"
+        )
+    )
+
+    source_ref: str = Field(
+        description=(
+            "Reference for this constant value.\n"
+            "Use 'modeling_assumption' for geometric calculations or well-established values.\n"
+            "Use a source_tag (e.g., 'Smith2020_CellSize') for literature-derived values."
         )
     )
 
@@ -251,29 +404,46 @@ class Measurement(BaseModel):
         )
     )
 
+    measurement_constants: List[MeasurementConstant] = Field(
+        default_factory=list,
+        description=(
+            "List of constants used in measurement_code.\n"
+            "All numeric values with units (conversion factors, reference values, etc.) must be declared here.\n"
+            "Each constant requires a biological_basis explaining where the value comes from.\n\n"
+            "These are passed to measurement_code as a dict of Pint Quantities.\n"
+            "Access via: constants['area_per_cancer_cell']"
+        ),
+    )
+
     measurement_code: str = Field(
         description=(
             "Python function that computes the observable from species time series.\n\n"
-            "Function signature: compute_measurement(time, species_dict, ureg)\n"
+            "Function signature: compute_measurement(time, species_dict, ureg, constants)\n"
             "- time: numpy array with time values (Pint Quantity with day units)\n"
             "- species_dict: dict mapping species names to numpy arrays (Pint Quantities, one value per timepoint)\n"
-            "- ureg: Pint UnitRegistry for unit conversions\n\n"
+            "- ureg: Pint UnitRegistry for unit conversions\n"
+            "- constants: dict mapping constant names to Pint Quantities (from measurement_constants)\n\n"
             "Must return a Pint Quantity (scalar or array) with units matching calibration_target_estimates.units.\n\n"
+            "IMPORTANT: Do NOT hardcode numeric values with units in the code.\n"
+            "All conversion factors and reference values must come from the constants dict.\n"
+            "Only universal constants (π, percentiles like 2.5/97.5) may be inline.\n\n"
             "IMPORTANT: Do NOT include time filtering logic (e.g., 'use last timepoint' or 'at t=14').\n"
             "This function computes WHAT to measure from the time series.\n"
             "WHEN to measure is handled separately via threshold_description.\n\n"
-            "The function may use multiple timepoints (e.g., for derivatives), but should not decide which timepoint to evaluate.\n\n"
-            "Example (simple ratio):\n"
-            "def compute_measurement(time, species_dict, ureg):\n"
-            "    cd8 = species_dict['V_T.CD8']  # Array of values over time\n"
-            "    tumor = species_dict['V_T.C1']  # Array of values over time\n"
-            "    ratio = cd8 / tumor  # Element-wise division\n"
-            "    return ratio.to(ureg.dimensionless)  # Returns array\n\n"
-            "Example (derivative):\n"
-            "def compute_measurement(time, species_dict, ureg):\n"
-            "    tumor = species_dict['V_T.C1']\n"
-            "    growth_rate = np.gradient(tumor.magnitude, time.magnitude) * (tumor.units / time.units)\n"
-            "    return growth_rate.to(ureg.cell / ureg.day)  # Returns array"
+            "Example (density with conversion factor):\n"
+            "def compute_measurement(time, species_dict, ureg, constants):\n"
+            "    cd8 = species_dict['V_T.CD8']  # CD8 T cells over time\n"
+            "    c_cells = species_dict['V_T.C1']  # Cancer cells over time\n"
+            "    area_per_cell = constants['area_per_cancer_cell']  # From measurement_constants\n"
+            "    tumor_area = c_cells * area_per_cell\n"
+            "    density = cd8 / tumor_area\n"
+            "    return density.to(ureg('cell/mm**2'))\n\n"
+            "Example (simple ratio - no constants needed):\n"
+            "def compute_measurement(time, species_dict, ureg, constants):\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    treg = species_dict['V_T.Treg']\n"
+            "    ratio = cd8 / treg\n"
+            "    return ratio.to(ureg.dimensionless)"
         )
     )
 
@@ -289,6 +459,25 @@ class Measurement(BaseModel):
             "- '7 days after first anti-PD-1 dose when tumor begins responding'\n"
             "- 'At clinical presentation (median tumor volume 450 mm³ in study cohort)'"
         )
+    )
+
+    support: SupportType = Field(
+        description=(
+            "Expected mathematical support (valid value range) of the measurement output.\n\n"
+            "- 'positive': Output must be > 0 (densities, concentrations, cell counts)\n"
+            "- 'non_negative': Output must be >= 0 (counts that could be zero)\n"
+            "- 'unit_interval': Output must be in [0, 1] (fractions, proportions)\n"
+            "- 'positive_unbounded': Output must be > 0, no upper limit (fold-changes, ratios > 1)\n"
+            "- 'real': Output can be any real number (log-ratios, change scores)"
+        )
+    )
+
+    measurement_mapping: Optional[MeasurementMapping] = Field(
+        default=None,
+        description=(
+            "Documents how literature measurements map to model species.\n"
+            "Recommended when measuring 'total' quantities or when species mapping is non-obvious."
+        ),
     )
 
 
@@ -936,9 +1125,9 @@ class CalibrationTarget(BaseModel):
 
             # Check signature
             args = [arg.arg for arg in func_def.args.args]
-            if args != ["time", "species_dict", "ureg"]:
+            if args != ["time", "species_dict", "ureg", "constants"]:
                 raise CodeStructureError(
-                    f"Function signature must be (time, species_dict, ureg), got ({', '.join(args)})"
+                    f"Function signature must be (time, species_dict, ureg, constants), got ({', '.join(args)})"
                 )
 
             # Execute with mock data
@@ -951,12 +1140,17 @@ class CalibrationTarget(BaseModel):
                     species_units, ureg, n_timepoints=len(mock_time)
                 )
 
+                # Build constants dict from measurement_constants
+                constants = {}
+                for const in measurement.measurement_constants:
+                    constants[const.name] = const.value * ureg(const.units)
+
                 # Execute function
                 local_scope = {"ureg": ureg, "np": np}
                 exec(measurement.measurement_code, local_scope)
                 compute_fn = local_scope["compute_measurement"]
 
-                result = compute_fn(mock_time, mock_species, ureg)
+                result = compute_fn(mock_time, mock_species, ureg, constants)
 
                 # Check result has units
                 if not hasattr(result, "units"):
@@ -1433,6 +1627,95 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_no_hardcoded_constants_in_measurement_code(self) -> "CalibrationTarget":
+        """
+        Validator (ERROR): Flag hardcoded numbers with units in measurement_code.
+
+        All numeric constants with units must be declared in measurement_constants
+        and accessed via the constants dict. This prevents arbitrary magic numbers
+        and forces explicit documentation of biological assumptions.
+
+        Allowed inline numbers:
+        - Universal mathematical constants (π, e)
+        - Statistical percentiles (2.5, 25, 50, 75, 97.5)
+        - Small integers (0, 1, 2, 3)
+        - Numbers accessed from constants dict
+        """
+        import re
+
+        # Patterns that indicate a number is being multiplied by units
+        # These catch: 1e-8 * ureg.mm, 23.0 * ureg('mg/mL'), 2.27e-4 * ureg.mm**2
+        HARDCODED_UNIT_PATTERNS = [
+            # NUMBER * ureg.UNIT or NUMBER * ureg('unit')
+            r"(\d+\.?\d*(?:e[+-]?\d+)?)\s*\*\s*ureg[.(]",
+            # ureg.UNIT * NUMBER or ureg('unit') * NUMBER
+            r"ureg[^*]+\*\s*(\d+\.?\d*(?:e[+-]?\d+)?)",
+            # NUMBER * ureg directly (captures the number)
+            r"(\d+\.?\d*(?:e[+-]?\d+)?)\s*\*\s*ureg\b",
+        ]
+
+        # Numbers that are OK to have inline
+        ALLOWED_NUMBERS = {
+            0,
+            1,
+            2,
+            3,
+            4,
+            0.5,
+            0.25,
+            0.75,
+            2.5,
+            25,
+            50,
+            75,
+            97.5,  # Percentiles
+            0.025,
+            0.25,
+            0.5,
+            0.75,
+            0.975,  # Fractional percentiles
+            100,  # Common for percent conversion
+        }
+
+        for measurement in self.scenario.measurements:
+            code = measurement.measurement_code
+
+            # Find all hardcoded numbers with units
+            violations = []
+            for pattern in HARDCODED_UNIT_PATTERNS:
+                for match in re.finditer(pattern, code):
+                    try:
+                        # Extract the number from the match
+                        num_str = match.group(1) if match.lastindex else None
+                        if num_str:
+                            num = float(num_str)
+                            # Skip allowed numbers
+                            if num not in ALLOWED_NUMBERS:
+                                violations.append((num, match.group(0)))
+                    except (ValueError, IndexError):
+                        continue
+
+            if violations:
+                violation_strs = [f"  • {v[0]} in '{v[1]}'" for v in violations[:5]]
+                raise HardcodedConstantError(
+                    "Hardcoded numeric constants with units found in measurement_code:\n"
+                    + "\n".join(violation_strs)
+                    + (f"\n  ... and {len(violations) - 5} more" if len(violations) > 5 else "")
+                    + "\n\nAll numeric constants with units must be declared in measurement_constants "
+                    + "and accessed via the constants dict.\n"
+                    + "Example fix:\n"
+                    + "  1. Add to measurement_constants:\n"
+                    + "     - name: area_per_cancer_cell\n"
+                    + "       value: 2.27e-4\n"
+                    + "       units: mm**2/cell\n"
+                    + "       biological_basis: 'Cancer cell diameter ~17 μm → area = π×(8.5 μm)²'\n"
+                    + "       source_ref: modeling_assumption\n"
+                    + "  2. Use in code: area_per_cell = constants['area_per_cancer_cell']"
+                )
+
+        return self
+
+    @model_validator(mode="after")
     def validate_scale_consistency(self, info: ValidationInfo) -> "CalibrationTarget":
         """
         Validator: Check that measurement_code output scale matches calibration target scale.
@@ -1464,34 +1747,55 @@ class CalibrationTarget(BaseModel):
         # Execute measurement_code and check output range
         for measurement in self.scenario.measurements:
             try:
-                # Create mock time array (wide range to explore measurement_code behavior)
-                mock_time = np.linspace(0, 100, 50) * ureg.day
+                # Create mock time array
+                n_timepoints = 50
+                mock_time = np.linspace(0, 100, n_timepoints) * ureg.day
 
-                # Create mock species with wide value range
+                # Create mock species with INDEPENDENT variation
+                # Key improvement: vary species with different phases so ratios actually vary
                 mock_species = {}
-                for species_name in measurement.measurement_species:
-                    # Generate values spanning many orders of magnitude
-                    base = np.logspace(0, 8, len(mock_time))
-
+                for idx, species_name in enumerate(measurement.measurement_species):
                     # Get unit from species_units (handle both dict and string formats)
                     species_info = species_units.get(species_name, "cell")
                     if isinstance(species_info, dict):
                         unit_str = species_info.get("units", "cell")
                     else:
                         unit_str = species_info
-                    mock_species[species_name] = base * ureg(unit_str)
+
+                    # Use biologically realistic base values based on unit type
+                    base_value = _get_typical_species_value(unit_str)
+
+                    # Vary each species with a different phase offset
+                    # This ensures ratios will vary, exposing conversion factor issues
+                    phase_offset = idx * np.pi / max(len(measurement.measurement_species), 1)
+                    variation = 1 + 0.8 * np.sin(
+                        np.linspace(0, 4 * np.pi, n_timepoints) + phase_offset
+                    )
+
+                    # Also include some magnitude variation (±1 order of magnitude)
+                    magnitude_variation = np.logspace(-0.5, 0.5, n_timepoints)
+
+                    values = base_value * variation * magnitude_variation
+                    mock_species[species_name] = values * ureg(unit_str)
 
                 # Execute measurement_code
                 local_scope = {"ureg": ureg, "np": np}
                 exec(measurement.measurement_code, local_scope)
                 compute_fn = local_scope["compute_measurement"]
 
-                result = compute_fn(mock_time, mock_species, ureg)
+                # Build constants dict from measurement_constants
+                constants = {}
+                for const in measurement.measurement_constants:
+                    constants[const.name] = const.value * ureg(const.units)
 
-                # Get code output range
-                code_min = float(np.min(result.magnitude))
-                code_max = float(np.max(result.magnitude))
-                code_median = float(np.median(result.magnitude))
+                result = compute_fn(mock_time, mock_species, ureg, constants)
+
+                # Get code output statistics
+                result_magnitude = np.atleast_1d(result.magnitude)
+                code_min = float(np.min(result_magnitude))
+                code_max = float(np.max(result_magnitude))
+                code_median = float(np.median(result_magnitude))
+                code_std = float(np.std(result_magnitude))
 
                 # Check for scale mismatch patterns
                 # Pattern 1: Code outputs ratio (0-1) but target is score (>2)
@@ -1533,6 +1837,78 @@ class CalibrationTarget(BaseModel):
                             f"Check for missing unit conversions or scaling factors."
                         )
 
+                # Pattern 4 (NEW): Absolute magnitude check
+                # Even if ranges "overlap" due to mock data spread, flag if
+                # medians are wildly different (>100×)
+                if code_median > 0 and target_median > 0:
+                    absolute_ratio = max(target_median, code_median) / min(
+                        target_median, code_median
+                    )
+                    if absolute_ratio > 100:
+                        raise ScaleMismatchError(
+                            f"Magnitude mismatch detected - medians differ by {absolute_ratio:.0f}×:\n"
+                            f"  • Calibration target median: {target_median:.3g}\n"
+                            f"  • Measurement code median:   {code_median:.3g}\n"
+                            f"The measurement_code output magnitude is very different from the calibration target.\n"
+                            f"This often indicates a wrong conversion factor (e.g., 1e-8 instead of 2.27e-4).\n"
+                            f"Check: area_per_cell calculations, volume conversions, or density scaling factors."
+                        )
+
+                # Pattern 5 (NEW): Support validation
+                # Check that output respects declared support constraints
+                support = measurement.support
+
+                if support == "positive" and code_min <= 0:
+                    raise ScaleMismatchError(
+                        f"Support violation detected - non-positive values for 'positive' support:\n"
+                        f"  • Declared support: {support}\n"
+                        f"  • Measurement code min: {code_min:.3g}\n"
+                        f"The measurement_code produces values <= 0, but support is 'positive'.\n"
+                        f"Check for sign errors or incorrect formula structure."
+                    )
+
+                if support == "non_negative" and code_min < 0:
+                    raise ScaleMismatchError(
+                        f"Support violation detected - negative values for 'non_negative' support:\n"
+                        f"  • Declared support: {support}\n"
+                        f"  • Measurement code min: {code_min:.3g}\n"
+                        f"The measurement_code produces negative values, but support is 'non_negative'.\n"
+                        f"Check for sign errors or incorrect formula structure."
+                    )
+
+                if support == "unit_interval" and (code_min < 0 or code_max > 1):
+                    raise ScaleMismatchError(
+                        f"Support violation detected - values outside [0, 1] for 'unit_interval' support:\n"
+                        f"  • Declared support: {support}\n"
+                        f"  • Measurement code range: [{code_min:.3g}, {code_max:.3g}]\n"
+                        f"The measurement_code produces values outside [0, 1], but support is 'unit_interval'.\n"
+                        f"Check for missing normalization or incorrect formula."
+                    )
+
+                if support == "positive_unbounded" and code_min <= 0:
+                    raise ScaleMismatchError(
+                        f"Support violation detected - non-positive values for 'positive_unbounded' support:\n"
+                        f"  • Declared support: {support}\n"
+                        f"  • Measurement code min: {code_min:.3g}\n"
+                        f"The measurement_code produces values <= 0, but support is 'positive_unbounded'.\n"
+                        f"Check for sign errors or incorrect formula structure."
+                    )
+
+                # Pattern 6 (NEW): Variability check
+                # If inputs vary but output is constant, formula may be wrong
+                if code_median != 0:
+                    code_cv = code_std / abs(code_median)
+                    if code_cv < 1e-6:
+                        # Output is effectively constant despite varying inputs
+                        import warnings
+
+                        warnings.warn(
+                            f"Measurement code output is constant (CV={code_cv:.2e}) despite varying inputs.\n"
+                            f"This may indicate the formula doesn't use all declared species correctly,\n"
+                            f"or contains hardcoded values that override the species inputs.",
+                            UserWarning,
+                        )
+
             except CalibrationTargetValidationError:
                 # Re-raise all our custom validation errors
                 raise
@@ -1540,6 +1916,51 @@ class CalibrationTarget(BaseModel):
                 # Other errors (e.g., complex mock data requirements) - be lenient
                 # The measurement_code might use logic we can't easily mock
                 pass
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_species_completeness(self) -> "CalibrationTarget":
+        """
+        Validator (WARNING): Check for potentially missing related species.
+
+        When measuring "total" quantities (e.g., total CD8 via pan-CD8 antibody),
+        warns if related species that should be summed are not included.
+        """
+        import warnings
+
+        # Related species pairs - if one is used for a "total" measurement,
+        # the other should likely be included too
+        RELATED_SPECIES = {
+            "V_T.CD8": ["V_T.CD8_exh"],
+            "V_T.CD8_exh": ["V_T.CD8"],
+            "V_T.Th": ["V_T.Treg"],
+            "V_T.Treg": ["V_T.Th"],
+            "V_T.M1": ["V_T.M2"],
+            "V_T.M2": ["V_T.M1"],
+        }
+
+        # Keywords suggesting a "total" measurement
+        TOTAL_KEYWORDS = ["total", "all", "overall", "pan-", "combined"]
+
+        for measurement in self.scenario.measurements:
+            desc_lower = measurement.measurement_description.lower()
+            uses_total = any(kw in desc_lower for kw in TOTAL_KEYWORDS)
+
+            if not uses_total:
+                continue
+
+            used_species = set(measurement.measurement_species)
+            for species in measurement.measurement_species:
+                related = RELATED_SPECIES.get(species, [])
+                missing = [r for r in related if r not in used_species]
+                if missing:
+                    warnings.warn(
+                        f"Species completeness: '{species}' used for 'total' measurement "
+                        f"but related species {missing} not included.\n"
+                        f"If measuring total CD8+ via pan-CD8 antibody, include both CD8 and CD8_exh.",
+                        UserWarning,
+                    )
 
         return self
 

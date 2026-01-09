@@ -150,15 +150,30 @@ Each measurement requires:
    - Format: `['compartment.species']` (e.g., `['V_T.CD8', 'V_T.C1']`)
    - Must match species names in model
 
-3. **measurement_code** (executable Python) - Computes observable from species time series:
-   - Function signature: `compute_measurement(time, species_dict, ureg)`
+3. **measurement_constants** (list) - All conversion factors and reference values with units:
+   - **REQUIRED** for any numeric constant with units used in measurement_code
+   - Each constant requires: `name`, `value`, `units`, `biological_basis`, `source_ref`
+   - **Never hardcode numbers with units** like `23.0 * ureg('mg/mL')` in measurement_code
+   - Access in code via: `constants['constant_name']`
+
+4. **measurement_code** (executable Python) - Computes observable from species time series:
+   - Function signature: `compute_measurement(time, species_dict, ureg, constants)`
    - `time`: numpy array with day units (Pint Quantity)
    - `species_dict`: dict mapping species names to numpy arrays (Pint Quantities, one value per timepoint)
    - `ureg`: Pint UnitRegistry for conversions
+   - `constants`: dict mapping constant names to Pint Quantities (from measurement_constants)
    - Must return Pint Quantity (scalar or array) with units matching `calibration_target_estimates.units`
-   - **IMPORTANT**: Do NOT include time filtering logic (e.g., "use last timepoint"). This function computes WHAT to measure. WHEN to measure is handled via threshold_description.
+   - **IMPORTANT**: Do NOT hardcode numbers with units. Use `constants` dict for all conversion factors.
+   - **IMPORTANT**: Do NOT include time filtering logic. This function computes WHAT to measure. WHEN to measure is handled via threshold_description.
 
-4. **threshold_description** (text) - Describes WHEN the measurement occurs:
+5. **support** (required) - Declares the mathematical support of the output:
+   - `positive`: Output must be > 0 (densities, concentrations, volumes)
+   - `non_negative`: Output must be ≥ 0 (counts)
+   - `unit_interval`: Output must be in [0, 1] (fractions, proportions)
+   - `positive_unbounded`: Output must be > 0, no upper bound (fold-changes, ratios)
+   - `real`: Any real value (log-ratios, change scores)
+
+6. **threshold_description** (text) - Describes WHEN the measurement occurs:
    - **What triggers measurement**: The biological or clinical event/condition that prompts observation
    - **Timing context**: When in disease progression or treatment timeline
    - **Avoid circular reasoning**: Don't define timing by the observable being measured (e.g., don't say "when tumor reaches X cm" if measuring tumor size)
@@ -167,16 +182,22 @@ Each measurement requires:
 **Example measurement:**
 ```yaml
 measurements:
-  - measurement_description: "CD8+ T cell density measured via IHC in tumor tissue sections, reported as dimensionless ratio"
+  - measurement_description: "CD8+ T cell density per tumor area via IHC, cells/mm²"
     measurement_species: ['V_T.CD8', 'V_T.C1']
+    measurement_constants:
+      - name: area_per_cancer_cell
+        value: 2.27e-4
+        units: mm**2/cell
+        biological_basis: "Cancer cell ~17 μm diameter → π×(8.5 μm)² = 2.27e-4 mm²"
+        source_ref: modeling_assumption
     measurement_code: |
-      def compute_measurement(time, species_dict, ureg):
-          """Compute CD8/tumor ratio (element-wise over time series)."""
-          cd8 = species_dict['V_T.CD8']  # Array of CD8 values over time
-          tumor = species_dict['V_T.C1']  # Array of tumor values over time
-          ratio = cd8 / tumor  # Element-wise division
-          return ratio.to(ureg.dimensionless)  # Returns array
-    threshold_description: "At tumor resection when tumor burden reaches ~1e9 cells (~500 mm³)"
+      def compute_measurement(time, species_dict, ureg, constants):
+          cd8 = species_dict['V_T.CD8']
+          c_cells = species_dict['V_T.C1']
+          tumor_area = c_cells * constants['area_per_cancer_cell']
+          return (cd8 / tumor_area).to('cell/mm**2')
+    support: positive
+    threshold_description: "At tumor resection"
 ```
 
 **Key principles for measurement_code:**
