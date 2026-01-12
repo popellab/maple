@@ -19,7 +19,7 @@ from qsp_llm_workflows.core.prompt_builder import (
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
 
 # Exception classes for validation error handling
-from qsp_llm_workflows.core.calibration_target_models import (
+from qsp_llm_workflows.core.exceptions import (
     CalibrationTargetValidationError,
     CodeSyntaxError,
     CodeStructureError,
@@ -35,7 +35,7 @@ from qsp_llm_workflows.core.calibration_target_models import (
     ComputedValueMismatchError,
     ScaleMismatchError,
     HardcodedConstantError,
-    ReferenceError,
+    CalibrationReferenceError,
     DOIResolutionError,
     PaperTitleMismatchError,
     SourceRefError,
@@ -67,7 +67,7 @@ __all__ = [
     "ComputedValueMismatchError",
     "ScaleMismatchError",
     "HardcodedConstantError",
-    "ReferenceError",
+    "CalibrationReferenceError",
     "DOIResolutionError",
     "PaperTitleMismatchError",
     "SourceRefError",
