@@ -301,7 +301,18 @@ qsp-llm-workflows/
 │       │   ├── resource_utils.py    # Package resource access
 │       │   ├── header_utils.py      # Header field management
 │       │   ├── schema_version_detector.py
-│       │   └── quick_estimate_models.py  # Quick estimate Pydantic models
+│       │   ├── quick_estimate_models.py  # Quick estimate Pydantic models
+│       │   │
+│       │   │   # Calibration target models (modular architecture)
+│       │   ├── calibration_target_models.py  # CalibrationTarget, IsolatedSystemTarget
+│       │   ├── shared_models.py     # Input, Source, Snippet, TrajectoryData, etc.
+│       │   ├── enums.py             # Species, Indication, Compartment, System enums
+│       │   ├── scenario.py          # Intervention, Measurement, Scenario
+│       │   ├── experimental_context.py  # Stage, TreatmentContext, ExperimentalContext
+│       │   ├── validators.py        # Validation helper functions
+│       │   ├── isolated_system_target.py  # Cut models (SpeciesCut, etc.)
+│       │   ├── exceptions.py        # Custom exception classes
+│       │   └── unit_registry.py     # Shared Pint UnitRegistry
 │       │
 │       ├── prepare/                  # Prompt generation
 │       │   ├── create_parameter_prompts.py
@@ -417,6 +428,33 @@ ratio.to(ureg.dimensionless)
 ```
 
 **IMPORTANT:** Never create a new `pint.UnitRegistry()` in validation or processing code. Always import `ureg` from the shared module.
+
+### Calibration Target Model Architecture
+
+The calibration target models use a modular, inheritance-based architecture:
+
+```
+CalibrationTarget (base class)
+├── calibration_target_estimates (median, iqr, ci95, distribution_code)
+├── scenario (interventions + measurements)
+├── experimental_context (species, compartment, system + optional clinical/in vitro fields)
+├── study_overview, study_design, key_assumptions, key_study_limitations
+└── primary_data_source, secondary_data_sources
+
+IsolatedSystemTarget(CalibrationTarget)
+└── cuts: List[Cut]  # Species, compartment, or reaction cuts for reduced models
+```
+
+**Key models:**
+- `CalibrationTarget`: For clinical/in vivo data where full model is assumed
+- `IsolatedSystemTarget`: Extends CalibrationTarget with `cuts` for in vitro experiments
+- `ExperimentalContext`: Unified context supporting both clinical (indication, treatment, stage) and in vitro (cell_lines, culture_conditions) fields
+- `TrajectoryData` / `DoseResponseData`: Optional structured multi-point data in shared_models.py
+
+**Cut types for isolated systems:**
+- `SpeciesCut`: Clamp, exclude, zero_flux, or prescribe a species
+- `CompartmentCut`: Exclude entire compartment
+- `ReactionCut`: Disable a reaction
 
 ### Key Design Principles
 

@@ -45,6 +45,11 @@ Both types go through a 9-validator suite that checks schema compliance, verifie
 ```
 src/qsp_llm_workflows/
 ├── core/       # Prompt generation, workflow orchestration, validation utilities
+│   ├── calibration_target_models.py  # CalibrationTarget, IsolatedSystemTarget
+│   ├── shared_models.py     # Input, Source, TrajectoryData, DoseResponseData
+│   ├── enums.py             # Species, Indication, Compartment, System enums
+│   ├── scenario.py          # Intervention, Measurement, Scenario models
+│   └── ...                  # Other core utilities
 ├── prepare/    # CSV enrichment and prompt generation
 ├── run/        # API request processing
 ├── process/    # Result unpacking
@@ -53,6 +58,10 @@ src/qsp_llm_workflows/
 ├── templates/  # YAML output templates
 └── prompts/    # LLM instruction prompts
 ```
+
+**Calibration target types:**
+- `CalibrationTarget`: For clinical/in vivo data (full model context)
+- `IsolatedSystemTarget`: For in vitro data with model "cuts" defining reduced systems
 
 ## Documentation
 

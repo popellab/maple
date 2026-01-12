@@ -12,17 +12,21 @@ See docs/calibration_target_design.md for full specification.
 import ast
 from difflib import SequenceMatcher
 from enum import Enum
-from typing import List, Literal, Optional, Type
+from typing import Annotated, List, Literal, Optional, Type, Union
 
 import numpy as np
 import requests
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from qsp_llm_workflows.core.shared_models import (
+    CellLine,
+    CultureConditions,
+    DoseResponseData,
     Input,
     KeyAssumption,
-    Source,
     SecondarySource,
+    Source,
+    TrajectoryData,
 )
 
 
@@ -274,14 +278,20 @@ class Intervention(BaseModel):
         description=(
             "Complete text description of the intervention including:\n"
             "- What: Agent/procedure name\n"
-            "- How much: Dose and units (mg/kg, mg/m2, etc.)\n"
-            "- When: Schedule/timing (e.g., 'every 2 weeks starting day 0', 'day 14 resection')\n"
-            "- Additional details: Patient weight/BSA if relevant, fraction removed for resection\n\n"
-            "Examples:\n"
+            "- How much: Dose and units\n"
+            "- When: Schedule/timing\n"
+            "- Additional details: Any relevant context\n\n"
+            "Clinical/in vivo examples:\n"
             "- 'Anti-PD-1 antibody 3 mg/kg IV every 2 weeks starting day 0 (patient weight 70 kg)'\n"
             "- 'Surgical resection on day 14, removing 90% of tumor burden'\n"
             "- 'Gemcitabine 1000 mg/m2 on days 0, 7, 14 (patient BSA 1.8 m2)'\n"
-            "- 'No intervention (natural disease progression)'"
+            "- 'No intervention (natural disease progression)'\n\n"
+            "In vitro examples:\n"
+            "- 'Add recombinant IL-2 at 10 ng/mL at t=0'\n"
+            "- 'Co-culture tumor cells with CD8+ T cells at E:T ratio 5:1'\n"
+            "- 'Stimulate with anti-CD3/CD28 beads (bead:cell ratio 1:1) for 48h'\n"
+            "- 'Treat with 1 μM drug X at t=24h'\n"
+            "- 'No treatment (unstimulated control)'"
         )
     )
 
@@ -450,14 +460,21 @@ class Measurement(BaseModel):
     threshold_description: str = Field(
         description=(
             "Text description of WHEN the measurement occurs:\n"
-            "- Trigger: What biological/clinical event triggers measurement\n"
-            "- Threshold: Specific value if stated (e.g., 'when tumor reaches 500 mm³', 'at 1e9 cells')\n"
-            "- Context: Clinical context (e.g., 'at resection', 'at diagnosis', 'baseline')\n\n"
-            "Examples:\n"
+            "- Trigger: What biological/experimental event triggers measurement\n"
+            "- Threshold: Specific value if stated\n"
+            "- Context: Experimental context\n\n"
+            "Clinical/in vivo examples:\n"
             "- 'At tumor resection when tumor burden reaches approximately 1e9 cells (~500 mm³)'\n"
             "- 'At baseline/diagnosis before any treatment (tumor burden ~1e9 cells)'\n"
             "- '7 days after first anti-PD-1 dose when tumor begins responding'\n"
-            "- 'At clinical presentation (median tumor volume 450 mm³ in study cohort)'"
+            "- 'At clinical presentation (median tumor volume 450 mm³ in study cohort)'\n\n"
+            "In vitro examples:\n"
+            "- 'At 24 hours post-stimulation'\n"
+            "- 'At 48h after co-culture initiation'\n"
+            "- 'At confluence (when cells reach ~90% coverage)'\n"
+            "- 'After 3 population doublings (~72h for this cell line)'\n"
+            "- 'At steady state (no change in cell counts for 24h)'\n"
+            "- 'At peak proliferation (determined by prior kinetic studies)'"
         )
     )
 
@@ -700,24 +717,51 @@ class ExperimentalContext(BaseModel):
 
     Uses typed enums for all context dimensions with hierarchical notation
     encoded in enum values (e.g., Compartment.TUMOR_PRIMARY = "tumor.primary").
+
+    Supports both clinical/in vivo contexts (using indication, treatment, stage)
+    and in vitro contexts (using cell_lines, culture_conditions).
     """
 
+    # Core fields (always required)
     species: Species = Field(description=enum_field_description(Species, "Species"))
+    compartment: Compartment = Field(
+        description=enum_field_description(Compartment, "Anatomical compartment")
+    )
+    system: System = Field(description=enum_field_description(System, "Experimental system"))
+
+    # Clinical/in vivo context (optional - used for integrated system targets)
     mouse_subspecifier: Optional[MouseSubspecifier] = Field(
         None,
         description=enum_field_description(
             MouseSubspecifier, "Optional mouse subspecifier (only if species is mouse)"
         ),
     )
-    indication: Indication = Field(
-        description=enum_field_description(Indication, "Cancer indication")
+    indication: Optional[Indication] = Field(
+        None,
+        description=enum_field_description(Indication, "Cancer indication (for clinical contexts)"),
     )
-    compartment: Compartment = Field(
-        description=enum_field_description(Compartment, "Anatomical compartment")
+    treatment: Optional[TreatmentContext] = Field(
+        None, description="Treatment context (for clinical contexts)"
     )
-    system: System = Field(description=enum_field_description(System, "Experimental system"))
-    treatment: TreatmentContext = Field(description="Treatment context")
-    stage: Stage = Field(description="Disease stage")
+    stage: Optional[Stage] = Field(None, description="Disease stage (for clinical contexts)")
+
+    # In vitro context (optional - used for isolated system targets)
+    cell_lines: Optional[List[CellLine]] = Field(
+        None,
+        description="Cell lines used in experiment (for in vitro systems)",
+    )
+    culture_conditions: Optional[CultureConditions] = Field(
+        None,
+        description="Culture conditions (for in vitro systems)",
+    )
+    tissue_source: Optional[str] = Field(
+        None,
+        description="Tissue source for ex vivo systems (e.g., 'human PDAC resection specimen')",
+    )
+    assay_type: Optional[str] = Field(
+        None,
+        description="Assay type for cell-free systems (e.g., 'surface plasmon resonance')",
+    )
 
 
 # ============================================================================
@@ -795,6 +839,26 @@ class CalibrationTargetEstimates(BaseModel):
             "    ci95_obs = [np.percentile(samples, 2.5), np.percentile(samples, 97.5)]\n"
             "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
         )
+    )
+
+    # Optional structured multi-point data (alternative to encoding in inputs)
+    trajectory_data: Optional[TrajectoryData] = Field(
+        None,
+        description=(
+            "Optional structured time-course data.\n"
+            "Use for kinetic experiments with measurements at multiple time points.\n"
+            "If provided, distribution_code should use this data to derive the distribution.\n"
+            "Example: T cell proliferation measured at 0, 24, 48, 72 hours."
+        ),
+    )
+    dose_response_data: Optional[DoseResponseData] = Field(
+        None,
+        description=(
+            "Optional structured dose-response data.\n"
+            "Use for experiments varying a parameter (concentration, E:T ratio) and measuring response.\n"
+            "If provided, distribution_code should use this data to derive the distribution.\n"
+            "Example: Cytotoxicity at E:T ratios of 1:1, 5:1, 10:1, 20:1."
+        ),
     )
 
 
@@ -2026,5 +2090,148 @@ class CalibrationTarget(BaseModel):
 
         # Check all fields in the model
         walk_and_check(self.model_dump(), "CalibrationTarget")
+
+        return self
+
+
+# ============================================================================
+# Cut Models (for Isolated System Targets)
+# ============================================================================
+
+
+class SpeciesCut(BaseModel):
+    """Cut applied to a species in the model (for isolated/in vitro systems)."""
+
+    type: Literal["species"] = Field(default="species", description="Cut type")
+    name: str = Field(description="Fully qualified species name (e.g., 'V_T.IL2', 'V_C.Drug')")
+    condition: Literal["clamped", "excluded", "zero_flux", "prescribed"] = Field(
+        description="Condition applied to the species"
+    )
+
+    # For clamped condition
+    value: Optional[float] = Field(None, description="Fixed value (required if clamped)")
+    unit: Optional[str] = Field(
+        None, description="Pint-parseable unit (required if clamped or prescribed)"
+    )
+
+    # For prescribed condition
+    time_course: Optional[str] = Field(
+        None,
+        description="Python function: def prescribed_value(time, ureg) -> Quantity",
+    )
+
+    @model_validator(mode="after")
+    def validate_condition_fields(self) -> "SpeciesCut":
+        """Ensure required fields are present for each condition type."""
+        if self.condition == "clamped":
+            if self.value is None:
+                raise ValueError("'value' is required when condition is 'clamped'")
+            if self.unit is None:
+                raise ValueError("'unit' is required when condition is 'clamped'")
+        elif self.condition == "prescribed":
+            if self.time_course is None:
+                raise ValueError("'time_course' is required when condition is 'prescribed'")
+            if self.unit is None:
+                raise ValueError("'unit' is required when condition is 'prescribed'")
+        return self
+
+
+class CompartmentCut(BaseModel):
+    """Cut that excludes an entire compartment (for isolated/in vitro systems)."""
+
+    type: Literal["compartment"] = Field(default="compartment", description="Cut type")
+    name: str = Field(description="Compartment name (e.g., 'V_C', 'V_T', 'V_LN')")
+    condition: Literal["excluded"] = Field(
+        default="excluded", description="Compartment condition (always 'excluded')"
+    )
+
+
+class ReactionCut(BaseModel):
+    """Cut that disables a reaction (for isolated/in vitro systems)."""
+
+    type: Literal["reaction"] = Field(default="reaction", description="Cut type")
+    name: str = Field(description="Reaction or rule name")
+    condition: Literal["disabled"] = Field(
+        default="disabled", description="Reaction condition (always 'disabled')"
+    )
+
+
+Cut = Annotated[
+    Union[SpeciesCut, CompartmentCut, ReactionCut],
+    Field(discriminator="type"),
+]
+
+
+# ============================================================================
+# Isolated System Target (inherits from CalibrationTarget)
+# ============================================================================
+
+
+class IsolatedSystemTarget(CalibrationTarget):
+    """
+    A calibration target from an isolated/in vitro experimental system.
+
+    Inherits all fields from CalibrationTarget and adds:
+    - cuts: Define which parts of the model are active (reduced model)
+
+    Used for in vitro experiments (cell lines, co-cultures, organoids) where
+    certain interactions have been experimentally "clamped" or removed.
+
+    The subnetwork is defined declaratively via cuts - matching how experimentalists
+    think: "I'll control X, remove Y, and measure Z."
+    """
+
+    # The key addition - defines reduced model via boundary conditions
+    cuts: List[Cut] = Field(
+        description=(
+            "List of cuts defining the subnetwork boundary conditions.\n"
+            "- Species cuts: clamped (fixed value), excluded, zero_flux, prescribed (time course)\n"
+            "- Compartment cuts: excluded (removes entire compartment)\n"
+            "- Reaction cuts: disabled (rate = 0)"
+        )
+    )
+
+    @field_validator("cuts")
+    @classmethod
+    def at_least_one_cut(cls, v: List[Cut]) -> List[Cut]:
+        """Ensure at least one cut is provided."""
+        if len(v) < 1:
+            raise ValueError(
+                "At least one cut is required to define the isolated system. "
+                "Use CompartmentCut to exclude compartments not present in vitro."
+            )
+        return v
+
+    @model_validator(mode="after")
+    def validate_no_duplicate_cuts(self) -> "IsolatedSystemTarget":
+        """Ensure no duplicate cuts (same type + name)."""
+        seen = set()
+        for cut in self.cuts:
+            key = (cut.type, cut.name)
+            if key in seen:
+                raise ValueError(f"Duplicate cut: type='{cut.type}', name='{cut.name}'")
+            seen.add(key)
+        return self
+
+    @model_validator(mode="after")
+    def validate_in_vitro_system(self) -> "IsolatedSystemTarget":
+        """Warn if system type doesn't match in vitro context."""
+        import warnings
+
+        system = self.experimental_context.system
+        in_vitro_systems = {
+            System.IN_VITRO_ORGANOID,
+            System.IN_VITRO_PRIMARY_CELLS,
+            System.IN_VITRO_CELL_LINE,
+            System.EX_VIVO_FRESH,
+            System.EX_VIVO_CULTURED,
+        }
+
+        if system not in in_vitro_systems:
+            warnings.warn(
+                f"IsolatedSystemTarget typically uses in_vitro or ex_vivo systems, "
+                f"but system is '{system.value}'. Ensure cuts properly define the isolated context.",
+                UserWarning,
+            )
 
         return self
