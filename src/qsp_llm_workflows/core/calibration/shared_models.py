@@ -7,23 +7,52 @@ calibration_target_models.py and pydantic_models.py.
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Input(BaseModel):
-    """An input value used in parameter or test statistic derivation."""
+    """
+    An input value used in calibration target derivation.
 
-    name: str = Field(description="Input name")
-    value: float = Field(description="Input value")
-    units: str = Field(
-        description="Input units (must be Pint-parseable, e.g., 'pg/mL', 'cells/mm^2', 'dimensionless')"
+    Supports both scalar and vector-valued inputs:
+    - Scalar: value=42.0 (single measurement, or constant applied to all index points)
+    - Vector: value=[10.0, 20.0, 30.0] (measurements at each index point)
+
+    Vector-valued inputs must have the same length as the parent's index_values.
+    Scalar inputs are broadcast (used for all index points).
+    """
+
+    name: str = Field(description="Input name (used as key in inputs dict)")
+    value: Union[float, List[float]] = Field(
+        description=(
+            "Input value(s). Use a list for vector-valued data (e.g., measurements at "
+            "multiple time points or doses). Scalar values are broadcast across all index points."
+        )
     )
-    description: str = Field(description="Input description")
-    source_ref: Optional[str] = Field(description="Source reference tag (or null)")
-    value_table_or_section: Optional[str] = Field(description="Location of value in source")
-    value_snippet: Optional[str] = Field(description="Text snippet containing value")
+    units: str = Field(
+        description="Input units (must be Pint-parseable, e.g., 'pg/mL', 'cell/mm^2', 'dimensionless')"
+    )
+    description: str = Field(description="What this input represents")
+    source_ref: Optional[str] = Field(
+        None,
+        description="Source reference tag (must match a defined source, or 'modeling_assumption')",
+    )
+    value_table_or_section: Optional[str] = Field(
+        None, description="Location of value in source (e.g., 'Table 2', 'Results section')"
+    )
+    value_snippet: Optional[str] = Field(
+        None, description="Exact text snippet from source containing the value(s)"
+    )
+
+    @field_validator("value")
+    @classmethod
+    def ensure_list_not_empty(cls, v: Union[float, List[float]]) -> Union[float, List[float]]:
+        """Ensure vector-valued inputs are not empty lists."""
+        if isinstance(v, list) and len(v) == 0:
+            raise ValueError("Vector-valued input cannot be an empty list")
+        return v
 
 
 class KeyAssumption(BaseModel):

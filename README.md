@@ -45,11 +45,12 @@ Both types go through a 9-validator suite that checks schema compliance, verifie
 ```
 src/qsp_llm_workflows/
 ├── core/       # Prompt generation, workflow orchestration, validation utilities
-│   ├── calibration_target_models.py  # CalibrationTarget, IsolatedSystemTarget
-│   ├── shared_models.py     # Input, Source, TrajectoryData, DoseResponseData
-│   ├── enums.py             # Species, Indication, Compartment, System enums
-│   ├── scenario.py          # Intervention, Measurement, Scenario models
-│   └── ...                  # Other core utilities
+│   └── calibration/  # Calibration target models
+│       ├── calibration_target_models.py  # CalibrationTarget, CalibrationTargetEstimates
+│       ├── isolated_system_target.py     # IsolatedSystemTarget with model cuts
+│       ├── shared_models.py              # Input (scalar/vector), Source, Snippet
+│       ├── enums.py                      # Species, Indication, Compartment, System
+│       └── scenario.py                   # Intervention, Measurement, Scenario
 ├── prepare/    # CSV enrichment and prompt generation
 ├── run/        # API request processing
 ├── process/    # Result unpacking
@@ -62,6 +63,8 @@ src/qsp_llm_workflows/
 **Calibration target types:**
 - `CalibrationTarget`: For clinical/in vivo data (full model context)
 - `IsolatedSystemTarget`: For in vitro data with model "cuts" defining reduced systems
+
+**Vector-valued data:** Calibration targets support both scalar and time-course/dose-response data through a unified pathway. Scalar data uses length-1 lists; vector data uses `index_values` to specify the indexing dimension (time points, doses, etc.).
 
 ## Documentation
 

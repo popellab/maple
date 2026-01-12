@@ -10,6 +10,7 @@ See docs/calibration_target_design.md for full specification.
 """
 
 import ast
+from enum import Enum
 from typing import List, Optional
 
 import numpy as np
@@ -38,12 +39,10 @@ from qsp_llm_workflows.core.calibration.exceptions import (
 from qsp_llm_workflows.core.calibration.experimental_context import ExperimentalContext
 from qsp_llm_workflows.core.calibration.scenario import Scenario
 from qsp_llm_workflows.core.calibration.shared_models import (
-    DoseResponseData,
     Input,
     KeyAssumption,
     SecondarySource,
     Source,
-    TrajectoryData,
 )
 from qsp_llm_workflows.core.calibration.validators import (
     create_mock_species,
@@ -75,80 +74,189 @@ class CalibrationTargetFooters(BaseModel):
     derivation_timestamp: Optional[str] = Field(None, description="ISO timestamp of derivation")
 
 
-class CalibrationTargetEstimates(BaseModel):
-    """Calibration target estimates with structured inputs and derivation."""
+class IndexType(str, Enum):
+    """Type of index dimension for vector-valued calibration targets."""
 
-    median: float = Field(
+    TIME = "time"  # Time-course data (e.g., measurements at Day 0, 7, 14)
+    DOSE = "dose"  # Dose-response data (e.g., drug concentrations)
+    RATIO = "ratio"  # Ratio-based index (e.g., E:T ratios)
+    CONCENTRATION = "concentration"  # Concentration series
+    OTHER = "other"  # Other index types
+
+
+class CalibrationTargetEstimates(BaseModel):
+    """
+    Calibration target estimates with structured inputs and derivation.
+
+    Supports both scalar and vector-valued outputs:
+    - Scalar: Single measurement → length-1 lists (median=[42.0], iqr=[5.0], ci95=[[37.0, 47.0]])
+    - Vector: Multi-point data → lists matching index_values length
+
+    Vector-valued outputs are indexed by index_values (e.g., time points, doses).
+    """
+
+    median: List[float] = Field(
         description=(
-            "COMPUTED median value from distribution_code. "
-            "Set this to the output of derive_distribution()['median_obs'].magnitude. "
-            "This is NOT necessarily the median reported in the paper (which goes in inputs)."
+            "COMPUTED median value(s) from distribution_code. "
+            "Length-1 list for scalar data, or list matching index_values length for vector data. "
+            "Set from derive_distribution()['median_obs'] - extract .magnitude for each element."
         )
     )
-    iqr: float = Field(
+    iqr: List[float] = Field(
         description=(
-            "COMPUTED interquartile range from distribution_code. "
-            "Set this to the output of derive_distribution()['iqr_obs'].magnitude. "
-            "This is NOT necessarily the IQR reported in the paper (which goes in inputs)."
+            "COMPUTED interquartile range(s) from distribution_code. "
+            "Length-1 list for scalar data, or list matching index_values length for vector data. "
+            "Set from derive_distribution()['iqr_obs'] - extract .magnitude for each element."
         )
     )
-    ci95: List[float] = Field(
+    ci95: List[List[float]] = Field(
         description=(
-            "COMPUTED 95% confidence interval [lower, upper] from distribution_code. "
-            "Set this to the output of derive_distribution()['ci95_obs'] as [lower.magnitude, upper.magnitude]. "
-            "Papers rarely report CI95 - derive from mean/SD or median/IQR via Monte Carlo."
+            "COMPUTED 95% confidence intervals from distribution_code. "
+            "List of [lower, upper] pairs. Length-1 for scalar data ([[lo, hi]]), "
+            "or matching index_values length for vector data ([[lo1, hi1], [lo2, hi2], ...]). "
+            "Set from derive_distribution()['ci95_obs']."
         )
     )
-    units: str = Field(description="Units of the observable")
+    units: str = Field(description="Units of the observable (Pint-parseable)")
+
+    # Index dimension for vector-valued data
+    index_values: Optional[List[float]] = Field(
+        None,
+        description=(
+            "Index values for vector-valued data (e.g., [0, 24, 48, 72] for time points). "
+            "None for scalar data. Vector-valued inputs and outputs must match this length."
+        ),
+    )
+    index_unit: Optional[str] = Field(
+        None,
+        description="Units for index_values (e.g., 'hour', 'day', 'nanomolar'). Required if index_values provided.",
+    )
+    index_type: Optional[IndexType] = Field(
+        None,
+        description="Type of index dimension. Required if index_values provided.",
+    )
+
     inputs: List[Input] = Field(
         description=(
             "List of inputs used in derivation. "
-            "These are the VALUES REPORTED IN THE PAPER (mean, SD, median, IQR, etc.) "
-            "that are used to DERIVE the distribution via Monte Carlo."
+            "These are the VALUES REPORTED IN THE PAPER (mean, SD, median, IQR, trajectories, etc.) "
+            "that are used to DERIVE the distribution via Monte Carlo. "
+            "Inputs can be scalar (broadcast to all index points) or vector-valued (same length as index_values)."
         )
     )
     distribution_code: str = Field(
         description=(
-            "Python code defining a derive_distribution(inputs, ureg) function. "
-            "inputs is a dict mapping input names to Pint Quantities. "
-            "Must return dict with Pint Quantities: median_obs, iqr_obs, ci95_obs ([lower, upper]). "
-            "Extract biological/experimental values via inputs with source traceability. "
-            "Universal constants OK as literals: percentiles (2.5, 25, 75, 97.5), mathematical constants (π, 2), MC sample sizes (10000). "
-            "Use MC methods (parametric bootstrap) for distribution estimates, NOT analytical approximations.\n"
-            "Example (parametric bootstrap from literature):\n"
+            "Python code defining a derive_distribution(inputs, ureg) function.\n"
+            "inputs is a dict mapping input names to Pint Quantities (scalar or array).\n"
+            "Must return dict with Pint Quantities:\n"
+            "  - median_obs: array of medians (length matching index_values, or length 1 for scalar)\n"
+            "  - iqr_obs: array of IQRs (same length)\n"
+            "  - ci95_obs: list of [lower, upper] pairs (same length)\n\n"
+            "For scalar data, return length-1 arrays.\n"
+            "For vector data, return arrays matching index_values length.\n\n"
+            "Example (scalar - single measurement):\n"
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
-            "    mean = inputs['cd8_density_mean']  # From Table 2\n"
-            "    sd = inputs['cd8_density_sd']  # From Table 2\n"
-            "    n_samples = inputs['n_mc_samples']  # e.g., 10000\n"
-            "    # Parametric bootstrap: sample from reported distribution\n"
-            "    samples = np.random.normal(mean.magnitude, sd.magnitude, int(n_samples.magnitude)) * mean.units\n"
-            "    median_obs = np.median(samples)\n"
-            "    iqr_obs = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
-            "    ci95_obs = [np.percentile(samples, 2.5), np.percentile(samples, 97.5)]\n"
-            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+            "    mean = inputs['cd8_density_mean'].magnitude\n"
+            "    sd = inputs['cd8_density_sd'].magnitude\n"
+            "    units = inputs['cd8_density_mean'].units\n"
+            "    samples = np.random.normal(mean, sd, 10000)\n"
+            "    return {\n"
+            "        'median_obs': np.array([np.median(samples)]) * units,\n"
+            "        'iqr_obs': np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * units,\n"
+            "        'ci95_obs': [[np.percentile(samples, 2.5) * units, np.percentile(samples, 97.5) * units]]\n"
+            "    }\n\n"
+            "Example (vector - time-course data):\n"
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    means = inputs['cd8_density_mean'].magnitude  # array\n"
+            "    sds = inputs['cd8_density_sd'].magnitude  # array\n"
+            "    units = inputs['cd8_density_mean'].units\n"
+            "    n_points = len(means)\n"
+            "    medians, iqrs, ci95s = [], [], []\n"
+            "    for i in range(n_points):\n"
+            "        samples = np.random.normal(means[i], sds[i], 10000)\n"
+            "        medians.append(np.median(samples))\n"
+            "        iqrs.append(np.percentile(samples, 75) - np.percentile(samples, 25))\n"
+            "        ci95s.append([np.percentile(samples, 2.5) * units, np.percentile(samples, 97.5) * units])\n"
+            "    return {\n"
+            "        'median_obs': np.array(medians) * units,\n"
+            "        'iqr_obs': np.array(iqrs) * units,\n"
+            "        'ci95_obs': ci95s\n"
+            "    }"
         )
     )
 
-    # Optional structured multi-point data (alternative to encoding in inputs)
-    trajectory_data: Optional[TrajectoryData] = Field(
-        None,
-        description=(
-            "Optional structured time-course data.\n"
-            "Use for kinetic experiments with measurements at multiple time points.\n"
-            "If provided, distribution_code should use this data to derive the distribution.\n"
-            "Example: T cell proliferation measured at 0, 24, 48, 72 hours."
-        ),
-    )
-    dose_response_data: Optional[DoseResponseData] = Field(
-        None,
-        description=(
-            "Optional structured dose-response data.\n"
-            "Use for experiments varying a parameter (concentration, E:T ratio) and measuring response.\n"
-            "If provided, distribution_code should use this data to derive the distribution.\n"
-            "Example: Cytotoxicity at E:T ratios of 1:1, 5:1, 10:1, 20:1."
-        ),
-    )
+    @model_validator(mode="after")
+    def validate_output_lengths_match(self) -> "CalibrationTargetEstimates":
+        """Validator: Ensure median, iqr, ci95 all have the same length."""
+        n_median = len(self.median)
+        n_iqr = len(self.iqr)
+        n_ci95 = len(self.ci95)
+
+        if not (n_median == n_iqr == n_ci95):
+            raise ValueError(
+                f"Output array lengths must match: median has {n_median}, "
+                f"iqr has {n_iqr}, ci95 has {n_ci95}"
+            )
+
+        # Check ci95 inner structure
+        for i, ci in enumerate(self.ci95):
+            if len(ci) != 2:
+                raise ValueError(f"ci95[{i}] must be [lower, upper] pair, got {len(ci)} elements")
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_index_fields_consistent(self) -> "CalibrationTargetEstimates":
+        """Validator: Ensure index_* fields are all present or all absent."""
+        has_values = self.index_values is not None
+        has_unit = self.index_unit is not None
+        has_type = self.index_type is not None
+
+        if has_values:
+            if not has_unit:
+                raise ValueError("index_unit is required when index_values is provided")
+            if not has_type:
+                raise ValueError("index_type is required when index_values is provided")
+
+            # Check that output length matches index_values length
+            # Type narrowing: we know index_values is not None here
+            assert self.index_values is not None  # for type checker
+            n_index = len(self.index_values)
+            n_output = len(self.median)
+            if n_output != n_index:
+                raise ValueError(
+                    f"Output length ({n_output}) must match index_values length ({n_index})"
+                )
+        else:
+            # Scalar case: must have length 1
+            if len(self.median) != 1:
+                raise ValueError(
+                    f"For scalar data (no index_values), outputs must have length 1, "
+                    f"got {len(self.median)}"
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_vector_input_lengths(self) -> "CalibrationTargetEstimates":
+        """Validator: Ensure vector-valued inputs match index_values length."""
+        if self.index_values is None:
+            return self  # Scalar case, skip
+
+        n_index = len(self.index_values)
+
+        for inp in self.inputs:
+            if isinstance(inp.value, list):
+                if len(inp.value) != n_index:
+                    raise ValueError(
+                        f"Vector input '{inp.name}' has length {len(inp.value)}, "
+                        f"but index_values has length {n_index}. "
+                        f"Vector inputs must match index_values length."
+                    )
+
+        return self
 
 
 class CalibrationTarget(BaseModel):
@@ -412,7 +520,7 @@ class CalibrationTarget(BaseModel):
     def validate_derivation_code(self) -> "CalibrationTarget":
         """
         Validator: Check that derivation_code executes, returns correct structure and units,
-        and computed values match reported values.
+        and computed values match reported values (element-wise for vector data).
         """
         from qsp_llm_workflows.core.unit_registry import ureg
 
@@ -444,9 +552,13 @@ class CalibrationTarget(BaseModel):
         # Execute with mock inputs to test structure and units
         try:
             # Create mock inputs dict with Pint quantities
+            # Handle both scalar and vector-valued inputs
             mock_inputs = {}
             for inp in self.calibration_target_estimates.inputs:
-                mock_inputs[inp.name] = inp.value * ureg(inp.units)
+                if isinstance(inp.value, list):
+                    mock_inputs[inp.name] = np.array(inp.value) * ureg(inp.units)
+                else:
+                    mock_inputs[inp.name] = inp.value * ureg(inp.units)
 
             # Execute function
             local_scope = {"ureg": ureg, "np": np}
@@ -465,8 +577,8 @@ class CalibrationTarget(BaseModel):
                     f"Function must return dict with keys: {required_keys}. Got: {result.keys()}"
                 )
 
-            # Check all values have units
-            for key in required_keys:
+            # Check median_obs and iqr_obs have units
+            for key in ["median_obs", "iqr_obs"]:
                 if not hasattr(result[key], "units"):
                     raise MissingUnitsError(f"Result['{key}'] must be a Pint Quantity with units")
 
@@ -489,21 +601,29 @@ class CalibrationTarget(BaseModel):
                     f"  Got: {result['iqr_obs'].units}"
                 )
 
-            # Check ci95 is list/array of 2 elements
-            if not hasattr(result["ci95_obs"], "__len__") or len(result["ci95_obs"]) != 2:
+            # Check ci95_obs is list of [lower, upper] pairs matching expected length
+            n_expected = len(self.calibration_target_estimates.median)
+            ci95_result = result["ci95_obs"]
+
+            if not hasattr(ci95_result, "__len__") or len(ci95_result) != n_expected:
                 raise ReturnStructureError(
-                    "ci95_obs must be a list/array with 2 elements [lower, upper]"
+                    f"ci95_obs must be a list of {n_expected} [lower, upper] pairs, "
+                    f"got {len(ci95_result) if hasattr(ci95_result, '__len__') else 'non-list'}"
                 )
+
+            # Check each ci95 pair
+            for i, ci_pair in enumerate(ci95_result):
+                if not hasattr(ci_pair, "__len__") or len(ci_pair) != 2:
+                    raise ReturnStructureError(
+                        f"ci95_obs[{i}] must be [lower, upper] pair, "
+                        f"got {len(ci_pair) if hasattr(ci_pair, '__len__') else 'non-list'} elements"
+                    )
 
             # Convert computed values to expected units for comparison
             median_computed = result["median_obs"].to(self.calibration_target_estimates.units)
             iqr_computed = result["iqr_obs"].to(self.calibration_target_estimates.units)
-            ci95_computed = [
-                result["ci95_obs"][0].to(self.calibration_target_estimates.units),
-                result["ci95_obs"][1].to(self.calibration_target_estimates.units),
-            ]
 
-            # Check computed values match reported values (with tolerance)
+            # Get reported values (now lists)
             median_reported = self.calibration_target_estimates.median
             iqr_reported = self.calibration_target_estimates.iqr
             ci95_reported = self.calibration_target_estimates.ci95
@@ -511,30 +631,54 @@ class CalibrationTarget(BaseModel):
             # Use relative tolerance of 1% for comparison
             rel_tol = 0.01
 
-            if abs(median_computed.magnitude - median_reported) > rel_tol * abs(median_reported):
-                raise ComputedValueMismatchError(
-                    f"Computed median ({median_computed.magnitude:.4g}) does not match "
-                    f"reported median ({median_reported:.4g}) within 1% tolerance"
+            # Handle array magnitudes
+            median_mag = np.atleast_1d(median_computed.magnitude)
+            iqr_mag = np.atleast_1d(iqr_computed.magnitude)
+
+            # Element-wise comparison for median
+            for i in range(len(median_reported)):
+                if abs(median_mag[i] - median_reported[i]) > rel_tol * abs(median_reported[i]):
+                    raise ComputedValueMismatchError(
+                        f"Computed median[{i}] ({median_mag[i]:.4g}) does not match "
+                        f"reported median[{i}] ({median_reported[i]:.4g}) within 1% tolerance"
+                    )
+
+            # Element-wise comparison for iqr
+            for i in range(len(iqr_reported)):
+                if abs(iqr_mag[i] - iqr_reported[i]) > rel_tol * abs(iqr_reported[i]):
+                    raise ComputedValueMismatchError(
+                        f"Computed IQR[{i}] ({iqr_mag[i]:.4g}) does not match "
+                        f"reported IQR[{i}] ({iqr_reported[i]:.4g}) within 1% tolerance"
+                    )
+
+            # Element-wise comparison for CI95
+            for i in range(len(ci95_reported)):
+                ci_computed = ci95_result[i]
+                ci_rep = ci95_reported[i]
+
+                # Get magnitudes (handle Pint quantities)
+                lo_computed = (
+                    ci_computed[0].magnitude
+                    if hasattr(ci_computed[0], "magnitude")
+                    else ci_computed[0]
+                )
+                hi_computed = (
+                    ci_computed[1].magnitude
+                    if hasattr(ci_computed[1], "magnitude")
+                    else ci_computed[1]
                 )
 
-            if abs(iqr_computed.magnitude - iqr_reported) > rel_tol * abs(iqr_reported):
-                raise ComputedValueMismatchError(
-                    f"Computed IQR ({iqr_computed.magnitude:.4g}) does not match "
-                    f"reported IQR ({iqr_reported:.4g}) within 1% tolerance"
-                )
+                if abs(lo_computed - ci_rep[0]) > rel_tol * abs(ci_rep[0]):
+                    raise ComputedValueMismatchError(
+                        f"Computed CI95[{i}] lower ({lo_computed:.4g}) does not match "
+                        f"reported CI95[{i}] lower ({ci_rep[0]:.4g}) within 1% tolerance"
+                    )
 
-            # Check CI95 bounds
-            if abs(ci95_computed[0].magnitude - ci95_reported[0]) > rel_tol * abs(ci95_reported[0]):
-                raise ComputedValueMismatchError(
-                    f"Computed CI95 lower ({ci95_computed[0].magnitude:.4g}) does not match "
-                    f"reported CI95 lower ({ci95_reported[0]:.4g}) within 1% tolerance"
-                )
-
-            if abs(ci95_computed[1].magnitude - ci95_reported[1]) > rel_tol * abs(ci95_reported[1]):
-                raise ComputedValueMismatchError(
-                    f"Computed CI95 upper ({ci95_computed[1].magnitude:.4g}) does not match "
-                    f"reported CI95 upper ({ci95_reported[1]:.4g}) within 1% tolerance"
-                )
+                if abs(hi_computed - ci_rep[1]) > rel_tol * abs(ci_rep[1]):
+                    raise ComputedValueMismatchError(
+                        f"Computed CI95[{i}] upper ({hi_computed:.4g}) does not match "
+                        f"reported CI95[{i}] upper ({ci_rep[1]:.4g}) within 1% tolerance"
+                    )
 
         except CalibrationTargetValidationError:
             # Re-raise all our custom validation errors
@@ -631,47 +775,57 @@ class CalibrationTarget(BaseModel):
         Validator (WARNING): Check if large variance is documented in limitations.
 
         CV > 50% suggests substantial variability that should be explained.
+        Only applies to scalar inputs (vector inputs are checked per-element elsewhere).
         """
         import warnings
 
-        # Find mean and SD/SE inputs
+        # Find mean and SD/SE inputs (only scalar inputs)
         mean_input = None
         std_input = None
 
         for inp in self.calibration_target_estimates.inputs:
+            # Skip vector-valued inputs for this check
+            if isinstance(inp.value, list):
+                continue
+
             name_lower = inp.name.lower()
             if "mean" in name_lower and mean_input is None:
                 mean_input = inp
             if any(x in name_lower for x in ["sd", "std", "se", "stderr", "stdev"]):
                 std_input = inp
 
-        if mean_input and std_input and mean_input.value != 0:
-            # Calculate CV (coefficient of variation)
-            cv = abs(std_input.value / mean_input.value)
+        if mean_input and std_input:
+            mean_val = mean_input.value
+            std_val = std_input.value
 
-            if cv > 0.5:  # CV > 50%
-                # Check if limitations mention variance/uncertainty
-                limitations_lower = self.key_study_limitations.lower()
-                variance_keywords = [
-                    "variance",
-                    "variability",
-                    "uncertain",
-                    "cv",
-                    "wide",
-                    "heterogen",
-                    "variation",
-                    "spread",
-                    "dispersion",
-                ]
+            # Both must be scalar at this point (we skipped lists above)
+            if not isinstance(mean_val, list) and not isinstance(std_val, list) and mean_val != 0:
+                # Calculate CV (coefficient of variation)
+                cv = abs(std_val / mean_val)
 
-                if not any(keyword in limitations_lower for keyword in variance_keywords):
-                    warnings.warn(
-                        f"Large coefficient of variation (CV = {cv:.1%}) detected but not discussed in key_study_limitations. "
-                        f"Consider explaining whether this reflects biological variability, measurement error, "
-                        f"or heterogeneous population. High variance may indicate need for stratification or "
-                        f"alternative distributional assumptions (e.g., lognormal).",
-                        UserWarning,
-                    )
+                if cv > 0.5:  # CV > 50%
+                    # Check if limitations mention variance/uncertainty
+                    limitations_lower = self.key_study_limitations.lower()
+                    variance_keywords = [
+                        "variance",
+                        "variability",
+                        "uncertain",
+                        "cv",
+                        "wide",
+                        "heterogen",
+                        "variation",
+                        "spread",
+                        "dispersion",
+                    ]
+
+                    if not any(keyword in limitations_lower for keyword in variance_keywords):
+                        warnings.warn(
+                            f"Large coefficient of variation (CV = {cv:.1%}) detected but not discussed in key_study_limitations. "
+                            f"Consider explaining whether this reflects biological variability, measurement error, "
+                            f"or heterogeneous population. High variance may indicate need for stratification or "
+                            f"alternative distributional assumptions (e.g., lognormal).",
+                            UserWarning,
+                        )
 
         return self
 
@@ -765,7 +919,14 @@ class CalibrationTarget(BaseModel):
 
             if literals:
                 # Check if these appear in inputs or assumptions
-                input_values = {inp.value for inp in self.calibration_target_estimates.inputs}
+                # Flatten input values (handle both scalar and vector inputs)
+                input_values: list[float] = []
+                for inp in self.calibration_target_estimates.inputs:
+                    if isinstance(inp.value, list):
+                        input_values.extend(inp.value)
+                    else:
+                        input_values.append(inp.value)
+
                 assumption_texts = " ".join(a.text for a in self.key_assumptions)
 
                 undocumented = []
@@ -941,11 +1102,18 @@ class CalibrationTarget(BaseModel):
         species_units = info.context["species_units"]
 
         # Get calibration target range
+        # For vector data, use overall statistics across all index points
         estimates = self.calibration_target_estimates
-        target_median = estimates.median
-        target_ci95 = estimates.ci95
-        target_min = float(min(target_ci95))
-        target_max = float(max(target_ci95))
+
+        # Flatten ci95 to get overall min/max
+        all_ci_values: list[float] = []
+        for ci_pair in estimates.ci95:
+            all_ci_values.extend(ci_pair)
+        target_min = float(min(all_ci_values))
+        target_max = float(max(all_ci_values))
+
+        # Use median of medians for representative central value
+        target_median = float(np.median(estimates.median))
 
         # Execute measurement_code and check output range
         for measurement in self.scenario.measurements:

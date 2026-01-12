@@ -7,14 +7,21 @@ scientific literature, used to calibrate QSP model parameters via Bayesian infer
 Main classes:
 - CalibrationTarget: For clinical/in vivo data (full model context)
 - IsolatedSystemTarget: For in vitro data with model "cuts" defining reduced systems
+- IndexType: Enum for vector-valued data index dimension (time, dose, ratio, etc.)
 
 Supporting modules:
 - enums: Species, Indication, Compartment, System enums
 - scenario: Intervention, Measurement, Scenario models
 - experimental_context: Stage, TreatmentContext, ExperimentalContext
-- shared_models: Input, Source, Snippet, TrajectoryData, DoseResponseData
+- shared_models: Input (scalar/vector), Source, Snippet
 - validators: Validation helper functions (resolve_doi, fuzzy_match, etc.)
 - exceptions: Custom exception classes for validation errors
+
+Vector-valued data:
+Calibration targets support both scalar and vector-valued data through a unified pathway:
+- Scalar: median=[42.0], ci95=[[37.0, 47.0]] (length-1 lists)
+- Vector: index_values=[0, 24, 48, 72], median=[10, 15, 20, 18] (matching lengths)
+- Input.value can be float (broadcast) or List[float] (per-index-point)
 """
 
 # Main calibration target classes
@@ -22,6 +29,7 @@ from qsp_llm_workflows.core.calibration.calibration_target_models import (
     CalibrationTarget,
     CalibrationTargetEstimates,
     CalibrationTargetFooters,
+    IndexType,
 )
 from qsp_llm_workflows.core.calibration.isolated_system_target import (
     CompartmentCut,
@@ -118,6 +126,7 @@ __all__ = [
     "CalibrationTarget",
     "CalibrationTargetEstimates",
     "CalibrationTargetFooters",
+    "IndexType",
     "IsolatedSystemTarget",
     "SpeciesCut",
     "CompartmentCut",

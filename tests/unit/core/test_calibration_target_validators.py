@@ -2,9 +2,9 @@
 """
 Tests for CalibrationTarget model validators.
 
-Tests all 11 active validators with:
-- 1 golden test: Valid data passes all validators
-- 8 negative tests: Validators fail on invalid data
+Tests all validators with:
+- 1 golden test: Valid scalar data passes all validators
+- Multiple negative tests: Validators fail on invalid data
   - DOI resolution fails
   - Title mismatch fails
   - Wrong measurement code units fails
@@ -13,12 +13,20 @@ Tests all 11 active validators with:
   - Derivation code value mismatch fails
   - Undefined source reference fails
   - Missing species fails
-- 5 warning tests: Scientific best practices
+- Warning tests: Scientific best practices
   - Clipping suggests lognormal distribution
   - Large variance should be documented
   - Normal distribution inappropriate for size data
   - Conversion factors should be documented
   - Unused inputs emit warning
+
+Vector-valued data tests:
+- Vector calibration target passes validation (time-course data)
+- Vector input length mismatch fails (input length != index_values length)
+- Output array length mismatch fails (median/iqr/ci95 different lengths)
+- Index fields required together (index_values needs index_unit and index_type)
+- Scalar data requires length-1 arrays (no index_values → length must be 1)
+- CI95 wrong inner structure fails ([lo, mid, hi] instead of [lo, hi])
 """
 
 import copy
@@ -91,9 +99,10 @@ def golden_calibration_target_data():
         "key_assumptions": [],
         "key_study_limitations": "Single-center study, limited sample size",
         "calibration_target_estimates": {
-            "median": 1.0,
-            "iqr": 0.6843,
-            "ci95": [0.3737, 2.7],
+            # Vector-valued outputs (length-1 for scalar data)
+            "median": [1.0],
+            "iqr": [0.6843],
+            "ci95": [[0.3737, 2.7]],
             "units": "dimensionless",
             "inputs": [
                 {
@@ -134,9 +143,10 @@ def golden_calibration_target_data():
                 "    n = int(inputs['n_mc_samples'].magnitude)\n"
                 "    mu_log = math.log(mean.magnitude)\n"
                 "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, n) * mean.units\n"
-                "    median_obs = np.median(samples)\n"
-                "    iqr_obs = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
-                "    ci95_obs = np.percentile(samples, [2.5, 97.5])\n"
+                "    median_obs = np.array([np.median(samples)]) * mean.units\n"
+                "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * mean.units\n"
+                "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+                "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
                 "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
             ),
         },
@@ -199,7 +209,10 @@ class TestCalibrationTargetGolden:
         assert target is not None
         assert target.description == "CD8+ T cell density in PDAC tumor at resection"
         assert len(target.scenario.measurements) == 1
-        assert target.calibration_target_estimates.median == pytest.approx(1.0, rel=0.01)
+        # Scalar data uses length-1 lists
+        assert target.calibration_target_estimates.median == [pytest.approx(1.0, rel=0.01)]
+        assert len(target.calibration_target_estimates.ci95) == 1
+        assert target.calibration_target_estimates.index_values is None  # Scalar case
 
 
 # ============================================================================
@@ -271,8 +284,8 @@ class TestCalibrationTargetValidators:
     ):
         """Validator should reject when computed values don't match reported."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Report wrong median (code will compute ~150, report as 200)
-        data["calibration_target_estimates"]["median"] = 200.0
+        # Report wrong median (code will compute ~1.0, report as 200)
+        data["calibration_target_estimates"]["median"] = [200.0]
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
@@ -396,9 +409,10 @@ class TestCalibrationTargetValidators:
             "    mu_log = math.log(mean.magnitude)\n"
             "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, n)\n"
             "    samples = np.clip(samples, 0.01, None) * mean.units  # Clipping!\n"
-            "    median_obs = np.median(samples)\n"
-            "    iqr_obs = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
-            "    ci95_obs = np.percentile(samples, [2.5, 97.5])\n"
+            "    median_obs = np.array([np.median(samples)]) * mean.units\n"
+            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * mean.units\n"
+            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+            "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
             "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
         )
 
@@ -455,16 +469,17 @@ class TestCalibrationTargetValidators:
             "    sd = inputs['ratio_sd']\n"
             "    n = int(inputs['n_mc_samples'].magnitude)\n"
             "    samples = np.abs(np.random.normal(mean.magnitude, sd.magnitude, n)) * mean.units\n"
-            "    median_obs = np.median(samples)\n"
-            "    iqr_obs = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
-            "    ci95_obs = np.percentile(samples, [2.5, 97.5])\n"
+            "    median_obs = np.array([np.median(samples)]) * mean.units\n"
+            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * mean.units\n"
+            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+            "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
             "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
         )
 
-        # Update calibration target estimates to match code output
-        data["calibration_target_estimates"]["median"] = 1.0475
-        data["calibration_target_estimates"]["iqr"] = 1.1671
-        data["calibration_target_estimates"]["ci95"] = [0.0496, 2.9741]
+        # Update calibration target estimates to match code output (vector format)
+        data["calibration_target_estimates"]["median"] = [1.0475]
+        data["calibration_target_estimates"]["iqr"] = [1.1671]
+        data["calibration_target_estimates"]["ci95"] = [[0.0496, 2.9741]]
 
         # Don't mention variance in limitations
         data["key_study_limitations"] = "Small sample size from single center"
@@ -514,9 +529,9 @@ class TestCalibrationTargetValidators:
                 "value_snippet": None,
             },
         ]
-        data["calibration_target_estimates"]["median"] = 1.4994
-        data["calibration_target_estimates"]["iqr"] = 0.3359
-        data["calibration_target_estimates"]["ci95"] = [1.0079, 1.9935]
+        data["calibration_target_estimates"]["median"] = [1.4994]
+        data["calibration_target_estimates"]["iqr"] = [0.3359]
+        data["calibration_target_estimates"]["ci95"] = [[1.0079, 1.9935]]
 
         # Also update measurement_code to return centimeter (to avoid unit mismatch error)
         data["scenario"]["measurements"][0]["measurement_code"] = (
@@ -539,10 +554,13 @@ class TestCalibrationTargetValidators:
             "    mean = inputs['diameter_mean']\n"
             "    sd = inputs['diameter_sd']\n"
             "    n = int(inputs['n_mc_samples'].magnitude)\n"
-            "    samples = np.random.normal(mean.magnitude, sd.magnitude, n) * ureg.centimeter\n"
-            "    median_obs = np.median(samples)\n"
-            "    iqr_obs = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
-            "    ci95_obs = np.percentile(samples, [2.5, 97.5])\n"
+            "    samples = np.random.normal(mean.magnitude, sd.magnitude, n)\n"
+            "    median_val = np.median(samples)\n"
+            "    iqr_val = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
+            "    ci95_vals = np.percentile(samples, [2.5, 97.5])\n"
+            "    median_obs = np.array([median_val]) * ureg.centimeter\n"
+            "    iqr_obs = np.array([iqr_val]) * ureg.centimeter\n"
+            "    ci95_obs = [[ci95_vals[0] * ureg.centimeter, ci95_vals[1] * ureg.centimeter]]\n"
             "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
         )
 
@@ -633,9 +651,9 @@ class TestCalibrationTargetValidators:
         )
 
         # But calibration target is on 0-3 score scale (>100x mismatch)
-        data["calibration_target_estimates"]["median"] = 2.42
-        data["calibration_target_estimates"]["iqr"] = 0.50
-        data["calibration_target_estimates"]["ci95"] = [1.69, 3.15]
+        data["calibration_target_estimates"]["median"] = [2.42]
+        data["calibration_target_estimates"]["iqr"] = [0.50]
+        data["calibration_target_estimates"]["ci95"] = [[1.69, 3.15]]
 
         # Update inputs to produce values in score range
         data["calibration_target_estimates"]["inputs"] = [
@@ -676,9 +694,10 @@ class TestCalibrationTargetValidators:
             "    sd = inputs['score_sd']\n"
             "    n = int(inputs['n_mc_samples'].magnitude)\n"
             "    samples = np.random.normal(mean.magnitude, sd.magnitude, n) * mean.units\n"
-            "    median_obs = np.median(samples)\n"
-            "    iqr_obs = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
-            "    ci95_obs = np.percentile(samples, [2.5, 97.5])\n"
+            "    median_obs = np.array([np.median(samples)]) * mean.units\n"
+            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * mean.units\n"
+            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+            "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
             "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
         )
 
@@ -801,3 +820,200 @@ class TestCalibrationTargetValidators:
                 data, context={"species_units": species_units}
             )
             assert target.scenario.measurements[0].support == support_type
+
+
+# ============================================================================
+# Vector-Valued Data Tests
+# ============================================================================
+
+
+class TestVectorValuedCalibrationTarget:
+    """Tests for vector-valued calibration target data (time-course, dose-response)."""
+
+    def test_vector_calibration_target_passes_validation(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Test that vector-valued calibration target passes all validators."""
+        from qsp_llm_workflows.core.calibration import IndexType
+
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Use actual computed values from the distribution_code with seed=42
+        # These are the values that lognormal(mu_log, 0.5) produces with the given means
+        data["calibration_target_estimates"]["median"] = [0.799, 1.008, 1.1965, 1.0943]
+        data["calibration_target_estimates"]["iqr"] = [0.5474, 0.6965, 0.8269, 0.7674]
+        data["calibration_target_estimates"]["ci95"] = [
+            [0.299, 2.1467],
+            [0.3768, 2.6694],
+            [0.4546, 3.1404],
+            [0.4106, 2.9389],
+        ]
+        data["calibration_target_estimates"]["index_values"] = [0, 7, 14, 21]
+        data["calibration_target_estimates"]["index_unit"] = "day"
+        data["calibration_target_estimates"]["index_type"] = "time"
+
+        # Update inputs to be vector-valued
+        data["calibration_target_estimates"]["inputs"] = [
+            {
+                "name": "cd8_ratio_mean",
+                "value": [0.8, 1.0, 1.2, 1.1],  # Vector input
+                "units": "dimensionless",
+                "description": "Mean CD8/tumor ratio at each time point",
+                "source_ref": "smith_2020",
+                "value_table_or_section": "Figure 3",
+                "value_snippet": "CD8/tumor ratio increased from 0.8 at baseline to 1.2 at day 14",
+            },
+            {
+                "name": "cd8_ratio_sigma_log",
+                "value": 0.5,  # Scalar input (broadcast)
+                "units": "dimensionless",
+                "description": "Log-scale SD (assumed constant)",
+                "source_ref": "smith_2020",
+                "value_table_or_section": "Figure 3",
+                "value_snippet": "variability approximately constant across time",
+            },
+            {
+                "name": "n_mc_samples",
+                "value": 10000.0,
+                "units": "dimensionless",
+                "description": "MC samples",
+                "source_ref": "modeling_assumption",
+                "value_table_or_section": None,
+                "value_snippet": None,
+            },
+        ]
+
+        # Update distribution_code to return vector outputs
+        data["calibration_target_estimates"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    import math\n"
+            "    np.random.seed(42)\n"
+            "    means = inputs['cd8_ratio_mean'].magnitude\n"
+            "    sigma_log = inputs['cd8_ratio_sigma_log'].magnitude\n"
+            "    n = int(inputs['n_mc_samples'].magnitude)\n"
+            "    units = inputs['cd8_ratio_mean'].units\n"
+            "    n_points = len(means)\n"
+            "    medians, iqrs, ci95s = [], [], []\n"
+            "    for i in range(n_points):\n"
+            "        mu_log = math.log(means[i])\n"
+            "        samples = np.random.lognormal(mu_log, sigma_log, n)\n"
+            "        medians.append(np.median(samples))\n"
+            "        iqrs.append(np.percentile(samples, 75) - np.percentile(samples, 25))\n"
+            "        ci95s.append([np.percentile(samples, 2.5) * units, np.percentile(samples, 97.5) * units])\n"
+            "    return {\n"
+            "        'median_obs': np.array(medians) * units,\n"
+            "        'iqr_obs': np.array(iqrs) * units,\n"
+            "        'ci95_obs': ci95s\n"
+            "    }"
+        )
+
+        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        assert target is not None
+        assert len(target.calibration_target_estimates.median) == 4
+        assert target.calibration_target_estimates.index_values == [0, 7, 14, 21]
+        assert target.calibration_target_estimates.index_type == IndexType.TIME
+        assert target.calibration_target_estimates.index_unit == "day"
+
+    def test_vector_input_length_mismatch_fails(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Test that vector input with wrong length fails validation."""
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Set up vector data with 4 time points
+        data["calibration_target_estimates"]["median"] = [0.8, 1.0, 1.2, 1.1]
+        data["calibration_target_estimates"]["iqr"] = [0.5, 0.68, 0.82, 0.75]
+        data["calibration_target_estimates"]["ci95"] = [
+            [0.3, 2.2],
+            [0.37, 2.7],
+            [0.45, 3.2],
+            [0.40, 2.95],
+        ]
+        data["calibration_target_estimates"]["index_values"] = [0, 7, 14, 21]
+        data["calibration_target_estimates"]["index_unit"] = "day"
+        data["calibration_target_estimates"]["index_type"] = "time"
+
+        # Vector input with wrong length (3 instead of 4)
+        data["calibration_target_estimates"]["inputs"] = [
+            {
+                "name": "cd8_ratio_mean",
+                "value": [0.8, 1.0, 1.2],  # Wrong length!
+                "units": "dimensionless",
+                "description": "Mean CD8/tumor ratio",
+                "source_ref": "smith_2020",
+                "value_table_or_section": "Figure 3",
+                "value_snippet": "data",
+            },
+        ]
+
+        with pytest.raises(ValidationError, match="length"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+    def test_output_length_mismatch_fails(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Test that output arrays with different lengths fail validation."""
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # median has 4 elements, iqr has 3 - mismatch
+        data["calibration_target_estimates"]["median"] = [0.8, 1.0, 1.2, 1.1]
+        data["calibration_target_estimates"]["iqr"] = [0.5, 0.68, 0.82]  # Wrong length!
+        data["calibration_target_estimates"]["ci95"] = [
+            [0.3, 2.2],
+            [0.37, 2.7],
+            [0.45, 3.2],
+            [0.40, 2.95],
+        ]
+
+        with pytest.raises(ValidationError, match="lengths must match"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+    def test_index_fields_required_together(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Test that index_values requires index_unit and index_type."""
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Vector outputs with index_values but missing index_unit
+        data["calibration_target_estimates"]["median"] = [0.8, 1.0, 1.2, 1.1]
+        data["calibration_target_estimates"]["iqr"] = [0.5, 0.68, 0.82, 0.75]
+        data["calibration_target_estimates"]["ci95"] = [
+            [0.3, 2.2],
+            [0.37, 2.7],
+            [0.45, 3.2],
+            [0.40, 2.95],
+        ]
+        data["calibration_target_estimates"]["index_values"] = [0, 7, 14, 21]
+        # Missing index_unit and index_type
+
+        with pytest.raises(ValidationError, match="index_unit is required"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+    def test_scalar_data_requires_length_one(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Test that scalar data (no index_values) must have length-1 arrays."""
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # No index_values but median has length > 1
+        data["calibration_target_estimates"]["median"] = [0.8, 1.0]  # Length 2 without index_values
+        data["calibration_target_estimates"]["iqr"] = [0.5, 0.68]
+        data["calibration_target_estimates"]["ci95"] = [[0.3, 2.2], [0.37, 2.7]]
+        # No index_values set
+
+        with pytest.raises(ValidationError, match="outputs must have length 1"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+    def test_ci95_wrong_inner_structure_fails(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Test that ci95 entries must be [lower, upper] pairs."""
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # ci95 with wrong inner structure (3 elements instead of 2)
+        data["calibration_target_estimates"]["ci95"] = [[0.3, 1.0, 2.7]]  # Wrong!
+
+        with pytest.raises(ValidationError, match="\\[lower, upper\\] pair"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})

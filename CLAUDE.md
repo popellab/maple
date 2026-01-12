@@ -308,7 +308,7 @@ qsp-llm-workflows/
 │       │       ├── __init__.py      # Re-exports all calibration classes
 │       │       ├── calibration_target_models.py  # CalibrationTarget base class
 │       │       ├── isolated_system_target.py  # IsolatedSystemTarget + Cut models
-│       │       ├── shared_models.py     # Input, Source, Snippet, TrajectoryData
+│       │       ├── shared_models.py     # Input (scalar/vector), Source, Snippet
 │       │       ├── enums.py             # Species, Indication, Compartment, System
 │       │       ├── scenario.py          # Intervention, Measurement, Scenario
 │       │       ├── experimental_context.py  # ExperimentalContext
@@ -437,7 +437,16 @@ The calibration target models use a modular, inheritance-based architecture:
 ```
 core/calibration/calibration_target_models.py:
   CalibrationTarget (base class)
-  ├── calibration_target_estimates (median, iqr, ci95, distribution_code)
+  ├── calibration_target_estimates
+  │   ├── median: List[float]      # Vector-valued (length-1 for scalar data)
+  │   ├── iqr: List[float]
+  │   ├── ci95: List[List[float]]  # [[lo, hi], [lo, hi], ...]
+  │   ├── units: str
+  │   ├── index_values: Optional[List[float]]  # e.g., [0, 24, 48, 72] for time
+  │   ├── index_unit: Optional[str]            # e.g., "hour"
+  │   ├── index_type: Optional[IndexType]      # time, dose, ratio, etc.
+  │   ├── inputs: List[Input]      # Scalar or vector-valued
+  │   └── distribution_code: str
   ├── scenario (interventions + measurements)
   ├── experimental_context (species, compartment, system + optional clinical/in vitro fields)
   ├── study_overview, study_design, key_assumptions, key_study_limitations
@@ -456,7 +465,7 @@ core/calibration/isolated_system_target.py:
 **Import pattern:**
 ```python
 # Recommended: import from the calibration package
-from qsp_llm_workflows.core.calibration import CalibrationTarget, IsolatedSystemTarget
+from qsp_llm_workflows.core.calibration import CalibrationTarget, IsolatedSystemTarget, IndexType
 
 # Or import specific submodules
 from qsp_llm_workflows.core.calibration.enums import Species, Compartment
@@ -466,7 +475,13 @@ from qsp_llm_workflows.core.calibration.enums import Species, Compartment
 - `CalibrationTarget` (in `calibration/calibration_target_models.py`): For clinical/in vivo data where full model is assumed
 - `IsolatedSystemTarget` (in `calibration/isolated_system_target.py`): Extends CalibrationTarget with `cuts` for in vitro experiments
 - `ExperimentalContext`: Unified context supporting both clinical (indication, treatment, stage) and in vitro (cell_lines, culture_conditions) fields
-- `TrajectoryData` / `DoseResponseData`: Optional structured multi-point data in calibration/shared_models.py
+- `IndexType`: Enum for index dimension type (time, dose, ratio, concentration, other)
+
+**Vector-valued data:**
+Both scalar and vector-valued data flow through the same pathway:
+- Scalar data: `median=[42.0]`, `iqr=[5.0]`, `ci95=[[37.0, 47.0]]` (length-1 lists)
+- Vector data: Lists matching `index_values` length (e.g., time-course with 4 points)
+- `Input.value` can be `float` (broadcast to all index points) or `List[float]` (per-point values)
 
 **Cut types for isolated systems (in `calibration/isolated_system_target.py`):**
 - `SpeciesCut`: Clamp, exclude, zero_flux, or prescribe a species
