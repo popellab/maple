@@ -19,7 +19,7 @@ from qsp_llm_workflows.core.prompt_builder import (
 from qsp_llm_workflows.core.workflow_orchestrator import WorkflowOrchestrator
 
 # Exception classes for validation error handling
-from qsp_llm_workflows.core.exceptions import (
+from qsp_llm_workflows.core.calibration.exceptions import (
     CalibrationTargetValidationError,
     CodeSyntaxError,
     CodeStructureError,

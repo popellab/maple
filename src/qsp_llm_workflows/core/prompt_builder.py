@@ -18,7 +18,7 @@ from qsp_llm_workflows.core.prompts import (
     build_calibration_target_prompt,
 )
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
-from qsp_llm_workflows.core.calibration_target_models import CalibrationTarget
+from qsp_llm_workflows.core.calibration import CalibrationTarget
 
 
 class PromptBuilder(ABC):

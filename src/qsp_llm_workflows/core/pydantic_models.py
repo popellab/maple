@@ -10,17 +10,15 @@ added during post-processing.
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
-from qsp_llm_workflows.core.calibration_target_models import (
+from qsp_llm_workflows.core.calibration import (
     CalibrationTarget,
     CalibrationTargetFooters,
-)
-from qsp_llm_workflows.core.shared_models import (
     Input,
     KeyAssumption,
     SecondarySource,
     Source,
-    WeightScore,
 )
+from qsp_llm_workflows.core.calibration.shared_models import WeightScore
 
 
 # ============================================================================

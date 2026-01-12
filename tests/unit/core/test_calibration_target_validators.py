@@ -26,7 +26,7 @@ import pytest
 from unittest.mock import Mock, patch
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.calibration_target_models import CalibrationTarget
+from qsp_llm_workflows.core.calibration import CalibrationTarget
 
 
 # ============================================================================

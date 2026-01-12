@@ -11,8 +11,8 @@ from typing import Annotated, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from qsp_llm_workflows.core.calibration_target_models import CalibrationTarget
-from qsp_llm_workflows.core.enums import System
+from qsp_llm_workflows.core.calibration.calibration_target_models import CalibrationTarget
+from qsp_llm_workflows.core.calibration.enums import System
 
 
 # ============================================================================

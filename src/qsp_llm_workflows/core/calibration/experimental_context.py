@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from qsp_llm_workflows.core.enums import (
+from qsp_llm_workflows.core.calibration.enums import (
     Compartment,
     Indication,
     MouseSubspecifier,
@@ -22,7 +22,7 @@ from qsp_llm_workflows.core.enums import (
     TreatmentStatus,
     enum_field_description,
 )
-from qsp_llm_workflows.core.shared_models import CellLine, CultureConditions
+from qsp_llm_workflows.core.calibration.shared_models import CellLine, CultureConditions
 
 
 class Stage(BaseModel):

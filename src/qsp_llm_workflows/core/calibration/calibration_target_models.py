@@ -15,8 +15,8 @@ from typing import List, Optional
 import numpy as np
 from pydantic import BaseModel, Field, ValidationInfo, model_validator
 
-# Import from refactored modules
-from qsp_llm_workflows.core.exceptions import (
+# Import from calibration submodules
+from qsp_llm_workflows.core.calibration.exceptions import (
     ArrayLengthError,
     CalibrationTargetValidationError,
     CodeStructureError,
@@ -35,9 +35,9 @@ from qsp_llm_workflows.core.exceptions import (
     SpeciesNotFoundError,
     UnitConversionError,
 )
-from qsp_llm_workflows.core.experimental_context import ExperimentalContext
-from qsp_llm_workflows.core.scenario import Scenario
-from qsp_llm_workflows.core.shared_models import (
+from qsp_llm_workflows.core.calibration.experimental_context import ExperimentalContext
+from qsp_llm_workflows.core.calibration.scenario import Scenario
+from qsp_llm_workflows.core.calibration.shared_models import (
     DoseResponseData,
     Input,
     KeyAssumption,
@@ -45,7 +45,7 @@ from qsp_llm_workflows.core.shared_models import (
     Source,
     TrajectoryData,
 )
-from qsp_llm_workflows.core.validators import (
+from qsp_llm_workflows.core.calibration.validators import (
     create_mock_species,
     fuzzy_match,
     get_typical_species_value,

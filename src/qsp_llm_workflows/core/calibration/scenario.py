@@ -10,7 +10,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from qsp_llm_workflows.core.exceptions import EmptyScenarioError
+from qsp_llm_workflows.core.calibration.exceptions import EmptyScenarioError
 
 
 # Support types for measurement output constraints
