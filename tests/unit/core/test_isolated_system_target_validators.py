@@ -647,6 +647,125 @@ class TestStateVariablesValidation:
 # ============================================================================
 
 
+class TestHardcodedConstantsValidation:
+    """Tests for hardcoded constants validator."""
+
+    def test_observable_code_with_hardcoded_constant_fails(
+        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
+    ):
+        """Test that hardcoded constants in observable code are flagged."""
+        data = copy.deepcopy(golden_isolated_target_data)
+        # Add hardcoded constant in observable code
+        data["submodel"]["observable"]["code"] = (
+            "def compute_observable(t, y, constants, ureg):\n"
+            "    T_cells = y[0]\n"
+            "    # Hardcoded constant with units - BAD!\n"
+            "    cell_volume = 1766.0 * ureg.micrometer**3\n"
+            "    return (T_cells * cell_volume).to('micrometer**3')"
+        )
+        data["submodel"]["observable"]["units"] = "micrometer**3"
+        data["calibration_target_estimates"]["units"] = "micrometer**3"
+        # Update distribution to match units
+        data["calibration_target_estimates"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    np.random.seed(42)\n"
+            "    samples = np.random.lognormal(10, 0.5, 10000)\n"
+            "    median_obs = np.array([np.median(samples)]) * ureg.micrometer**3\n"
+            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * ureg.micrometer**3\n"
+            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+            "    ci95_obs = [[ci95[0] * ureg.micrometer**3, ci95[1] * ureg.micrometer**3]]\n"
+            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+        )
+        # Exact values from lognormal(10, 0.5) with seed 42
+        data["calibration_target_estimates"]["median"] = [21997.91]
+        data["calibration_target_estimates"]["iqr"] = [15072.36]
+        data["calibration_target_estimates"]["ci95"] = [[8231.66, 59104.89]]
+
+        with pytest.raises(ValidationError, match="Hardcoded numeric constants"):
+            IsolatedSystemTarget.model_validate(
+                data,
+                context={"species_units": species_units, "model_structure": model_structure},
+            )
+
+    def test_observable_code_with_constants_dict_passes(
+        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
+    ):
+        """Test that constants from constants dict are allowed."""
+        data = copy.deepcopy(golden_isolated_target_data)
+        # Use constants dict properly
+        data["submodel"]["observable"]["code"] = (
+            "def compute_observable(t, y, constants, ureg):\n"
+            "    T_cells = y[0]\n"
+            "    cell_volume = constants['cell_volume']  # Properly declared\n"
+            "    return (T_cells * cell_volume).to('micrometer**3')"
+        )
+        data["submodel"]["observable"]["units"] = "micrometer**3"
+        data["submodel"]["observable"]["constants"] = [
+            {
+                "name": "cell_volume",
+                "value": 1766.0,
+                "units": "micrometer**3",
+                "biological_basis": "PDAC cell ~15 μm diameter",
+                "source_ref": "modeling_assumption",
+            }
+        ]
+        data["calibration_target_estimates"]["units"] = "micrometer**3"
+        data["calibration_target_estimates"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    np.random.seed(42)\n"
+            "    samples = np.random.lognormal(18, 0.5, 10000)\n"
+            "    median_obs = np.array([np.median(samples)]) * ureg.micrometer**3\n"
+            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * ureg.micrometer**3\n"
+            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+            "    ci95_obs = [[ci95[0] * ureg.micrometer**3, ci95[1] * ureg.micrometer**3]]\n"
+            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+        )
+        # Exact values from lognormal(18, 0.5) with seed 42
+        data["calibration_target_estimates"]["median"] = [6.56e7]
+        data["calibration_target_estimates"]["iqr"] = [4.49e7]
+        data["calibration_target_estimates"]["ci95"] = [[2.45e7, 1.76e8]]
+
+        # Should pass - constants are properly declared
+        target = IsolatedSystemTarget.model_validate(
+            data,
+            context={"species_units": species_units, "model_structure": model_structure},
+        )
+        assert target is not None
+
+    def test_default_observable_skips_hardcoded_check(
+        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
+    ):
+        """Test that default observable (no code) doesn't trigger hardcoded check."""
+        data = copy.deepcopy(golden_isolated_target_data)
+        # Use default observable (no code)
+        data["submodel"]["observable"]["code"] = None
+        data["submodel"]["observable"]["units"] = "cell"
+        data["calibration_target_estimates"]["units"] = "cell"
+        data["calibration_target_estimates"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    np.random.seed(42)\n"
+            "    samples = np.random.lognormal(11.5, 0.5, 10000)\n"
+            "    median_obs = np.array([np.median(samples)]) * ureg.cell\n"
+            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * ureg.cell\n"
+            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+            "    ci95_obs = [[ci95[0] * ureg.cell, ci95[1] * ureg.cell]]\n"
+            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+        )
+        data["calibration_target_estimates"]["median"] = [98587.77]
+        data["calibration_target_estimates"]["iqr"] = [67549.62]
+        data["calibration_target_estimates"]["ci95"] = [[36891.73, 264889.72]]
+
+        # Should pass
+        target = IsolatedSystemTarget.model_validate(
+            data,
+            context={"species_units": species_units, "model_structure": model_structure},
+        )
+        assert target.submodel.observable.code is None
+
+
 class TestObservableCodeValidation:
     """Tests for observable code validator."""
 

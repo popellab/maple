@@ -21,6 +21,7 @@ from qsp_llm_workflows.core.calibration.exceptions import (
     CalibrationTargetValidationError,
     CodeStructureError,
     DimensionalityMismatchError,
+    HardcodedConstantError,
 )
 from qsp_llm_workflows.core.calibration.observable import Submodel
 
@@ -570,6 +571,100 @@ class IsolatedSystemTarget(CalibrationTarget):
         except Exception as e:
             raise CalibrationTargetValidationError(
                 f"Invalid observable units '{self.submodel.observable.units}': {e}"
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_no_hardcoded_constants_in_submodel(self) -> "IsolatedSystemTarget":
+        """
+        Validator (ERROR): Flag hardcoded numbers with units in submodel code.
+
+        In submodel.code (ODE), all numeric constants should come from:
+        - The params dict (parameters from the full model)
+        - The inputs dict (experimental conditions)
+
+        In submodel.observable.code (if provided), all numeric constants with units
+        must be declared in submodel.observable.constants and accessed via the
+        constants dict.
+
+        Allowed inline numbers:
+        - Universal mathematical constants (π, e)
+        - Statistical percentiles (2.5, 25, 50, 75, 97.5)
+        - Small integers (0, 1, 2, 3, 4)
+        - Array indices
+        """
+        import re
+
+        # Patterns that indicate a number is being multiplied by units
+        HARDCODED_UNIT_PATTERNS = [
+            # NUMBER * ureg.UNIT or NUMBER * ureg('unit')
+            r"(\d+\.?\d*(?:e[+-]?\d+)?)\s*\*\s*ureg[.(]",
+            # ureg.UNIT * NUMBER or ureg('unit') * NUMBER
+            r"ureg[^*]+\*\s*(\d+\.?\d*(?:e[+-]?\d+)?)",
+            # NUMBER * ureg directly
+            r"(\d+\.?\d*(?:e[+-]?\d+)?)\s*\*\s*ureg\b",
+        ]
+
+        # Numbers that are OK to have inline
+        ALLOWED_NUMBERS = {
+            0,
+            1,
+            2,
+            3,
+            4,
+            0.5,
+            0.25,
+            0.75,
+            2.5,
+            25,
+            50,
+            75,
+            97.5,  # Percentiles
+            0.025,
+            0.975,  # Fractional percentiles
+            100,  # Common for percent conversion
+        }
+
+        def find_violations(code: str, code_type: str) -> list:
+            """Find hardcoded constants in code."""
+            violations = []
+            for pattern in HARDCODED_UNIT_PATTERNS:
+                for match in re.finditer(pattern, code):
+                    try:
+                        num_str = match.group(1) if match.lastindex else None
+                        if num_str:
+                            num = float(num_str)
+                            if num not in ALLOWED_NUMBERS:
+                                violations.append((num, match.group(0), code_type))
+                    except (ValueError, IndexError):
+                        continue
+            return violations
+
+        all_violations = []
+
+        # Check submodel.observable.code if provided
+        if self.submodel.observable.code is not None:
+            all_violations.extend(
+                find_violations(self.submodel.observable.code, "submodel.observable.code")
+            )
+
+        if all_violations:
+            violation_strs = [f"  • {v[0]} in '{v[1]}' ({v[2]})" for v in all_violations[:5]]
+            raise HardcodedConstantError(
+                "Hardcoded numeric constants with units found in submodel code:\n"
+                + "\n".join(violation_strs)
+                + (f"\n  ... and {len(all_violations) - 5} more" if len(all_violations) > 5 else "")
+                + "\n\nFor submodel.observable.code, declare constants in submodel.observable.constants "
+                + "and access via the constants dict.\n"
+                + "Example fix:\n"
+                + "  1. Add to submodel.observable.constants:\n"
+                + "     - name: cell_volume\n"
+                + "       value: 1766.0\n"
+                + "       units: micrometer**3\n"
+                + "       biological_basis: 'PDAC cell ~15 μm diameter → V = 4/3×π×(7.5)³'\n"
+                + "       source_ref: modeling_assumption\n"
+                + "  2. Use in code: cell_vol = constants['cell_volume']"
             )
 
         return self
