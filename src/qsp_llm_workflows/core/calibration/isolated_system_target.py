@@ -55,7 +55,8 @@ class IsolatedSystemTarget(CalibrationTarget):
             observable=SubmodelObservable(
                 code='''
                 def compute_observable(t, y, constants, ureg):
-                    cells = y['spheroid_cells']
+                    cells = y[0]  # same index as in ODE
+                    cell_vol = constants['cell_volume']
                     ...
                     return diameter.to('micrometer')
                 ''',
@@ -430,6 +431,146 @@ class IsolatedSystemTarget(CalibrationTarget):
             except Exception:
                 # Unit parsing failed, skip
                 pass
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_observable_code(self, info: ValidationInfo) -> "IsolatedSystemTarget":
+        """
+        Validate that submodel.observable.code executes correctly.
+
+        If code is None, uses default: return y[0] * ureg(units).
+
+        Checks:
+        - Function signature is compute_observable(t, y, constants, ureg) (if code provided)
+        - Code executes with mock integrated state
+        - Returns a Pint Quantity with correct units
+
+        Requires context:
+            model_structure: ModelStructure instance with parameter values
+        """
+        from scipy.integrate import solve_ivp
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        model_structure = self._require_model_structure(info)
+
+        # If code is provided, validate signature
+        if self.submodel.observable.code is not None:
+            try:
+                tree = ast.parse(self.submodel.observable.code)
+            except SyntaxError as e:
+                raise CodeStructureError(f"submodel.observable.code syntax error: {e}")
+
+            func_def = None
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == "compute_observable":
+                    func_def = node
+                    break
+
+            if not func_def:
+                raise CodeStructureError(
+                    "submodel.observable.code must define a function named 'compute_observable'"
+                )
+
+            args = [arg.arg for arg in func_def.args.args]
+            if args != ["t", "y", "constants", "ureg"]:
+                raise CodeStructureError(
+                    f"compute_observable signature must be (t, y, constants, ureg), "
+                    f"got ({', '.join(args)})"
+                )
+
+        # Integrate ODE to get state at t_end
+        param_lookup = {p.name: p for p in model_structure.parameters}
+        params = {}
+        for param_name in self.submodel.parameters:
+            if param_name in param_lookup and param_lookup[param_name].value is not None:
+                params[param_name] = param_lookup[param_name].value
+            else:
+                params[param_name] = 1.0
+
+        inputs = {}
+        state_var_names = [sv.name for sv in self.submodel.state_variables]
+        initial_conditions: dict[str, float] = {}
+
+        for inp in self.calibration_target_estimates.inputs:
+            val = inp.value[0] if isinstance(inp.value, list) else inp.value
+            inputs[inp.name] = val
+            if inp.initializes_state is not None:
+                initial_conditions[inp.initializes_state] = val
+
+        y0 = [initial_conditions[sv] for sv in state_var_names]
+
+        # Compile and run ODE
+        local_scope: dict = {}
+        exec(self.submodel.code, local_scope)
+        submodel_fn = local_scope["submodel"]
+
+        def ode_func(t, y):
+            return submodel_fn(t, list(y), params, inputs)
+
+        sol = solve_ivp(ode_func, list(self.submodel.t_span), y0, method="RK45")
+
+        # Get final state as list (same format as y in ODE)
+        y_final = list(sol.y[:, -1])
+        t_final = sol.t[-1]
+
+        # Build constants dict with Pint quantities
+        constants = {}
+        for const in self.submodel.observable.constants:
+            try:
+                constants[const.name] = const.value * ureg(const.units)
+            except Exception as e:
+                raise CalibrationTargetValidationError(
+                    f"Invalid units '{const.units}' for constant '{const.name}': {e}"
+                )
+
+        # Get observable function (custom or default)
+        if self.submodel.observable.code is not None:
+            # Compile custom observable code
+            try:
+                obs_scope: dict = {}
+                exec(self.submodel.observable.code, obs_scope)
+                compute_obs = obs_scope["compute_observable"]
+            except Exception as e:
+                raise CodeStructureError(f"Failed to compile observable code: {e}")
+        else:
+            # Default: return y[0] with declared units
+            obs_units = self.submodel.observable.units
+
+            def compute_obs(t, y, constants, ureg):
+                return y[0] * ureg(obs_units)
+
+        try:
+            result = compute_obs(t_final, y_final, constants, ureg)
+        except Exception as e:
+            raise CalibrationTargetValidationError(
+                f"submodel.observable.code failed to execute: {e}\n"
+                f"Check that y indices and constants are accessed correctly."
+            )
+
+        # Check result is a Pint Quantity
+        if not hasattr(result, "units"):
+            raise CalibrationTargetValidationError(
+                f"compute_observable must return a Pint Quantity, got {type(result).__name__}\n"
+                "Ensure the return value has units attached (e.g., return value * ureg.micrometer)"
+            )
+
+        # Check units match declared observable units
+        try:
+            expected_units = ureg(self.submodel.observable.units)
+            if result.dimensionality != expected_units.dimensionality:
+                raise DimensionalityMismatchError(
+                    f"Observable output has wrong dimensions:\n"
+                    f"  Expected: {expected_units.dimensionality} ({self.submodel.observable.units})\n"
+                    f"  Got: {result.dimensionality}\n"
+                    f"Check observable code and constants."
+                )
+        except DimensionalityMismatchError:
+            raise
+        except Exception as e:
+            raise CalibrationTargetValidationError(
+                f"Invalid observable units '{self.submodel.observable.units}': {e}"
+            )
 
         return self
 

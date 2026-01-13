@@ -131,7 +131,7 @@ def golden_isolated_target_data():
             "observable": {
                 "code": (
                     "def compute_observable(t, y, constants, ureg):\n"
-                    "    T_cells = y['T_cells']\n"
+                    "    T_cells = y[0]  # same index as in ODE\n"
                     "    # Normalize to initial condition (dimensionless fold-change)\n"
                     "    return (T_cells / 1e5) * ureg.dimensionless"
                 ),
@@ -645,6 +645,87 @@ class TestStateVariablesValidation:
 # ============================================================================
 # get_parameters_used Method Tests
 # ============================================================================
+
+
+class TestObservableCodeValidation:
+    """Tests for observable code validator."""
+
+    def test_default_observable_when_code_omitted(
+        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
+    ):
+        """Test that observable code can be omitted and defaults to y[0] * units."""
+        data = copy.deepcopy(golden_isolated_target_data)
+        # Remove observable code - should default to y[0] * ureg(units)
+        data["submodel"]["observable"]["code"] = None
+        # State is in cells, observable should return cells
+        data["submodel"]["observable"]["units"] = "cell"
+        data["calibration_target_estimates"]["units"] = "cell"
+        # Update distribution_code to return cell units
+        data["calibration_target_estimates"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    np.random.seed(42)\n"
+            "    samples = np.random.lognormal(11.5, 0.5, 10000)  # Around 1e5 cells\n"
+            "    median_obs = np.array([np.median(samples)]) * ureg.cell\n"
+            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * ureg.cell\n"
+            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+            "    ci95_obs = [[ci95[0] * ureg.cell, ci95[1] * ureg.cell]]\n"
+            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+        )
+        # Update median/iqr/ci95 values to match the distribution output
+        # lognormal(11.5, 0.5) with seed 42 produces these exact values
+        data["calibration_target_estimates"]["median"] = [98587.77]
+        data["calibration_target_estimates"]["iqr"] = [67549.62]
+        data["calibration_target_estimates"]["ci95"] = [[36891.73, 264889.72]]
+
+        target = IsolatedSystemTarget.model_validate(
+            data,
+            context={"species_units": species_units, "model_structure": model_structure},
+        )
+        assert target.submodel.observable.code is None
+        assert target.submodel.observable.units == "cell"
+
+    def test_custom_observable_code_works(
+        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
+    ):
+        """Test that custom observable code is validated and executed."""
+        target = IsolatedSystemTarget.model_validate(
+            golden_isolated_target_data,
+            context={"species_units": species_units, "model_structure": model_structure},
+        )
+        assert target.submodel.observable.code is not None
+
+    def test_observable_wrong_signature_fails(
+        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
+    ):
+        """Test that observable with wrong signature fails."""
+        data = copy.deepcopy(golden_isolated_target_data)
+        data["submodel"]["observable"]["code"] = (
+            "def compute_observable(t, y):\n"  # Missing constants, ureg
+            "    return y[0]"
+        )
+
+        with pytest.raises(ValidationError, match="signature must be"):
+            IsolatedSystemTarget.model_validate(
+                data,
+                context={"species_units": species_units, "model_structure": model_structure},
+            )
+
+    def test_observable_wrong_function_name_fails(
+        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
+    ):
+        """Test that observable with wrong function name fails."""
+        data = copy.deepcopy(golden_isolated_target_data)
+        data["submodel"]["observable"]["code"] = (
+            "def get_observable(t, y, constants, ureg):\n"  # Wrong name
+            "    return y[0] * ureg.dimensionless"
+        )
+
+        with pytest.raises(ValidationError, match="compute_observable"):
+            IsolatedSystemTarget.model_validate(
+                data,
+                context={"species_units": species_units, "model_structure": model_structure},
+            )
 
 
 class TestGetParametersUsed:

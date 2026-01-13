@@ -17,6 +17,7 @@ from typing import Dict, Tuple, Optional
 
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
+from ruamel.yaml.comments import CommentedMap
 
 
 # Threshold for converting strings to block scalars
@@ -224,6 +225,22 @@ def _sanitize_null_bytes(obj):
         return obj
 
 
+def _add_blank_lines_between_sections(data: dict) -> CommentedMap:
+    """
+    Convert dict to CommentedMap with blank lines between root-level sections.
+
+    Adds a blank line before each root-level key (except the first) for readability.
+    """
+    cm = CommentedMap(data)
+
+    # Add blank line before each key except the first
+    keys = list(cm.keys())
+    for i, key in enumerate(keys[1:], start=1):
+        cm.yaml_set_comment_before_after_key(key, before="\n")
+
+    return cm
+
+
 def convert_to_yaml(json_data: dict) -> str:
     """Convert JSON to YAML with proper formatting using ruamel.yaml."""
     # Sanitize null bytes from LLM output
@@ -231,6 +248,9 @@ def convert_to_yaml(json_data: dict) -> str:
 
     # Convert long strings to block scalars
     processed_data = _convert_long_strings_to_block(json_data)
+
+    # Add blank lines between root-level sections
+    processed_data = _add_blank_lines_between_sections(processed_data)
 
     # Configure ruamel.yaml
     yaml = YAML()

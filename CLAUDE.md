@@ -468,12 +468,24 @@ core/calibration/isolated_system_target.py:
       ├── parameters: List[str]    # Full model parameter names (for joint inference)
       ├── t_span: [t_start, t_end]
       ├── t_unit: str              # e.g., "day", "hour"
-      ├── observable: SubmodelObservable  # compute_observable(t, y, constants, ureg)
+      ├── observable: SubmodelObservable
+      │   ├── code: Optional[str]  # compute_observable(t, y, constants, ureg)
+      │   │                        # Optional! If omitted, defaults to y[0] * ureg(units)
+      │   ├── units: str           # Required - Pint-parseable units
+      │   └── constants: List[ObservableConstant]
       └── rationale: str           # Why this submodel approximation is appropriate
 
 core/calibration/observable.py:
   Observable, ObservableConstant, SupportType
   Submodel, SubmodelObservable, SubmodelStateVariable
+
+**Submodel observable simplification:**
+If the observable IS just a state variable (no transformation needed), omit `observable.code`:
+```yaml
+observable:
+  units: cell  # Just specify units - code defaults to return y[0] * ureg(units)
+```
+Only write observable code if you need transformations (e.g., cell count → diameter).
 ```
 
 **Import pattern:**
@@ -490,11 +502,21 @@ from qsp_llm_workflows.core.calibration.enums import Species, Compartment
 
 **Key models:**
 - `CalibrationTarget`: For clinical/in vivo data where full model is used. Requires `observable` to define how to compute measurements from model species.
-- `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` with nested ODE code that shares parameter names with the full model for joint inference.
+- `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` with nested ODE code that shares parameter names with the full model for joint inference. Observable code is optional - defaults to `y[0] * ureg(units)`.
 - `Observable`: Defines `compute_observable(time, species_dict, constants, ureg)` for full model
 - `Submodel`: Contains ODE code, state variables, parameters, and a nested `SubmodelObservable`
+- `SubmodelObservable`: Defines `compute_observable(t, y, constants, ureg)` - code is optional, defaults to returning y[0] with units
 - `ExperimentalContext`: Unified context supporting both clinical (indication, treatment, stage) and in vitro (cell_lines, culture_conditions) fields
 - `IndexType`: Enum for index dimension type (time, dose, ratio, concentration, other)
+
+**ModelQueryService (for IsolatedSystemTarget workflow):**
+When extracting IsolatedSystemTarget data, the LLM has access to tools that query the full QSP model:
+- `query_parameters()` - Get parameter names, values, and units
+- `query_species(compartment?)` - Get species in compartments
+- `query_reactions(compartment?, species?)` - Get reaction equations
+- `validate_entity(name, type)` - Verify a parameter/species exists
+
+The LLM should query parameters BEFORE writing submodel code to get exact parameter names for joint inference.
 
 **Vector-valued data:**
 Both scalar and vector-valued data flow through the same pathway:

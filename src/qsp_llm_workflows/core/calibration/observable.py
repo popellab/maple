@@ -133,28 +133,31 @@ class SubmodelObservable(BaseModel):
     """
     Observable specification for IsolatedSystemTarget (submodel).
 
-    Defines how to compute the experimental observable from submodel state.
+    Defines how to compute the experimental observable from integrated submodel state.
+    If code is omitted, defaults to returning y[0] with the specified units.
     """
 
-    code: str = Field(
+    code: Optional[str] = Field(
+        default=None,
         description=(
-            "Python function that computes the observable from submodel state.\n\n"
+            "Python function that computes the observable from integrated submodel state.\n\n"
+            "OPTIONAL: If omitted, defaults to returning y[0] * ureg(units).\n"
+            "Only write code if you need transformations (e.g., cell count → diameter).\n\n"
             "Function signature: compute_observable(t, y, constants, ureg)\n"
             "- t: time value (float, in t_unit)\n"
-            "- y: dict mapping state variable names to values (floats)\n"
+            "- y: state vector (list of floats, same order as state_variables)\n"
             "- constants: dict mapping constant names to Pint Quantities\n"
             "- ureg: Pint UnitRegistry for unit conversions\n\n"
             "Must return a Pint Quantity with units matching calibration_target_estimates.units.\n\n"
             "Example (convert cell count to spheroid diameter):\n"
             "def compute_observable(t, y, constants, ureg):\n"
             "    import numpy as np\n"
-            "    cells = y['PDAC_spheroid_cells']\n"
+            "    cells = y[0]\n"
             "    cell_volume = constants['cell_volume']\n"
             "    volume = cells * cell_volume\n"
             "    radius = ((3 * volume) / (4 * np.pi)) ** (1/3)\n"
-            "    diameter = 2 * radius\n"
-            "    return diameter.to('micrometer')"
-        )
+            "    return (2 * radius).to('micrometer')"
+        ),
     )
 
     units: str = Field(

@@ -63,7 +63,7 @@ src/qsp_llm_workflows/
 
 **Calibration target types:**
 - `CalibrationTarget`: For clinical/in vivo data. Uses `observable` to compute measurements from full model species.
-- `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` to define a standalone ODE that shares parameter names with the full model for joint inference.
+- `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` to define a standalone ODE that shares parameter names with the full model for joint inference. The observable code is optional—if omitted, it defaults to returning the first state variable with the specified units.
 
 **Vector-valued data:** Calibration targets support both scalar and time-course/dose-response data through a unified pathway. Scalar data uses length-1 lists; vector data uses `index_values` to specify the indexing dimension (time points, doses, etc.).
 
