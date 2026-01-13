@@ -307,10 +307,11 @@ qsp-llm-workflows/
 │       │   └── calibration/         # Calibration target models (subfolder)
 │       │       ├── __init__.py      # Re-exports all calibration classes
 │       │       ├── calibration_target_models.py  # CalibrationTarget base class
-│       │       ├── isolated_system_target.py  # IsolatedSystemTarget + Cut models
+│       │       ├── isolated_system_target.py  # IsolatedSystemTarget for in vitro/preclinical
+│       │       ├── observable.py        # Observable, Submodel, SubmodelObservable
 │       │       ├── shared_models.py     # Input (scalar/vector), Source, Snippet
 │       │       ├── enums.py             # Species, Indication, Compartment, System
-│       │       ├── scenario.py          # Intervention, Measurement, Scenario
+│       │       ├── scenario.py          # Intervention, Scenario
 │       │       ├── experimental_context.py  # ExperimentalContext
 │       │       ├── validators.py        # Validation helper functions
 │       │       └── exceptions.py        # Calibration validation exceptions
@@ -436,7 +437,14 @@ The calibration target models use a modular, inheritance-based architecture:
 
 ```
 core/calibration/calibration_target_models.py:
-  CalibrationTarget (base class)
+  CalibrationTarget (base class - for full model calibration)
+  ├── observable                    # How to compute measurement from full model species
+  │   ├── code: str                # compute_observable(time, species_dict, constants, ureg)
+  │   ├── units: str               # Pint-parseable units
+  │   ├── species: List[str]       # Model species accessed (e.g., ['V_T.CD8', 'V_T.C1'])
+  │   ├── constants: List[ObservableConstant]  # Documented constants with units
+  │   ├── support: SupportType     # Mathematical support (positive, non_negative, etc.)
+  │   └── mapping_rationale: str   # Explanation of measurement-to-model mapping
   ├── calibration_target_estimates
   │   ├── median: List[float]      # Vector-valued (length-1 for scalar data)
   │   ├── iqr: List[float]
@@ -447,33 +455,44 @@ core/calibration/calibration_target_models.py:
   │   ├── index_type: Optional[IndexType]      # time, dose, ratio, etc.
   │   ├── inputs: List[Input]      # Scalar or vector-valued
   │   └── distribution_code: str
-  ├── scenario (interventions + measurements)
+  ├── scenario (description + interventions)
   ├── experimental_context (species, compartment, system + optional clinical/in vitro fields)
   ├── study_overview, study_design, key_assumptions, key_study_limitations
   └── primary_data_source, secondary_data_sources
 
 core/calibration/isolated_system_target.py:
   IsolatedSystemTarget(CalibrationTarget)
-  └── cuts: List[Cut]  # Species, compartment, or reaction cuts for reduced models
+  └── submodel                      # Nested ODE submodel (replaces observable)
+      ├── code: str                # submodel(t, y, params, inputs) -> [dydt]
+      ├── state_variables: List[SubmodelStateVariable]  # name + units
+      ├── parameters: List[str]    # Full model parameter names (for joint inference)
+      ├── t_span: [t_start, t_end]
+      ├── t_unit: str              # e.g., "day", "hour"
+      ├── observable: SubmodelObservable  # compute_observable(t, y, constants, ureg)
+      └── rationale: str           # Why this submodel approximation is appropriate
 
-  Cut models:
-  ├── SpeciesCut (clamped, excluded, zero_flux, prescribed)
-  ├── CompartmentCut (excluded)
-  └── ReactionCut (disabled)
+core/calibration/observable.py:
+  Observable, ObservableConstant, SupportType
+  Submodel, SubmodelObservable, SubmodelStateVariable
 ```
 
 **Import pattern:**
 ```python
 # Recommended: import from the calibration package
-from qsp_llm_workflows.core.calibration import CalibrationTarget, IsolatedSystemTarget, IndexType
+from qsp_llm_workflows.core.calibration import (
+    CalibrationTarget, IsolatedSystemTarget, IndexType,
+    Observable, Submodel, SubmodelStateVariable
+)
 
 # Or import specific submodules
 from qsp_llm_workflows.core.calibration.enums import Species, Compartment
 ```
 
 **Key models:**
-- `CalibrationTarget` (in `calibration/calibration_target_models.py`): For clinical/in vivo data where full model is assumed
-- `IsolatedSystemTarget` (in `calibration/isolated_system_target.py`): Extends CalibrationTarget with `cuts` for in vitro experiments
+- `CalibrationTarget`: For clinical/in vivo data where full model is used. Requires `observable` to define how to compute measurements from model species.
+- `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` with nested ODE code that shares parameter names with the full model for joint inference.
+- `Observable`: Defines `compute_observable(time, species_dict, constants, ureg)` for full model
+- `Submodel`: Contains ODE code, state variables, parameters, and a nested `SubmodelObservable`
 - `ExperimentalContext`: Unified context supporting both clinical (indication, treatment, stage) and in vitro (cell_lines, culture_conditions) fields
 - `IndexType`: Enum for index dimension type (time, dose, ratio, concentration, other)
 
@@ -482,11 +501,6 @@ Both scalar and vector-valued data flow through the same pathway:
 - Scalar data: `median=[42.0]`, `iqr=[5.0]`, `ci95=[[37.0, 47.0]]` (length-1 lists)
 - Vector data: Lists matching `index_values` length (e.g., time-course with 4 points)
 - `Input.value` can be `float` (broadcast to all index points) or `List[float]` (per-point values)
-
-**Cut types for isolated systems (in `calibration/isolated_system_target.py`):**
-- `SpeciesCut`: Clamp, exclude, zero_flux, or prescribe a species
-- `CompartmentCut`: Exclude entire compartment
-- `ReactionCut`: Disable a reaction
 
 ### Key Design Principles
 

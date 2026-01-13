@@ -45,6 +45,13 @@ class Input(BaseModel):
     value_snippet: Optional[str] = Field(
         None, description="Exact text snippet from source containing the value(s)"
     )
+    initializes_state: Optional[str] = Field(
+        None,
+        description=(
+            "For IsolatedSystemTarget: the state variable this input provides "
+            "the initial condition for (e.g., 'T_cells'). Must match a name in state_variables."
+        ),
+    )
 
     @field_validator("value")
     @classmethod

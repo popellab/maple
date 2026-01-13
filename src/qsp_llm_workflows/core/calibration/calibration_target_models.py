@@ -37,6 +37,7 @@ from qsp_llm_workflows.core.calibration.exceptions import (
     UnitConversionError,
 )
 from qsp_llm_workflows.core.calibration.experimental_context import ExperimentalContext
+from qsp_llm_workflows.core.calibration.observable import Observable
 from qsp_llm_workflows.core.calibration.scenario import Scenario
 from qsp_llm_workflows.core.calibration.shared_models import (
     Input,
@@ -284,9 +285,16 @@ class CalibrationTarget(BaseModel):
     # --- Scenario specification (LLM-generated) ---
     scenario: Scenario = Field(
         description=(
-            "Experimental scenario: sequence of interventions and measurements. "
-            "Must include at least one measurement to specify what observable is being extracted. "
+            "Experimental scenario: description and sequence of interventions. "
             "Interventions list may be empty for natural/untreated state measurements."
+        )
+    )
+
+    # --- Observable specification (LLM-generated) ---
+    observable: Observable = Field(
+        description=(
+            "How to compute the experimental observable from full model species. "
+            "Defines the code that transforms model output to match literature measurements."
         )
     )
 
@@ -364,12 +372,6 @@ class CalibrationTarget(BaseModel):
         """
         return cls(**{**headers.model_dump(), **content})
 
-    # DISABLED: Simplified measurement structure - executable code deferred to manual implementation
-    # @model_validator(mode="after")
-    # def validate_threshold_inputs(self) -> "CalibrationTarget":
-    #     """Validator disabled for simplified measurement structure."""
-    #     return self
-
     @model_validator(mode="after")
     def validate_doi_resolution(self) -> "CalibrationTarget":
         """Validator: Check that primary DOI resolves via CrossRef."""
@@ -400,13 +402,17 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_measurement_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
+    def validate_observable_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
         """
-        Validator: Check that measurement_code executes and returns correct units.
+        Validator: Check that observable code executes and returns correct units.
 
         Requires context:
             species_units: Dict mapping species names to unit strings (from species_units.json)
         """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
         from qsp_llm_workflows.core.unit_registry import ureg
         import pint
 
@@ -417,102 +423,101 @@ class CalibrationTarget(BaseModel):
             )
         species_units = info.context["species_units"]
 
-        for measurement in self.scenario.measurements:
-            # Parse the code
-            try:
-                tree = ast.parse(measurement.measurement_code)
-            except SyntaxError as e:
-                raise CodeSyntaxError(f"measurement_code has syntax error: {e}")
+        # Parse the code
+        try:
+            tree = ast.parse(self.observable.code)
+        except SyntaxError as e:
+            raise CodeSyntaxError(f"observable.code has syntax error: {e}")
 
-            # Find the function definition
-            func_def = None
-            for node in ast.walk(tree):
-                if isinstance(node, ast.FunctionDef) and node.name == "compute_measurement":
-                    func_def = node
-                    break
+        # Find the function definition
+        func_def = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "compute_observable":
+                func_def = node
+                break
 
-            if not func_def:
-                raise CodeStructureError(
-                    "measurement_code must define a function named 'compute_measurement'"
+        if not func_def:
+            raise CodeStructureError(
+                "observable.code must define a function named 'compute_observable'"
+            )
+
+        # Check signature
+        args = [arg.arg for arg in func_def.args.args]
+        if args != ["time", "species_dict", "constants", "ureg"]:
+            raise CodeStructureError(
+                f"Function signature must be (time, species_dict, constants, ureg), got ({', '.join(args)})"
+            )
+
+        # Execute with mock data
+        try:
+            # Create mock time array
+            mock_time = np.linspace(0, 14, 100) * ureg.day
+
+            # Create mock species from actual model (with matching length)
+            mock_species = create_mock_species(species_units, ureg, n_timepoints=len(mock_time))
+
+            # Build constants dict from observable.constants
+            constants = {}
+            for const in self.observable.constants:
+                constants[const.name] = const.value * ureg(const.units)
+
+            # Execute function
+            local_scope = {"ureg": ureg, "np": np}
+            exec(self.observable.code, local_scope)
+            compute_fn = local_scope["compute_observable"]
+
+            result = compute_fn(mock_time, mock_species, constants, ureg)
+
+            # Check result has units
+            if not hasattr(result, "units"):
+                raise MissingUnitsError("Function must return a Pint Quantity with units")
+
+            # Check dimensionality matches calibration target units
+            expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
+            if result.dimensionality != expected_quantity.dimensionality:
+                raise DimensionalityMismatchError(
+                    f"Observable code unit dimensionality mismatch:\n"
+                    f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
+                    f"  Got: {result.units} ({result.dimensionality})"
                 )
 
-            # Check signature
-            args = [arg.arg for arg in func_def.args.args]
-            if args != ["time", "species_dict", "ureg", "constants"]:
-                raise CodeStructureError(
-                    f"Function signature must be (time, species_dict, ureg, constants), got ({', '.join(args)})"
-                )
-
-            # Execute with mock data
-            try:
-                # Create mock time array
-                mock_time = np.linspace(0, 14, 100) * ureg.day
-
-                # Create mock species from actual model (with matching length)
-                mock_species = create_mock_species(species_units, ureg, n_timepoints=len(mock_time))
-
-                # Build constants dict from measurement_constants
-                constants = {}
-                for const in measurement.measurement_constants:
-                    constants[const.name] = const.value * ureg(const.units)
-
-                # Execute function
-                local_scope = {"ureg": ureg, "np": np}
-                exec(measurement.measurement_code, local_scope)
-                compute_fn = local_scope["compute_measurement"]
-
-                result = compute_fn(mock_time, mock_species, ureg, constants)
-
-                # Check result has units
-                if not hasattr(result, "units"):
-                    raise MissingUnitsError("Function must return a Pint Quantity with units")
-
-                # Check dimensionality matches calibration target units
-                expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
-                if result.dimensionality != expected_quantity.dimensionality:
-                    raise DimensionalityMismatchError(
-                        f"Measurement code unit dimensionality mismatch:\n"
-                        f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
-                        f"  Got: {result.units} ({result.dimensionality})"
+            # Check result has same length as time series (no time indexing)
+            if hasattr(result, "magnitude"):
+                result_magnitude = result.magnitude
+                # Handle both scalar and array results
+                if np.isscalar(result_magnitude):
+                    raise ScalarReturnError(
+                        f"Observable code returned a scalar, but should return an array with same length as time series.\n"
+                        f"  Expected length: {len(mock_time)}\n"
+                        f"  Got: scalar value\n"
+                        f"Do NOT use time indexing (e.g., species[-1] or species[0]) in observable code.\n"
+                        f"Compute the observable over the entire time series."
+                    )
+                elif len(result_magnitude) != len(mock_time):
+                    raise ArrayLengthError(
+                        f"Observable code returned array with wrong length:\n"
+                        f"  Expected: {len(mock_time)} (same as time series)\n"
+                        f"  Got: {len(result_magnitude)}\n"
+                        f"Do NOT use time indexing. Compute over entire time series."
                     )
 
-                # Check result has same length as time series (no time indexing)
-                if hasattr(result, "magnitude"):
-                    result_magnitude = result.magnitude
-                    # Handle both scalar and array results
-                    if np.isscalar(result_magnitude):
-                        raise ScalarReturnError(
-                            f"Measurement code returned a scalar, but should return an array with same length as time series.\n"
-                            f"  Expected length: {len(mock_time)}\n"
-                            f"  Got: scalar value\n"
-                            f"Do NOT use time indexing (e.g., species[-1] or species[0]) in measurement_code.\n"
-                            f"Compute the observable over the entire time series."
-                        )
-                    elif len(result_magnitude) != len(mock_time):
-                        raise ArrayLengthError(
-                            f"Measurement code returned array with wrong length:\n"
-                            f"  Expected: {len(mock_time)} (same as time series)\n"
-                            f"  Got: {len(result_magnitude)}\n"
-                            f"Do NOT use time indexing. Compute over entire time series."
-                        )
-
-            except (
-                pint.DimensionalityError,
-                pint.UndefinedUnitError,
-                pint.OffsetUnitCalculusError,
-            ) as e:
-                # Wrap Pint unit errors in our custom exception
-                raise UnitConversionError(
-                    f"Measurement code has unit error: {str(e)}\n"
-                    f"Check that all unit operations are dimensionally consistent."
-                ) from e
-            except CalibrationTargetValidationError:
-                # Re-raise all our custom validation errors
-                raise
-            except Exception:
-                # Other errors might be from complex logic or missing species
-                # Be lenient - actual execution will catch these
-                pass
+        except (
+            pint.DimensionalityError,
+            pint.UndefinedUnitError,
+            pint.OffsetUnitCalculusError,
+        ) as e:
+            # Wrap Pint unit errors in our custom exception
+            raise UnitConversionError(
+                f"Observable code has unit error: {str(e)}\n"
+                f"Check that all unit operations are dimensionally consistent."
+            ) from e
+        except CalibrationTargetValidationError:
+            # Re-raise all our custom validation errors
+            raise
+        except Exception:
+            # Other errors might be from complex logic or missing species
+            # Be lenient - actual execution will catch these
+            pass
 
         return self
 
@@ -712,11 +717,15 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_species_exist(self, info: ValidationInfo) -> "CalibrationTarget":
         """
-        Validator: Check that measurement_species exist in model.
+        Validator: Check that observable.species exist in model.
 
         Requires context:
             species_units: Dict mapping species names to unit strings (from species_units.json)
         """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
         # Get species_units from context
         if not info.context:
             raise ValueError(
@@ -725,15 +734,14 @@ class CalibrationTarget(BaseModel):
         species_units = info.context["species_units"]
         available_species = set(species_units.keys())
 
-        for measurement in self.scenario.measurements:
-            # Check all measurement_species exist
-            for species in measurement.measurement_species:
-                if species not in available_species:
-                    raise SpeciesNotFoundError(
-                        f"measurement_species '{species}' not found in model.\n"
-                        f"Available species: {sorted(available_species)}\n"
-                        f"Check species name format (should be compartment.species, e.g., 'V_T.C1', 'V_T.CD8')"
-                    )
+        # Check all observable species exist
+        for species in self.observable.species:
+            if species not in available_species:
+                raise SpeciesNotFoundError(
+                    f"observable.species '{species}' not found in model.\n"
+                    f"Available species: {sorted(available_species)}\n"
+                    f"Check species name format (should be compartment.species, e.g., 'V_T.C1', 'V_T.CD8')"
+                )
 
         return self
 
@@ -864,8 +872,12 @@ class CalibrationTarget(BaseModel):
         """
         Validator (WARNING): Check that conversion factors are documented.
 
-        Magic numbers in measurement_code should be in inputs or key_assumptions.
+        Magic numbers in observable.code should be in observable.constants or key_assumptions.
         """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
         import warnings
 
         # Universal constants to ignore (only truly fundamental values)
@@ -900,54 +912,45 @@ class CalibrationTarget(BaseModel):
             0.975,
         }
 
-        for measurement in self.scenario.measurements:
-            code = measurement.measurement_code
+        code = self.observable.code
 
-            # Extract numeric literals from code
-            try:
-                tree = ast.parse(code)
-                literals = []
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-                        val = node.value
-                        # Skip universal constants (with tolerance for floating point)
-                        if not any(abs(val - c) < 1e-6 for c in UNIVERSAL_CONSTANTS):
-                            literals.append(val)
-            except SyntaxError:
-                # If code doesn't parse, skip this check
-                continue
+        # Extract numeric literals from code
+        try:
+            tree = ast.parse(code)
+            literals = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                    val = node.value
+                    # Skip universal constants (with tolerance for floating point)
+                    if not any(abs(val - c) < 1e-6 for c in UNIVERSAL_CONSTANTS):
+                        literals.append(val)
+        except SyntaxError:
+            # If code doesn't parse, skip this check
+            return self
 
-            if literals:
-                # Check if these appear in inputs or assumptions
-                # Flatten input values (handle both scalar and vector inputs)
-                input_values: list[float] = []
-                for inp in self.calibration_target_estimates.inputs:
-                    if isinstance(inp.value, list):
-                        input_values.extend(inp.value)
-                    else:
-                        input_values.append(inp.value)
+        if literals:
+            # Check if these appear in observable.constants or assumptions
+            constant_values: list[float] = [c.value for c in self.observable.constants]
 
-                assumption_texts = " ".join(a.text for a in self.key_assumptions)
+            assumption_texts = " ".join(a.text for a in self.key_assumptions)
 
-                undocumented = []
-                for lit in literals:
-                    # Check if value appears in inputs (with tolerance)
-                    in_inputs = any(abs(lit - v) < 1e-6 for v in input_values)
-                    # Check if value appears in assumption text
-                    in_assumptions = (
-                        str(lit) in assumption_texts or f"{lit:.0e}" in assumption_texts
-                    )
+            undocumented = []
+            for lit in literals:
+                # Check if value appears in constants (with tolerance)
+                in_constants = any(abs(lit - v) < 1e-6 for v in constant_values)
+                # Check if value appears in assumption text
+                in_assumptions = str(lit) in assumption_texts or f"{lit:.0e}" in assumption_texts
 
-                    if not (in_inputs or in_assumptions):
-                        undocumented.append(lit)
+                if not (in_constants or in_assumptions):
+                    undocumented.append(lit)
 
-                if undocumented:
-                    warnings.warn(
-                        f"measurement_code contains numeric literals {undocumented} that may be conversion factors. "
-                        f"Document these in either inputs (with source_ref) or key_assumptions. "
-                        f"Examples: cell sizes (µm), cellularity fractions, density values, geometric conversion factors.",
-                        UserWarning,
-                    )
+            if undocumented:
+                warnings.warn(
+                    f"observable.code contains numeric literals {undocumented} that may be conversion factors. "
+                    f"Document these in either observable.constants or key_assumptions. "
+                    f"Examples: cell sizes (µm), cellularity fractions, density values, geometric conversion factors.",
+                    UserWarning,
+                )
 
         return self
 
@@ -991,11 +994,11 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_no_hardcoded_constants_in_measurement_code(self) -> "CalibrationTarget":
+    def validate_no_hardcoded_constants_in_observable_code(self) -> "CalibrationTarget":
         """
-        Validator (ERROR): Flag hardcoded numbers with units in measurement_code.
+        Validator (ERROR): Flag hardcoded numbers with units in observable.code.
 
-        All numeric constants with units must be declared in measurement_constants
+        All numeric constants with units must be declared in observable.constants
         and accessed via the constants dict. This prevents arbitrary magic numbers
         and forces explicit documentation of biological assumptions.
 
@@ -1005,6 +1008,10 @@ class CalibrationTarget(BaseModel):
         - Small integers (0, 1, 2, 3)
         - Numbers accessed from constants dict
         """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
         import re
 
         # Patterns that indicate a number is being multiplied by units
@@ -1041,50 +1048,49 @@ class CalibrationTarget(BaseModel):
             100,  # Common for percent conversion
         }
 
-        for measurement in self.scenario.measurements:
-            code = measurement.measurement_code
+        code = self.observable.code
 
-            # Find all hardcoded numbers with units
-            violations = []
-            for pattern in HARDCODED_UNIT_PATTERNS:
-                for match in re.finditer(pattern, code):
-                    try:
-                        # Extract the number from the match
-                        num_str = match.group(1) if match.lastindex else None
-                        if num_str:
-                            num = float(num_str)
-                            # Skip allowed numbers
-                            if num not in ALLOWED_NUMBERS:
-                                violations.append((num, match.group(0)))
-                    except (ValueError, IndexError):
-                        continue
+        # Find all hardcoded numbers with units
+        violations = []
+        for pattern in HARDCODED_UNIT_PATTERNS:
+            for match in re.finditer(pattern, code):
+                try:
+                    # Extract the number from the match
+                    num_str = match.group(1) if match.lastindex else None
+                    if num_str:
+                        num = float(num_str)
+                        # Skip allowed numbers
+                        if num not in ALLOWED_NUMBERS:
+                            violations.append((num, match.group(0)))
+                except (ValueError, IndexError):
+                    continue
 
-            if violations:
-                violation_strs = [f"  • {v[0]} in '{v[1]}'" for v in violations[:5]]
-                raise HardcodedConstantError(
-                    "Hardcoded numeric constants with units found in measurement_code:\n"
-                    + "\n".join(violation_strs)
-                    + (f"\n  ... and {len(violations) - 5} more" if len(violations) > 5 else "")
-                    + "\n\nAll numeric constants with units must be declared in measurement_constants "
-                    + "and accessed via the constants dict.\n"
-                    + "Example fix:\n"
-                    + "  1. Add to measurement_constants:\n"
-                    + "     - name: area_per_cancer_cell\n"
-                    + "       value: 2.27e-4\n"
-                    + "       units: mm**2/cell\n"
-                    + "       biological_basis: 'Cancer cell diameter ~17 μm → area = π×(8.5 μm)²'\n"
-                    + "       source_ref: modeling_assumption\n"
-                    + "  2. Use in code: area_per_cell = constants['area_per_cancer_cell']"
-                )
+        if violations:
+            violation_strs = [f"  • {v[0]} in '{v[1]}'" for v in violations[:5]]
+            raise HardcodedConstantError(
+                "Hardcoded numeric constants with units found in observable.code:\n"
+                + "\n".join(violation_strs)
+                + (f"\n  ... and {len(violations) - 5} more" if len(violations) > 5 else "")
+                + "\n\nAll numeric constants with units must be declared in observable.constants "
+                + "and accessed via the constants dict.\n"
+                + "Example fix:\n"
+                + "  1. Add to observable.constants:\n"
+                + "     - name: area_per_cancer_cell\n"
+                + "       value: 2.27e-4\n"
+                + "       units: mm**2/cell\n"
+                + "       biological_basis: 'Cancer cell diameter ~17 μm → area = π×(8.5 μm)²'\n"
+                + "       source_ref: modeling_assumption\n"
+                + "  2. Use in code: area_per_cell = constants['area_per_cancer_cell']"
+            )
 
         return self
 
     @model_validator(mode="after")
     def validate_scale_consistency(self, info: ValidationInfo) -> "CalibrationTarget":
         """
-        Validator: Check that measurement_code output scale matches calibration target scale.
+        Validator: Check that observable.code output scale matches calibration target scale.
 
-        Executes measurement_code with mock species data spanning wide range and checks
+        Executes observable.code with mock species data spanning wide range and checks
         if output range is compatible with calibration_target_estimates range.
 
         Catches scale mismatches like ratio (0-1) vs score (0-3) before calibration.
@@ -1092,6 +1098,10 @@ class CalibrationTarget(BaseModel):
         Requires context:
             species_units: Dict mapping species names to unit strings (from species_units.json)
         """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
         from qsp_llm_workflows.core.unit_registry import ureg
 
         # Get species_units from context
@@ -1115,178 +1125,132 @@ class CalibrationTarget(BaseModel):
         # Use median of medians for representative central value
         target_median = float(np.median(estimates.median))
 
-        # Execute measurement_code and check output range
-        for measurement in self.scenario.measurements:
-            try:
-                # Create mock time array
-                n_timepoints = 50
-                mock_time = np.linspace(0, 100, n_timepoints) * ureg.day
+        try:
+            # Create mock time array
+            n_timepoints = 50
+            mock_time = np.linspace(0, 100, n_timepoints) * ureg.day
 
-                # Create mock species with INDEPENDENT variation
-                # Key improvement: vary species with different phases so ratios actually vary
-                mock_species = {}
-                for idx, species_name in enumerate(measurement.measurement_species):
-                    # Get unit from species_units (handle both dict and string formats)
-                    species_info = species_units.get(species_name, "cell")
-                    if isinstance(species_info, dict):
-                        unit_str = species_info.get("units", "cell")
-                    else:
-                        unit_str = species_info
+            # Create mock species with INDEPENDENT variation
+            # Key improvement: vary species with different phases so ratios actually vary
+            mock_species = {}
+            for idx, species_name in enumerate(self.observable.species):
+                # Get unit from species_units (handle both dict and string formats)
+                species_info = species_units.get(species_name, "cell")
+                if isinstance(species_info, dict):
+                    unit_str = species_info.get("units", "cell")
+                else:
+                    unit_str = species_info
 
-                    # Use biologically realistic base values based on unit type
-                    base_value = get_typical_species_value(unit_str)
+                # Use biologically realistic base values based on unit type
+                base_value = get_typical_species_value(unit_str)
 
-                    # Vary each species with a different phase offset
-                    # This ensures ratios will vary, exposing conversion factor issues
-                    phase_offset = idx * np.pi / max(len(measurement.measurement_species), 1)
-                    variation = 1 + 0.8 * np.sin(
-                        np.linspace(0, 4 * np.pi, n_timepoints) + phase_offset
-                    )
+                # Vary each species with a different phase offset
+                # This ensures ratios will vary, exposing conversion factor issues
+                phase_offset = idx * np.pi / max(len(self.observable.species), 1)
+                variation = 1 + 0.8 * np.sin(np.linspace(0, 4 * np.pi, n_timepoints) + phase_offset)
 
-                    # Also include some magnitude variation (±1 order of magnitude)
-                    magnitude_variation = np.logspace(-0.5, 0.5, n_timepoints)
+                # Also include some magnitude variation (±1 order of magnitude)
+                magnitude_variation = np.logspace(-0.5, 0.5, n_timepoints)
 
-                    values = base_value * variation * magnitude_variation
-                    mock_species[species_name] = values * ureg(unit_str)
+                values = base_value * variation * magnitude_variation
+                mock_species[species_name] = values * ureg(unit_str)
 
-                # Execute measurement_code
-                local_scope = {"ureg": ureg, "np": np}
-                exec(measurement.measurement_code, local_scope)
-                compute_fn = local_scope["compute_measurement"]
+            # Execute observable.code
+            local_scope = {"ureg": ureg, "np": np}
+            exec(self.observable.code, local_scope)
+            compute_fn = local_scope["compute_observable"]
 
-                # Build constants dict from measurement_constants
-                constants = {}
-                for const in measurement.measurement_constants:
-                    constants[const.name] = const.value * ureg(const.units)
+            # Build constants dict from observable.constants
+            constants = {}
+            for const in self.observable.constants:
+                constants[const.name] = const.value * ureg(const.units)
 
-                result = compute_fn(mock_time, mock_species, ureg, constants)
+            result = compute_fn(mock_time, mock_species, constants, ureg)
 
-                # Get code output statistics
-                result_magnitude = np.atleast_1d(result.magnitude)
-                code_min = float(np.min(result_magnitude))
-                code_max = float(np.max(result_magnitude))
-                code_median = float(np.median(result_magnitude))
-                code_std = float(np.std(result_magnitude))
+            # Get code output statistics
+            result_magnitude = np.atleast_1d(result.magnitude)
+            code_min = float(np.min(result_magnitude))
+            code_max = float(np.max(result_magnitude))
+            code_median = float(np.median(result_magnitude))
+            code_std = float(np.std(result_magnitude))
 
-                # Check for scale mismatch patterns
-                # Pattern 1: Code outputs ratio (0-1) but target is score (>2)
-                if code_max <= 1.5 and target_max > 2.0:
+            # Check for scale mismatch patterns
+            # Pattern 1: Code outputs ratio (0-1) but target is score (>2)
+            if code_max <= 1.5 and target_max > 2.0:
+                raise ScaleMismatchError(
+                    f"Scale mismatch detected - likely ratio (0-1) vs score (0-N) mismatch:\n"
+                    f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
+                    f"  • Observable code:    median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
+                    f"The observable.code outputs values on 0-1 scale (likely a ratio/fraction),\n"
+                    f"but calibration target is on a larger scale (likely a 0-N score).\n"
+                    f"Fix: Either scale the calibration target down to 0-1, or scale the observable.code up to 0-N."
+                )
+
+            # Pattern 2: Code outputs score (>2) but target is ratio (0-1)
+            if code_max > 2.0 and target_max <= 1.5:
+                raise ScaleMismatchError(
+                    f"Scale mismatch detected - likely score (0-N) vs ratio (0-1) mismatch:\n"
+                    f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
+                    f"  • Observable code:    median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
+                    f"The observable.code outputs values on 0-N scale (likely a score),\n"
+                    f"but calibration target is on 0-1 scale (likely a ratio/fraction).\n"
+                    f"Fix: Either scale the calibration target up to 0-N, or scale the observable.code down to 0-1."
+                )
+
+            # Pattern 3: Ranges don't overlap and differ by >10x
+            tolerance = 10.0
+            if code_median > 0 and target_median > 0:
+                median_ratio = max(target_median, code_median) / min(target_median, code_median)
+
+                # Check if ranges don't overlap
+                ranges_overlap = not (code_max < target_min or code_min > target_max)
+
+                if not ranges_overlap and median_ratio > tolerance:
                     raise ScaleMismatchError(
-                        f"Scale mismatch detected - likely ratio (0-1) vs score (0-N) mismatch:\n"
+                        f"Scale mismatch detected - output scale differs by {median_ratio:.1f}x:\n"
                         f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
-                        f"  • Measurement code:   median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
-                        f"The measurement_code outputs values on 0-1 scale (likely a ratio/fraction),\n"
-                        f"but calibration target is on a larger scale (likely a 0-N score).\n"
-                        f"Fix: Either scale the calibration target down to 0-1, or scale the measurement_code up to 0-N."
+                        f"  • Observable code:    median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
+                        f"The observable.code output is on a different scale than the calibration target.\n"
+                        f"Check for missing unit conversions or scaling factors."
                     )
 
-                # Pattern 2: Code outputs score (>2) but target is ratio (0-1)
-                if code_max > 2.0 and target_max <= 1.5:
+            # Pattern 4: Absolute magnitude check
+            # Even if ranges "overlap" due to mock data spread, flag if
+            # medians are wildly different (>100×)
+            if code_median > 0 and target_median > 0:
+                absolute_ratio = max(target_median, code_median) / min(target_median, code_median)
+                if absolute_ratio > 100:
                     raise ScaleMismatchError(
-                        f"Scale mismatch detected - likely score (0-N) vs ratio (0-1) mismatch:\n"
-                        f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
-                        f"  • Measurement code:   median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
-                        f"The measurement_code outputs values on 0-N scale (likely a score),\n"
-                        f"but calibration target is on 0-1 scale (likely a ratio/fraction).\n"
-                        f"Fix: Either scale the calibration target up to 0-N, or scale the measurement_code down to 0-1."
+                        f"Magnitude mismatch detected - medians differ by {absolute_ratio:.0f}×:\n"
+                        f"  • Calibration target median: {target_median:.3g}\n"
+                        f"  • Observable code median:    {code_median:.3g}\n"
+                        f"The observable.code output magnitude is very different from the calibration target.\n"
+                        f"This often indicates a wrong conversion factor (e.g., 1e-8 instead of 2.27e-4).\n"
+                        f"Check: area_per_cell calculations, volume conversions, or density scaling factors."
                     )
 
-                # Pattern 3: Ranges don't overlap and differ by >10x
-                tolerance = 10.0
-                if code_median > 0 and target_median > 0:
-                    median_ratio = max(target_median, code_median) / min(target_median, code_median)
+            # Pattern 5: Variability check
+            # If inputs vary but output is constant, formula may be wrong
+            if code_median != 0:
+                code_cv = code_std / abs(code_median)
+                if code_cv < 1e-6:
+                    # Output is effectively constant despite varying inputs
+                    import warnings
 
-                    # Check if ranges don't overlap
-                    ranges_overlap = not (code_max < target_min or code_min > target_max)
-
-                    if not ranges_overlap and median_ratio > tolerance:
-                        raise ScaleMismatchError(
-                            f"Scale mismatch detected - output scale differs by {median_ratio:.1f}x:\n"
-                            f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
-                            f"  • Measurement code:   median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
-                            f"The measurement_code output is on a different scale than the calibration target.\n"
-                            f"Check for missing unit conversions or scaling factors."
-                        )
-
-                # Pattern 4 (NEW): Absolute magnitude check
-                # Even if ranges "overlap" due to mock data spread, flag if
-                # medians are wildly different (>100×)
-                if code_median > 0 and target_median > 0:
-                    absolute_ratio = max(target_median, code_median) / min(
-                        target_median, code_median
-                    )
-                    if absolute_ratio > 100:
-                        raise ScaleMismatchError(
-                            f"Magnitude mismatch detected - medians differ by {absolute_ratio:.0f}×:\n"
-                            f"  • Calibration target median: {target_median:.3g}\n"
-                            f"  • Measurement code median:   {code_median:.3g}\n"
-                            f"The measurement_code output magnitude is very different from the calibration target.\n"
-                            f"This often indicates a wrong conversion factor (e.g., 1e-8 instead of 2.27e-4).\n"
-                            f"Check: area_per_cell calculations, volume conversions, or density scaling factors."
-                        )
-
-                # Pattern 5 (NEW): Support validation
-                # Check that output respects declared support constraints
-                support = measurement.support
-
-                if support == "positive" and code_min <= 0:
-                    raise ScaleMismatchError(
-                        f"Support violation detected - non-positive values for 'positive' support:\n"
-                        f"  • Declared support: {support}\n"
-                        f"  • Measurement code min: {code_min:.3g}\n"
-                        f"The measurement_code produces values <= 0, but support is 'positive'.\n"
-                        f"Check for sign errors or incorrect formula structure."
+                    warnings.warn(
+                        f"Observable code output is constant (CV={code_cv:.2e}) despite varying inputs.\n"
+                        f"This may indicate the formula doesn't use all declared species correctly,\n"
+                        f"or contains hardcoded values that override the species inputs.",
+                        UserWarning,
                     )
 
-                if support == "non_negative" and code_min < 0:
-                    raise ScaleMismatchError(
-                        f"Support violation detected - negative values for 'non_negative' support:\n"
-                        f"  • Declared support: {support}\n"
-                        f"  • Measurement code min: {code_min:.3g}\n"
-                        f"The measurement_code produces negative values, but support is 'non_negative'.\n"
-                        f"Check for sign errors or incorrect formula structure."
-                    )
-
-                if support == "unit_interval" and (code_min < 0 or code_max > 1):
-                    raise ScaleMismatchError(
-                        f"Support violation detected - values outside [0, 1] for 'unit_interval' support:\n"
-                        f"  • Declared support: {support}\n"
-                        f"  • Measurement code range: [{code_min:.3g}, {code_max:.3g}]\n"
-                        f"The measurement_code produces values outside [0, 1], but support is 'unit_interval'.\n"
-                        f"Check for missing normalization or incorrect formula."
-                    )
-
-                if support == "positive_unbounded" and code_min <= 0:
-                    raise ScaleMismatchError(
-                        f"Support violation detected - non-positive values for 'positive_unbounded' support:\n"
-                        f"  • Declared support: {support}\n"
-                        f"  • Measurement code min: {code_min:.3g}\n"
-                        f"The measurement_code produces values <= 0, but support is 'positive_unbounded'.\n"
-                        f"Check for sign errors or incorrect formula structure."
-                    )
-
-                # Pattern 6 (NEW): Variability check
-                # If inputs vary but output is constant, formula may be wrong
-                if code_median != 0:
-                    code_cv = code_std / abs(code_median)
-                    if code_cv < 1e-6:
-                        # Output is effectively constant despite varying inputs
-                        import warnings
-
-                        warnings.warn(
-                            f"Measurement code output is constant (CV={code_cv:.2e}) despite varying inputs.\n"
-                            f"This may indicate the formula doesn't use all declared species correctly,\n"
-                            f"or contains hardcoded values that override the species inputs.",
-                            UserWarning,
-                        )
-
-            except CalibrationTargetValidationError:
-                # Re-raise all our custom validation errors
-                raise
-            except Exception:
-                # Other errors (e.g., complex mock data requirements) - be lenient
-                # The measurement_code might use logic we can't easily mock
-                pass
+        except CalibrationTargetValidationError:
+            # Re-raise all our custom validation errors
+            raise
+        except Exception:
+            # Other errors (e.g., complex mock data requirements) - be lenient
+            # The observable.code might use logic we can't easily mock
+            pass
 
         return self
 
@@ -1298,6 +1262,10 @@ class CalibrationTarget(BaseModel):
         When measuring "total" quantities (e.g., total CD8 via pan-CD8 antibody),
         warns if related species that should be summed are not included.
         """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
         import warnings
 
         # Related species pairs - if one is used for a "total" measurement,
@@ -1314,24 +1282,23 @@ class CalibrationTarget(BaseModel):
         # Keywords suggesting a "total" measurement
         TOTAL_KEYWORDS = ["total", "all", "overall", "pan-", "combined"]
 
-        for measurement in self.scenario.measurements:
-            desc_lower = measurement.measurement_description.lower()
-            uses_total = any(kw in desc_lower for kw in TOTAL_KEYWORDS)
+        desc_lower = self.description.lower()
+        uses_total = any(kw in desc_lower for kw in TOTAL_KEYWORDS)
 
-            if not uses_total:
-                continue
+        if not uses_total:
+            return self
 
-            used_species = set(measurement.measurement_species)
-            for species in measurement.measurement_species:
-                related = RELATED_SPECIES.get(species, [])
-                missing = [r for r in related if r not in used_species]
-                if missing:
-                    warnings.warn(
-                        f"Species completeness: '{species}' used for 'total' measurement "
-                        f"but related species {missing} not included.\n"
-                        f"If measuring total CD8+ via pan-CD8 antibody, include both CD8 and CD8_exh.",
-                        UserWarning,
-                    )
+        used_species = set(self.observable.species)
+        for species in self.observable.species:
+            related = RELATED_SPECIES.get(species, [])
+            missing = [r for r in related if r not in used_species]
+            if missing:
+                warnings.warn(
+                    f"Species completeness: '{species}' used for 'total' measurement "
+                    f"but related species {missing} not included.\n"
+                    f"If measuring total CD8+ via pan-CD8 antibody, include both CD8 and CD8_exh.",
+                    UserWarning,
+                )
 
         return self
 

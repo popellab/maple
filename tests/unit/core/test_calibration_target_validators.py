@@ -63,27 +63,23 @@ def golden_calibration_target_data():
             "interventions": [
                 {"intervention_description": "No intervention (natural disease progression)"}
             ],
-            "measurements": [
-                {
-                    "measurement_description": (
-                        "CD8+ T cell density measured via IHC in tumor tissue sections, "
-                        "reported as dimensionless ratio (CD8+ cells / tumor cells)"
-                    ),
-                    "measurement_species": ["V_T.CD8", "V_T.C1"],
-                    "measurement_constants": [],
-                    "measurement_code": (
-                        "def compute_measurement(time, species_dict, ureg, constants):\n"
-                        "    cd8 = species_dict['V_T.CD8']\n"
-                        "    tumor = species_dict['V_T.C1']\n"
-                        "    ratio = cd8 / tumor\n"
-                        "    return ratio.to(ureg.dimensionless)"
-                    ),
-                    "threshold_description": (
-                        "At tumor resection when tumor burden reaches approximately 1e9 cells (~500 mm³)"
-                    ),
-                    "support": "positive_unbounded",
-                }
-            ],
+        },
+        "observable": {
+            "code": (
+                "def compute_observable(time, species_dict, constants, ureg):\n"
+                "    cd8 = species_dict['V_T.CD8']\n"
+                "    tumor = species_dict['V_T.C1']\n"
+                "    ratio = cd8 / tumor\n"
+                "    return ratio.to(ureg.dimensionless)"
+            ),
+            "units": "dimensionless",
+            "species": ["V_T.CD8", "V_T.C1"],
+            "constants": [],
+            "support": "positive_unbounded",
+            "mapping_rationale": (
+                "CD8+ T cell density measured via IHC in tumor tissue sections, "
+                "reported as dimensionless ratio (CD8+ cells / tumor cells)"
+            ),
         },
         "experimental_context": {
             "species": "human",
@@ -208,7 +204,8 @@ class TestCalibrationTargetGolden:
 
         assert target is not None
         assert target.description == "CD8+ T cell density in PDAC tumor at resection"
-        assert len(target.scenario.measurements) == 1
+        assert target.observable is not None
+        assert target.observable.species == ["V_T.CD8", "V_T.C1"]
         # Scalar data uses length-1 lists
         assert target.calibration_target_estimates.median == [pytest.approx(1.0, rel=0.01)]
         assert len(target.calibration_target_estimates.ci95) == 1
@@ -222,6 +219,17 @@ class TestCalibrationTargetGolden:
 
 class TestCalibrationTargetValidators:
     """Tests for individual CalibrationTarget validators."""
+
+    def test_observable_required_for_calibration_target(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """CalibrationTarget must have observable field - it's required for full model targets."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Remove observable field
+        del data["observable"]
+
+        with pytest.raises(ValidationError, match="observable"):
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
 
     def test_validate_doi_resolution_fails_on_invalid_doi(
         self, mock_crossref_failure, species_units, golden_calibration_target_data
@@ -261,14 +269,14 @@ class TestCalibrationTargetValidators:
             error_str = str(exc_info.value).lower()
             assert "title mismatch" in error_str or "mismatch" in error_str
 
-    def test_validate_measurement_code_units_fails_on_wrong_units(
+    def test_validate_observable_code_units_fails_on_wrong_units(
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
-        """Validator should reject measurement_code with wrong output units."""
+        """Validator should reject observable code with wrong output units."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Change measurement_code to return wrong units (nanomolar instead of dimensionless)
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        # Change observable code to return wrong units (nanomolar instead of dimensionless)
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    import numpy as np\n"
             "    return np.ones(len(time)) * 100.0 * ureg.nanomolar"
         )
@@ -313,7 +321,7 @@ class TestCalibrationTargetValidators:
         """Validator should reject species not in model."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Reference species that doesn't exist in species_units
-        data["scenario"]["measurements"][0]["measurement_species"] = [
+        data["observable"]["species"] = [
             "V_T.CD8",
             "V_T.NonexistentSpecies",
         ]
@@ -350,14 +358,14 @@ class TestCalibrationTargetValidators:
         assert target is not None
         assert len(target.calibration_target_estimates.inputs) == 4  # 3 original + 1 unused
 
-    def test_validate_measurement_code_fails_on_scalar_return(
+    def test_validate_observable_code_fails_on_scalar_return(
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
-        """Validator should reject measurement_code that returns a scalar instead of array."""
+        """Validator should reject observable code that returns a scalar instead of array."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Change measurement_code to return scalar (using time indexing)
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        # Change observable code to return scalar (using time indexing)
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    ratio = cd8[-1] / tumor[-1]  # Returns scalar (last timepoint)\n"
@@ -370,14 +378,14 @@ class TestCalibrationTargetValidators:
         error_str = str(exc_info.value).lower()
         assert "returned a scalar" in error_str or "time indexing" in error_str
 
-    def test_validate_measurement_code_fails_on_wrong_length_array(
+    def test_validate_observable_code_fails_on_wrong_length_array(
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
-        """Validator should reject measurement_code that returns array with wrong length."""
+        """Validator should reject observable code that returns array with wrong length."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Change measurement_code to return wrong-length array
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        # Change observable code to return wrong-length array
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    import numpy as np\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
@@ -533,9 +541,9 @@ class TestCalibrationTargetValidators:
         data["calibration_target_estimates"]["iqr"] = [0.3359]
         data["calibration_target_estimates"]["ci95"] = [[1.0079, 1.9935]]
 
-        # Also update measurement_code to return centimeter (to avoid unit mismatch error)
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        # Also update observable code to return centimeter (to avoid unit mismatch error)
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    import numpy as np\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
@@ -544,7 +552,7 @@ class TestCalibrationTargetValidators:
             "    diameter_cm = 1.5 + 0.0 * (cd8 / tumor).magnitude  # ~1.5 cm\n"
             "    return diameter_cm * ureg.centimeter"
         )
-        data["scenario"]["measurements"][0]["support"] = "positive"
+        data["observable"]["units"] = "centimeter"
 
         # Use normal distribution (not lognormal)
         data["calibration_target_estimates"]["distribution_code"] = (
@@ -574,11 +582,11 @@ class TestCalibrationTargetValidators:
     def test_validate_conversion_factors_documented(
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
-        """Validator should warn when measurement_code has undocumented magic numbers."""
+        """Validator should warn when observable code has undocumented magic numbers."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Add magic number (cell size) to measurement_code without documenting
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        # Add magic number (cell size) to observable code without documenting
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    # Magic number: 10 = cell radius in micrometers (UNDOCUMENTED)\n"
@@ -600,8 +608,8 @@ class TestCalibrationTargetValidators:
         """Validator should catch Pint DimensionalityError (e.g., day² → day)."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Create code that produces dimensional mismatch
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    # Intentional dimension error: time squared can't convert to dimensionless\n"
@@ -619,8 +627,8 @@ class TestCalibrationTargetValidators:
         """Validator should catch Pint UndefinedUnitError for unknown units."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Create code that uses undefined unit
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    # Intentional undefined unit error\n"
@@ -638,10 +646,10 @@ class TestCalibrationTargetValidators:
         """Validator should catch scale mismatch: 0-1 ratio code vs 0-3 score target."""
         data = copy.deepcopy(golden_calibration_target_data)
 
-        # Change measurement_code to return values in 0-0.1 range (small fractions)
+        # Change observable code to return values in 0-0.1 range (small fractions)
         # Use division by 100 which is an allowed number
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    import numpy as np\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
@@ -718,11 +726,11 @@ class TestCalibrationTargetValidators:
     def test_validate_hardcoded_constants_fails_on_inline_units(
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
-        """Validator should reject hardcoded numbers with units in measurement_code."""
+        """Validator should reject hardcoded numbers with units in observable code."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Add hardcoded constant with units (1e-8 * ureg.mm**2)
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    # BAD: hardcoded constant with units\n"
@@ -734,13 +742,13 @@ class TestCalibrationTargetValidators:
         with pytest.raises(ValidationError, match="Hardcoded numeric constants"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
 
-    def test_validate_hardcoded_constants_passes_with_measurement_constants(
+    def test_validate_hardcoded_constants_passes_with_observable_constants(
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should pass when constants are properly declared and accessed."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Add constant to measurement_constants
-        data["scenario"]["measurements"][0]["measurement_constants"] = [
+        # Add constant to observable constants
+        data["observable"]["constants"] = [
             {
                 "name": "area_per_cancer_cell",
                 "value": 2.27e-4,
@@ -750,8 +758,8 @@ class TestCalibrationTargetValidators:
             }
         ]
         # Use constant via constants dict (no hardcoded numbers with units)
-        data["scenario"]["measurements"][0]["measurement_code"] = (
-            "def compute_measurement(time, species_dict, ureg, constants):\n"
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    # GOOD: use constant from constants dict\n"
@@ -775,11 +783,9 @@ class TestCalibrationTargetValidators:
             "V_T.CD8_exh": {"units": "cell", "description": "Exhausted CD8+ T cells"},
         }
         # Change description to mention "total" CD8
-        data["scenario"]["measurements"][0][
-            "measurement_description"
-        ] = "Total CD8+ T cell to tumor cell ratio measured via IHC"
+        data["description"] = "Total CD8+ T cell to tumor cell ratio measured via IHC"
         # Only use V_T.CD8, missing V_T.CD8_exh
-        data["scenario"]["measurements"][0]["measurement_species"] = ["V_T.CD8", "V_T.C1"]
+        data["observable"]["species"] = ["V_T.CD8", "V_T.C1"]
 
         with pytest.warns(UserWarning, match="CD8.*CD8_exh"):
             target = CalibrationTarget.model_validate(
@@ -793,7 +799,7 @@ class TestCalibrationTargetValidators:
         """Validator should reject invalid support type."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Set invalid support type
-        data["scenario"]["measurements"][0]["support"] = "invalid_support"
+        data["observable"]["support"] = "invalid_support"
 
         with pytest.raises(ValidationError, match="support"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
@@ -801,25 +807,24 @@ class TestCalibrationTargetValidators:
     def test_support_field_accepts_valid_types(
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
-        """Validator should accept all valid support types that are compatible with measurement_code output."""
-        # Note: unit_interval is excluded because the golden measurement_code produces
-        # ratios that can exceed 1, which violates unit_interval support
-        compatible_support_types = [
+        """Validator should accept all valid support types."""
+        valid_support_types = [
             "positive",
             "non_negative",
+            "unit_interval",
             "positive_unbounded",
             "real",
         ]
 
-        for support_type in compatible_support_types:
+        for support_type in valid_support_types:
             data = copy.deepcopy(golden_calibration_target_data)
-            data["scenario"]["measurements"][0]["support"] = support_type
+            data["observable"]["support"] = support_type
 
             # Should not raise for valid support types
             target = CalibrationTarget.model_validate(
                 data, context={"species_units": species_units}
             )
-            assert target.scenario.measurements[0].support == support_type
+            assert target.observable.support == support_type
 
 
 # ============================================================================

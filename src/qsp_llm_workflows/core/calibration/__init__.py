@@ -6,12 +6,27 @@ scientific literature, used to calibrate QSP model parameters via Bayesian infer
 
 Main classes:
 - CalibrationTarget: For clinical/in vivo data (full model context)
-- IsolatedSystemTarget: For in vitro data with model "cuts" defining reduced systems
+  - Uses `observable` field to define how to compute measurement from full model species
+- IsolatedSystemTarget: For in vitro/preclinical data with Python submodels
+  - Uses `submodel` field with nested ODE code, state variables, parameters, and observable
 - IndexType: Enum for vector-valued data index dimension (time, dose, ratio, etc.)
+
+CalibrationTarget:
+Uses the full QSP model. The `observable` field defines Python code to compute the
+experimental measurement from model species (e.g., ratio of CD8 cells to tumor cells).
+
+IsolatedSystemTarget:
+For isolated systems (in vitro, preclinical), the LLM builds a Python submodel that
+approximates the relevant dynamics from the full QSP model. The `submodel` field includes:
+- `code`: ODE function using parameter names from full model (for joint inference)
+- `state_variables`: State variables with names and units
+- `parameters`: List of parameter names from the full model
+- `observable`: How to compute the measurement from submodel state
 
 Supporting modules:
 - enums: Species, Indication, Compartment, System enums
-- scenario: Intervention, Measurement, Scenario models
+- scenario: Intervention, Scenario models
+- observable: Observable, Submodel, ObservableConstant models
 - experimental_context: Stage, TreatmentContext, ExperimentalContext
 - shared_models: Input (scalar/vector), Source, Snippet
 - validators: Validation helper functions (resolve_doi, fuzzy_match, etc.)
@@ -32,11 +47,7 @@ from qsp_llm_workflows.core.calibration.calibration_target_models import (
     IndexType,
 )
 from qsp_llm_workflows.core.calibration.isolated_system_target import (
-    CompartmentCut,
-    Cut,
     IsolatedSystemTarget,
-    ReactionCut,
-    SpeciesCut,
 )
 
 # Enums
@@ -56,10 +67,17 @@ from qsp_llm_workflows.core.calibration.enums import (
 # Scenario models
 from qsp_llm_workflows.core.calibration.scenario import (
     Intervention,
-    Measurement,
-    MeasurementConstant,
-    MeasurementMapping,
     Scenario,
+)
+
+# Observable models
+from qsp_llm_workflows.core.calibration.observable import (
+    Observable,
+    ObservableConstant,
+    Submodel,
+    SubmodelObservable,
+    SubmodelStateVariable,
+    SupportType,
 )
 
 # Experimental context
@@ -128,10 +146,6 @@ __all__ = [
     "CalibrationTargetFooters",
     "IndexType",
     "IsolatedSystemTarget",
-    "SpeciesCut",
-    "CompartmentCut",
-    "ReactionCut",
-    "Cut",
     # Enums
     "Species",
     "MouseSubspecifier",
@@ -145,10 +159,14 @@ __all__ = [
     "enum_field_description",
     # Scenario
     "Intervention",
-    "MeasurementMapping",
-    "MeasurementConstant",
-    "Measurement",
     "Scenario",
+    # Observable
+    "Observable",
+    "ObservableConstant",
+    "SupportType",
+    "Submodel",
+    "SubmodelObservable",
+    "SubmodelStateVariable",
     # Context
     "Stage",
     "TreatmentContext",
