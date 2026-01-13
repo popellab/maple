@@ -14,6 +14,7 @@ from qsp_llm_workflows.core.prompt_builder import (
     ParameterPromptBuilder,
     TestStatisticPromptBuilder,
     CalibrationTargetPromptBuilder,
+    IsolatedSystemTargetPromptBuilder,
 )
 from qsp_llm_workflows.core.immediate_processor import ImmediateRequestProcessor
 from qsp_llm_workflows.core.output_directory import create_unique_output_directory
@@ -48,6 +49,8 @@ class CreatePreviewStep(WorkflowStep):
             builder = TestStatisticPromptBuilder(context.config.base_dir)
         elif context.workflow_type == "calibration_target":
             builder = CalibrationTargetPromptBuilder(context.config.base_dir)
+        elif context.workflow_type == "isolated_system_target":
+            builder = IsolatedSystemTargetPromptBuilder(context.config.base_dir)
         else:
             raise ValueError(f"Unknown workflow type: {context.workflow_type}")
 
@@ -62,6 +65,21 @@ class CreatePreviewStep(WorkflowStep):
                 species_units_file = context.config.jobs_dir / "input_data" / "species_units.json"
                 prompts = builder.process(
                     context.input_csv, species_units_file, context.config.reasoning_effort
+                )
+            elif context.workflow_type == "isolated_system_target":
+                # Requires model_structure_file, optionally species_units_file
+                model_structure_file = context.config.model_structure_file
+                if not model_structure_file:
+                    raise ValueError(
+                        "model_structure_file is required for isolated_system_target workflow. "
+                        "Use --model-structure option."
+                    )
+                species_units_file = context.config.jobs_dir / "input_data" / "species_units.json"
+                prompts = builder.process(
+                    context.input_csv,
+                    model_structure_file,
+                    species_units_file if species_units_file.exists() else None,
+                    context.config.reasoning_effort,
                 )
             else:
                 prompts = builder.process(context.input_csv, None, context.config.reasoning_effort)
@@ -157,6 +175,7 @@ class ProcessPromptsStep(WorkflowStep):
             processor = ImmediateRequestProcessor(
                 context.config.base_dir,
                 context.config.openai_api_key,
+                model_structure_file=context.config.model_structure_file,
             )
 
             # Process requests with streaming unpacker

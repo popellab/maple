@@ -45,6 +45,12 @@ class WorkflowConfig(BaseModel):
         description="Reasoning effort level for API requests",
     )
 
+    # Model structure for LLM query tools (calibration targets)
+    model_structure_file: Optional[Path] = Field(
+        default=None,
+        description="Path to model_structure.json for LLM query tools",
+    )
+
     @field_validator("base_dir", "storage_dir", mode="before")
     @classmethod
     def convert_to_path(cls, v) -> Path:

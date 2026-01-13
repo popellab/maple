@@ -61,6 +61,17 @@ def load_metadata(input_csv: Path, workflow_type: str) -> Dict:
                     "model_context": row.get("model_context", ""),
                     "observable_description": row.get("observable_description", ""),
                 }
+            elif workflow_type == "isolated_system_target":
+                key = row["target_id"]
+                metadata[key] = {
+                    "target_id": key,
+                    "cancer_type": row["cancer_type"],
+                    "observable_description": row.get("observable_description", ""),
+                    "model_species": row.get("model_species", ""),
+                    "model_indication": row.get("model_indication", ""),
+                    "model_compartment": row.get("model_compartment", ""),
+                    "model_system": row.get("model_system", ""),
+                }
             else:  # parameter
                 key = (row["cancer_type"], row["parameter_name"])
                 metadata[key] = {
@@ -113,6 +124,12 @@ def add_footer_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
                 json_data["model_context"] = json.loads(model_context)
             except Exception:
                 json_data["model_context"] = model_context
+
+    elif workflow_type == "isolated_system_target":
+        # Isolated system targets - the LLM output already contains all data
+        # Just add tags
+        tags = ["ai-generated"]
+        json_data["tags"] = tags
 
     elif workflow_type == "test_statistic":
         # Test statistics have different footer structure
@@ -248,6 +265,10 @@ def parse_custom_id(custom_id: str) -> Tuple[str, str, str]:
         # cal_target_CALIBRATION_TARGET_ID_INDEX
         return ("calibration_target", "", "_".join(parts[2:-1]))
 
+    elif parts[0] == "isolated" and parts[1] == "target":
+        # isolated_target_TARGET_ID_INDEX
+        return ("isolated_system_target", "", "_".join(parts[2:-1]))
+
     else:
         # CANCER_PARAMETER_INDEX (regular parameter extraction)
         return ("parameter", parts[0], "_".join(parts[1:-1]))
@@ -323,6 +344,10 @@ def unpack_single_result(
         meta = metadata.get(identifier)
         if meta:
             cancer_type = meta["cancer_type"]
+    elif workflow_type == "isolated_system_target":
+        meta = metadata.get(identifier)
+        if meta:
+            cancer_type = meta["cancer_type"]
     else:
         meta = metadata.get((cancer_type, identifier))
 
@@ -343,6 +368,12 @@ def unpack_single_result(
 
     elif workflow_type == "calibration_target":
         # cal_target_id_cancer_deriv001.yaml
+        base = f"{identifier}_{cancer_type}"
+        deriv_num = find_next_derivation_number(output_dir, base)
+        filename = f"{base}_deriv{deriv_num:03d}.yaml"
+
+    elif workflow_type == "isolated_system_target":
+        # target_id_cancer_deriv001.yaml
         base = f"{identifier}_{cancer_type}"
         deriv_num = find_next_derivation_number(output_dir, base)
         filename = f"{base}_deriv{deriv_num:03d}.yaml"
@@ -444,6 +475,10 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 meta = metadata.get(identifier)
                 if meta:
                     cancer_type = meta["cancer_type"]
+            elif workflow_type == "isolated_system_target":
+                meta = metadata.get(identifier)
+                if meta:
+                    cancer_type = meta["cancer_type"]
             else:
                 meta = metadata.get((cancer_type, identifier))
 
@@ -463,6 +498,12 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
 
             elif workflow_type == "calibration_target":
                 # cal_target_id_cancer_deriv001.yaml
+                base = f"{identifier}_{cancer_type}"
+                deriv_num = find_next_derivation_number(output_dir, base)
+                filename = f"{base}_deriv{deriv_num:03d}.yaml"
+
+            elif workflow_type == "isolated_system_target":
+                # target_id_cancer_deriv001.yaml
                 base = f"{identifier}_{cancer_type}"
                 deriv_num = find_next_derivation_number(output_dir, base)
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"

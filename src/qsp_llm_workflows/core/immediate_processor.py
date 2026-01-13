@@ -12,13 +12,14 @@ from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 from pydantic_ai import Agent, WebSearchTool, CodeExecutionTool
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 from qsp_llm_workflows.core.prompt_builder import (
     ParameterPromptBuilder,
     TestStatisticPromptBuilder,
     CalibrationTargetPromptBuilder,
+    IsolatedSystemTargetPromptBuilder,
 )
+from qsp_llm_workflows.core.model_query_service import ModelQueryService
 
 # Optional logfire instrumentation (comes with pydantic-ai)
 try:
@@ -32,16 +33,30 @@ except ImportError:
 class ImmediateRequestProcessor:
     """Process extraction requests directly via Pydantic AI."""
 
-    def __init__(self, base_dir: Path, api_key: str):
+    def __init__(
+        self,
+        base_dir: Path,
+        api_key: str,
+        model_structure_file: Optional[Path] = None,
+    ):
         """
         Initialize immediate request processor.
 
         Args:
             base_dir: Base directory for prompt assembly
             api_key: OpenAI API key
+            model_structure_file: Optional path to model_structure.json for LLM query tools
         """
         self.base_dir = Path(base_dir)
         self.api_key = api_key
+        self.model_structure_file = model_structure_file
+
+        # Initialize model query service if structure file provided
+        self.model_query_service: Optional[ModelQueryService] = None
+        if model_structure_file and Path(model_structure_file).exists():
+            self.model_query_service = ModelQueryService.from_json(model_structure_file)
+        elif model_structure_file:
+            print(f"Warning: model_structure_file not found: {model_structure_file}")
 
         # Setup logfire once (optional instrumentation for debugging)
         if LOGFIRE_AVAILABLE:
@@ -52,6 +67,7 @@ class ImmediateRequestProcessor:
         self.parameter_creator = ParameterPromptBuilder(base_dir)
         self.test_statistic_creator = TestStatisticPromptBuilder(base_dir)
         self.calibration_target_creator = CalibrationTargetPromptBuilder(base_dir)
+        self.isolated_system_target_creator = IsolatedSystemTargetPromptBuilder(base_dir)
 
     def get_prompts(
         self,
@@ -83,6 +99,15 @@ class ImmediateRequestProcessor:
             return self.calibration_target_creator.process(
                 input_csv, species_units_file, reasoning_effort
             )
+        elif workflow_type == "isolated_system_target":
+            # Requires model_structure_file
+            if not self.model_structure_file:
+                raise ValueError(
+                    "model_structure_file required for isolated_system_target workflow"
+                )
+            return self.isolated_system_target_creator.process(
+                input_csv, self.model_structure_file, species_units_file, reasoning_effort
+            )
         else:
             return []
 
@@ -91,6 +116,7 @@ class ImmediateRequestProcessor:
         request: Dict[str, Any],
         index: int,
         reasoning_effort: str,
+        workflow_type: str = "parameter",
         progress_callback: Optional[callable] = None,
     ) -> Dict[str, Any]:
         """
@@ -100,11 +126,15 @@ class ImmediateRequestProcessor:
             request: Prompt dictionary from prompt builder
             index: Request index
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
+            workflow_type: Type of workflow for tool selection
             progress_callback: Optional callback for progress updates
 
         Returns:
             Result dictionary in workflow-compatible format
         """
+        # Import here to avoid circular imports and allow lazy loading
+        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
         custom_id = request["custom_id"]
         prompt = request["prompt"]
         pydantic_model = request["pydantic_model"]
@@ -130,13 +160,25 @@ class ImmediateRequestProcessor:
             # Get validation context from request (for species_units)
             validation_context = request.get("validation_context", {})
 
+            # Build tools list - always include web search and code execution
+            builtin_tools = [WebSearchTool(), CodeExecutionTool()]
+
+            # Add model query tools for calibration targets and isolated system targets
+            custom_tools = []
+            if (
+                workflow_type in ("calibration_target", "isolated_system_target")
+                and self.model_query_service
+            ):
+                custom_tools = self.model_query_service.get_tools()
+
             agent = Agent(
                 model,
                 output_type=pydantic_model,
                 model_settings=settings,
-                builtin_tools=[WebSearchTool(), CodeExecutionTool()],
+                builtin_tools=builtin_tools,
+                tools=custom_tools,
                 validation_context=validation_context,
-                retries=2,  # Increased for validation requirements
+                retries=5,  # Increased for validation requirements
             )
 
             # Run agent with prompt
@@ -195,9 +237,9 @@ class ImmediateRequestProcessor:
         Returns:
             List of results in standard format
         """
-        # Get species_units_file for calibration targets
+        # Get species_units_file for calibration/isolated system targets
         species_units_file = None
-        if workflow_type == "calibration_target":
+        if workflow_type in ("calibration_target", "isolated_system_target"):
             species_units_file = self.base_dir / "jobs" / "input_data" / "species_units.json"
 
         # Generate prompts using prompt builder (DRY principle)
@@ -205,10 +247,17 @@ class ImmediateRequestProcessor:
 
         if progress_callback:
             progress_callback(f"Processing {len(prompts)} requests via Pydantic AI...\n")
+            if (
+                workflow_type in ("calibration_target", "isolated_system_target")
+                and self.model_query_service
+            ):
+                progress_callback("  (Model query tools enabled)\n")
 
         # Create tasks for all requests
         tasks = [
-            self.process_single_request(prompt, i, reasoning_effort, progress_callback)
+            self.process_single_request(
+                prompt, i, reasoning_effort, workflow_type, progress_callback
+            )
             for i, prompt in enumerate(prompts)
         ]
 

@@ -141,3 +141,49 @@ def build_calibration_target_prompt(
     prompt = prompt.replace("{{PRIMARY_SOURCE_TITLE}}", source_instruction)
 
     return prompt
+
+
+def build_isolated_system_target_prompt(
+    observable_description: str,
+    cancer_type: str,
+    model_species: str,
+    model_indication: str,
+    model_compartment: str,
+    model_system: str,
+    primary_source_title: str = "",
+) -> str:
+    """
+    Build isolated system target extraction prompt.
+
+    Args:
+        observable_description: Description of observable to extract
+        cancer_type: Cancer type/indication (e.g., "PDAC")
+        model_species: Model species (e.g., "human", "mouse")
+        model_indication: Model indication (e.g., "PDAC")
+        model_compartment: Model compartment (e.g., "in_vitro", "tumor.primary")
+        model_system: Model system (e.g., "in_vitro.cell_line", "animal_in_vivo.PDX")
+        primary_source_title: Title of specific paper to extract from (optional)
+
+    Returns:
+        Complete prompt with placeholders replaced
+    """
+    prompt = read_prompt("isolated_system_target_prompt.md")
+
+    # Build source instruction
+    if primary_source_title and primary_source_title.strip():
+        source_instruction = (
+            f"**Extract from this specific paper:** {primary_source_title}\n\n"
+            f"Do NOT search for other papers. Use ONLY this source."
+        )
+    else:
+        source_instruction = "**Find 1 peer-reviewed paper** reporting this observable."
+
+    prompt = prompt.replace("{{OBSERVABLE_DESCRIPTION}}", observable_description)
+    prompt = prompt.replace("{{CANCER_TYPE}}", cancer_type)
+    prompt = prompt.replace("{{MODEL_SPECIES}}", model_species)
+    prompt = prompt.replace("{{MODEL_INDICATION}}", model_indication)
+    prompt = prompt.replace("{{MODEL_COMPARTMENT}}", model_compartment)
+    prompt = prompt.replace("{{MODEL_SYSTEM}}", model_system)
+    prompt = prompt.replace("{{PRIMARY_SOURCE_TITLE}}", source_instruction)
+
+    return prompt

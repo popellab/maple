@@ -33,7 +33,7 @@ Examples:
     parser.add_argument(
         "--type",
         required=True,
-        choices=["parameter", "test_statistic", "calibration_target"],
+        choices=["parameter", "test_statistic", "calibration_target", "isolated_system_target"],
         help="Type of extraction workflow",
     )
 
@@ -57,6 +57,12 @@ Examples:
         help="Preview prompts without sending to API (saves preview file to jobs/)",
     )
 
+    parser.add_argument(
+        "--model-structure",
+        type=Path,
+        help="Path to model_structure.json for LLM query tools (calibration targets)",
+    )
+
     args = parser.parse_args()
 
     # Validate input file
@@ -73,9 +79,35 @@ Examples:
         print("Please create the directory or specify an existing path", file=sys.stderr)
         sys.exit(1)
 
+    # Validate required options for specific workflow types
+    if args.type == "isolated_system_target" and not args.model_structure:
+        print(
+            "Error: --model-structure is required for isolated_system_target workflow",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # Load configuration from environment with explicit storage directory
     try:
         config = WorkflowConfig.from_env(storage_dir=output_dir)
+
+        # Add model_structure_file if provided
+        if args.model_structure:
+            if not args.model_structure.exists():
+                print(
+                    f"Error: Model structure file not found: {args.model_structure}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            # Create new config with model_structure_file (config is frozen)
+            config = WorkflowConfig(
+                base_dir=config.base_dir,
+                storage_dir=config.storage_dir,
+                openai_api_key=config.openai_api_key,
+                openai_model=config.openai_model,
+                reasoning_effort=config.reasoning_effort,
+                model_structure_file=args.model_structure,
+            )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         print("Make sure OPENAI_API_KEY is set in .env file", file=sys.stderr)
@@ -119,13 +151,18 @@ Examples:
             print("WORKFLOW COMPLETE")
             print("=" * 70)
             print(f"Status: {result.status}")
+            if result.error:
+                print(f"Error: {result.error}")
             print(f"Files extracted: {result.file_count}")
             print(f"Output directory: {result.output_directory}")
             print(f"Duration: {result.duration_seconds:.1f}s")
             print()
-            print("Next steps:")
-            print(f"  1. Review files in: {result.output_directory}")
-            print(f"  2. Run validation: qsp-validate {args.type} --dir {result.output_directory}")
+            if result.status == "success":
+                print("Next steps:")
+                print(f"  1. Review files in: {result.output_directory}")
+                print(
+                    f"  2. Run validation: qsp-validate {args.type} --dir {result.output_directory}"
+                )
         print()
 
         sys.exit(0)

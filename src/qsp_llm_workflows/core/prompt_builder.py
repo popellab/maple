@@ -16,9 +16,11 @@ from qsp_llm_workflows.core.prompts import (
     build_parameter_extraction_prompt,
     build_test_statistic_prompt,
     build_calibration_target_prompt,
+    build_isolated_system_target_prompt,
 )
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
-from qsp_llm_workflows.core.calibration import CalibrationTarget
+from qsp_llm_workflows.core.calibration import CalibrationTarget, IsolatedSystemTarget
+from qsp_llm_workflows.core.model_structure import ModelStructure
 
 
 class PromptBuilder(ABC):
@@ -564,6 +566,104 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
                     "prompt": prompt,
                     "pydantic_model": CalibrationTarget,
                     "validation_context": {"species_units": all_species_units},
+                }
+
+                requests.append(request)
+
+        return requests
+
+
+class IsolatedSystemTargetPromptBuilder(PromptBuilder):
+    """
+    Creates prompts for isolated system target extraction from in vitro/preclinical literature.
+
+    Processes CSV input with observable descriptions and generates prompts for
+    extracting calibration data with custom ODE submodels.
+
+    Requires model_structure_file to be provided for parameter validation.
+    """
+
+    def get_workflow_type(self) -> str:
+        return "isolated_system_target"
+
+    def process(
+        self,
+        input_csv: Path,
+        model_structure_file: Path,
+        species_units_file: Optional[Path] = None,
+        reasoning_effort: str = "high",
+    ) -> List[Dict[str, Any]]:
+        """
+        Process isolated system target inputs and generate prompts.
+
+        Args:
+            input_csv: CSV file with columns: target_id, cancer_type,
+                      observable_description, model_species, model_indication,
+                      model_compartment, model_system, primary_source_title (optional)
+            model_structure_file: JSON file with ModelStructure (required for validation)
+            species_units_file: Optional JSON file mapping species -> units
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
+
+        Returns:
+            List of prompt request dictionaries
+        """
+        import csv
+
+        # Load model structure (required)
+        if not model_structure_file or not model_structure_file.exists():
+            raise ValueError(
+                f"model_structure_file is required for IsolatedSystemTarget workflow. "
+                f"Got: {model_structure_file}"
+            )
+
+        model_structure = ModelStructure.from_json(model_structure_file)
+
+        # Load species units if provided
+        all_species_units = {}
+        if species_units_file and species_units_file.exists():
+            with open(species_units_file, "r") as f:
+                all_species_units = json.load(f)
+
+        requests = []
+        with open(input_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+
+            for i, row in enumerate(reader):
+                target_id = row.get("target_id", f"target_{i}")
+                cancer_type = row.get("cancer_type", "UNKNOWN")
+                observable_description = row.get("observable_description", "")
+                model_species = row.get("model_species", "")
+                model_indication = row.get("model_indication", "")
+                model_compartment = row.get("model_compartment", "")
+                model_system = row.get("model_system", "")
+                primary_source_title = row.get("primary_source_title", "")
+
+                if not observable_description.strip():
+                    print(f"Warning: Empty observable description for {target_id}, skipping")
+                    continue
+
+                # Build the prompt
+                prompt = build_isolated_system_target_prompt(
+                    observable_description=observable_description,
+                    cancer_type=cancer_type,
+                    model_species=model_species or "Not specified",
+                    model_indication=model_indication or "Not specified",
+                    model_compartment=model_compartment or "Not specified",
+                    model_system=model_system or "Not specified",
+                    primary_source_title=primary_source_title,
+                )
+
+                # Create prompt dict with model_structure in validation context
+                custom_id = f"isolated_target_{target_id}_{i}"
+
+                request = {
+                    "custom_id": custom_id,
+                    "prompt": prompt,
+                    "pydantic_model": IsolatedSystemTarget,
+                    "validation_context": {
+                        "species_units": all_species_units,
+                        "model_structure": model_structure,
+                    },
                 }
 
                 requests.append(request)

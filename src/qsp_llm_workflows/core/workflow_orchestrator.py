@@ -131,6 +131,7 @@ class WorkflowOrchestrator:
                 openai_api_key=config.openai_api_key,
                 openai_model=config.openai_model,
                 reasoning_effort=reasoning_effort,
+                model_structure_file=config.model_structure_file,
             )
 
         # Create workflow context
