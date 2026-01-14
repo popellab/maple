@@ -314,6 +314,7 @@ qsp-llm-workflows/
 │       │       ├── scenario.py          # Intervention, Scenario
 │       │       ├── experimental_context.py  # ExperimentalContext
 │       │       ├── validators.py        # Validation helper functions
+│       │       ├── code_validator.py    # Unified code validation (CodeValidator, CodeType)
 │       │       └── exceptions.py        # Calibration validation exceptions
 │       │
 │       ├── prepare/                  # Prompt generation
@@ -493,7 +494,9 @@ Only write observable code if you need transformations (e.g., cell count → dia
 # Recommended: import from the calibration package
 from qsp_llm_workflows.core.calibration import (
     CalibrationTarget, IsolatedSystemTarget, IndexType,
-    Observable, Submodel, SubmodelStateVariable
+    Observable, Submodel, SubmodelStateVariable,
+    # Code validation
+    CodeType, CodeValidator, validate_code_block, find_hardcoded_constants,
 )
 
 # Or import specific submodules
@@ -523,6 +526,57 @@ Both scalar and vector-valued data flow through the same pathway:
 - Scalar data: `median=[42.0]`, `iqr=[5.0]`, `ci95=[[37.0, 47.0]]` (length-1 lists)
 - Vector data: Lists matching `index_values` length (e.g., time-course with 4 points)
 - `Input.value` can be `float` (broadcast to all index points) or `List[float]` (per-point values)
+
+### Unified Code Validation
+
+All code blocks in calibration targets are validated using `CodeValidator` from `code_validator.py`. This provides consistent validation across:
+
+- `submodel.code` - ODE function `submodel(t, y, params, inputs)`
+- `submodel.observable.code` - Observable `compute_observable(t, y, constants, ureg)`
+- `observable.code` - Full model observable `compute_observable(time, species_dict, constants, ureg)`
+- `distribution_code` - Distribution derivation `derive_distribution(inputs, ureg)`
+
+**CodeType enum:**
+```python
+class CodeType(str, Enum):
+    SUBMODEL = "submodel"
+    SUBMODEL_OBSERVABLE = "submodel_observable"
+    OBSERVABLE = "observable"
+    DISTRIBUTION = "distribution"
+    DERIVATION = "derivation"  # Legacy parameter derivation
+```
+
+**Usage:**
+```python
+from qsp_llm_workflows.core.calibration import (
+    CodeType, validate_code_block, find_hardcoded_constants,
+)
+
+# Validate code syntax, signature, and optionally execution
+result = validate_code_block(
+    code="def submodel(t, y, params, inputs): ...",
+    code_type=CodeType.SUBMODEL,
+    check_hardcoded=True,  # Check for hardcoded constants with units
+    check_execution=False,  # Skip execution test
+)
+
+if not result.passed:
+    for issue in result.get_errors():
+        print(f"Error: {issue.message}")
+
+# Find hardcoded constants (numbers multiplied by ureg)
+violations = find_hardcoded_constants(code)
+# Returns: [(value, line, column, context), ...]
+```
+
+**Hardcoded constant detection:**
+The validator uses AST analysis to find numeric literals multiplied by ureg units. Allowed numbers include:
+- Small integers (0-5, -1, -2)
+- Common fractions (0.5, 0.25, 0.75)
+- Statistical percentiles (2.5, 25, 50, 75, 97.5)
+- Common conversion factors (100, 1000)
+
+All other numbers attached to units must be passed via `params`, `inputs`, or `constants` dicts.
 
 ### Key Design Principles
 

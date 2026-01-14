@@ -7,7 +7,6 @@ dynamics for the isolated experimental system. The submodel uses the same parame
 names as the full model, enabling joint inference across multiple calibration targets.
 """
 
-import ast
 import warnings
 from typing import List, Optional
 
@@ -139,28 +138,26 @@ class IsolatedSystemTarget(CalibrationTarget):
 
     @model_validator(mode="after")
     def validate_submodel_code(self) -> "IsolatedSystemTarget":
-        """Validate submodel.code syntax and signature."""
+        """Validate submodel.code syntax and signature using unified CodeValidator."""
         if self.submodel is None:
             return self
-        try:
-            tree = ast.parse(self.submodel.code)
-        except SyntaxError as e:
-            raise ValueError(f"submodel.code syntax error: {e}")
 
-        func_def = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "submodel":
-                func_def = node
-                break
+        from qsp_llm_workflows.core.calibration.code_validator import (
+            CodeType,
+            validate_code_block,
+        )
 
-        if not func_def:
-            raise ValueError("submodel.code must define a function named 'submodel'")
+        result = validate_code_block(
+            self.submodel.code,
+            CodeType.SUBMODEL,
+            check_hardcoded=False,  # Submodel code doesn't typically use ureg directly
+            check_execution=False,  # We have separate validators for execution
+        )
 
-        args = [arg.arg for arg in func_def.args.args]
-        if args != ["t", "y", "params", "inputs"]:
-            raise ValueError(
-                f"submodel signature must be (t, y, params, inputs), got ({', '.join(args)})"
-            )
+        if not result.passed:
+            errors = result.get_errors()
+            if errors:
+                raise ValueError(errors[0].message)
 
         return self
 
@@ -538,33 +535,26 @@ class IsolatedSystemTarget(CalibrationTarget):
             return self
         from scipy.integrate import solve_ivp
         from qsp_llm_workflows.core.unit_registry import ureg
+        from qsp_llm_workflows.core.calibration.code_validator import (
+            CodeType,
+            validate_code_block,
+        )
 
         model_structure = self._require_model_structure(info)
 
-        # If code is provided, validate signature
+        # If code is provided, validate syntax and signature using CodeValidator
         if self.submodel.observable.code is not None:
-            try:
-                tree = ast.parse(self.submodel.observable.code)
-            except SyntaxError as e:
-                raise CodeStructureError(f"submodel.observable.code syntax error: {e}")
+            result = validate_code_block(
+                self.submodel.observable.code,
+                CodeType.SUBMODEL_OBSERVABLE,
+                check_hardcoded=False,  # Handled by separate validator
+                check_execution=False,  # We do custom execution below
+            )
 
-            func_def = None
-            for node in ast.walk(tree):
-                if isinstance(node, ast.FunctionDef) and node.name == "compute_observable":
-                    func_def = node
-                    break
-
-            if not func_def:
-                raise CodeStructureError(
-                    "submodel.observable.code must define a function named 'compute_observable'"
-                )
-
-            args = [arg.arg for arg in func_def.args.args]
-            if args != ["t", "y", "constants", "ureg"]:
-                raise CodeStructureError(
-                    f"compute_observable signature must be (t, y, constants, ureg), "
-                    f"got ({', '.join(args)})"
-                )
+            if not result.passed:
+                errors = result.get_errors()
+                if errors:
+                    raise CodeStructureError(errors[0].message)
 
         # Integrate ODE to get state at t_end
         param_lookup = {p.name: p for p in model_structure.parameters}
@@ -662,6 +652,8 @@ class IsolatedSystemTarget(CalibrationTarget):
         """
         Validator (ERROR): Flag hardcoded numbers with units in submodel code.
 
+        Uses AST-based detection to find numeric constants multiplied by ureg units.
+
         In submodel.code (ODE), all numeric constants should come from:
         - The params dict (parameters from the full model)
         - The inputs dict (experimental conditions)
@@ -673,68 +665,27 @@ class IsolatedSystemTarget(CalibrationTarget):
         Allowed inline numbers:
         - Universal mathematical constants (π, e)
         - Statistical percentiles (2.5, 25, 50, 75, 97.5)
-        - Small integers (0, 1, 2, 3, 4)
-        - Array indices
+        - Small integers (0, 1, 2, 3, 4, 5)
+        - Common fractions (0.5, 0.25, 0.75)
+        - Common conversion factors (100, 1000)
         """
         if self.submodel is None:
             return self
-        import re
 
-        # Patterns that indicate a number is being multiplied by units
-        HARDCODED_UNIT_PATTERNS = [
-            # NUMBER * ureg.UNIT or NUMBER * ureg('unit')
-            r"(\d+\.?\d*(?:e[+-]?\d+)?)\s*\*\s*ureg[.(]",
-            # ureg.UNIT * NUMBER or ureg('unit') * NUMBER
-            r"ureg[^*]+\*\s*(\d+\.?\d*(?:e[+-]?\d+)?)",
-            # NUMBER * ureg directly
-            r"(\d+\.?\d*(?:e[+-]?\d+)?)\s*\*\s*ureg\b",
-        ]
-
-        # Numbers that are OK to have inline
-        ALLOWED_NUMBERS = {
-            0,
-            1,
-            2,
-            3,
-            4,
-            0.5,
-            0.25,
-            0.75,
-            2.5,
-            25,
-            50,
-            75,
-            97.5,  # Percentiles
-            0.025,
-            0.975,  # Fractional percentiles
-            100,  # Common for percent conversion
-        }
-
-        def find_violations(code: str, code_type: str) -> list:
-            """Find hardcoded constants in code."""
-            violations = []
-            for pattern in HARDCODED_UNIT_PATTERNS:
-                for match in re.finditer(pattern, code):
-                    try:
-                        num_str = match.group(1) if match.lastindex else None
-                        if num_str:
-                            num = float(num_str)
-                            if num not in ALLOWED_NUMBERS:
-                                violations.append((num, match.group(0), code_type))
-                    except (ValueError, IndexError):
-                        continue
-            return violations
+        from qsp_llm_workflows.core.calibration.code_validator import find_hardcoded_constants
 
         all_violations = []
 
         # Check submodel.observable.code if provided
         if self.submodel.observable.code is not None:
-            all_violations.extend(
-                find_violations(self.submodel.observable.code, "submodel.observable.code")
-            )
+            violations = find_hardcoded_constants(self.submodel.observable.code)
+            for value, line, col, context in violations:
+                all_violations.append((value, context, "submodel.observable.code", line))
 
         if all_violations:
-            violation_strs = [f"  • {v[0]} in '{v[1]}' ({v[2]})" for v in all_violations[:5]]
+            violation_strs = [
+                f"  • {v[0]} in '{v[1]}' ({v[2]}, line {v[3]})" for v in all_violations[:5]
+            ]
             raise HardcodedConstantError(
                 "Hardcoded numeric constants with units found in submodel code:\n"
                 + "\n".join(violation_strs)

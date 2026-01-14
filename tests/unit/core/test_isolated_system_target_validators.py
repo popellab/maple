@@ -435,7 +435,7 @@ class TestSubmodelIntegrationValidation:
             "    return [T *"  # Syntax error
         )
 
-        with pytest.raises(ValidationError, match="syntax error"):
+        with pytest.raises(ValidationError, match="(?i)syntax error"):
             IsolatedSystemTarget.model_validate(
                 data,
                 context={"species_units": species_units, "model_structure": model_structure},
@@ -592,7 +592,7 @@ class TestSubmodelCodeValidation:
             "    return [0.5 * y[0]]"
         )
 
-        with pytest.raises(ValidationError, match="signature must be"):
+        with pytest.raises(ValidationError, match="wrong signature"):
             IsolatedSystemTarget.model_validate(
                 data,
                 context={"species_units": species_units, "model_structure": model_structure},
@@ -815,7 +815,7 @@ class TestObservableCodeValidation:
             "    return y[0]"
         )
 
-        with pytest.raises(ValidationError, match="signature must be"):
+        with pytest.raises(ValidationError, match="wrong signature"):
             IsolatedSystemTarget.model_validate(
                 data,
                 context={"species_units": species_units, "model_structure": model_structure},

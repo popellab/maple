@@ -51,7 +51,8 @@ src/qsp_llm_workflows/
 │       ├── observable.py                 # Observable, Submodel, SubmodelObservable
 │       ├── shared_models.py              # Input (scalar/vector), Source, Snippet
 │       ├── enums.py                      # Species, Indication, Compartment, System
-│       └── scenario.py                   # Intervention, Scenario
+│       ├── scenario.py                   # Intervention, Scenario
+│       └── code_validator.py             # Unified code validation (CodeValidator)
 ├── prepare/    # CSV enrichment and prompt generation
 ├── run/        # API request processing
 ├── process/    # Result unpacking

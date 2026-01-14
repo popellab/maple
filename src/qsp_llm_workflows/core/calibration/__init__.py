@@ -117,6 +117,18 @@ from qsp_llm_workflows.core.calibration.validators import (
     resolve_doi,
 )
 
+# Code validation
+from qsp_llm_workflows.core.calibration.code_validator import (
+    ALLOWED_NUMERIC_LITERALS,
+    EXPECTED_SIGNATURES,
+    CodeType,
+    CodeValidationResult,
+    CodeValidator,
+    ValidationIssue,
+    find_hardcoded_constants,
+    validate_code_block,
+)
+
 # Exceptions
 from qsp_llm_workflows.core.calibration.exceptions import (
     ArrayLengthError,
@@ -200,6 +212,15 @@ __all__ = [
     "check_value_in_text",
     "get_typical_species_value",
     "create_mock_species",
+    # Code validation
+    "CodeType",
+    "CodeValidator",
+    "CodeValidationResult",
+    "ValidationIssue",
+    "validate_code_block",
+    "find_hardcoded_constants",
+    "EXPECTED_SIGNATURES",
+    "ALLOWED_NUMERIC_LITERALS",
     # Exceptions
     "CalibrationTargetValidationError",
     "CodeSyntaxError",

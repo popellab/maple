@@ -474,6 +474,10 @@ class CalibrationTarget(BaseModel):
             return self
 
         from qsp_llm_workflows.core.unit_registry import ureg
+        from qsp_llm_workflows.core.calibration.code_validator import (
+            CodeType,
+            validate_code_block,
+        )
         import pint
 
         # Get species_units from context
@@ -483,30 +487,26 @@ class CalibrationTarget(BaseModel):
             )
         species_units = info.context["species_units"]
 
-        # Parse the code
-        try:
-            tree = ast.parse(self.observable.code)
-        except SyntaxError as e:
-            raise CodeSyntaxError(f"observable.code has syntax error: {e}")
+        # Use CodeValidator for syntax and signature checks
+        result = validate_code_block(
+            self.observable.code,
+            CodeType.OBSERVABLE,
+            check_hardcoded=False,  # Handled by separate validator
+            check_execution=False,  # We do custom execution below
+        )
 
-        # Find the function definition
-        func_def = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "compute_observable":
-                func_def = node
-                break
-
-        if not func_def:
-            raise CodeStructureError(
-                "observable.code must define a function named 'compute_observable'"
-            )
-
-        # Check signature
-        args = [arg.arg for arg in func_def.args.args]
-        if args != ["time", "species_dict", "constants", "ureg"]:
-            raise CodeStructureError(
-                f"Function signature must be (time, species_dict, constants, ureg), got ({', '.join(args)})"
-            )
+        if not result.passed:
+            errors = result.get_errors()
+            if errors:
+                first_error = errors[0]
+                if first_error.category == "syntax":
+                    raise CodeSyntaxError(
+                        f"observable.code has syntax error: {first_error.message}"
+                    )
+                elif first_error.category == "signature":
+                    raise CodeStructureError(first_error.message)
+                else:
+                    raise CodeStructureError(first_error.message)
 
         # Execute with mock data
         try:
@@ -628,31 +628,31 @@ class CalibrationTarget(BaseModel):
         and computed values match reported values (element-wise for vector data).
         """
         from qsp_llm_workflows.core.unit_registry import ureg
+        from qsp_llm_workflows.core.calibration.code_validator import (
+            CodeType,
+            validate_code_block,
+        )
 
-        # Parse the code
-        try:
-            tree = ast.parse(self.calibration_target_estimates.distribution_code)
-        except SyntaxError as e:
-            raise CodeSyntaxError(f"distribution_code has syntax error: {e}")
+        # Use CodeValidator for syntax and signature checks
+        result = validate_code_block(
+            self.calibration_target_estimates.distribution_code,
+            CodeType.DISTRIBUTION,
+            check_hardcoded=False,  # Distribution code doesn't use ureg units directly
+            check_execution=False,  # We do custom execution below
+        )
 
-        # Find the function definition
-        func_def = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "derive_distribution":
-                func_def = node
-                break
-
-        if not func_def:
-            raise CodeStructureError(
-                "distribution_code must define a function named 'derive_distribution'"
-            )
-
-        # Check signature
-        args = [arg.arg for arg in func_def.args.args]
-        if args != ["inputs", "ureg"]:
-            raise CodeStructureError(
-                f"Function signature must be (inputs, ureg), got ({', '.join(args)})"
-            )
+        if not result.passed:
+            errors = result.get_errors()
+            if errors:
+                first_error = errors[0]
+                if first_error.category == "syntax":
+                    raise CodeSyntaxError(
+                        f"distribution_code has syntax error: {first_error.message}"
+                    )
+                elif first_error.category == "signature":
+                    raise CodeStructureError(first_error.message)
+                else:
+                    raise CodeStructureError(first_error.message)
 
         # Execute with mock inputs to test structure and units
         try:
@@ -1092,75 +1092,28 @@ class CalibrationTarget(BaseModel):
         """
         Validator (ERROR): Flag hardcoded numbers with units in observable.code.
 
+        Uses AST-based detection to find numeric constants multiplied by ureg units.
+
         All numeric constants with units must be declared in observable.constants
         and accessed via the constants dict. This prevents arbitrary magic numbers
         and forces explicit documentation of biological assumptions.
 
         Allowed inline numbers:
-        - Universal mathematical constants (π, e)
+        - Small integers (0-5)
+        - Common fractions (0.5, 0.25, 0.75)
         - Statistical percentiles (2.5, 25, 50, 75, 97.5)
-        - Small integers (0, 1, 2, 3)
-        - Numbers accessed from constants dict
+        - Common conversion factors (100, 1000)
         """
         # Skip for IsolatedSystemTarget (uses submodel.observable instead)
         if type(self).__name__ == "IsolatedSystemTarget":
             return self
 
-        import re
+        from qsp_llm_workflows.core.calibration.code_validator import find_hardcoded_constants
 
-        # Patterns that indicate a number is being multiplied by units
-        # These catch: 1e-8 * ureg.mm, 23.0 * ureg('mg/mL'), 2.27e-4 * ureg.mm**2
-        HARDCODED_UNIT_PATTERNS = [
-            # NUMBER * ureg.UNIT or NUMBER * ureg('unit')
-            r"(\d+\.?\d*(?:e[+-]?\d+)?)\s*\*\s*ureg[.(]",
-            # ureg.UNIT * NUMBER or ureg('unit') * NUMBER
-            r"ureg[^*]+\*\s*(\d+\.?\d*(?:e[+-]?\d+)?)",
-            # NUMBER * ureg directly (captures the number)
-            r"(\d+\.?\d*(?:e[+-]?\d+)?)\s*\*\s*ureg\b",
-        ]
-
-        # Numbers that are OK to have inline
-        ALLOWED_NUMBERS = {
-            0,
-            1,
-            2,
-            3,
-            4,
-            0.5,
-            0.25,
-            0.75,
-            2.5,
-            25,
-            50,
-            75,
-            97.5,  # Percentiles
-            0.025,
-            0.25,
-            0.5,
-            0.75,
-            0.975,  # Fractional percentiles
-            100,  # Common for percent conversion
-        }
-
-        code = self.observable.code
-
-        # Find all hardcoded numbers with units
-        violations = []
-        for pattern in HARDCODED_UNIT_PATTERNS:
-            for match in re.finditer(pattern, code):
-                try:
-                    # Extract the number from the match
-                    num_str = match.group(1) if match.lastindex else None
-                    if num_str:
-                        num = float(num_str)
-                        # Skip allowed numbers
-                        if num not in ALLOWED_NUMBERS:
-                            violations.append((num, match.group(0)))
-                except (ValueError, IndexError):
-                    continue
+        violations = find_hardcoded_constants(self.observable.code)
 
         if violations:
-            violation_strs = [f"  • {v[0]} in '{v[1]}'" for v in violations[:5]]
+            violation_strs = [f"  • {v[0]} in '{v[3]}' (line {v[1]})" for v in violations[:5]]
             raise HardcodedConstantError(
                 "Hardcoded numeric constants with units found in observable.code:\n"
                 + "\n".join(violation_strs)
