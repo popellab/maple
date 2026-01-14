@@ -637,7 +637,7 @@ class CalibrationTarget(BaseModel):
         result = validate_code_block(
             self.calibration_target_estimates.distribution_code,
             CodeType.DISTRIBUTION,
-            check_hardcoded=False,  # Distribution code doesn't use ureg units directly
+            check_hardcoded=True,  # Check for hardcoded constants with units
             check_execution=False,  # We do custom execution below
         )
 

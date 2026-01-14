@@ -119,7 +119,6 @@ from qsp_llm_workflows.core.calibration.validators import (
 
 # Code validation
 from qsp_llm_workflows.core.calibration.code_validator import (
-    ALLOWED_NUMERIC_LITERALS,
     EXPECTED_SIGNATURES,
     CodeType,
     CodeValidationResult,
@@ -220,7 +219,6 @@ __all__ = [
     "validate_code_block",
     "find_hardcoded_constants",
     "EXPECTED_SIGNATURES",
-    "ALLOWED_NUMERIC_LITERALS",
     # Exceptions
     "CalibrationTargetValidationError",
     "CodeSyntaxError",

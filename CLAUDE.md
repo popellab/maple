@@ -570,13 +570,7 @@ violations = find_hardcoded_constants(code)
 ```
 
 **Hardcoded constant detection:**
-The validator uses AST analysis to find numeric literals multiplied by ureg units. Allowed numbers include:
-- Small integers (0-5, -1, -2)
-- Common fractions (0.5, 0.25, 0.75)
-- Statistical percentiles (2.5, 25, 50, 75, 97.5)
-- Common conversion factors (100, 1000)
-
-All other numbers attached to units must be passed via `params`, `inputs`, or `constants` dicts.
+The validator uses AST analysis to find numeric literals multiplied by ureg units (e.g., `42.0 * ureg.day`, `1.5 * ureg('1/day')`). All numbers with units must come from `inputs`, `assumptions`, or `constants` dicts—no exceptions. Numbers without units (array indices, exponents, percentiles) are allowed.
 
 ### Key Design Principles
 

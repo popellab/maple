@@ -468,13 +468,32 @@ class IsolatedSystemTarget(CalibrationTarget):
             except Exception:
                 y_pint.append(1.0 * ureg.dimensionless)
 
-        # Build inputs (as floats - inputs are experimental values)
-        inputs_mock = {}
+        # Build inputs with Pint quantities for dimensional analysis
+        # Both LiteratureInput and ModelingAssumption have 'units' fields
+        inputs_pint = {}
         for inp in self.calibration_target_estimates.inputs:
-            if isinstance(inp.value, list):
-                inputs_mock[inp.name] = inp.value[0]
-            else:
-                inputs_mock[inp.name] = inp.value
+            try:
+                if isinstance(inp.value, list):
+                    inputs_pint[inp.name] = inp.value[0] * ureg(inp.units)
+                else:
+                    inputs_pint[inp.name] = inp.value * ureg(inp.units)
+            except Exception:
+                # If unit parsing fails, fall back to dimensionless
+                val = inp.value[0] if isinstance(inp.value, list) else inp.value
+                inputs_pint[inp.name] = val * ureg.dimensionless
+
+        # Also include assumptions
+        for assumption in self.calibration_target_estimates.assumptions:
+            try:
+                if isinstance(assumption.value, list):
+                    inputs_pint[assumption.name] = assumption.value[0] * ureg(assumption.units)
+                else:
+                    inputs_pint[assumption.name] = assumption.value * ureg(assumption.units)
+            except Exception:
+                val = (
+                    assumption.value[0] if isinstance(assumption.value, list) else assumption.value
+                )
+                inputs_pint[assumption.name] = val * ureg.dimensionless
 
         # Execute submodel with Pint quantities
         try:
@@ -482,7 +501,7 @@ class IsolatedSystemTarget(CalibrationTarget):
             exec(self.submodel.code, local_scope)
             submodel_fn = local_scope["submodel"]
 
-            dydt = submodel_fn(1.0, y_pint, params_pint, inputs_mock)
+            dydt = submodel_fn(1.0, y_pint, params_pint, inputs_pint)
         except Exception as e:
             # Dimensional analysis failed - this might be expected if
             # the submodel doesn't handle Pint quantities gracefully

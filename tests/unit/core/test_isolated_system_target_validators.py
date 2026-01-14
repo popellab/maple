@@ -1090,8 +1090,8 @@ class TestCancerFieldsValidation:
             "key_study_limitations": "Mouse model",
             "rationale": "Using viral infection data as proxy.",
             "calibration_target_estimates": {
-                "median": [2.0],
-                "ci95": [[1.5, 2.5]],
+                "median": [2.079],  # ln(2) / (8/24) = 2.079 per day
+                "ci95": [[1.559, 2.599]],  # +/- 25%
                 "units": "1/day",
                 "inputs": [
                     {
@@ -1109,9 +1109,13 @@ class TestCancerFieldsValidation:
                 "distribution_code": (
                     "def derive_distribution(inputs, ureg):\n"
                     "    import numpy as np\n"
-                    "    np.random.seed(42)\n"
-                    "    median_obs = np.array([2.0]) * ureg('1/day')\n"
-                    "    ci95_obs = [[1.5 * ureg('1/day'), 2.5 * ureg('1/day')]]\n"
+                    "    # k = ln(2) / doubling_time\n"
+                    "    doubling_time = inputs['doubling_time']\n"
+                    "    k = np.log(2) / doubling_time\n"
+                    "    median_obs = np.array([k.to('1/day').magnitude]) * ureg('1/day')\n"
+                    "    ci95_low = (k * 0.75).to('1/day').magnitude\n"
+                    "    ci95_high = (k * 1.25).to('1/day').magnitude\n"
+                    "    ci95_obs = [[ci95_low * ureg('1/day'), ci95_high * ureg('1/day')]]\n"
                     "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
                 ),
             },
@@ -1157,8 +1161,8 @@ class TestCancerFieldsValidation:
             "key_study_limitations": "Mouse model",
             "rationale": "Using viral infection data as proxy.",
             "calibration_target_estimates": {
-                "median": [2.0],
-                "ci95": [[1.5, 2.5]],
+                "median": [2.079],  # ln(2) / (8/24) = 2.079 per day
+                "ci95": [[1.559, 2.599]],  # +/- 25%
                 "units": "1/day",
                 "inputs": [
                     {
@@ -1176,9 +1180,13 @@ class TestCancerFieldsValidation:
                 "distribution_code": (
                     "def derive_distribution(inputs, ureg):\n"
                     "    import numpy as np\n"
-                    "    np.random.seed(42)\n"
-                    "    median_obs = np.array([2.0]) * ureg('1/day')\n"
-                    "    ci95_obs = [[1.5 * ureg('1/day'), 2.5 * ureg('1/day')]]\n"
+                    "    # k = ln(2) / doubling_time\n"
+                    "    doubling_time = inputs['doubling_time']\n"
+                    "    k = np.log(2) / doubling_time\n"
+                    "    median_obs = np.array([k.to('1/day').magnitude]) * ureg('1/day')\n"
+                    "    ci95_low = (k * 0.75).to('1/day').magnitude\n"
+                    "    ci95_high = (k * 1.25).to('1/day').magnitude\n"
+                    "    ci95_obs = [[ci95_low * ureg('1/day'), ci95_high * ureg('1/day')]]\n"
                     "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
                 ),
             },

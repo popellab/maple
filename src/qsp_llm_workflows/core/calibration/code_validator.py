@@ -19,7 +19,7 @@ Validates:
 import ast
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -41,39 +41,6 @@ EXPECTED_SIGNATURES: Dict[CodeType, Tuple[str, List[str]]] = {
     CodeType.OBSERVABLE: ("compute_observable", ["time", "species_dict", "constants", "ureg"]),
     CodeType.DISTRIBUTION: ("derive_distribution", ["inputs", "ureg"]),
     CodeType.DERIVATION: ("derive_parameter", ["inputs", "ureg"]),
-}
-
-
-# Numbers that are acceptable as inline literals
-ALLOWED_NUMERIC_LITERALS: Set[float] = {
-    # Basic integers for indexing, counting, math
-    0,
-    1,
-    2,
-    3,
-    4,
-    5,
-    -1,
-    -2,
-    # Common fractions
-    0.5,
-    0.25,
-    0.75,
-    # Statistical percentiles
-    2.5,
-    25,
-    50,
-    75,
-    97.5,
-    0.025,
-    0.975,
-    0.05,
-    0.95,
-    # Common conversion factors
-    100,
-    1000,
-    # Mathematical constants (numpy provides these, but sometimes hardcoded)
-    # We'll also check for np.pi, np.e usage
 }
 
 
@@ -146,30 +113,28 @@ class CodeValidationResult:
 
 class HardcodedConstantVisitor(ast.NodeVisitor):
     """
-    AST visitor that finds hardcoded numeric constants.
+    AST visitor that finds numeric constants attached to units.
 
-    Detects:
-    - Numeric literals that aren't in the allowed set
-    - Numbers multiplied by ureg (indicating unit attachment)
-    - Magic numbers in mathematical expressions
+    Detects patterns like:
+    - 42.0 * ureg.day
+    - 1.5 * ureg('1/day')
+    - 100 * ureg.mm**2
+
+    All numbers with units must come from inputs, assumptions, or constants dicts.
     """
 
-    def __init__(self, allowed_numbers: Optional[Set[float]] = None):
-        self.allowed_numbers = allowed_numbers or ALLOWED_NUMERIC_LITERALS
+    def __init__(self):
         self.violations: List[Tuple[float, int, int, str]] = []  # (value, line, col, context)
-        self._in_ureg_mult = False  # Track if we're in a ureg multiplication
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
         """Check binary operations for number * ureg patterns."""
-        # Check for: NUMBER * ureg.X or ureg.X * NUMBER
         if isinstance(node.op, ast.Mult):
-            # Check left side is number, right side involves ureg
+            # Check: NUMBER * ureg.X
             if isinstance(node.left, ast.Constant) and self._involves_ureg(node.right):
-                self._check_ureg_multiplication(node.left, node)
-            # Check right side is number, left side involves ureg
+                self._flag_number(node.left, node)
+            # Check: ureg.X * NUMBER
             elif isinstance(node.right, ast.Constant) and self._involves_ureg(node.left):
-                self._check_ureg_multiplication(node.right, node)
-
+                self._flag_number(node.right, node)
         self.generic_visit(node)
 
     def _involves_ureg(self, node: ast.AST) -> bool:
@@ -182,7 +147,7 @@ class HardcodedConstantVisitor(ast.NodeVisitor):
             elif isinstance(node.func, ast.Name) and node.func.id == "ureg":
                 return True
         elif isinstance(node, ast.BinOp):
-            # Handle ureg.mm ** 2 (Pow) or ureg.mm * ureg.s (Mult/Div)
+            # Handle ureg.mm ** 2 or ureg.mm * ureg.s
             return self._involves_ureg(node.left) or self._involves_ureg(node.right)
         return False
 
@@ -194,46 +159,22 @@ class HardcodedConstantVisitor(ast.NodeVisitor):
             return self._is_ureg_reference(node.value)
         return False
 
-    def _check_ureg_multiplication(self, num_node: ast.Constant, context_node: ast.AST) -> None:
-        """Check if a number in ureg multiplication is allowed."""
+    def _flag_number(self, num_node: ast.Constant, context_node: ast.AST) -> None:
+        """Flag a number attached to units."""
         if not isinstance(num_node.value, (int, float)):
             return
-
-        value = float(num_node.value)
-        if value not in self.allowed_numbers:
-            # Get context string for better error messages
-            try:
-                context = ast.unparse(context_node)
-            except Exception:
-                context = f"line {num_node.lineno}"
-
-            self.violations.append(
-                (
-                    value,
-                    num_node.lineno,
-                    num_node.col_offset,
-                    context,
-                )
+        try:
+            context = ast.unparse(context_node)
+        except Exception:
+            context = f"line {num_node.lineno}"
+        self.violations.append(
+            (
+                float(num_node.value),
+                num_node.lineno,
+                num_node.col_offset,
+                context,
             )
-
-    def visit_Constant(self, node: ast.Constant) -> None:
-        """
-        Check standalone numeric constants.
-
-        We're more lenient with standalone numbers since they might be
-        array indices, loop bounds, etc. The main concern is numbers
-        being attached to units.
-        """
-        # Only flag very suspicious standalone numbers (like physical constants)
-        if isinstance(node.value, (int, float)):
-            value = float(node.value)
-            # Flag numbers that look like physical constants (specific ranges)
-            # This is heuristic - numbers like 6.022e23, 1.38e-23, etc.
-            if abs(value) > 1e6 or (0 < abs(value) < 1e-4 and value not in self.allowed_numbers):
-                # Only add as warning, not error - might be legitimate
-                pass  # We handle this via ureg multiplication detection
-
-        self.generic_visit(node)
+        )
 
 
 class CodeValidator:
@@ -360,15 +301,14 @@ class CodeValidator:
         return func_node
 
     def _check_hardcoded_constants(self, tree: ast.AST, result: CodeValidationResult) -> None:
-        """Check for hardcoded numeric constants attached to units."""
+        """Check for hardcoded numeric constants."""
         visitor = HardcodedConstantVisitor()
         visitor.visit(tree)
 
         for value, line, col, context in visitor.violations:
             message = (
-                f"Hardcoded constant {value} attached to units.\n"
-                f"  Context: {context}\n"
-                f"  All constants with units must be passed via params, inputs, or constants dict."
+                f"Hardcoded constant {value} with units: {context}\n"
+                f"  All numbers with units must come from inputs, assumptions, or constants dict."
             )
             if self.strict_hardcoded:
                 result.add_error(
@@ -527,5 +467,4 @@ __all__ = [
     "validate_code_block",
     "find_hardcoded_constants",
     "EXPECTED_SIGNATURES",
-    "ALLOWED_NUMERIC_LITERALS",
 ]
