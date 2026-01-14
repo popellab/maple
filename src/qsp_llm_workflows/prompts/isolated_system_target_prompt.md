@@ -491,6 +491,43 @@ Add to `caveats` for every context mismatch:
 
 ---
 
+## Sample Size Requirement
+
+You MUST extract the sample size (n) for each measurement. This is critical
+for proper uncertainty quantification and pooling across studies.
+
+**Look for:**
+- "n = X" or "N = X" in methods/results sections
+- Sample sizes in figure legends (e.g., "n=5 per group")
+- Patient/subject counts in study design
+- Number of replicates in in vitro experiments
+- Number of animals per group in preclinical studies
+
+**For vector-valued data:**
+- If sample size differs at each index point, provide as a list: `sample_size: [5, 5, 4, 3]`
+- If same for all points, provide single int: `sample_size: 5`
+
+**If sample size is not explicitly reported:**
+- Check figure error bars - if SEM is reported, can sometimes back-calculate n from SD/SEM
+- Note uncertainty in rationale: "Sample size not explicitly reported; n≈X inferred from methods"
+- Use conservative estimate based on study type
+
+**Required fields:**
+- `sample_size`: int or List[int] - the numeric value(s)
+- `sample_size_rationale`: str - explanation of how sample size was determined
+
+**Example:**
+```yaml
+calibration_target_estimates:
+  median: [750000]
+  ci95: [[456000, 1044000]]
+  units: cell
+  sample_size: 5
+  sample_size_rationale: "n=5 replicates per condition, stated in Methods section 2.3"
+```
+
+---
+
 ## Input Classification (input_type)
 
 Each input must be classified by type:
@@ -703,6 +740,8 @@ calibration_target_estimates:
   median: [750000]
   ci95: [[456000, 1044000]]
   units: cell
+  sample_size: 3
+  sample_size_rationale: "n=3 replicates per condition, standard for in vitro T cell expansion assays"
 
   distribution_code: |
     def derive_distribution(inputs, ureg):
@@ -838,6 +877,8 @@ calibration_target_estimates:
   median: [8.2]
   ci95: [[7.4, 9.0]]
   units: nanomolar
+  sample_size: 3
+  sample_size_rationale: "n=3 independent SPR measurements, typical for binding affinity determination"
 
   distribution_code: |
     def derive_distribution(inputs, ureg):
@@ -972,6 +1013,8 @@ calibration_target_estimates:
   median: [228.0]
   ci95: [[109.0, 427.0]]
   units: milliliter / day
+  sample_size: 365
+  sample_size_rationale: "n=365 patients in population PK analysis, reported in Methods section"
 
   distribution_code: |
     def derive_distribution(inputs, ureg):
@@ -1120,6 +1163,8 @@ calibration_target_estimates:
   median: [1.0]
   ci95: [[0.52, 1.95]]
   units: picogram / cell / hour
+  sample_size: 6
+  sample_size_rationale: "n=6 biological replicates across different stimulation conditions, pooled to establish range"
 
   distribution_code: |
     def derive_distribution(inputs, ureg):

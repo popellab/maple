@@ -95,6 +95,8 @@ def golden_calibration_target_data():
             "median": [1.0],
             "ci95": [[0.3737, 2.7]],
             "units": "dimensionless",
+            "sample_size": 42,
+            "sample_size_rationale": "n=42 patients in resected PDAC cohort, Table 1",
             "inputs": [
                 {
                     "name": "cd8_ratio_mean",

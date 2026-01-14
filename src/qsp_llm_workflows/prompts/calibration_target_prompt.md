@@ -308,6 +308,37 @@ When `measurement_code` includes conversion factors (cells → volume, IHC score
 - **Verbatim snippets**: Exact quotes containing values (automatically verified)
 - **Secondary sources**: Reference values, conversion factors (can be multiple)
 
+### Sample Size Requirement
+
+You MUST extract the sample size (n) for each measurement. This is critical
+for proper uncertainty quantification and pooling across studies.
+
+**Look for:**
+- "n = X" or "N = X" in methods/results sections
+- Sample sizes in figure legends (e.g., "n=5 per group")
+- Patient/subject counts in study design
+- Number of samples/biopsies in clinical studies
+
+**Required fields in `calibration_target_estimates`:**
+- `sample_size`: int or List[int] - the numeric value(s)
+- `sample_size_rationale`: str - explanation of how sample size was determined
+
+**If sample size is not explicitly reported:**
+- Check figure error bars - if SEM is reported, can sometimes back-calculate n from SD/SEM
+- Note uncertainty in rationale: "Sample size not explicitly reported; n≈X inferred from methods"
+- Use conservative estimate based on study type
+
+**Example:**
+```yaml
+calibration_target_estimates:
+  median: 149.94
+  iqr: 33.59
+  ci95: [100.79, 199.35]
+  units: cell / mm**2
+  sample_size: 42
+  sample_size_rationale: "n=42 patients with resected PDAC tumors, stated in Table 1"
+```
+
 ---
 
 ## Source Hierarchy

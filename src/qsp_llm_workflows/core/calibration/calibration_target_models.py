@@ -11,10 +11,10 @@ See docs/calibration_target_design.md for full specification.
 
 import ast
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import numpy as np
-from pydantic import BaseModel, Field, ValidationInfo, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 # Import from calibration submodules
 from qsp_llm_workflows.core.calibration.exceptions import (
@@ -113,6 +113,23 @@ class CalibrationTargetEstimates(BaseModel):
     )
     units: str = Field(description="Units of the observable (Pint-parseable)")
 
+    # Sample size metadata
+    sample_size: Union[int, List[int]] = Field(
+        description=(
+            "Sample size (n) for the measurement. Critical for uncertainty quantification "
+            "and pooling across studies. Single int for scalar data or same n for all index "
+            "points. List[int] for different sample sizes at each index point (must match "
+            "index_values length)."
+        )
+    )
+    sample_size_rationale: str = Field(
+        description=(
+            "Explanation of how sample_size was determined. Document the source "
+            "(e.g., 'n=5 per group stated in Methods section', 'n inferred from "
+            "figure error bars using SEM formula', 'n estimated as typical for this study type')."
+        )
+    )
+
     # Index dimension for vector-valued data
     index_values: Optional[List[float]] = Field(
         None,
@@ -185,6 +202,19 @@ class CalibrationTargetEstimates(BaseModel):
             "    }"
         )
     )
+
+    @field_validator("sample_size")
+    @classmethod
+    def validate_sample_size_positive(cls, v: Union[int, List[int]]) -> Union[int, List[int]]:
+        """Validate sample size is at least 1."""
+        if isinstance(v, list):
+            for i, n in enumerate(v):
+                if n < 1:
+                    raise ValueError(f"sample_size[{i}] must be at least 1, got {n}")
+        else:
+            if v < 1:
+                raise ValueError(f"sample_size must be at least 1, got {v}")
+        return v
 
     @model_validator(mode="after")
     def validate_output_lengths_match(self) -> "CalibrationTargetEstimates":
@@ -264,6 +294,21 @@ class CalibrationTargetEstimates(BaseModel):
                         f"Vector assumptions must match index_values length."
                     )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_sample_size_length(self) -> "CalibrationTargetEstimates":
+        """Validator: Ensure vector sample_size matches index_values length."""
+        if isinstance(self.sample_size, list):
+            if self.index_values is None:
+                raise ValueError(
+                    "Vector sample_size requires index_values. " "Use a single int for scalar data."
+                )
+            if len(self.sample_size) != len(self.index_values):
+                raise ValueError(
+                    f"sample_size length ({len(self.sample_size)}) must match "
+                    f"index_values length ({len(self.index_values)})"
+                )
         return self
 
 

@@ -70,6 +70,8 @@ src/qsp_llm_workflows/
 
 **Vector-valued data:** Calibration targets support both scalar and time-course/dose-response data through a unified pathway. Scalar data uses length-1 lists; vector data uses `index_values` to specify the indexing dimension (time points, doses, etc.).
 
+**Sample size tracking:** All calibration targets require `sample_size` (int or List[int]) and `sample_size_rationale` (str) for proper uncertainty quantification and meta-analysis pooling across studies.
+
 ## Documentation
 
 The [automated workflow guide](docs/automated_workflow.md) walks through first-time setup and basic usage. For package internals—how prompts are assembled, how validation works, how to add new validators—see [CLAUDE.md](CLAUDE.md).

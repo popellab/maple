@@ -492,6 +492,8 @@ core/calibration/calibration_target_models.py:
   │   ├── median: List[float]      # Vector-valued (length-1 for scalar data)
   │   ├── ci95: List[List[float]]  # [[lo, hi], [lo, hi], ...]
   │   ├── units: str
+  │   ├── sample_size: Union[int, List[int]]   # Required - for uncertainty pooling
+  │   ├── sample_size_rationale: str           # Required - how n was determined
   │   ├── index_values: Optional[List[float]]  # e.g., [0, 24, 48, 72] for time
   │   ├── index_unit: Optional[str]            # e.g., "hour"
   │   ├── index_type: Optional[IndexType]      # time, dose, ratio, etc.

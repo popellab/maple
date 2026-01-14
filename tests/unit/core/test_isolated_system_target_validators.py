@@ -78,9 +78,10 @@ def golden_isolated_target_data():
         "rationale": "Logistic growth model captures T cell expansion; ignores death for short-term assay.",
         "calibration_target_estimates": {
             "median": [1.0],
-            "iqr": [0.6843],
             "ci95": [[0.3737, 2.7]],
             "units": "dimensionless",
+            "sample_size": 3,
+            "sample_size_rationale": "n=3 replicates per condition, standard for in vitro T cell assays",
             "inputs": [
                 {
                     "name": "initial_T_cells",
@@ -917,6 +918,8 @@ class TestGetParametersUsed:
                 "median": [2.0801],
                 "ci95": [[1.6679, 2.7581]],
                 "units": "1/day",
+                "sample_size": 5,
+                "sample_size_rationale": "n=5 replicates in doubling time experiment",
                 "inputs": [
                     {
                         "name": "doubling_time",
@@ -1001,6 +1004,8 @@ class TestDirectConversionMode:
                 "median": [2.0801],
                 "ci95": [[1.6679, 2.7581]],
                 "units": "1/day",
+                "sample_size": 5,
+                "sample_size_rationale": "n=5 replicates in doubling time experiment",
                 "inputs": [
                     {
                         "name": "doubling_time",
@@ -1104,6 +1109,8 @@ class TestCancerFieldsValidation:
                 "median": [2.079],  # ln(2) / (8/24) = 2.079 per day
                 "ci95": [[1.559, 2.599]],  # +/- 25%
                 "units": "1/day",
+                "sample_size": 8,
+                "sample_size_rationale": "n=8 mice in viral infection cohort",
                 "inputs": [
                     {
                         "name": "doubling_time",
@@ -1175,6 +1182,8 @@ class TestCancerFieldsValidation:
                 "median": [2.079],  # ln(2) / (8/24) = 2.079 per day
                 "ci95": [[1.559, 2.599]],  # +/- 25%
                 "units": "1/day",
+                "sample_size": 8,
+                "sample_size_rationale": "n=8 mice in viral infection cohort",
                 "inputs": [
                     {
                         "name": "doubling_time",
