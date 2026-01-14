@@ -146,6 +146,12 @@ class SourceRefError(CalibrationReferenceError):
     pass
 
 
+class SnippetValueMismatchError(CalibrationReferenceError):
+    """Value not found in value_snippet text."""
+
+    pass
+
+
 class SpeciesNotFoundError(CalibrationReferenceError):
     """Species not found in model."""
 

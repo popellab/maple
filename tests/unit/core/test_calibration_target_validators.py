@@ -229,6 +229,112 @@ class TestCalibrationTargetValidators:
         error_str = str(exc_info.value)
         assert "failed to resolve" in error_str
 
+    def test_validate_secondary_doi_resolution_fails_on_invalid_doi(
+        self, species_units, golden_calibration_target_data
+    ):
+        """Validator should reject secondary source DOI that doesn't resolve."""
+        # Mock primary DOI success but secondary DOI failure
+        call_count = [0]
+
+        def mock_get(url, headers=None, timeout=None):
+            call_count[0] += 1
+            mock_response = Mock()
+            # First call is primary DOI (success), subsequent calls for secondary (fail)
+            if "10.1000/test.2020.001" in url:
+                mock_response.status_code = 200
+                mock_response.json.return_value = {
+                    "title": ["Immune landscape of pancreatic ductal adenocarcinoma"],
+                    "author": [{"family": "Smith"}],
+                    "issued": {"date-parts": [[2020]]},
+                }
+            else:
+                mock_response.status_code = 404
+            return mock_response
+
+        with patch("requests.get", mock_get):
+            data = copy.deepcopy(golden_calibration_target_data)
+            # Add secondary source with invalid DOI
+            data["secondary_data_sources"] = [
+                {
+                    "source_tag": "jones_2019",
+                    "title": "Some reference paper",
+                    "first_author": "Jones",
+                    "year": 2019,
+                    "doi_or_url": "10.9999/invalid.secondary.doi",
+                }
+            ]
+
+            with pytest.raises(ValidationError) as exc_info:
+                CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+            error_str = str(exc_info.value)
+            assert "failed to resolve" in error_str
+            assert "jones_2019" in error_str or "Secondary source" in error_str
+
+    def test_validate_secondary_title_match_fails_on_title_mismatch(
+        self, species_units, golden_calibration_target_data
+    ):
+        """Validator should reject secondary source with mismatched title."""
+
+        def mock_get(url, headers=None, timeout=None):
+            mock_response = Mock()
+            mock_response.status_code = 200
+            if "10.1000/test.2020.001" in url:
+                mock_response.json.return_value = {
+                    "title": ["Immune landscape of pancreatic ductal adenocarcinoma"],
+                    "author": [{"family": "Smith"}],
+                    "issued": {"date-parts": [[2020]]},
+                }
+            else:
+                # Secondary DOI returns different title than provided
+                mock_response.json.return_value = {
+                    "title": ["Completely Different Secondary Paper Title"],
+                    "author": [{"family": "Jones"}],
+                    "issued": {"date-parts": [[2019]]},
+                }
+            return mock_response
+
+        with patch("requests.get", mock_get):
+            data = copy.deepcopy(golden_calibration_target_data)
+            # Add secondary source with DOI that resolves to different title
+            data["secondary_data_sources"] = [
+                {
+                    "source_tag": "jones_2019",
+                    "title": "Provided title that doesn't match CrossRef",
+                    "first_author": "Jones",
+                    "year": 2019,
+                    "doi_or_url": "10.1000/secondary.2019.001",
+                }
+            ]
+
+            with pytest.raises(ValidationError) as exc_info:
+                CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+            error_str = str(exc_info.value).lower()
+            assert "title mismatch" in error_str or "mismatch" in error_str
+            assert "jones_2019" in error_str or "secondary" in error_str
+
+    def test_validate_secondary_source_url_skipped(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should skip URL validation for secondary sources (only DOIs)."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Add secondary source with URL (not DOI) - should not be validated
+        data["secondary_data_sources"] = [
+            {
+                "source_tag": "reference_website",
+                "title": "Reference Values Database",
+                "first_author": "Database",
+                "year": 2023,
+                "doi_or_url": "https://example.com/reference-values",
+            }
+        ]
+
+        # Should pass - URL is not validated via CrossRef
+        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        assert target is not None
+        assert len(target.secondary_data_sources) == 1
+
     def test_validate_title_match_fails_on_title_mismatch(
         self, species_units, golden_calibration_target_data
     ):
@@ -299,6 +405,95 @@ class TestCalibrationTargetValidators:
 
         error_str = str(exc_info.value)
         assert "not defined" in error_str.lower() and "nonexistent_source" in error_str
+
+    def test_validate_input_values_in_snippets_fails_on_missing_value(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should reject inputs where value is not found in value_snippet."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Change value but keep snippet the same (snippet says 1.0, value is 999)
+        data["calibration_target_estimates"]["inputs"][0]["value"] = 999.0
+        data["calibration_target_estimates"]["inputs"][0][
+            "value_snippet"
+        ] = "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value)
+        assert "not found in value_snippet" in error_str or "SnippetValueMismatch" in error_str
+        assert "999" in error_str
+
+    def test_validate_input_values_in_snippets_passes_with_matching_value(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should pass when values are found in snippets."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Ensure snippet contains the value
+        data["calibration_target_estimates"]["inputs"][0]["value"] = 1.0
+        data["calibration_target_estimates"]["inputs"][0][
+            "value_snippet"
+        ] = "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
+
+        # Should pass
+        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        assert target is not None
+
+    def test_validate_input_values_in_snippets_handles_scientific_notation(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should find values in scientific notation format (Unicode superscripts)."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Use value with Unicode superscript notation in snippet
+        # Value 1.0 can be written as 1×10⁰ to test superscript parsing
+        data["calibration_target_estimates"]["inputs"][0]["value"] = 1.0
+        data["calibration_target_estimates"]["inputs"][0][
+            "value_snippet"
+        ] = "CD8+ T cell to tumor cell ratio: 1×10⁰ (mean from Figure 2)"
+
+        # Should pass - Unicode superscript notation is handled
+        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        assert target is not None
+
+    def test_validate_input_values_in_snippets_handles_percentage(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should find percentage values (0.5 in snippet as 50%)."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Use value that matches the observable scale (~1.0) but expressed as percentage
+        # The check_value_in_text function should recognize 0.5 in "50%"
+        data["calibration_target_estimates"]["inputs"][1]["value"] = 0.5
+        data["calibration_target_estimates"]["inputs"][1][
+            "value_snippet"
+        ] = "The log-scale SD was 50% of the mean"
+
+        # Should pass - percentage format is handled (0.5 matches "50%")
+        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        assert target is not None
+
+    def test_validate_input_values_in_snippets_fails_on_vector_missing_value(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Validator should reject vector inputs where not all values are in snippet."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        # Vector input where one value is not in snippet
+        data["calibration_target_estimates"]["inputs"][0]["value"] = [1.0, 2.0, 999.0]
+        data["calibration_target_estimates"]["inputs"][0][
+            "value_snippet"
+        ] = "Values were 1.0 at baseline, 2.0 at day 7"  # Missing 999.0
+        # Set up as vector data
+        data["calibration_target_estimates"]["median"] = [1.0, 2.0, 2.5]
+        data["calibration_target_estimates"]["ci95"] = [[0.5, 1.5], [1.0, 3.0], [1.2, 3.8]]
+        data["calibration_target_estimates"]["index_values"] = [0, 7, 14]
+        data["calibration_target_estimates"]["index_unit"] = "day"
+        data["calibration_target_estimates"]["index_type"] = "time"
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value)
+        assert "not found in value_snippet" in error_str or "SnippetValueMismatch" in error_str
+        assert "999" in error_str
 
     def test_validate_species_exist_fails_on_missing_species(
         self, species_units, golden_calibration_target_data, mock_crossref_success
@@ -857,7 +1052,7 @@ class TestVectorValuedCalibrationTarget:
                 "description": "Log-scale SD (assumed constant)",
                 "source_ref": "smith_2020",
                 "value_location": "Figure 3",
-                "value_snippet": "variability approximately constant across time",
+                "value_snippet": "variability σ=0.5 approximately constant across time",
             },
         ]
         data["calibration_target_estimates"]["assumptions"] = [

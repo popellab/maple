@@ -32,6 +32,7 @@ from qsp_llm_workflows.core.calibration.exceptions import (
     ReturnStructureError,
     ScaleMismatchError,
     ScalarReturnError,
+    SnippetValueMismatchError,
     SourceRefError,
     SpeciesNotFoundError,
     UnitConversionError,
@@ -46,6 +47,7 @@ from qsp_llm_workflows.core.calibration.shared_models import (
     Source,
 )
 from qsp_llm_workflows.core.calibration.validators import (
+    check_value_in_text,
     create_mock_species,
     fuzzy_match,
     get_typical_species_value,
@@ -407,6 +409,59 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_secondary_doi_resolution(self) -> "CalibrationTarget":
+        """Validator: Check that secondary source DOIs resolve via CrossRef.
+
+        Secondary sources use doi_or_url field which can be a DOI or URL.
+        Only validates entries that look like DOIs (start with '10.').
+        """
+        for source in self.secondary_data_sources:
+            doi_or_url = source.doi_or_url
+            if not doi_or_url:
+                continue
+
+            # Check if it looks like a DOI (starts with 10. or contains doi.org)
+            is_doi = doi_or_url.startswith("10.") or "doi.org/10." in doi_or_url
+
+            if is_doi:
+                metadata = resolve_doi(doi_or_url)
+                if metadata is None:
+                    raise DOIResolutionError(
+                        f"Secondary source '{source.source_tag}' has DOI '{doi_or_url}' "
+                        f"that failed to resolve via CrossRef.\n"
+                        f"Verify the DOI exists and is correctly formatted (e.g., '10.1234/journal.2023.123').\n"
+                        f"If this is a URL (not a DOI), ensure it doesn't start with '10.' or contain 'doi.org'."
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def validate_secondary_title_match(self) -> "CalibrationTarget":
+        """Validator: Check that secondary source titles match CrossRef metadata.
+
+        Only validates entries with DOIs (not URLs).
+        """
+        for source in self.secondary_data_sources:
+            doi_or_url = source.doi_or_url
+            if not doi_or_url:
+                continue
+
+            # Check if it looks like a DOI
+            is_doi = doi_or_url.startswith("10.") or "doi.org/10." in doi_or_url
+
+            if is_doi:
+                metadata = resolve_doi(doi_or_url)
+                if metadata:
+                    crossref_title = metadata.get("title", "")
+                    if not fuzzy_match(crossref_title, source.title, threshold=0.75):
+                        raise PaperTitleMismatchError(
+                            f"Secondary source '{source.source_tag}' title mismatch:\n"
+                            f"  CrossRef: '{crossref_title}'\n"
+                            f"  Provided: '{source.title}'\n"
+                            f"Use the exact title from the DOI. Copy the title from CrossRef or the paper itself."
+                        )
+        return self
+
+    @model_validator(mode="after")
     def validate_observable_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
         """
         Validator: Check that observable code executes and returns correct units.
@@ -523,6 +578,46 @@ class CalibrationTarget(BaseModel):
             # Other errors might be from complex logic or missing species
             # Be lenient - actual execution will catch these
             pass
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_input_values_in_snippets(self) -> "CalibrationTarget":
+        """Validator: Check that LiteratureInput values appear in their value_snippet.
+
+        Ensures data integrity by verifying that extracted values can be found
+        in the source text. Handles multiple numeric formats (decimal, scientific,
+        percentage, rounded variations).
+
+        Raises SnippetValueMismatchError if a value is not found in its snippet.
+        """
+        for inp in self.calibration_target_estimates.inputs:
+            value = inp.value
+            snippet = inp.value_snippet
+
+            if not snippet:
+                continue
+
+            # Handle both scalar and vector-valued inputs
+            values_to_check = [value] if not isinstance(value, list) else value
+
+            missing_values = []
+            for val in values_to_check:
+                if not check_value_in_text(snippet, val):
+                    missing_values.append(val)
+
+            if missing_values:
+                raise SnippetValueMismatchError(
+                    f"LiteratureInput '{inp.name}' has value(s) not found in value_snippet.\n"
+                    f"  Missing values: {missing_values}\n"
+                    f"  Snippet: '{snippet[:200]}{'...' if len(snippet) > 200 else ''}'\n"
+                    f"The value_snippet must contain the exact values extracted from the paper.\n"
+                    f"Check for:\n"
+                    f"  - Typos in the extracted value\n"
+                    f"  - Different numeric format in the paper (e.g., '2.5×10⁻³' vs '0.0025')\n"
+                    f"  - Value reported in different units that need conversion\n"
+                    f"  - Snippet truncated before the value appears"
+                )
 
         return self
 

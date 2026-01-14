@@ -88,7 +88,7 @@ def fuzzy_match(str1: str, str2: str, threshold: float = 0.75) -> bool:
 def check_value_in_text(text: str, value: float) -> bool:
     """
     Check if numeric value appears in text.
-    Handles different formats: scientific notation, percentages, etc.
+    Handles different formats: scientific notation, percentages, integers, etc.
 
     Args:
         text: Text to search
@@ -97,6 +97,8 @@ def check_value_in_text(text: str, value: float) -> bool:
     Returns:
         True if value found in text
     """
+    import re
+
     if not text:
         return False
 
@@ -108,20 +110,54 @@ def check_value_in_text(text: str, value: float) -> bool:
     # Direct value
     patterns.append(str(value))
 
+    # Integer format (if value is a whole number)
+    if value == int(value):
+        patterns.append(str(int(value)))
+
     # Scientific notation variations
-    if abs(value) < 0.01 or abs(value) > 10000:
+    if abs(value) < 0.01 or abs(value) > 1000:
         patterns.append(f"{value:e}")
         patterns.append(f"{value:.2e}")
         patterns.append(f"{value:.3e}")
+        patterns.append(f"{value:.1e}")
+        patterns.append(f"{value:.0e}")
+
+        # Compact scientific notation (e.g., "1e5" without +/- sign or leading zeros)
+        # Handle values like 1e5, 2.5e-3, etc.
+        if value != 0:
+            import math
+
+            exponent = int(math.floor(math.log10(abs(value))))
+            mantissa = value / (10**exponent)
+
+            # Format with minimal notation
+            if mantissa == int(mantissa):
+                # Integer mantissa: "1e5", "2e-3"
+                patterns.append(f"{int(mantissa)}e{exponent}")
+            else:
+                # Decimal mantissa: "2.5e-3"
+                patterns.append(f"{mantissa:.1f}e{exponent}")
+                patterns.append(f"{mantissa:.2f}e{exponent}")
+
+            # Also try without exponent sign for positive exponents
+            if exponent >= 0:
+                if mantissa == int(mantissa):
+                    patterns.append(f"{int(mantissa)}e+{exponent}")
+                    patterns.append(f"{int(mantissa)}e{exponent:02d}")
 
     # Percentage format (if value is between 0 and 1)
     if 0 < value < 1:
         pct = value * 100
         patterns.append(f"{pct}%")
+        patterns.append(f"{pct:.0f}%")
         patterns.append(f"{pct:.1f}%")
         patterns.append(f"{pct:.2f}%")
+        # Also without % symbol
+        if pct == int(pct):
+            patterns.append(str(int(pct)))
 
     # Rounded variations
+    patterns.append(f"{value:.0f}")
     patterns.append(f"{value:.1f}")
     patterns.append(f"{value:.2f}")
     patterns.append(f"{value:.3f}")
@@ -130,6 +166,52 @@ def check_value_in_text(text: str, value: float) -> bool:
     for pattern in patterns:
         if str(pattern).lower() in text_norm:
             return True
+
+    # Also check for Unicode superscript notation (e.g., "10⁵", "2.5×10⁻³")
+    # Convert superscript to regular notation for comparison
+    superscript_map = {
+        "⁰": "0",
+        "¹": "1",
+        "²": "2",
+        "³": "3",
+        "⁴": "4",
+        "⁵": "5",
+        "⁶": "6",
+        "⁷": "7",
+        "⁸": "8",
+        "⁹": "9",
+        "⁻": "-",
+        "⁺": "+",
+    }
+
+    # Check for 10^X notation
+    superscript_pattern = r"10([⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+)"
+    for match in re.finditer(superscript_pattern, text):
+        exp_super = match.group(1)
+        exp_str = "".join(superscript_map.get(c, c) for c in exp_super)
+        try:
+            exp_val = int(exp_str)
+            # Check if this matches our value (10^exp_val)
+            if abs(value - 10**exp_val) / abs(value) < 0.01:
+                return True
+        except ValueError:
+            pass
+
+    # Check for coefficient×10^X notation (e.g., "2.5×10⁻³")
+    coef_pattern = r"([\d.]+)\s*[×x]\s*10([⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+)"
+    for match in re.finditer(coef_pattern, text):
+        coef_str = match.group(1)
+        exp_super = match.group(2)
+        exp_str = "".join(superscript_map.get(c, c) for c in exp_super)
+        try:
+            coef = float(coef_str)
+            exp_val = int(exp_str)
+            text_value = coef * (10**exp_val)
+            # Check if this matches our value (within 1% tolerance)
+            if abs(value - text_value) / abs(value) < 0.01:
+                return True
+        except ValueError:
+            pass
 
     return False
 
