@@ -11,7 +11,6 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from qsp_llm_workflows.core.calibration.enums import (
-    Compartment,
     Indication,
     MouseSubspecifier,
     StageBurden,
@@ -58,17 +57,17 @@ class ExperimentalContext(BaseModel):
     Experimental context for an observable.
 
     Uses typed enums for all context dimensions with hierarchical notation
-    encoded in enum values (e.g., Compartment.TUMOR_PRIMARY = "tumor.primary").
+    encoded in enum values (e.g., System.IN_VITRO_PRIMARY = "in_vitro.primary_cells").
 
     Supports both clinical/in vivo contexts (using indication, treatment, stage)
     and in vitro contexts (using cell_lines, culture_conditions).
+
+    Note: `compartment` was removed as it's redundant with `system` - the System enum
+    already encodes compartment information (e.g., in_vitro, clinical, mouse).
     """
 
     # Core fields (always required)
     species: Species = Field(description=enum_field_description(Species, "Species"))
-    compartment: Compartment = Field(
-        description=enum_field_description(Compartment, "Anatomical compartment")
-    )
     system: System = Field(description=enum_field_description(System, "Experimental system"))
 
     # Clinical/in vivo context (optional - used for integrated system targets)

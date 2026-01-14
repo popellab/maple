@@ -577,10 +577,10 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
     """
     Creates prompts for isolated system target extraction from in vitro/preclinical literature.
 
-    Processes CSV input with observable descriptions and generates prompts for
-    extracting calibration data with custom ODE submodels.
+    Processes CSV input with parameter names and generates prompts for
+    finding experimental data to calibrate those parameters.
 
-    Requires model_structure_file to be provided for parameter validation.
+    Requires model_structure_file and model_context_file to be provided.
     """
 
     def get_workflow_type(self) -> str:
@@ -590,6 +590,7 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
         self,
         input_csv: Path,
         model_structure_file: Path,
+        model_context_file: Path,
         species_units_file: Optional[Path] = None,
         reasoning_effort: str = "high",
     ) -> List[Dict[str, Any]]:
@@ -597,10 +598,9 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
         Process isolated system target inputs and generate prompts.
 
         Args:
-            input_csv: CSV file with columns: target_id, cancer_type,
-                      observable_description, model_species, model_indication,
-                      model_compartment, model_system, primary_source_title (optional)
-            model_structure_file: JSON file with ModelStructure (required for validation)
+            input_csv: CSV file with columns: target_id, parameters, notes (optional)
+            model_structure_file: JSON file with ModelStructure (for parameter validation)
+            model_context_file: Text file with high-level model description
             species_units_file: Optional JSON file mapping species -> units
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
 
@@ -615,8 +615,16 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                 f"model_structure_file is required for IsolatedSystemTarget workflow. "
                 f"Got: {model_structure_file}"
             )
-
         model_structure = ModelStructure.from_json(model_structure_file)
+
+        # Load model context (required)
+        if not model_context_file or not model_context_file.exists():
+            raise ValueError(
+                f"model_context_file is required for IsolatedSystemTarget workflow. "
+                f"Got: {model_context_file}"
+            )
+        with open(model_context_file, "r", encoding="utf-8") as f:
+            model_context = f.read().strip()
 
         # Load species units if provided
         all_species_units = {}
@@ -630,27 +638,18 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
 
             for i, row in enumerate(reader):
                 target_id = row.get("target_id", f"target_{i}")
-                cancer_type = row.get("cancer_type", "UNKNOWN")
-                observable_description = row.get("observable_description", "")
-                model_species = row.get("model_species", "")
-                model_indication = row.get("model_indication", "")
-                model_compartment = row.get("model_compartment", "")
-                model_system = row.get("model_system", "")
-                primary_source_title = row.get("primary_source_title", "")
+                parameters = row.get("parameters", "")
+                notes = row.get("notes", "")
 
-                if not observable_description.strip():
-                    print(f"Warning: Empty observable description for {target_id}, skipping")
+                if not parameters.strip():
+                    print(f"Warning: Empty parameters for {target_id}, skipping")
                     continue
 
                 # Build the prompt
                 prompt = build_isolated_system_target_prompt(
-                    observable_description=observable_description,
-                    cancer_type=cancer_type,
-                    model_species=model_species or "Not specified",
-                    model_indication=model_indication or "Not specified",
-                    model_compartment=model_compartment or "Not specified",
-                    model_system=model_system or "Not specified",
-                    primary_source_title=primary_source_title,
+                    parameters=parameters,
+                    model_context=model_context,
+                    notes=notes,
                 )
 
                 # Create prompt dict with model_structure in validation context

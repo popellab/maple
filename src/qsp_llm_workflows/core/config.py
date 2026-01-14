@@ -51,6 +51,12 @@ class WorkflowConfig(BaseModel):
         description="Path to model_structure.json for LLM query tools",
     )
 
+    # Model context for prompt generation (isolated system targets)
+    model_context_file: Optional[Path] = Field(
+        default=None,
+        description="Path to model_context.txt with high-level model description",
+    )
+
     @field_validator("base_dir", "storage_dir", mode="before")
     @classmethod
     def convert_to_path(cls, v) -> Path:

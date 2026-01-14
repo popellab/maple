@@ -63,6 +63,12 @@ Examples:
         help="Path to model_structure.json for LLM query tools (calibration targets)",
     )
 
+    parser.add_argument(
+        "--model-context",
+        type=Path,
+        help="Path to model_context.txt with high-level model description (isolated_system_target)",
+    )
+
     args = parser.parse_args()
 
     # Validate input file
@@ -80,12 +86,22 @@ Examples:
         sys.exit(1)
 
     # Validate required options for specific workflow types
-    if args.type == "isolated_system_target" and not args.model_structure:
-        print(
-            "Error: --model-structure is required for isolated_system_target workflow",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    if args.type == "isolated_system_target":
+        if not args.model_structure:
+            print(
+                "Error: --model-structure is required for isolated_system_target workflow",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not args.model_context:
+            print(
+                "Error: --model-context is required for isolated_system_target workflow",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not args.model_context.exists():
+            print(f"Error: Model context file not found: {args.model_context}", file=sys.stderr)
+            sys.exit(1)
 
     # Load configuration from environment with explicit storage directory
     try:
@@ -99,7 +115,7 @@ Examples:
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            # Create new config with model_structure_file (config is frozen)
+            # Create new config with model files (config is frozen)
             config = WorkflowConfig(
                 base_dir=config.base_dir,
                 storage_dir=config.storage_dir,
@@ -107,6 +123,7 @@ Examples:
                 openai_model=config.openai_model,
                 reasoning_effort=config.reasoning_effort,
                 model_structure_file=args.model_structure,
+                model_context_file=args.model_context,
             )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)

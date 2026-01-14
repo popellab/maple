@@ -9,7 +9,6 @@ Uses Pydantic AI with tool calling for structured outputs (supports discriminate
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from concurrent.futures import ThreadPoolExecutor
 
 from pydantic_ai import Agent, WebSearchTool, CodeExecutionTool
 
@@ -38,6 +37,7 @@ class ImmediateRequestProcessor:
         base_dir: Path,
         api_key: str,
         model_structure_file: Optional[Path] = None,
+        model_context_file: Optional[Path] = None,
     ):
         """
         Initialize immediate request processor.
@@ -46,10 +46,12 @@ class ImmediateRequestProcessor:
             base_dir: Base directory for prompt assembly
             api_key: OpenAI API key
             model_structure_file: Optional path to model_structure.json for LLM query tools
+            model_context_file: Optional path to model_context.txt for isolated system targets
         """
         self.base_dir = Path(base_dir)
         self.api_key = api_key
         self.model_structure_file = model_structure_file
+        self.model_context_file = model_context_file
 
         # Initialize model query service if structure file provided
         self.model_query_service: Optional[ModelQueryService] = None
@@ -100,13 +102,19 @@ class ImmediateRequestProcessor:
                 input_csv, species_units_file, reasoning_effort
             )
         elif workflow_type == "isolated_system_target":
-            # Requires model_structure_file
+            # Requires model_structure_file and model_context_file
             if not self.model_structure_file:
                 raise ValueError(
                     "model_structure_file required for isolated_system_target workflow"
                 )
+            if not self.model_context_file:
+                raise ValueError("model_context_file required for isolated_system_target workflow")
             return self.isolated_system_target_creator.process(
-                input_csv, self.model_structure_file, species_units_file, reasoning_effort
+                input_csv,
+                self.model_structure_file,
+                self.model_context_file,
+                species_units_file,
+                reasoning_effort,
             )
         else:
             return []
@@ -262,21 +270,14 @@ class ImmediateRequestProcessor:
         ]
 
         # Process concurrently, calling result_callback as each completes
-        # Use thread executor to prevent blocking I/O in callback from blocking event loop
         results = []
-        executor = ThreadPoolExecutor(max_workers=1)
-        loop = asyncio.get_event_loop()
-
         for coro in asyncio.as_completed(tasks):
             result = await coro
             results.append(result)
 
-            # Call result_callback in thread to avoid blocking event loop
+            # Call result_callback synchronously (it's quick I/O)
             if result_callback:
-                await loop.run_in_executor(executor, result_callback, result)
-
-        # Shutdown executor
-        executor.shutdown(wait=True)
+                result_callback(result)
 
         if progress_callback:
             success_count = sum(1 for r in results if r.get("error") is None)

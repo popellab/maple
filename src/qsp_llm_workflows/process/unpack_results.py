@@ -67,11 +67,8 @@ def load_metadata(input_csv: Path, workflow_type: str) -> Dict:
                 metadata[key] = {
                     "target_id": key,
                     "cancer_type": row["cancer_type"],
-                    "observable_description": row.get("observable_description", ""),
-                    "model_species": row.get("model_species", ""),
-                    "model_indication": row.get("model_indication", ""),
-                    "model_compartment": row.get("model_compartment", ""),
-                    "model_system": row.get("model_system", ""),
+                    "parameters": row.get("parameters", ""),
+                    "notes": row.get("notes", ""),
                 }
             else:  # parameter
                 key = (row["cancer_type"], row["parameter_name"])

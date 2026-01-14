@@ -9,14 +9,14 @@ names as the full model, enabling joint inference across multiple calibration ta
 
 import ast
 import warnings
-from typing import List
+from typing import List, Optional
 
 from pydantic import Field, ValidationInfo, model_validator
 
 from qsp_llm_workflows.core.calibration.calibration_target_models import (
     CalibrationTarget,
 )
-from qsp_llm_workflows.core.calibration.enums import System
+from qsp_llm_workflows.core.calibration.enums import Indication, System
 from qsp_llm_workflows.core.calibration.exceptions import (
     CalibrationTargetValidationError,
     CodeStructureError,
@@ -24,21 +24,35 @@ from qsp_llm_workflows.core.calibration.exceptions import (
     HardcodedConstantError,
 )
 from qsp_llm_workflows.core.calibration.observable import Submodel
+from qsp_llm_workflows.core.calibration.shared_models import ContextMismatch
 
 
 class IsolatedSystemTarget(CalibrationTarget):
     """
     A calibration target from an isolated/in vitro/preclinical experimental system.
 
-    Inherits calibration data fields from CalibrationTarget but REPLACES the observable
-    field with a submodel that defines both the ODE dynamics AND how to compute the observable.
+    Supports two modes:
 
-    Key differences from CalibrationTarget:
-    - Uses `submodel` instead of `observable` (submodel includes nested observable)
-    - The submodel.code defines an ODE that can be integrated independently
-    - The submodel.observable transforms the integrated state to the experimental measurement
+    1. **Direct conversion** (submodel=None): For simple analytical relationships
+       - distribution_code computes the parameter directly from literature values
+       - Example: k_pro = ln(2) / doubling_time
+       - No ODE simulation needed
 
-    Example:
+    2. **Submodel-based** (submodel provided): For complex dynamics
+       - submodel.code defines an ODE that can be integrated
+       - Bayesian inference finds parameters that make submodel output ≈ data
+       - Use when dynamics don't have analytical solutions
+
+    Choose direct conversion when:
+    - Simple algebraic formula relates literature value to parameter
+    - Examples: doubling time, half-life, Kd from binding assay
+
+    Choose submodel when:
+    - Multiple interacting parameters to estimate jointly
+    - Nonlinear dynamics (logistic growth, saturation kinetics)
+    - Time-course data requiring ODE fitting
+
+    Example (submodel for logistic growth):
         submodel = Submodel(
             code='''
             def submodel(t, y, params, inputs):
@@ -53,18 +67,8 @@ class IsolatedSystemTarget(CalibrationTarget):
             parameters=['k_C1_growth', 'C_max'],
             t_span=[0, 14],
             t_unit='day',
-            observable=SubmodelObservable(
-                code='''
-                def compute_observable(t, y, constants, ureg):
-                    cells = y[0]  # same index as in ODE
-                    cell_vol = constants['cell_volume']
-                    ...
-                    return diameter.to('micrometer')
-                ''',
-                units='micrometer',
-                constants=[...]
-            ),
-            rationale='Logistic growth captures spheroid expansion dynamics...'
+            observable=SubmodelObservable(units='micrometer', ...),
+            rationale='Logistic growth captures contact inhibition...'
         )
     """
 
@@ -76,16 +80,33 @@ class IsolatedSystemTarget(CalibrationTarget):
         description="Not used for IsolatedSystemTarget - use submodel instead",
     )
 
-    submodel: Submodel = Field(
+    submodel: Optional[Submodel] = Field(
+        default=None,
         description=(
-            "Isolated submodel definition including ODE code, state variables, "
-            "parameters from full model, and how to compute the observable from state."
-        )
+            "Optional isolated submodel for complex dynamics requiring ODE simulation.\n"
+            "Set to None for direct conversion cases where distribution_code computes "
+            "parameters via simple analytical formulas (e.g., k = ln(2) / t_double).\n"
+            "Provide a Submodel when dynamics don't have analytical solutions and "
+            "require Bayesian inference over ODE simulations."
+        ),
+    )
+
+    context_mismatches: List[ContextMismatch] = Field(
+        default_factory=list,
+        description=(
+            "Structured documentation of context mismatches between experimental data and model.\n"
+            "Use this to explicitly document when the experimental context differs from the model context,\n"
+            "along with expected bias direction and any adjustments applied.\n\n"
+            "Example: Species mismatch (mouse data for human model), system mismatch "
+            "(in vitro data for in vivo model), activation state mismatch (activated vs exhausted)."
+        ),
     )
 
     @model_validator(mode="after")
     def validate_t_span(self) -> "IsolatedSystemTarget":
         """Validate t_span is valid (t_start < t_end, both non-negative)."""
+        if self.submodel is None:
+            return self
         t_start, t_end = self.submodel.t_span
         if t_start < 0:
             raise ValueError(f"submodel.t_span[0] must be non-negative, got {t_start}")
@@ -96,6 +117,8 @@ class IsolatedSystemTarget(CalibrationTarget):
     @model_validator(mode="after")
     def validate_t_unit(self) -> "IsolatedSystemTarget":
         """Validate t_unit is a valid Pint time unit."""
+        if self.submodel is None:
+            return self
         from qsp_llm_workflows.core.unit_registry import ureg
 
         try:
@@ -117,6 +140,8 @@ class IsolatedSystemTarget(CalibrationTarget):
     @model_validator(mode="after")
     def validate_submodel_code(self) -> "IsolatedSystemTarget":
         """Validate submodel.code syntax and signature."""
+        if self.submodel is None:
+            return self
         try:
             tree = ast.parse(self.submodel.code)
         except SyntaxError as e:
@@ -142,6 +167,8 @@ class IsolatedSystemTarget(CalibrationTarget):
     @model_validator(mode="after")
     def validate_state_variables(self) -> "IsolatedSystemTarget":
         """Validate state_variables is not empty."""
+        if self.submodel is None:
+            return self
         if len(self.submodel.state_variables) == 0:
             raise ValueError("At least one state variable is required in submodel.state_variables")
         return self
@@ -149,40 +176,90 @@ class IsolatedSystemTarget(CalibrationTarget):
     @model_validator(mode="after")
     def validate_initial_conditions_specified(self) -> "IsolatedSystemTarget":
         """
-        Validate that every state variable has an input specifying its initial condition.
+        Validate that every state variable's initial_value_input references a valid input.
 
-        Each state variable must have exactly one input with initializes_state pointing to it.
+        Each SubmodelStateVariable.initial_value_input must match an Input.name.
         """
-        # Build list of state variable names
-        state_var_names = [sv.name for sv in self.submodel.state_variables]
+        if self.submodel is None:
+            return self
+        # Build set of valid input names
+        input_names = {inp.name for inp in self.calibration_target_estimates.inputs}
 
-        # Build mapping from state variable to input(s) that initialize it
-        state_to_inputs: dict[str, list[str]] = {sv: [] for sv in state_var_names}
+        # Track which inputs are used for initial conditions (for duplicate detection)
+        used_inputs: dict[str, list[str]] = {}
 
-        for inp in self.calibration_target_estimates.inputs:
-            if inp.initializes_state is not None:
-                if inp.initializes_state in state_to_inputs:
-                    state_to_inputs[inp.initializes_state].append(inp.name)
-                else:
-                    raise ValueError(
-                        f"Input '{inp.name}' has initializes_state='{inp.initializes_state}' "
-                        f"which is not a valid state variable.\n"
-                        f"Valid state variables: {state_var_names}"
-                    )
+        for sv in self.submodel.state_variables:
+            # Check that initial_value_input references a valid input
+            if sv.initial_value_input not in input_names:
+                raise ValueError(
+                    f"State variable '{sv.name}' has initial_value_input='{sv.initial_value_input}' "
+                    f"which is not a valid input name.\n"
+                    f"Available inputs: {sorted(input_names)}"
+                )
 
-        # Check each state variable has exactly one initial condition
-        missing = [sv for sv, inps in state_to_inputs.items() if len(inps) == 0]
-        if missing:
-            raise ValueError(
-                f"State variables missing initial conditions: {missing}\n"
-                f"Each state variable must have an input with initializes_state set to it."
+            # Track for duplicate detection
+            if sv.initial_value_input not in used_inputs:
+                used_inputs[sv.initial_value_input] = []
+            used_inputs[sv.initial_value_input].append(sv.name)
+
+        # Check for multiple state variables using the same input (warning, not error)
+        duplicates = {inp: svs for inp, svs in used_inputs.items() if len(svs) > 1}
+        if duplicates:
+            import warnings
+
+            warnings.warn(
+                f"Multiple state variables use the same initial value input: {duplicates}\n"
+                f"This is allowed but may indicate an error.",
+                UserWarning,
             )
 
-        duplicates = {sv: inps for sv, inps in state_to_inputs.items() if len(inps) > 1}
-        if duplicates:
-            raise ValueError(
-                f"State variables with multiple initial conditions: {duplicates}\n"
-                f"Each state variable must have exactly one input providing its initial condition."
+        return self
+
+    @model_validator(mode="after")
+    def validate_no_initializes_state_without_submodel(self) -> "IsolatedSystemTarget":
+        """
+        Validate that inputs don't use initializes_state when there's no submodel.
+
+        In direct conversion mode (submodel=None), there are no state variables
+        to initialize, so initializes_state should not be set on any input.
+        """
+        if self.submodel is not None:
+            return self
+
+        # Check all inputs for initializes_state
+        for inp in self.calibration_target_estimates.inputs:
+            if inp.initializes_state is not None:
+                raise ValueError(
+                    f"Input '{inp.name}' has initializes_state='{inp.initializes_state}' "
+                    f"but submodel is null (direct conversion mode).\n"
+                    f"In direct conversion mode, there are no state variables to initialize.\n"
+                    f"Remove initializes_state from this input."
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_cancer_fields_for_non_cancer_indication(self) -> "IsolatedSystemTarget":
+        """
+        Warn if cancer-specific fields are populated for non-cancer indications.
+
+        When indication is 'other_disease' or not a cancer type, fields like
+        stage.extent, stage.burden shouldn't be populated with cancer values.
+        """
+        ctx = self.experimental_context
+
+        # Only warn for non-cancer indications
+        if ctx.indication != Indication.OTHER_DISEASE:
+            return self
+
+        # Check for cancer-specific stage fields
+        if ctx.stage is not None:
+            warnings.warn(
+                f"experimental_context.stage is set (extent={ctx.stage.extent.value}, "
+                f"burden={ctx.stage.burden.value}) but indication='other_disease'.\n"
+                f"Cancer staging (extent/burden) doesn't apply to non-cancer contexts.\n"
+                f"Consider setting stage to null for non-cancer data.",
+                UserWarning,
             )
 
         return self
@@ -230,6 +307,8 @@ class IsolatedSystemTarget(CalibrationTarget):
         Requires context:
             model_structure: ModelStructure instance with parameter definitions
         """
+        if self.submodel is None:
+            return self
         model_structure = self._require_model_structure(info)
 
         # Get valid parameter names from model
@@ -258,6 +337,8 @@ class IsolatedSystemTarget(CalibrationTarget):
         Requires context:
             model_structure: ModelStructure instance with parameter values
         """
+        if self.submodel is None:
+            return self
         from scipy.integrate import solve_ivp
         import numpy as np
 
@@ -284,27 +365,28 @@ class IsolatedSystemTarget(CalibrationTarget):
             else:
                 params[param_name] = 1.0  # Fallback
 
-        # Build inputs dict and initial conditions from calibration_target_estimates.inputs
+        # Build inputs dict from calibration_target_estimates.inputs
         inputs = {}
-        state_var_names = [sv.name for sv in self.submodel.state_variables]
-        initial_conditions: dict[str, float] = {}
-
         for inp in self.calibration_target_estimates.inputs:
             # Get scalar value (first element if vector)
             if isinstance(inp.value, list):
                 val = inp.value[0]
             else:
                 val = inp.value
-
             inputs[inp.name] = val
 
-            # Track initial conditions explicitly
-            if inp.initializes_state is not None:
-                initial_conditions[inp.initializes_state] = val
-
-        # Build y0 in state_variables order
+        # Build y0 from state variables' initial_value_input references
         n_states = len(self.submodel.state_variables)
-        y0 = [initial_conditions[sv] for sv in state_var_names]
+        y0 = []
+        for sv in self.submodel.state_variables:
+            if sv.initial_value_input in inputs:
+                y0.append(inputs[sv.initial_value_input])
+            else:
+                # This shouldn't happen if validate_initial_conditions_specified ran
+                raise ValueError(
+                    f"State variable '{sv.name}' initial_value_input "
+                    f"'{sv.initial_value_input}' not found in inputs"
+                )
 
         # Create ODE function for solve_ivp (signature: f(t, y))
         def ode_func(t, y):
@@ -363,6 +445,8 @@ class IsolatedSystemTarget(CalibrationTarget):
         Requires context:
             model_structure: ModelStructure instance with parameter units
         """
+        if self.submodel is None:
+            return self
         from qsp_llm_workflows.core.unit_registry import ureg
 
         model_structure = self._require_model_structure(info)
@@ -450,6 +534,8 @@ class IsolatedSystemTarget(CalibrationTarget):
         Requires context:
             model_structure: ModelStructure instance with parameter values
         """
+        if self.submodel is None:
+            return self
         from scipy.integrate import solve_ivp
         from qsp_llm_workflows.core.unit_registry import ureg
 
@@ -490,16 +576,12 @@ class IsolatedSystemTarget(CalibrationTarget):
                 params[param_name] = 1.0
 
         inputs = {}
-        state_var_names = [sv.name for sv in self.submodel.state_variables]
-        initial_conditions: dict[str, float] = {}
-
         for inp in self.calibration_target_estimates.inputs:
             val = inp.value[0] if isinstance(inp.value, list) else inp.value
             inputs[inp.name] = val
-            if inp.initializes_state is not None:
-                initial_conditions[inp.initializes_state] = val
 
-        y0 = [initial_conditions[sv] for sv in state_var_names]
+        # Build y0 from state variables' initial_value_input references
+        y0 = [inputs[sv.initial_value_input] for sv in self.submodel.state_variables]
 
         # Compile and run ODE
         local_scope: dict = {}
@@ -594,6 +676,8 @@ class IsolatedSystemTarget(CalibrationTarget):
         - Small integers (0, 1, 2, 3, 4)
         - Array indices
         """
+        if self.submodel is None:
+            return self
         import re
 
         # Patterns that indicate a number is being multiplied by units
@@ -670,7 +754,9 @@ class IsolatedSystemTarget(CalibrationTarget):
         return self
 
     def get_parameters_used(self) -> List[str]:
-        """Get the list of parameter names used in the submodel."""
+        """Get the list of parameter names used in the submodel (empty if no submodel)."""
+        if self.submodel is None:
+            return []
         return list(self.submodel.parameters)
 
 

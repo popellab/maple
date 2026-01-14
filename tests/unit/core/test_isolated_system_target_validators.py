@@ -75,6 +75,7 @@ def golden_isolated_target_data():
         "derivation_explanation": "Direct cell count measurements",
         "key_assumptions": [],
         "key_study_limitations": "In vitro conditions may differ from in vivo",
+        "rationale": "Logistic growth model captures T cell expansion; ignores death for short-term assay.",
         "calibration_target_estimates": {
             "median": [1.0],
             "iqr": [0.6843],
@@ -87,9 +88,9 @@ def golden_isolated_target_data():
                     "units": "cell",
                     "description": "Initial T cell count",
                     "source_ref": "smith_2020",
-                    "value_table_or_section": "Methods",
+                    "value_location": "Methods",
                     "value_snippet": "T cells were seeded at 1e5 cells/well",
-                    "initializes_state": "T_cells",
+                    "input_type": "experimental_condition",
                 },
             ],
             "distribution_code": (
@@ -124,7 +125,9 @@ def golden_isolated_target_data():
                 "    K_max = params['K_T_max']\n"
                 "    return [k_prolif * T * (1 - T / K_max)]"
             ),
-            "state_variables": [{"name": "T_cells", "units": "cell"}],
+            "state_variables": [
+                {"name": "T_cells", "units": "cell", "initial_value_input": "initial_T_cells"}
+            ],
             "parameters": ["k_T_prolif", "K_T_max"],
             "t_span": [0, 3],
             "t_unit": "day",
@@ -138,10 +141,6 @@ def golden_isolated_target_data():
                 "units": "dimensionless",
                 "constants": [],
             },
-            "rationale": (
-                "Simple logistic growth model captures T cell expansion dynamics. "
-                "Ignores death term for short-term assay."
-            ),
         },
     }
 
@@ -286,80 +285,72 @@ class TestInitialConditionsValidation:
         assert len(target.submodel.state_variables) == 1
         assert target.submodel.state_variables[0].name == "T_cells"
 
-    def test_missing_initial_condition_fails(
+    def test_invalid_initial_value_input_reference_fails(
         self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
     ):
-        """Test that missing initial condition for a state variable fails."""
+        """Test that initial_value_input pointing to non-existent input fails."""
         data = copy.deepcopy(golden_isolated_target_data)
-        # Remove initializes_state from input
-        data["calibration_target_estimates"]["inputs"][0]["initializes_state"] = None
+        # Set initial_value_input to a non-existent input name
+        data["submodel"]["state_variables"][0]["initial_value_input"] = "nonexistent_input"
 
-        with pytest.raises(ValidationError, match="missing initial conditions"):
+        with pytest.raises(ValidationError, match="not a valid input name"):
             IsolatedSystemTarget.model_validate(
                 data,
                 context={"species_units": species_units, "model_structure": model_structure},
             )
 
-    def test_duplicate_initial_condition_fails(
+    def test_multiple_state_variables_each_need_initial_value_input(
         self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
     ):
-        """Test that multiple inputs initializing same state variable fails."""
+        """Test that multi-state system needs initial_value_input for each state."""
         data = copy.deepcopy(golden_isolated_target_data)
-        # Add second input that also initializes T_cells
+        # Add second input for tumor initial condition (use primary source for methods)
         data["calibration_target_estimates"]["inputs"].append(
             {
-                "name": "another_initial",
-                "value": 50.0,
+                "name": "initial_tumor",
+                "value": 1e4,
                 "units": "cell",
-                "description": "Another initial condition",
-                "source_ref": "modeling_assumption",
-                "initializes_state": "T_cells",  # Duplicate!
+                "description": "Initial tumor count",
+                "source_ref": "smith_2020",  # Must use defined source tag
+                "value_location": "Methods",
+                "value_snippet": "Tumor cells seeded at 1e4",
+                "input_type": "experimental_condition",
             }
         )
-
-        with pytest.raises(ValidationError, match="multiple initial conditions"):
-            IsolatedSystemTarget.model_validate(
-                data,
-                context={"species_units": species_units, "model_structure": model_structure},
-            )
-
-    def test_invalid_state_variable_reference_fails(
-        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
-    ):
-        """Test that initializes_state pointing to non-existent state fails."""
-        data = copy.deepcopy(golden_isolated_target_data)
-        data["calibration_target_estimates"]["inputs"][0]["initializes_state"] = "NonexistentState"
-
-        with pytest.raises(ValidationError, match="not a valid state variable"):
-            IsolatedSystemTarget.model_validate(
-                data,
-                context={"species_units": species_units, "model_structure": model_structure},
-            )
-
-    def test_multiple_state_variables_each_need_initial_condition(
-        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
-    ):
-        """Test that multi-state system needs initial condition for each state."""
-        data = copy.deepcopy(golden_isolated_target_data)
-        # Add second state variable
+        # Add second state variable with proper initial_value_input
         data["submodel"]["state_variables"] = [
-            {"name": "T_cells", "units": "cell"},
-            {"name": "Tumor", "units": "cell"},
+            {"name": "T_cells", "units": "cell", "initial_value_input": "initial_T_cells"},
+            {"name": "Tumor", "units": "cell", "initial_value_input": "initial_tumor"},
         ]
-        # Update submodel to have 2 states
+        # Update submodel to have 2 states (use k_T_death for tumor growth to keep params valid)
         data["submodel"]["code"] = (
             "def submodel(t, y, params, inputs):\n"
             "    T, C = y\n"
             "    k_prolif = params['k_T_prolif']\n"
             "    K_max = params['K_T_max']\n"
+            "    k_tumor = params['k_T_death']  # Reuse death param as tumor growth rate\n"
             "    return [\n"
             "        k_prolif * T * (1 - T / K_max),\n"
-            "        0.1 * C  # Simple tumor growth\n"
+            "        k_tumor * C  # Simple tumor growth\n"
             "    ]"
         )
-        # Only have initial condition for T_cells, missing Tumor
+        data["submodel"]["parameters"].append("k_T_death")
+        # This should pass because both state variables have valid initial_value_input
+        target = IsolatedSystemTarget.model_validate(
+            data,
+            context={"species_units": species_units, "model_structure": model_structure},
+        )
+        assert len(target.submodel.state_variables) == 2
 
-        with pytest.raises(ValidationError, match="missing initial conditions.*Tumor"):
+    def test_missing_initial_value_input_field_fails(
+        self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
+    ):
+        """Test that state variable without initial_value_input field fails."""
+        data = copy.deepcopy(golden_isolated_target_data)
+        # Remove initial_value_input from state variable (field is required)
+        del data["submodel"]["state_variables"][0]["initial_value_input"]
+
+        with pytest.raises(ValidationError, match="initial_value_input"):
             IsolatedSystemTarget.model_validate(
                 data,
                 context={"species_units": species_units, "model_structure": model_structure},
@@ -885,3 +876,335 @@ class TestGetParametersUsed:
 
         params = target.get_parameters_used()
         assert sorted(params) == ["K_T_max", "k_T_death", "k_T_prolif"]
+
+    def test_returns_empty_for_direct_conversion_mode(
+        self, species_units, model_structure, mock_crossref_success
+    ):
+        """Test that get_parameters_used returns empty list when submodel is None."""
+        # Direct conversion mode data (no submodel)
+        # CI values computed from: np.random.seed(42); samples = np.random.normal(8, 1, 10000);
+        # samples = np.maximum(samples, 1.0); k_samples = np.log(2) / samples * 24
+        # median = 2.078, ci95 = [1.668, 2.614]
+        data = {
+            "description": "Direct conversion of doubling time to proliferation rate",
+            "scenario": {
+                "description": "T cell doubling time measurement",
+                "interventions": [],
+            },
+            "experimental_context": {
+                "species": "human",
+                "system": "in_vitro.cell_line",
+            },
+            "study_overview": "T cell kinetics study",
+            "study_design": "Doubling time measurement",
+            "derivation_explanation": "Direct conversion: k = ln(2) / t_double",
+            "key_assumptions": [],
+            "key_study_limitations": "In vitro conditions",
+            "rationale": "Simple analytical conversion from doubling time to rate.",
+            "calibration_target_estimates": {
+                "median": [2.0801],
+                "ci95": [[1.6679, 2.7581]],
+                "units": "1/day",
+                "inputs": [
+                    {
+                        "name": "doubling_time",
+                        "value": 8.0,
+                        "units": "hour",
+                        "description": "T cell doubling time",
+                        "source_ref": "smith_2020",
+                        "value_location": "Figure 2",
+                        "value_snippet": "cells doubled every 8 hours",
+                        "input_type": "proxy_measurement",
+                        "conversion_formula": "k = ln(2) / doubling_time",
+                    },
+                ],
+                "distribution_code": (
+                    "def derive_distribution(inputs, ureg):\n"
+                    "    import numpy as np\n"
+                    "    np.random.seed(42)\n"
+                    "    t_double = inputs['doubling_time'].magnitude\n"
+                    "    t_sd = 1.0  # Assumed 1h SD\n"
+                    "    samples = np.random.normal(t_double, t_sd, 10000)\n"
+                    "    samples = np.maximum(samples, 1.0)\n"
+                    "    k_samples = np.log(2) / samples * 24  # Convert to per day\n"
+                    "    median_obs = np.array([np.median(k_samples)]) * ureg('1/day')\n"
+                    "    ci95 = np.percentile(k_samples, [2.5, 97.5])\n"
+                    "    ci95_obs = [[ci95[0] * ureg('1/day'), ci95[1] * ureg('1/day')]]\n"
+                    "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+                ),
+            },
+            "primary_data_source": {
+                "source_tag": "smith_2020",
+                "title": "T cell proliferation dynamics",
+                "doi": "10.1000/test.2020.001",
+                "first_author": "Smith",
+                "year": 2020,
+            },
+            "secondary_data_sources": [],
+            "submodel": None,  # Direct conversion mode
+        }
+
+        target = IsolatedSystemTarget.model_validate(
+            data,
+            context={"species_units": species_units, "model_structure": model_structure},
+        )
+
+        assert target.submodel is None
+        assert target.get_parameters_used() == []
+
+
+# ============================================================================
+# Direct Conversion Mode Tests
+# ============================================================================
+
+
+class TestDirectConversionMode:
+    """Tests for direct conversion mode (submodel=None)."""
+
+    @pytest.fixture
+    def direct_conversion_data(self):
+        """Valid direct conversion mode data.
+
+        CI values computed from: np.random.seed(42); samples = np.random.normal(8, 1, 10000);
+        samples = np.maximum(samples, 1.0); k_samples = np.log(2) / samples * 24
+        median = 2.078, ci95 = [1.668, 2.614]
+        """
+        return {
+            "description": "Direct conversion of doubling time to proliferation rate",
+            "scenario": {
+                "description": "T cell doubling time measurement",
+                "interventions": [],
+            },
+            "experimental_context": {
+                "species": "human",
+                "system": "in_vitro.cell_line",
+            },
+            "study_overview": "T cell kinetics study",
+            "study_design": "Doubling time measurement",
+            "derivation_explanation": "Direct conversion: k = ln(2) / t_double",
+            "key_assumptions": [],
+            "key_study_limitations": "In vitro conditions",
+            "rationale": "Simple analytical conversion from doubling time to rate.",
+            "calibration_target_estimates": {
+                "median": [2.0801],
+                "ci95": [[1.6679, 2.7581]],
+                "units": "1/day",
+                "inputs": [
+                    {
+                        "name": "doubling_time",
+                        "value": 8.0,
+                        "units": "hour",
+                        "description": "T cell doubling time",
+                        "source_ref": "smith_2020",
+                        "value_location": "Figure 2",
+                        "value_snippet": "cells doubled every 8 hours",
+                        "input_type": "proxy_measurement",
+                        "conversion_formula": "k = ln(2) / doubling_time",
+                    },
+                ],
+                "distribution_code": (
+                    "def derive_distribution(inputs, ureg):\n"
+                    "    import numpy as np\n"
+                    "    np.random.seed(42)\n"
+                    "    t_double = inputs['doubling_time'].magnitude\n"
+                    "    t_sd = 1.0\n"
+                    "    samples = np.random.normal(t_double, t_sd, 10000)\n"
+                    "    samples = np.maximum(samples, 1.0)\n"
+                    "    k_samples = np.log(2) / samples * 24\n"
+                    "    median_obs = np.array([np.median(k_samples)]) * ureg('1/day')\n"
+                    "    ci95 = np.percentile(k_samples, [2.5, 97.5])\n"
+                    "    ci95_obs = [[ci95[0] * ureg('1/day'), ci95[1] * ureg('1/day')]]\n"
+                    "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+                ),
+            },
+            "primary_data_source": {
+                "source_tag": "smith_2020",
+                "title": "T cell proliferation dynamics",
+                "doi": "10.1000/test.2020.001",
+                "first_author": "Smith",
+                "year": 2020,
+            },
+            "secondary_data_sources": [],
+            "submodel": None,
+        }
+
+    def test_direct_conversion_mode_valid(
+        self, species_units, model_structure, direct_conversion_data, mock_crossref_success
+    ):
+        """Test that valid direct conversion mode passes validation."""
+        target = IsolatedSystemTarget.model_validate(
+            direct_conversion_data,
+            context={"species_units": species_units, "model_structure": model_structure},
+        )
+
+        assert target.submodel is None
+        assert target.get_parameters_used() == []
+
+    def test_direct_conversion_with_initializes_state_fails(
+        self, species_units, model_structure, direct_conversion_data, mock_crossref_success
+    ):
+        """Test that initializes_state on input fails when submodel is None."""
+        data = copy.deepcopy(direct_conversion_data)
+        # Add initializes_state to an input - this is invalid in direct conversion mode
+        data["calibration_target_estimates"]["inputs"][0]["initializes_state"] = "T_cells"
+
+        with pytest.raises(ValidationError, match="initializes_state.*direct conversion mode"):
+            IsolatedSystemTarget.model_validate(
+                data,
+                context={"species_units": species_units, "model_structure": model_structure},
+            )
+
+
+# ============================================================================
+# Cancer Fields Validation Tests
+# ============================================================================
+
+
+class TestCancerFieldsValidation:
+    """Tests for cancer fields validation with non-cancer data."""
+
+    def test_cancer_stage_with_other_disease_warns(
+        self, species_units, model_structure, mock_crossref_success
+    ):
+        """Test that cancer stage fields with other_disease indication triggers warning."""
+        # Use same title as mock_crossref_success fixture returns
+        data = {
+            "description": "Viral infection data used for cancer model",
+            "scenario": {
+                "description": "LCMV infection in mice",
+                "interventions": [],
+            },
+            "experimental_context": {
+                "species": "mouse",
+                "system": "animal_in_vivo.syngeneic",
+                "indication": "other_disease",  # Not cancer
+                "stage": {
+                    "extent": "metastatic",  # Doesn't make sense for viral infection
+                    "burden": "high",
+                },
+            },
+            "study_overview": "T cell kinetics in viral infection",
+            "study_design": "Time-course measurement",
+            "derivation_explanation": "Direct conversion",
+            "key_assumptions": [],
+            "key_study_limitations": "Mouse model",
+            "rationale": "Using viral infection data as proxy.",
+            "calibration_target_estimates": {
+                "median": [2.0],
+                "ci95": [[1.5, 2.5]],
+                "units": "1/day",
+                "inputs": [
+                    {
+                        "name": "doubling_time",
+                        "value": 8.0,
+                        "units": "hour",
+                        "description": "T cell doubling time",
+                        "source_ref": "smith_2020",
+                        "value_location": "Abstract",
+                        "value_snippet": "doubling time 8h",
+                        "input_type": "proxy_measurement",
+                        "conversion_formula": "k = ln(2) / t",
+                    },
+                ],
+                "distribution_code": (
+                    "def derive_distribution(inputs, ureg):\n"
+                    "    import numpy as np\n"
+                    "    np.random.seed(42)\n"
+                    "    median_obs = np.array([2.0]) * ureg('1/day')\n"
+                    "    ci95_obs = [[1.5 * ureg('1/day'), 2.5 * ureg('1/day')]]\n"
+                    "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+                ),
+            },
+            "primary_data_source": {
+                "source_tag": "smith_2020",
+                "title": "T cell proliferation dynamics",  # Must match mock
+                "doi": "10.1000/test.2020.001",
+                "first_author": "Smith",
+                "year": 2020,
+            },
+            "secondary_data_sources": [],
+            "submodel": None,
+        }
+
+        # Should warn about cancer staging with non-cancer indication
+        with pytest.warns(UserWarning, match="Cancer staging.*doesn't apply"):
+            IsolatedSystemTarget.model_validate(
+                data,
+                context={"species_units": species_units, "model_structure": model_structure},
+            )
+
+    def test_no_warning_when_stage_null_for_other_disease(
+        self, species_units, model_structure, mock_crossref_success
+    ):
+        """Test that no warning when stage is null for other_disease."""
+        # Use same title as mock_crossref_success fixture returns
+        data = {
+            "description": "Viral infection data used for cancer model",
+            "scenario": {
+                "description": "LCMV infection in mice",
+                "interventions": [],
+            },
+            "experimental_context": {
+                "species": "mouse",
+                "system": "animal_in_vivo.syngeneic",
+                "indication": "other_disease",
+                "stage": None,  # Correctly set to null
+            },
+            "study_overview": "T cell kinetics in viral infection",
+            "study_design": "Time-course measurement",
+            "derivation_explanation": "Direct conversion",
+            "key_assumptions": [],
+            "key_study_limitations": "Mouse model",
+            "rationale": "Using viral infection data as proxy.",
+            "calibration_target_estimates": {
+                "median": [2.0],
+                "ci95": [[1.5, 2.5]],
+                "units": "1/day",
+                "inputs": [
+                    {
+                        "name": "doubling_time",
+                        "value": 8.0,
+                        "units": "hour",
+                        "description": "T cell doubling time",
+                        "source_ref": "smith_2020",
+                        "value_location": "Abstract",
+                        "value_snippet": "doubling time 8h",
+                        "input_type": "proxy_measurement",
+                        "conversion_formula": "k = ln(2) / t",
+                    },
+                ],
+                "distribution_code": (
+                    "def derive_distribution(inputs, ureg):\n"
+                    "    import numpy as np\n"
+                    "    np.random.seed(42)\n"
+                    "    median_obs = np.array([2.0]) * ureg('1/day')\n"
+                    "    ci95_obs = [[1.5 * ureg('1/day'), 2.5 * ureg('1/day')]]\n"
+                    "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+                ),
+            },
+            "primary_data_source": {
+                "source_tag": "smith_2020",
+                "title": "T cell proliferation dynamics",  # Must match mock
+                "doi": "10.1000/test.2020.001",
+                "first_author": "Smith",
+                "year": 2020,
+            },
+            "secondary_data_sources": [],
+            "submodel": None,
+        }
+
+        # Should NOT warn when stage is properly null
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            # Filter out unrelated warnings from validators we're not testing
+            warnings.filterwarnings("ignore", message=".*IsolatedSystemTarget typically uses.*")
+            warnings.filterwarnings(
+                "ignore", message=".*inputs/assumptions are defined but not used.*"
+            )
+            target = IsolatedSystemTarget.model_validate(
+                data,
+                context={"species_units": species_units, "model_structure": model_structure},
+            )
+            assert target.experimental_context.stage is None

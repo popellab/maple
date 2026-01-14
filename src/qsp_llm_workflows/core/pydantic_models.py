@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from qsp_llm_workflows.core.calibration import (
     CalibrationTarget,
     CalibrationTargetFooters,
-    Input,
+    LiteratureInput,
     KeyAssumption,
     SecondarySource,
     Source,
@@ -29,7 +29,7 @@ from qsp_llm_workflows.core.calibration.shared_models import WeightScore
 class ParameterEstimates(BaseModel):
     """Parameter estimates with structured inputs and derivation."""
 
-    inputs: List[Input] = Field(description="List of inputs used in derivation")
+    inputs: List[LiteratureInput] = Field(description="List of inputs used in derivation")
     derivation_code: str = Field(
         description=(
             "Python code defining a derive_parameter(inputs, ureg) function. "
@@ -181,7 +181,7 @@ class ModelOutput(BaseModel):
 class TestStatisticEstimates(BaseModel):
     """Test statistic estimates with structured inputs and derivation."""
 
-    inputs: List[Input] = Field(description="List of inputs used in derivation")
+    inputs: List[LiteratureInput] = Field(description="List of inputs used in derivation")
     derivation_code: str = Field(
         description=(
             "Python code defining a derive_distribution(inputs, ureg) function. "

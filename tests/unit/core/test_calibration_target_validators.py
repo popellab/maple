@@ -23,7 +23,7 @@ Tests all validators with:
 Vector-valued data tests:
 - Vector calibration target passes validation (time-course data)
 - Vector input length mismatch fails (input length != index_values length)
-- Output array length mismatch fails (median/iqr/ci95 different lengths)
+- Output array length mismatch fails (median/ci95 different lengths)
 - Index fields required together (index_values needs index_unit and index_type)
 - Scalar data requires length-1 arrays (no index_values → length must be 1)
 - CI95 wrong inner structure fails ([lo, mid, hi] instead of [lo, hi])
@@ -57,13 +57,6 @@ def species_units():
 def golden_calibration_target_data():
     """Complete valid CalibrationTarget data that passes all validators."""
     return {
-        "description": "CD8+ T cell density in PDAC tumor at resection",
-        "scenario": {
-            "description": "Baseline PDAC tumor at resection",
-            "interventions": [
-                {"intervention_description": "No intervention (natural disease progression)"}
-            ],
-        },
         "observable": {
             "code": (
                 "def compute_observable(time, species_dict, constants, ureg):\n"
@@ -84,20 +77,22 @@ def golden_calibration_target_data():
         "experimental_context": {
             "species": "human",
             "indication": "PDAC",
-            "compartment": "tumor.primary",
             "system": "clinical.resection",
             "treatment": {"history": ["treatment_naive"], "status": "off_treatment"},
             "stage": {"extent": "resectable", "burden": "moderate"},
         },
-        "study_overview": "Immune profiling of resectable PDAC tumors",
-        "study_design": "IHC analysis of CD8+ T cells in tumor sections",
-        "derivation_explanation": "Parametric bootstrap from reported mean and SD",
-        "key_assumptions": [],
-        "key_study_limitations": "Single-center study, limited sample size",
+        "rationale": (
+            "CD8+ T cell density in resectable PDAC tumors measured via IHC. "
+            "Parametric bootstrap from reported lognormal distribution (mean 1.0, sigma_log 0.5). "
+            "Maps to CD8/tumor ratio in model for immune profiling comparison."
+        ),
+        "caveats": [
+            "Single-center study with limited sample size",
+            "Lognormal distribution assumed based on positive-only data",
+        ],
         "calibration_target_estimates": {
             # Vector-valued outputs (length-1 for scalar data)
             "median": [1.0],
-            "iqr": [0.6843],
             "ci95": [[0.3737, 2.7]],
             "units": "dimensionless",
             "inputs": [
@@ -105,28 +100,19 @@ def golden_calibration_target_data():
                     "name": "cd8_ratio_mean",
                     "value": 1.0,
                     "units": "dimensionless",
-                    "description": "Mean CD8/tumor ratio",
+                    "description": "Mean CD8/tumor ratio from lognormal fit",
                     "source_ref": "smith_2020",
-                    "value_table_or_section": "Table 2",
+                    "value_location": "Table 2",
                     "value_snippet": "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)",
                 },
                 {
                     "name": "cd8_ratio_sigma_log",
                     "value": 0.5,
                     "units": "dimensionless",
-                    "description": "Log-scale SD of CD8/tumor ratio",
+                    "description": "Log-scale SD of CD8/tumor ratio from lognormal fit",
                     "source_ref": "smith_2020",
-                    "value_table_or_section": "Table 2",
+                    "value_location": "Table 2",
                     "value_snippet": "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)",
-                },
-                {
-                    "name": "n_mc_samples",
-                    "value": 10000.0,
-                    "units": "dimensionless",
-                    "description": "MC samples",
-                    "source_ref": "modeling_assumption",
-                    "value_table_or_section": None,
-                    "value_snippet": None,
                 },
             ],
             "distribution_code": (
@@ -136,14 +122,13 @@ def golden_calibration_target_data():
                 "    np.random.seed(42)\n"
                 "    mean = inputs['cd8_ratio_mean']\n"
                 "    sigma_log = inputs['cd8_ratio_sigma_log']\n"
-                "    n = int(inputs['n_mc_samples'].magnitude)\n"
+                "    n = 10000\n"
                 "    mu_log = math.log(mean.magnitude)\n"
                 "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, n) * mean.units\n"
                 "    median_obs = np.array([np.median(samples)]) * mean.units\n"
-                "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * mean.units\n"
                 "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
                 "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
-                "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+                "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
             ),
         },
         "primary_data_source": {
@@ -203,7 +188,7 @@ class TestCalibrationTargetGolden:
         )
 
         assert target is not None
-        assert target.description == "CD8+ T cell density in PDAC tumor at resection"
+        assert "CD8+ T cell density" in target.rationale
         assert target.observable is not None
         assert target.observable.species == ["V_T.CD8", "V_T.C1"]
         # Scalar data uses length-1 lists
@@ -337,18 +322,16 @@ class TestCalibrationTargetValidators:
     ):
         """Validator should warn about unused inputs."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Add an input that's not used in derivation_code
-        data["calibration_target_estimates"]["inputs"].append(
+        # Add an assumption that's not used in derivation_code
+        data["calibration_target_estimates"]["assumptions"] = [
             {
-                "name": "unused_input",
+                "name": "unused_assumption",
                 "value": 999.0,
                 "units": "dimensionless",
-                "description": "This input is not used",
-                "source_ref": "modeling_assumption",
-                "value_table_or_section": None,
-                "value_snippet": None,
+                "description": "This assumption is not used",
+                "rationale": "Testing unused input warning",
             }
-        )
+        ]
 
         with pytest.warns(UserWarning, match="not used in distribution_code"):
             target = CalibrationTarget.model_validate(
@@ -356,7 +339,7 @@ class TestCalibrationTargetValidators:
             )
 
         assert target is not None
-        assert len(target.calibration_target_estimates.inputs) == 4  # 3 original + 1 unused
+        assert len(target.calibration_target_estimates.assumptions) == 1
 
     def test_validate_observable_code_fails_on_scalar_return(
         self, species_units, golden_calibration_target_data, mock_crossref_success
@@ -413,15 +396,14 @@ class TestCalibrationTargetValidators:
             "    np.random.seed(42)\n"
             "    mean = inputs['cd8_ratio_mean']\n"
             "    sigma_log = inputs['cd8_ratio_sigma_log']\n"
-            "    n = int(inputs['n_mc_samples'].magnitude)\n"
+            "    n = 10000\n"
             "    mu_log = math.log(mean.magnitude)\n"
             "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, n)\n"
             "    samples = np.clip(samples, 0.01, None) * mean.units  # Clipping!\n"
             "    median_obs = np.array([np.median(samples)]) * mean.units\n"
-            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * mean.units\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
             "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
-            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+            "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
         )
 
         with pytest.warns(UserWarning, match="clipping.*lognormal"):
@@ -445,7 +427,7 @@ class TestCalibrationTargetValidators:
                 "units": "dimensionless",
                 "description": "Mean ratio",
                 "source_ref": "smith_2020",
-                "value_table_or_section": "Table 2",
+                "value_location": "Table 2",
                 "value_snippet": "ratio: 1.0 ± 1.0",
             },
             {
@@ -454,17 +436,17 @@ class TestCalibrationTargetValidators:
                 "units": "dimensionless",
                 "description": "SD of ratio",
                 "source_ref": "smith_2020",
-                "value_table_or_section": "Table 2",
+                "value_location": "Table 2",
                 "value_snippet": "ratio: 1.0 ± 1.0",
             },
+        ]
+        data["calibration_target_estimates"]["assumptions"] = [
             {
                 "name": "n_mc_samples",
                 "value": 10000.0,
                 "units": "dimensionless",
                 "description": "MC samples",
-                "source_ref": "modeling_assumption",
-                "value_table_or_section": None,
-                "value_snippet": None,
+                "rationale": "Standard sample size for stable percentile estimates",
             },
         ]
 
@@ -515,7 +497,7 @@ class TestCalibrationTargetValidators:
                 "units": "centimeter",
                 "description": "Mean tumor diameter",
                 "source_ref": "smith_2020",
-                "value_table_or_section": "Table 2",
+                "value_location": "Table 2",
                 "value_snippet": "tumor diameter: 1.5 ± 0.25 cm",
             },
             {
@@ -524,17 +506,17 @@ class TestCalibrationTargetValidators:
                 "units": "centimeter",
                 "description": "SD of tumor diameter",
                 "source_ref": "smith_2020",
-                "value_table_or_section": "Table 2",
+                "value_location": "Table 2",
                 "value_snippet": "tumor diameter: 1.5 ± 0.25 cm",
             },
+        ]
+        data["calibration_target_estimates"]["assumptions"] = [
             {
                 "name": "n_mc_samples",
                 "value": 10000.0,
                 "units": "dimensionless",
                 "description": "MC samples",
-                "source_ref": "modeling_assumption",
-                "value_table_or_section": None,
-                "value_snippet": None,
+                "rationale": "Standard sample size for stable percentile estimates",
             },
         ]
         data["calibration_target_estimates"]["median"] = [1.4994]
@@ -671,7 +653,7 @@ class TestCalibrationTargetValidators:
                 "units": "dimensionless",
                 "description": "Mean score",
                 "source_ref": "smith_2020",
-                "value_table_or_section": "Table 2",
+                "value_location": "Table 2",
                 "value_snippet": "score: 2.42 ± 0.37",
             },
             {
@@ -680,17 +662,17 @@ class TestCalibrationTargetValidators:
                 "units": "dimensionless",
                 "description": "SD of score",
                 "source_ref": "smith_2020",
-                "value_table_or_section": "Table 2",
+                "value_location": "Table 2",
                 "value_snippet": "score: 2.42 ± 0.37",
             },
+        ]
+        data["calibration_target_estimates"]["assumptions"] = [
             {
                 "name": "n_mc_samples",
                 "value": 10000.0,
                 "units": "dimensionless",
                 "description": "MC samples",
-                "source_ref": "modeling_assumption",
-                "value_table_or_section": None,
-                "value_snippet": None,
+                "rationale": "Standard sample size for stable percentile estimates",
             },
         ]
 
@@ -717,8 +699,8 @@ class TestCalibrationTargetValidators:
     ):
         """Validator should catch control characters in text fields."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Add control character to description
-        data["description"] = "CD8+ T cell\x03 density in PDAC"  # ETX control character
+        # Add control character to rationale (CalibrationTarget doesn't have description)
+        data["rationale"] = "CD8+ T cell\x03 density in PDAC"  # ETX control character
 
         with pytest.raises(ValidationError, match="Control character"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
@@ -782,8 +764,8 @@ class TestCalibrationTargetValidators:
             **species_units,
             "V_T.CD8_exh": {"units": "cell", "description": "Exhausted CD8+ T cells"},
         }
-        # Change description to mention "total" CD8
-        data["description"] = "Total CD8+ T cell to tumor cell ratio measured via IHC"
+        # Change rationale to mention "total" CD8 (validator checks rationale, not description)
+        data["rationale"] = "Total CD8+ T cell to tumor cell ratio measured via IHC"
         # Only use V_T.CD8, missing V_T.CD8_exh
         data["observable"]["species"] = ["V_T.CD8", "V_T.C1"]
 
@@ -865,7 +847,7 @@ class TestVectorValuedCalibrationTarget:
                 "units": "dimensionless",
                 "description": "Mean CD8/tumor ratio at each time point",
                 "source_ref": "smith_2020",
-                "value_table_or_section": "Figure 3",
+                "value_location": "Figure 3",
                 "value_snippet": "CD8/tumor ratio increased from 0.8 at baseline to 1.2 at day 14",
             },
             {
@@ -874,17 +856,17 @@ class TestVectorValuedCalibrationTarget:
                 "units": "dimensionless",
                 "description": "Log-scale SD (assumed constant)",
                 "source_ref": "smith_2020",
-                "value_table_or_section": "Figure 3",
+                "value_location": "Figure 3",
                 "value_snippet": "variability approximately constant across time",
             },
+        ]
+        data["calibration_target_estimates"]["assumptions"] = [
             {
                 "name": "n_mc_samples",
                 "value": 10000.0,
                 "units": "dimensionless",
                 "description": "MC samples",
-                "source_ref": "modeling_assumption",
-                "value_table_or_section": None,
-                "value_snippet": None,
+                "rationale": "Standard sample size for stable percentile estimates",
             },
         ]
 
@@ -948,7 +930,7 @@ class TestVectorValuedCalibrationTarget:
                 "units": "dimensionless",
                 "description": "Mean CD8/tumor ratio",
                 "source_ref": "smith_2020",
-                "value_table_or_section": "Figure 3",
+                "value_location": "Figure 3",
                 "value_snippet": "data",
             },
         ]
@@ -971,8 +953,12 @@ class TestVectorValuedCalibrationTarget:
             [0.45, 3.2],
             [0.40, 2.95],
         ]
+        # Must set index_values to enable length mismatch validation (otherwise fails scalar check)
+        data["calibration_target_estimates"]["index_values"] = [0, 7, 14, 21]
+        data["calibration_target_estimates"]["index_unit"] = "day"
+        data["calibration_target_estimates"]["index_type"] = "time"
 
-        with pytest.raises(ValidationError, match="lengths must match"):
+        with pytest.raises(ValidationError, match="(lengths must match|must be a list of 4)"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
 
     def test_index_fields_required_together(

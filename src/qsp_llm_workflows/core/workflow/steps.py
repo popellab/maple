@@ -67,17 +67,24 @@ class CreatePreviewStep(WorkflowStep):
                     context.input_csv, species_units_file, context.config.reasoning_effort
                 )
             elif context.workflow_type == "isolated_system_target":
-                # Requires model_structure_file, optionally species_units_file
+                # Requires model_structure_file and model_context_file
                 model_structure_file = context.config.model_structure_file
                 if not model_structure_file:
                     raise ValueError(
                         "model_structure_file is required for isolated_system_target workflow. "
                         "Use --model-structure option."
                     )
+                model_context_file = context.config.model_context_file
+                if not model_context_file:
+                    raise ValueError(
+                        "model_context_file is required for isolated_system_target workflow. "
+                        "Use --model-context option."
+                    )
                 species_units_file = context.config.jobs_dir / "input_data" / "species_units.json"
                 prompts = builder.process(
                     context.input_csv,
                     model_structure_file,
+                    model_context_file,
                     species_units_file if species_units_file.exists() else None,
                     context.config.reasoning_effort,
                 )
@@ -176,6 +183,7 @@ class ProcessPromptsStep(WorkflowStep):
                 context.config.base_dir,
                 context.config.openai_api_key,
                 model_structure_file=context.config.model_structure_file,
+                model_context_file=context.config.model_context_file,
             )
 
             # Process requests with streaming unpacker

@@ -19,7 +19,7 @@ from qsp_llm_workflows.core.pydantic_models import (
     TestStatistic,
     TestStatisticFooters,
     ModelRegistry,
-    Input,
+    LiteratureInput,
     ParameterEstimates,
     KeyAssumption,
     BiologicalRelevance,
@@ -105,16 +105,14 @@ class TestParameterMetadataSplitMerge:
             study_design="In vitro experiments",
             parameter_estimates=ParameterEstimates(
                 inputs=[
-                    Input(
+                    LiteratureInput(
                         name="obs_growth",
                         value=0.05,
                         units="1/day",
                         description="Observed growth",
                         source_ref="Smith2020",
-                        value_table_or_section="Table 1",
-                        value_snippet="growth rate = 0.05",
-                        units_table_or_section="Table 1",
-                        units_snippet="units: 1/day",
+                        value_location="Table 1",
+                        value_snippet="growth rate = 0.05 (units: 1/day)",
                     )
                 ],
                 derivation_code="median = 0.05",
@@ -203,10 +201,8 @@ class TestParameterMetadataSplitMerge:
                         "units": "1/day",
                         "description": "Observed growth",
                         "source_ref": "Smith2020",
-                        "value_table_or_section": "Table 1",
-                        "value_snippet": "growth rate = 0.05",
-                        "units_table_or_section": "Table 1",
-                        "units_snippet": "units: 1/day",
+                        "value_location": "Table 1",
+                        "value_snippet": "growth rate = 0.05 (units: 1/day)",
                     }
                 ],
                 "derivation_code": "median = 0.05",

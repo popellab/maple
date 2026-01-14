@@ -5,6 +5,7 @@ Observable models for calibration targets.
 Defines how to compute observables from model state (full model or submodel).
 """
 
+from enum import Enum
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,42 @@ from pydantic import BaseModel, Field
 
 # Support types for measurement output constraints
 SupportType = Literal["positive", "non_negative", "unit_interval", "positive_unbounded", "real"]
+
+
+class SubmodelPattern(str, Enum):
+    """
+    Standard ODE patterns for isolated system submodels.
+
+    These correspond to the patterns documented in the prompt and help with
+    validation, documentation, and potentially auto-generation of template code.
+    """
+
+    FIRST_ORDER_DECAY = "first_order_decay"
+    """Pattern 1: dX/dt = -k*X. For clearance, death, dissociation, degradation."""
+
+    PRODUCTION_DECAY = "production_decay"
+    """Pattern 2: dC/dt = k_prod - k_decay*C. For cytokine steady-state, protein turnover."""
+
+    EXPONENTIAL_GROWTH = "exponential_growth"
+    """Pattern 3: dN/dt = k*N. For cell proliferation, viral replication, early tumor growth."""
+
+    LOGISTIC_GROWTH = "logistic_growth"
+    """Pattern 4: dN/dt = k*N*(1 - N/K). For growth with carrying capacity, spheroid expansion."""
+
+    BIRTH_DEATH = "birth_death"
+    """Pattern 5: dN/dt = (k_pro - k_death)*N. For populations with separate birth and death."""
+
+    BINDING_EQUILIBRIUM = "binding_equilibrium"
+    """Pattern 6: Receptor-ligand binding dynamics. For Kd, kon, koff estimation."""
+
+    MICHAELIS_MENTEN = "michaelis_menten"
+    """Pattern 7: dS/dt = -Vmax*S/(Km + S). For enzyme kinetics, saturable processes."""
+
+    TWO_SPECIES_INTERACTION = "two_species_interaction"
+    """Pattern 8: Two coupled ODEs. For effector-target killing, predator-prey."""
+
+    CUSTOM = "custom"
+    """Non-standard pattern that doesn't fit the above categories."""
 
 
 class ObservableConstant(BaseModel):
@@ -127,6 +164,13 @@ class SubmodelStateVariable(BaseModel):
 
     name: str = Field(description="Name of the state variable (e.g., 'PDAC_spheroid_cells')")
     units: str = Field(description="Pint-parseable units (e.g., 'cell', 'micrometer')")
+    initial_value_input: str = Field(
+        description=(
+            "Name of the Input that provides the initial condition for this state variable.\n"
+            "Must match an Input.name in calibration_target_estimates.inputs.\n"
+            "Example: 'initial_T_cells' for a T cell count state variable."
+        )
+    )
 
 
 class SubmodelObservable(BaseModel):
@@ -220,6 +264,26 @@ class Submodel(BaseModel):
         description="How to compute the experimental observable from submodel state."
     )
 
-    rationale: str = Field(
-        description="Why this submodel approximation is appropriate for the experimental data."
+    pattern: SubmodelPattern = Field(
+        default=SubmodelPattern.CUSTOM,
+        description=(
+            "Which standard ODE pattern this submodel follows.\n"
+            "Helps with validation, documentation, and understanding the model structure.\n"
+            "Use CUSTOM if the submodel doesn't fit a standard pattern."
+        ),
     )
+
+    identifiability_notes: Optional[str] = Field(
+        default=None,
+        description=(
+            "Notes on parameter identifiability from this experimental data.\n"
+            "Document which parameters are independently identifiable vs. only jointly identifiable.\n\n"
+            "Examples:\n"
+            "- 'Only net growth rate (k_pro - k_death) identifiable from this data; "
+            "individual rates require separate proliferation and death assays'\n"
+            "- 'Kd identifiable but kon and koff require kinetic (non-equilibrium) data'\n"
+            "- 'Vmax and Km jointly identifiable from saturation curve'"
+        ),
+    )
+
+    # Note: rationale moved to top-level CalibrationTarget.rationale field

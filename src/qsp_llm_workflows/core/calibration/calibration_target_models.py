@@ -40,8 +40,8 @@ from qsp_llm_workflows.core.calibration.experimental_context import Experimental
 from qsp_llm_workflows.core.calibration.observable import Observable
 from qsp_llm_workflows.core.calibration.scenario import Scenario
 from qsp_llm_workflows.core.calibration.shared_models import (
-    Input,
-    KeyAssumption,
+    LiteratureInput,
+    ModelingAssumption,
     SecondarySource,
     Source,
 )
@@ -90,7 +90,7 @@ class CalibrationTargetEstimates(BaseModel):
     Calibration target estimates with structured inputs and derivation.
 
     Supports both scalar and vector-valued outputs:
-    - Scalar: Single measurement → length-1 lists (median=[42.0], iqr=[5.0], ci95=[[37.0, 47.0]])
+    - Scalar: Single measurement → length-1 lists (median=[42.0], ci95=[[37.0, 47.0]])
     - Vector: Multi-point data → lists matching index_values length
 
     Vector-valued outputs are indexed by index_values (e.g., time points, doses).
@@ -99,23 +99,14 @@ class CalibrationTargetEstimates(BaseModel):
     median: List[float] = Field(
         description=(
             "COMPUTED median value(s) from distribution_code. "
-            "Length-1 list for scalar data, or list matching index_values length for vector data. "
-            "Set from derive_distribution()['median_obs'] - extract .magnitude for each element."
-        )
-    )
-    iqr: List[float] = Field(
-        description=(
-            "COMPUTED interquartile range(s) from distribution_code. "
-            "Length-1 list for scalar data, or list matching index_values length for vector data. "
-            "Set from derive_distribution()['iqr_obs'] - extract .magnitude for each element."
+            "Length-1 list for scalar data, or list matching index_values length for vector data."
         )
     )
     ci95: List[List[float]] = Field(
         description=(
             "COMPUTED 95% confidence intervals from distribution_code. "
             "List of [lower, upper] pairs. Length-1 for scalar data ([[lo, hi]]), "
-            "or matching index_values length for vector data ([[lo1, hi1], [lo2, hi2], ...]). "
-            "Set from derive_distribution()['ci95_obs']."
+            "or matching index_values length for vector data."
         )
     )
     units: str = Field(description="Units of the observable (Pint-parseable)")
@@ -137,13 +128,21 @@ class CalibrationTargetEstimates(BaseModel):
         description="Type of index dimension. Required if index_values provided.",
     )
 
-    inputs: List[Input] = Field(
+    inputs: List[LiteratureInput] = Field(
         description=(
-            "List of inputs used in derivation. "
+            "List of literature-extracted inputs used in derivation. "
             "These are the VALUES REPORTED IN THE PAPER (mean, SD, median, IQR, trajectories, etc.) "
             "that are used to DERIVE the distribution via Monte Carlo. "
             "Inputs can be scalar (broadcast to all index points) or vector-valued (same length as index_values)."
         )
+    )
+    assumptions: List[ModelingAssumption] = Field(
+        default_factory=list,
+        description=(
+            "List of modeling assumptions used in derivation. "
+            "These are values NOT from the paper but needed for computation (e.g., n_mc_samples, "
+            "assumed_cv when not reported). Each must have a rationale field explaining the choice."
+        ),
     )
     distribution_code: str = Field(
         description=(
@@ -151,7 +150,6 @@ class CalibrationTargetEstimates(BaseModel):
             "inputs is a dict mapping input names to Pint Quantities (scalar or array).\n"
             "Must return dict with Pint Quantities:\n"
             "  - median_obs: array of medians (length matching index_values, or length 1 for scalar)\n"
-            "  - iqr_obs: array of IQRs (same length)\n"
             "  - ci95_obs: list of [lower, upper] pairs (same length)\n\n"
             "For scalar data, return length-1 arrays.\n"
             "For vector data, return arrays matching index_values length.\n\n"
@@ -164,7 +162,6 @@ class CalibrationTargetEstimates(BaseModel):
             "    samples = np.random.normal(mean, sd, 10000)\n"
             "    return {\n"
             "        'median_obs': np.array([np.median(samples)]) * units,\n"
-            "        'iqr_obs': np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * units,\n"
             "        'ci95_obs': [[np.percentile(samples, 2.5) * units, np.percentile(samples, 97.5) * units]]\n"
             "    }\n\n"
             "Example (vector - time-course data):\n"
@@ -174,15 +171,13 @@ class CalibrationTargetEstimates(BaseModel):
             "    sds = inputs['cd8_density_sd'].magnitude  # array\n"
             "    units = inputs['cd8_density_mean'].units\n"
             "    n_points = len(means)\n"
-            "    medians, iqrs, ci95s = [], [], []\n"
+            "    medians, ci95s = [], []\n"
             "    for i in range(n_points):\n"
             "        samples = np.random.normal(means[i], sds[i], 10000)\n"
             "        medians.append(np.median(samples))\n"
-            "        iqrs.append(np.percentile(samples, 75) - np.percentile(samples, 25))\n"
             "        ci95s.append([np.percentile(samples, 2.5) * units, np.percentile(samples, 97.5) * units])\n"
             "    return {\n"
             "        'median_obs': np.array(medians) * units,\n"
-            "        'iqr_obs': np.array(iqrs) * units,\n"
             "        'ci95_obs': ci95s\n"
             "    }"
         )
@@ -190,15 +185,13 @@ class CalibrationTargetEstimates(BaseModel):
 
     @model_validator(mode="after")
     def validate_output_lengths_match(self) -> "CalibrationTargetEstimates":
-        """Validator: Ensure median, iqr, ci95 all have the same length."""
+        """Validator: Ensure median and ci95 have the same length."""
         n_median = len(self.median)
-        n_iqr = len(self.iqr)
         n_ci95 = len(self.ci95)
 
-        if not (n_median == n_iqr == n_ci95):
+        if n_median != n_ci95:
             raise ValueError(
-                f"Output array lengths must match: median has {n_median}, "
-                f"iqr has {n_iqr}, ci95 has {n_ci95}"
+                f"Output array lengths must match: median has {n_median}, ci95 has {n_ci95}"
             )
 
         # Check ci95 inner structure
@@ -242,12 +235,13 @@ class CalibrationTargetEstimates(BaseModel):
 
     @model_validator(mode="after")
     def validate_vector_input_lengths(self) -> "CalibrationTargetEstimates":
-        """Validator: Ensure vector-valued inputs match index_values length."""
+        """Validator: Ensure vector-valued inputs and assumptions match index_values length."""
         if self.index_values is None:
             return self  # Scalar case, skip
 
         n_index = len(self.index_values)
 
+        # Check literature inputs
         for inp in self.inputs:
             if isinstance(inp.value, list):
                 if len(inp.value) != n_index:
@@ -255,6 +249,16 @@ class CalibrationTargetEstimates(BaseModel):
                         f"Vector input '{inp.name}' has length {len(inp.value)}, "
                         f"but index_values has length {n_index}. "
                         f"Vector inputs must match index_values length."
+                    )
+
+        # Check assumptions
+        for assumption in self.assumptions:
+            if isinstance(assumption.value, list):
+                if len(assumption.value) != n_index:
+                    raise ValueError(
+                        f"Vector assumption '{assumption.name}' has length {len(assumption.value)}, "
+                        f"but index_values has length {n_index}. "
+                        f"Vector assumptions must match index_values length."
                     )
 
         return self
@@ -280,16 +284,6 @@ class CalibrationTarget(BaseModel):
     # Field definitions
     # ========================================================================
 
-    description: str = Field(description="Human-readable description of the observable")
-
-    # --- Scenario specification (LLM-generated) ---
-    scenario: Scenario = Field(
-        description=(
-            "Experimental scenario: description and sequence of interventions. "
-            "Interventions list may be empty for natural/untreated state measurements."
-        )
-    )
-
     # --- Observable specification (LLM-generated) ---
     observable: Observable = Field(
         description=(
@@ -303,27 +297,38 @@ class CalibrationTarget(BaseModel):
         description="Experimental context of the observable"
     )
 
-    # --- Study information (LLM-generated) ---
-    study_overview: str = Field(
-        description="High-level biological context (WHAT and WHY) in 1-2 sentences"
-    )
-    study_design: str = Field(description="Concrete experimental details (HOW) in 1-2 sentences")
-    derivation_explanation: str = Field(
-        description="Step-by-step explanation of derivation code with assumption justifications"
-    )
-    key_assumptions: List[KeyAssumption] = Field(
-        description="List of key assumptions with numbers and text"
-    )
-    key_study_limitations: str = Field(
+    # --- Scenario (optional, for intervention tracking) ---
+    scenario: Optional[Scenario] = Field(
+        default=None,
         description=(
-            "Important limitations and their impact on reliability. Address:\n"
-            "- Sample size and statistical power\n"
-            "- Population generalizability (single center, specific subtype, demographics)\n"
-            "- Large variance/uncertainty (if CV > 50% or wide CI, explain biological vs methodological sources)\n"
-            "- Distributional assumptions (if using normal for size data, acknowledge potential bias)\n"
-            "- Conversion factor uncertainties (cellularity, cell size, geometric assumptions)\n"
-            "- Measurement timing ambiguity (if unclear what triggered observation)"
+            "Experimental scenario with interventions. Optional - can be omitted if "
+            "no interventions or if intervention details are captured in rationale."
+        ),
+    )
+
+    # --- Consolidated narrative (LLM-generated) ---
+    rationale: str = Field(
+        description=(
+            "Single consolidated explanation covering:\n"
+            "- What observable is being measured and why it's relevant\n"
+            "- How the experimental data maps to model species/parameters\n"
+            "- Key assumptions made in the derivation\n"
+            "- Any interventions or experimental conditions\n\n"
+            "This replaces: description, study_overview, study_design, "
+            "derivation_explanation, scenario.description, and key_assumptions."
         )
+    )
+
+    caveats: List[str] = Field(
+        default_factory=list,
+        description=(
+            "List of limitations, assumptions, or caveats as simple strings.\n"
+            "Examples:\n"
+            "- 'Values estimated from figures, not tabulated'\n"
+            "- 'Single-center cohort (n~15), limited generalizability'\n"
+            "- 'Bulk CD3+ assay, not CD8-specific'\n"
+            "- 'Normal distribution assumed for positive-only data'"
+        ),
     )
 
     # --- Sources (LLM-generated) ---
@@ -331,7 +336,7 @@ class CalibrationTarget(BaseModel):
         description="Primary data source (the paper where this observable was measured)"
     )
     secondary_data_sources: List[SecondarySource] = Field(
-        description="Secondary data sources (reference values, constants)"
+        default_factory=list, description="Secondary data sources (reference values, constants)"
     )
 
     @classmethod
@@ -557,13 +562,22 @@ class CalibrationTarget(BaseModel):
         # Execute with mock inputs to test structure and units
         try:
             # Create mock inputs dict with Pint quantities
-            # Handle both scalar and vector-valued inputs
+            # Merge both literature inputs and modeling assumptions into a single dict
             mock_inputs = {}
+            # Add literature inputs
             for inp in self.calibration_target_estimates.inputs:
                 if isinstance(inp.value, list):
                     mock_inputs[inp.name] = np.array(inp.value) * ureg(inp.units)
                 else:
                     mock_inputs[inp.name] = inp.value * ureg(inp.units)
+            # Add modeling assumptions
+            for assumption in self.calibration_target_estimates.assumptions:
+                if isinstance(assumption.value, list):
+                    mock_inputs[assumption.name] = np.array(assumption.value) * ureg(
+                        assumption.units
+                    )
+                else:
+                    mock_inputs[assumption.name] = assumption.value * ureg(assumption.units)
 
             # Execute function
             local_scope = {"ureg": ureg, "np": np}
@@ -576,16 +590,15 @@ class CalibrationTarget(BaseModel):
             if not isinstance(result, dict):
                 raise ReturnStructureError("Function must return a dict")
 
-            required_keys = {"median_obs", "iqr_obs", "ci95_obs"}
+            required_keys = {"median_obs", "ci95_obs"}
             if not required_keys.issubset(result.keys()):
                 raise ReturnStructureError(
                     f"Function must return dict with keys: {required_keys}. Got: {result.keys()}"
                 )
 
-            # Check median_obs and iqr_obs have units
-            for key in ["median_obs", "iqr_obs"]:
-                if not hasattr(result[key], "units"):
-                    raise MissingUnitsError(f"Result['{key}'] must be a Pint Quantity with units")
+            # Check median_obs has units
+            if not hasattr(result["median_obs"], "units"):
+                raise MissingUnitsError("Result['median_obs'] must be a Pint Quantity with units")
 
             # Check dimensionality matches expected units
             expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
@@ -596,14 +609,6 @@ class CalibrationTarget(BaseModel):
                     f"median_obs unit dimensionality mismatch:\n"
                     f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
                     f"  Got: {result['median_obs'].units} ({result['median_obs'].dimensionality})"
-                )
-
-            # Check iqr
-            if result["iqr_obs"].dimensionality != expected_quantity.dimensionality:
-                raise DimensionalityMismatchError(
-                    f"iqr_obs unit dimensionality mismatch:\n"
-                    f"  Expected: {self.calibration_target_estimates.units}\n"
-                    f"  Got: {result['iqr_obs'].units}"
                 )
 
             # Check ci95_obs is list of [lower, upper] pairs matching expected length
@@ -626,11 +631,9 @@ class CalibrationTarget(BaseModel):
 
             # Convert computed values to expected units for comparison
             median_computed = result["median_obs"].to(self.calibration_target_estimates.units)
-            iqr_computed = result["iqr_obs"].to(self.calibration_target_estimates.units)
 
             # Get reported values (now lists)
             median_reported = self.calibration_target_estimates.median
-            iqr_reported = self.calibration_target_estimates.iqr
             ci95_reported = self.calibration_target_estimates.ci95
 
             # Use relative tolerance of 1% for comparison
@@ -638,7 +641,6 @@ class CalibrationTarget(BaseModel):
 
             # Handle array magnitudes
             median_mag = np.atleast_1d(median_computed.magnitude)
-            iqr_mag = np.atleast_1d(iqr_computed.magnitude)
 
             # Element-wise comparison for median
             for i in range(len(median_reported)):
@@ -646,14 +648,6 @@ class CalibrationTarget(BaseModel):
                     raise ComputedValueMismatchError(
                         f"Computed median[{i}] ({median_mag[i]:.4g}) does not match "
                         f"reported median[{i}] ({median_reported[i]:.4g}) within 1% tolerance"
-                    )
-
-            # Element-wise comparison for iqr
-            for i in range(len(iqr_reported)):
-                if abs(iqr_mag[i] - iqr_reported[i]) > rel_tol * abs(iqr_reported[i]):
-                    raise ComputedValueMismatchError(
-                        f"Computed IQR[{i}] ({iqr_mag[i]:.4g}) does not match "
-                        f"reported IQR[{i}] ({iqr_reported[i]:.4g}) within 1% tolerance"
                     )
 
             # Element-wise comparison for CI95
@@ -696,20 +690,20 @@ class CalibrationTarget(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_refs(self) -> "CalibrationTarget":
-        """Validator: Check all source_refs in inputs point to defined sources."""
-        # Build set of valid source tags
+        """Validator: Check all source_refs in LiteratureInputs point to defined sources."""
+        # Build set of valid source tags from literature sources
         valid_tags = {self.primary_data_source.source_tag}
         valid_tags.update(s.source_tag for s in self.secondary_data_sources)
-        valid_tags.add("modeling_assumption")  # Special tag
 
-        # Check each input's source_ref
+        # Check each literature input's source_ref
+        # (ModelingAssumptions don't have source_refs - they're handled separately)
         for inp in self.calibration_target_estimates.inputs:
             if inp.source_ref not in valid_tags:
                 raise SourceRefError(
-                    f"Input '{inp.name}' has source_ref '{inp.source_ref}' which is not defined.\n"
+                    f"LiteratureInput '{inp.name}' has source_ref '{inp.source_ref}' which is not defined.\n"
                     f"Valid source tags: {sorted(valid_tags)}\n"
-                    f"Add the source to primary_data_source or secondary_data_sources, "
-                    f"or use 'modeling_assumption' if appropriate."
+                    f"Add the source to primary_data_source or secondary_data_sources.\n"
+                    f"For values not from literature, use the 'assumptions' field instead."
                 )
 
         return self
@@ -812,8 +806,10 @@ class CalibrationTarget(BaseModel):
                 cv = abs(std_val / mean_val)
 
                 if cv > 0.5:  # CV > 50%
-                    # Check if limitations mention variance/uncertainty
-                    limitations_lower = self.key_study_limitations.lower()
+                    # Check if caveats or rationale mention variance/uncertainty
+                    caveats_text = " ".join(self.caveats).lower()
+                    rationale_lower = self.rationale.lower()
+                    combined_text = caveats_text + " " + rationale_lower
                     variance_keywords = [
                         "variance",
                         "variability",
@@ -826,12 +822,11 @@ class CalibrationTarget(BaseModel):
                         "dispersion",
                     ]
 
-                    if not any(keyword in limitations_lower for keyword in variance_keywords):
+                    if not any(keyword in combined_text for keyword in variance_keywords):
                         warnings.warn(
-                            f"Large coefficient of variation (CV = {cv:.1%}) detected but not discussed in key_study_limitations. "
-                            f"Consider explaining whether this reflects biological variability, measurement error, "
-                            f"or heterogeneous population. High variance may indicate need for stratification or "
-                            f"alternative distributional assumptions (e.g., lognormal).",
+                            f"Large coefficient of variation (CV = {cv:.1%}) detected but not discussed in caveats. "
+                            f"Consider adding a caveat explaining whether this reflects biological variability, "
+                            f"measurement error, or heterogeneous population.",
                             UserWarning,
                         )
 
@@ -872,7 +867,7 @@ class CalibrationTarget(BaseModel):
         """
         Validator (WARNING): Check that conversion factors are documented.
 
-        Magic numbers in observable.code should be in observable.constants or key_assumptions.
+        Magic numbers in observable.code should be in observable.constants or rationale/caveats.
         """
         # Skip for IsolatedSystemTarget (uses submodel.observable instead)
         if type(self).__name__ == "IsolatedSystemTarget":
@@ -929,25 +924,26 @@ class CalibrationTarget(BaseModel):
             return self
 
         if literals:
-            # Check if these appear in observable.constants or assumptions
+            # Check if these appear in observable.constants or rationale/caveats
             constant_values: list[float] = [c.value for c in self.observable.constants]
 
-            assumption_texts = " ".join(a.text for a in self.key_assumptions)
+            # Check rationale and caveats for documentation
+            combined_text = self.rationale + " " + " ".join(self.caveats)
 
             undocumented = []
             for lit in literals:
                 # Check if value appears in constants (with tolerance)
                 in_constants = any(abs(lit - v) < 1e-6 for v in constant_values)
-                # Check if value appears in assumption text
-                in_assumptions = str(lit) in assumption_texts or f"{lit:.0e}" in assumption_texts
+                # Check if value appears in rationale/caveats text
+                in_text = str(lit) in combined_text or f"{lit:.0e}" in combined_text
 
-                if not (in_constants or in_assumptions):
+                if not (in_constants or in_text):
                     undocumented.append(lit)
 
             if undocumented:
                 warnings.warn(
                     f"observable.code contains numeric literals {undocumented} that may be conversion factors. "
-                    f"Document these in either observable.constants or key_assumptions. "
+                    f"Document these in observable.constants or explain in rationale. "
                     f"Examples: cell sizes (µm), cellularity fractions, density values, geometric conversion factors.",
                     UserWarning,
                 )
@@ -956,7 +952,7 @@ class CalibrationTarget(BaseModel):
 
     @model_validator(mode="after")
     def validate_inputs_used(self) -> "CalibrationTarget":
-        """Validator: Warn if inputs are defined but not used in distribution_code (simplified for text-based measurements)."""
+        """Validator: Warn if inputs/assumptions are defined but not used in distribution_code."""
         # Extract all names accessed from 'inputs' dict
         used_input_names = set()
 
@@ -977,17 +973,20 @@ class CalibrationTarget(BaseModel):
             # Already caught by validate_derivation_code
             pass
 
-        # Check which defined inputs are not used
+        # Check which defined inputs/assumptions are not used
+        # Both LiteratureInputs and ModelingAssumptions are merged into the inputs dict
         defined_inputs = {inp.name for inp in self.calibration_target_estimates.inputs}
-        unused_inputs = defined_inputs - used_input_names
+        defined_assumptions = {a.name for a in self.calibration_target_estimates.assumptions}
+        all_defined = defined_inputs | defined_assumptions
+        unused = all_defined - used_input_names
 
-        if unused_inputs:
+        if unused:
             # This is a warning, not an error - could be intentional
             import warnings
 
             warnings.warn(
-                f"The following inputs are defined but not used in distribution_code: {sorted(unused_inputs)}. "
-                f"If these inputs are not needed, consider removing them.",
+                f"The following inputs/assumptions are defined but not used in distribution_code: {sorted(unused)}. "
+                f"If these are not needed, consider removing them.",
                 UserWarning,
             )
 
@@ -1282,8 +1281,8 @@ class CalibrationTarget(BaseModel):
         # Keywords suggesting a "total" measurement
         TOTAL_KEYWORDS = ["total", "all", "overall", "pan-", "combined"]
 
-        desc_lower = self.description.lower()
-        uses_total = any(kw in desc_lower for kw in TOTAL_KEYWORDS)
+        rationale_lower = self.rationale.lower()
+        uses_total = any(kw in rationale_lower for kw in TOTAL_KEYWORDS)
 
         if not uses_total:
             return self

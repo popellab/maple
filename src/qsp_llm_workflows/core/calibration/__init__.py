@@ -24,7 +24,7 @@ approximates the relevant dynamics from the full QSP model. The `submodel` field
 - `observable`: How to compute the measurement from submodel state
 
 Supporting modules:
-- enums: Species, Indication, Compartment, System enums
+- enums: Species, Indication, System enums (Compartment kept for backward compatibility)
 - scenario: Intervention, Scenario models
 - observable: Observable, Submodel, ObservableConstant models
 - experimental_context: Stage, TreatmentContext, ExperimentalContext
@@ -76,6 +76,7 @@ from qsp_llm_workflows.core.calibration.observable import (
     ObservableConstant,
     Submodel,
     SubmodelObservable,
+    SubmodelPattern,
     SubmodelStateVariable,
     SupportType,
 )
@@ -91,10 +92,14 @@ from qsp_llm_workflows.core.calibration.experimental_context import (
 from qsp_llm_workflows.core.calibration.shared_models import (
     CellLine,
     CellSpecies,
+    ContextMismatch,
     CultureConditions,
     DoseResponseData,
-    Input,
-    KeyAssumption,
+    InputType,
+    KeyAssumption,  # Kept for backward compatibility with ParameterMetadata/TestStatistic
+    LiteratureInput,
+    MismatchDimension,
+    ModelingAssumption,
     SecondarySource,
     Snippet,
     Source,
@@ -166,18 +171,23 @@ __all__ = [
     "SupportType",
     "Submodel",
     "SubmodelObservable",
+    "SubmodelPattern",
     "SubmodelStateVariable",
     # Context
     "Stage",
     "TreatmentContext",
     "ExperimentalContext",
     # Shared models
-    "Input",
+    "LiteratureInput",
+    "ModelingAssumption",
+    "InputType",
     "KeyAssumption",
     "Source",
     "SecondarySource",
     "Snippet",
     "Validation",
+    "ContextMismatch",
+    "MismatchDimension",
     "CellSpecies",
     "CellLine",
     "CultureConditions",

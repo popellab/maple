@@ -46,10 +46,8 @@ class TestSchemaValidator:
                             "units": "dimensionless",
                             "description": "Test input description",
                             "source_ref": "src1",
-                            "value_table_or_section": "Table 1",
-                            "value_snippet": "The value was 1.0",
-                            "units_table_or_section": "Methods section",
-                            "units_snippet": "dimensionless",
+                            "value_location": "Table 1",
+                            "value_snippet": "The value was 1.0 (dimensionless)",
                         }
                     ],
                 },
