@@ -49,7 +49,7 @@ src/qsp_llm_workflows/
 │       ├── calibration_target_models.py  # CalibrationTarget, CalibrationTargetEstimates
 │       ├── isolated_system_target.py     # IsolatedSystemTarget for in vitro data
 │       ├── observable.py                 # Observable, Submodel, SubmodelObservable
-│       ├── shared_models.py              # Input (scalar/vector), Source, Snippet
+│       ├── shared_models.py              # EstimateInput, SubmodelInput, Source, Snippet
 │       ├── enums.py                      # Species, Indication, Compartment, System
 │       ├── scenario.py                   # Intervention, Scenario
 │       └── code_validator.py             # Unified code validation (CodeValidator)
@@ -64,7 +64,9 @@ src/qsp_llm_workflows/
 
 **Calibration target types:**
 - `CalibrationTarget`: For clinical/in vivo data. Uses `observable` to compute measurements from full model species.
-- `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` to define a standalone ODE that shares parameter names with the full model for joint inference. The observable code is optional—if omitted, it defaults to returning the first state variable with the specified units.
+- `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` to define a standalone ODE that shares parameter names with the full model for joint inference. State variables are self-contained with initial values and provenance. Observable code is optional—if omitted, defaults to the first state variable with units.
+
+**Input architecture:** Inputs are co-located with the code blocks that use them. `submodel.inputs` holds experimental conditions for ODE code, `observable.inputs` holds values for observable code, and `calibration_target_estimates.inputs` holds values for distribution derivation. State variables include their initial values directly (no reference indirection).
 
 **Vector-valued data:** Calibration targets support both scalar and time-course/dose-response data through a unified pathway. Scalar data uses length-1 lists; vector data uses `index_values` to specify the indexing dimension (time points, doses, etc.).
 

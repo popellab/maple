@@ -25,18 +25,20 @@ class InputType(str, Enum):
     """Protocol/experimental choice from paper (e.g., seeding density, E:T ratio)."""
 
 
-class LiteratureInput(BaseModel):
+class EstimateInput(BaseModel):
     """
-    A literature-extracted input value for calibration target derivation.
+    A literature-extracted input value for distribution derivation.
 
-    Used in CalibrationTargetEstimates.inputs. All provenance fields are REQUIRED
-    to ensure full traceability. source_ref must point to an actual literature source.
+    Used in CalibrationTargetEstimates.inputs for values that feed into
+    distribution_code to derive calibration target estimates. All provenance
+    fields are REQUIRED to ensure full traceability.
 
     Supports both scalar and vector-valued inputs:
     - Scalar: value=42.0 (single measurement, or constant applied to all index points)
     - Vector: value=[10.0, 20.0, 30.0] (measurements at each index point)
 
-    For modeling assumptions (e.g., n_mc_samples), use ModelingAssumption instead.
+    For experimental conditions used in submodel/observable code, use SubmodelInput.
+    For modeling assumptions (e.g., n_mc_samples), use ModelingAssumption.
     """
 
     name: str = Field(description="Input name (used as key in inputs dict)")
@@ -62,20 +64,12 @@ class LiteratureInput(BaseModel):
     value_snippet: str = Field(
         description="Exact text snippet from the source containing or supporting the value(s)"
     )
-    initializes_state: Optional[str] = Field(
-        None,
-        description=(
-            "DEPRECATED: Use SubmodelStateVariable.initial_value_input instead.\n"
-            "For IsolatedSystemTarget: the state variable this input provides "
-            "the initial condition for (e.g., 'T_cells'). Must match a name in state_variables."
-        ),
-    )
 
     input_type: InputType = Field(
         default=InputType.DIRECT_PARAMETER,
         description=(
             "Classification of this input:\n"
-            "- direct_parameter: Literature reports the model parameter directly (e.g., 'k = 3/day')\n"
+            "- direct_parameter: Literature reports the value directly (e.g., 'mean = 42.0')\n"
             "- proxy_measurement: Requires conversion (e.g., 'doubling time = 8h' → rate constant)\n"
             "- experimental_condition: Protocol choice from paper (e.g., seeding density, E:T ratio)"
         ),
@@ -110,11 +104,15 @@ class LiteratureInput(BaseModel):
 
         if input_type == InputType.PROXY_MEASUREMENT and v is None:
             warnings.warn(
-                "LiteratureInput with input_type='proxy_measurement' should have conversion_formula "
+                "EstimateInput with input_type='proxy_measurement' should have conversion_formula "
                 "documenting how to convert to model parameter (e.g., 'k = ln(2) / t_half').",
                 UserWarning,
             )
         return v
+
+
+# Backwards compatibility alias
+LiteratureInput = EstimateInput
 
 
 class ModelingAssumption(BaseModel):
@@ -150,6 +148,55 @@ class ModelingAssumption(BaseModel):
         """Ensure vector-valued assumptions are not empty lists."""
         if isinstance(v, list) and len(v) == 0:
             raise ValueError("Vector-valued assumption cannot be an empty list")
+        return v
+
+
+class SubmodelInput(BaseModel):
+    """
+    An experimental input used in submodel or observable code.
+
+    Used in Submodel.inputs and Observable.inputs for values that appear directly
+    in ODE or observable calculations. Unlike EstimateInput (which feeds
+    distribution_code), these are inputs to the model simulation itself.
+
+    Examples:
+    - E:T ratio for killing assay
+    - Drug concentration for dose-response
+    - Culture duration for growth experiments
+
+    All provenance fields are REQUIRED for traceability.
+    """
+
+    name: str = Field(description="Input name (used as key in inputs dict)")
+    value: Union[float, List[float]] = Field(
+        description=(
+            "Input value(s). Use a list for vector-valued data (e.g., measurements at "
+            "multiple time points or doses). Scalar values are broadcast across all index points."
+        )
+    )
+    units: str = Field(
+        description="Input units (must be Pint-parseable, e.g., 'pg/mL', 'cell/mm^2', 'dimensionless')"
+    )
+    description: str = Field(description="What this input represents and how it was extracted")
+    source_ref: str = Field(
+        description=(
+            "Source reference tag. MUST match a source_tag in primary_data_source or "
+            "secondary_data_sources."
+        )
+    )
+    value_location: str = Field(
+        description="Where the value appears in the source (e.g., 'Table 2', 'Figure 3A', 'Results p.5')"
+    )
+    value_snippet: str = Field(
+        description="Exact text snippet from the source containing or supporting the value(s)"
+    )
+
+    @field_validator("value")
+    @classmethod
+    def ensure_list_not_empty(cls, v: Union[float, List[float]]) -> Union[float, List[float]]:
+        """Ensure vector-valued inputs are not empty lists."""
+        if isinstance(v, list) and len(v) == 0:
+            raise ValueError("Vector-valued input cannot be an empty list")
         return v
 
 

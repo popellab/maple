@@ -41,7 +41,7 @@ from qsp_llm_workflows.core.calibration.experimental_context import Experimental
 from qsp_llm_workflows.core.calibration.observable import Observable
 from qsp_llm_workflows.core.calibration.scenario import Scenario
 from qsp_llm_workflows.core.calibration.shared_models import (
-    LiteratureInput,
+    EstimateInput,
     ModelingAssumption,
     SecondarySource,
     Source,
@@ -130,12 +130,13 @@ class CalibrationTargetEstimates(BaseModel):
         description="Type of index dimension. Required if index_values provided.",
     )
 
-    inputs: List[LiteratureInput] = Field(
+    inputs: List[EstimateInput] = Field(
         description=(
-            "List of literature-extracted inputs used in derivation. "
+            "List of literature-extracted inputs used in distribution_code derivation. "
             "These are the VALUES REPORTED IN THE PAPER (mean, SD, median, IQR, trajectories, etc.) "
             "that are used to DERIVE the distribution via Monte Carlo. "
-            "Inputs can be scalar (broadcast to all index points) or vector-valued (same length as index_values)."
+            "Inputs can be scalar (broadcast to all index points) or vector-valued (same length as index_values).\n\n"
+            "NOTE: For inputs used in submodel or observable code, use submodel.inputs or observable.inputs instead."
         )
     )
     assumptions: List[ModelingAssumption] = Field(
@@ -583,41 +584,55 @@ class CalibrationTarget(BaseModel):
 
     @model_validator(mode="after")
     def validate_input_values_in_snippets(self) -> "CalibrationTarget":
-        """Validator: Check that LiteratureInput values appear in their value_snippet.
+        """Validator: Check that input values appear in their value_snippet.
 
         Ensures data integrity by verifying that extracted values can be found
         in the source text. Handles multiple numeric formats (decimal, scientific,
         percentage, rounded variations).
 
+        Checks inputs in:
+        - calibration_target_estimates.inputs (EstimateInput)
+        - observable.inputs (SubmodelInput)
+
         Raises SnippetValueMismatchError if a value is not found in its snippet.
         """
-        for inp in self.calibration_target_estimates.inputs:
-            value = inp.value
-            snippet = inp.value_snippet
 
-            if not snippet:
-                continue
+        def check_inputs(inputs, location_prefix: str):
+            """Helper to check value_snippet for a list of inputs."""
+            for inp in inputs:
+                value = inp.value
+                snippet = inp.value_snippet
 
-            # Handle both scalar and vector-valued inputs
-            values_to_check = [value] if not isinstance(value, list) else value
+                if not snippet:
+                    continue
 
-            missing_values = []
-            for val in values_to_check:
-                if not check_value_in_text(snippet, val):
-                    missing_values.append(val)
+                # Handle both scalar and vector-valued inputs
+                values_to_check = [value] if not isinstance(value, list) else value
 
-            if missing_values:
-                raise SnippetValueMismatchError(
-                    f"LiteratureInput '{inp.name}' has value(s) not found in value_snippet.\n"
-                    f"  Missing values: {missing_values}\n"
-                    f"  Snippet: '{snippet[:200]}{'...' if len(snippet) > 200 else ''}'\n"
-                    f"The value_snippet must contain the exact values extracted from the paper.\n"
-                    f"Check for:\n"
-                    f"  - Typos in the extracted value\n"
-                    f"  - Different numeric format in the paper (e.g., '2.5×10⁻³' vs '0.0025')\n"
-                    f"  - Value reported in different units that need conversion\n"
-                    f"  - Snippet truncated before the value appears"
-                )
+                missing_values = []
+                for val in values_to_check:
+                    if not check_value_in_text(snippet, val):
+                        missing_values.append(val)
+
+                if missing_values:
+                    raise SnippetValueMismatchError(
+                        f"{location_prefix} input '{inp.name}' has value(s) not found in value_snippet.\n"
+                        f"  Missing values: {missing_values}\n"
+                        f"  Snippet: '{snippet[:200]}{'...' if len(snippet) > 200 else ''}'\n"
+                        f"The value_snippet must contain the exact values extracted from the paper.\n"
+                        f"Check for:\n"
+                        f"  - Typos in the extracted value\n"
+                        f"  - Different numeric format in the paper (e.g., '2.5×10⁻³' vs '0.0025')\n"
+                        f"  - Value reported in different units that need conversion\n"
+                        f"  - Snippet truncated before the value appears"
+                    )
+
+        # Check calibration_target_estimates.inputs
+        check_inputs(self.calibration_target_estimates.inputs, "calibration_target_estimates")
+
+        # Check observable.inputs (if present and not IsolatedSystemTarget)
+        if type(self).__name__ != "IsolatedSystemTarget" and self.observable.inputs:
+            check_inputs(self.observable.inputs, "observable")
 
         return self
 
@@ -785,21 +800,33 @@ class CalibrationTarget(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_refs(self) -> "CalibrationTarget":
-        """Validator: Check all source_refs in LiteratureInputs point to defined sources."""
+        """Validator: Check all source_refs in inputs point to defined sources.
+
+        Checks source_refs in:
+        - calibration_target_estimates.inputs (EstimateInput)
+        - observable.inputs (SubmodelInput)
+        """
         # Build set of valid source tags from literature sources
         valid_tags = {self.primary_data_source.source_tag}
         valid_tags.update(s.source_tag for s in self.secondary_data_sources)
 
-        # Check each literature input's source_ref
-        # (ModelingAssumptions don't have source_refs - they're handled separately)
-        for inp in self.calibration_target_estimates.inputs:
-            if inp.source_ref not in valid_tags:
-                raise SourceRefError(
-                    f"LiteratureInput '{inp.name}' has source_ref '{inp.source_ref}' which is not defined.\n"
-                    f"Valid source tags: {sorted(valid_tags)}\n"
-                    f"Add the source to primary_data_source or secondary_data_sources.\n"
-                    f"For values not from literature, use the 'assumptions' field instead."
-                )
+        def check_refs(inputs, location_prefix: str):
+            """Helper to check source_refs for a list of inputs."""
+            for inp in inputs:
+                if inp.source_ref not in valid_tags:
+                    raise SourceRefError(
+                        f"{location_prefix} input '{inp.name}' has source_ref '{inp.source_ref}' which is not defined.\n"
+                        f"Valid source tags: {sorted(valid_tags)}\n"
+                        f"Add the source to primary_data_source or secondary_data_sources.\n"
+                        f"For values not from literature, use the 'assumptions' field instead."
+                    )
+
+        # Check calibration_target_estimates.inputs
+        check_refs(self.calibration_target_estimates.inputs, "calibration_target_estimates")
+
+        # Check observable.inputs (if present and not IsolatedSystemTarget)
+        if type(self).__name__ != "IsolatedSystemTarget" and self.observable.inputs:
+            check_refs(self.observable.inputs, "observable")
 
         return self
 
@@ -1068,8 +1095,8 @@ class CalibrationTarget(BaseModel):
             # Already caught by validate_derivation_code
             pass
 
-        # Check which defined inputs/assumptions are not used
-        # Both LiteratureInputs and ModelingAssumptions are merged into the inputs dict
+        # Check which defined inputs/assumptions are not used in distribution_code
+        # Both EstimateInputs and ModelingAssumptions are merged into the inputs dict
         defined_inputs = {inp.name for inp in self.calibration_target_estimates.inputs}
         defined_assumptions = {a.name for a in self.calibration_target_estimates.assumptions}
         all_defined = defined_inputs | defined_assumptions

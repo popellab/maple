@@ -11,6 +11,16 @@ Main classes:
   - Uses `submodel` field with nested ODE code, state variables, parameters, and observable
 - IndexType: Enum for vector-valued data index dimension (time, dose, ratio, etc.)
 
+Input Architecture:
+Inputs are co-located with the code blocks that use them for clarity:
+
+- `submodel.inputs` (SubmodelInput): Experimental conditions for ODE code (E:T ratio, dose, etc.)
+- `submodel.state_variables` (SubmodelStateVariable): Self-contained with initial values + provenance
+- `observable.inputs` (SubmodelInput): Literature inputs for observable code
+- `observable.constants` (ObservableConstant): Geometric/modeling constants
+- `calibration_target_estimates.inputs` (EstimateInput): Inputs for distribution_code derivation
+- `calibration_target_estimates.assumptions` (ModelingAssumption): Computational assumptions
+
 CalibrationTarget:
 Uses the full QSP model. The `observable` field defines Python code to compute the
 experimental measurement from model species (e.g., ratio of CD8 cells to tumor cells).
@@ -19,7 +29,8 @@ IsolatedSystemTarget:
 For isolated systems (in vitro, preclinical), the LLM builds a Python submodel that
 approximates the relevant dynamics from the full QSP model. The `submodel` field includes:
 - `code`: ODE function using parameter names from full model (for joint inference)
-- `state_variables`: State variables with names and units
+- `inputs`: Experimental conditions with full provenance
+- `state_variables`: Self-contained with initial values, units, and provenance
 - `parameters`: List of parameter names from the full model
 - `observable`: How to compute the measurement from submodel state
 
@@ -28,7 +39,7 @@ Supporting modules:
 - scenario: Intervention, Scenario models
 - observable: Observable, Submodel, ObservableConstant models
 - experimental_context: Stage, TreatmentContext, ExperimentalContext
-- shared_models: Input (scalar/vector), Source, Snippet
+- shared_models: EstimateInput, SubmodelInput, ModelingAssumption, Source, Snippet
 - validators: Validation helper functions (resolve_doi, fuzzy_match, etc.)
 - exceptions: Custom exception classes for validation errors
 
@@ -95,14 +106,16 @@ from qsp_llm_workflows.core.calibration.shared_models import (
     ContextMismatch,
     CultureConditions,
     DoseResponseData,
+    EstimateInput,
     InputType,
     KeyAssumption,  # Kept for backward compatibility with ParameterMetadata/TestStatistic
-    LiteratureInput,
+    LiteratureInput,  # Backwards compatibility alias for EstimateInput
     MismatchDimension,
     ModelingAssumption,
     SecondarySource,
     Snippet,
     Source,
+    SubmodelInput,
     TrajectoryData,
     UncertaintyType,
     Validation,
@@ -189,7 +202,9 @@ __all__ = [
     "TreatmentContext",
     "ExperimentalContext",
     # Shared models
-    "LiteratureInput",
+    "EstimateInput",
+    "SubmodelInput",
+    "LiteratureInput",  # Backwards compatibility alias
     "ModelingAssumption",
     "InputType",
     "KeyAssumption",

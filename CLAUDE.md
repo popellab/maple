@@ -434,7 +434,26 @@ ratio.to(ureg.dimensionless)
 
 ### Calibration Target Model Architecture
 
-The calibration target models use a modular, inheritance-based architecture:
+The calibration target models use a modular, inheritance-based architecture with **co-located inputs** - each code block has its own inputs for clarity.
+
+**Input Architecture:**
+```
+Inputs are co-located with the code blocks that use them:
+
+- submodel.inputs (SubmodelInput)      # Experimental conditions for ODE code
+- submodel.state_variables             # Self-contained with initial values + provenance
+- observable.inputs (SubmodelInput)    # Literature inputs for observable code
+- observable.constants                 # Geometric/modeling constants
+- calibration_target_estimates.inputs  # EstimateInput for distribution_code
+- calibration_target_estimates.assumptions  # ModelingAssumption for derivation
+```
+
+**Input classes:**
+- `SubmodelInput`: Experimental conditions for submodel/observable code (E:T ratio, dose, etc.)
+- `EstimateInput`: Literature values for distribution_code derivation (mean, SD, etc.)
+- `ModelingAssumption`: Computational assumptions with rationale (n_mc_samples, etc.)
+- `ObservableConstant`: Geometric/modeling constants with biological_basis
+- `LiteratureInput`: Backwards-compatibility alias for `EstimateInput`
 
 ```
 core/calibration/calibration_target_models.py:
@@ -443,42 +462,59 @@ core/calibration/calibration_target_models.py:
   │   ├── code: str                # compute_observable(time, species_dict, constants, ureg)
   │   ├── units: str               # Pint-parseable units
   │   ├── species: List[str]       # Model species accessed (e.g., ['V_T.CD8', 'V_T.C1'])
-  │   ├── constants: List[ObservableConstant]  # Documented constants with units
+  │   ├── constants: List[ObservableConstant]  # Geometric/modeling constants
+  │   ├── inputs: List[SubmodelInput]  # Literature inputs for observable code
   │   ├── support: SupportType     # Mathematical support (positive, non_negative, etc.)
   │   └── mapping_rationale: str   # Explanation of measurement-to-model mapping
   ├── calibration_target_estimates
   │   ├── median: List[float]      # Vector-valued (length-1 for scalar data)
-  │   ├── iqr: List[float]
   │   ├── ci95: List[List[float]]  # [[lo, hi], [lo, hi], ...]
   │   ├── units: str
   │   ├── index_values: Optional[List[float]]  # e.g., [0, 24, 48, 72] for time
   │   ├── index_unit: Optional[str]            # e.g., "hour"
   │   ├── index_type: Optional[IndexType]      # time, dose, ratio, etc.
-  │   ├── inputs: List[Input]      # Scalar or vector-valued
+  │   ├── inputs: List[EstimateInput]  # Inputs for distribution_code ONLY
+  │   ├── assumptions: List[ModelingAssumption]
   │   └── distribution_code: str
   ├── scenario (description + interventions)
   ├── experimental_context (species, compartment, system + optional clinical/in vitro fields)
-  ├── study_overview, study_design, key_assumptions, key_study_limitations
   └── primary_data_source, secondary_data_sources
 
 core/calibration/isolated_system_target.py:
   IsolatedSystemTarget(CalibrationTarget)
   └── submodel                      # Nested ODE submodel (replaces observable)
       ├── code: str                # submodel(t, y, params, inputs) -> [dydt]
-      ├── state_variables: List[SubmodelStateVariable]  # name + units
+      ├── inputs: List[SubmodelInput]  # Experimental conditions for ODE
+      ├── state_variables: List[SubmodelStateVariable]
+      │   └── name, units, initial_value, source_ref, value_location, value_snippet
       ├── parameters: List[str]    # Full model parameter names (for joint inference)
       ├── t_span: [t_start, t_end]
       ├── t_unit: str              # e.g., "day", "hour"
       ├── observable: SubmodelObservable
       │   ├── code: Optional[str]  # compute_observable(t, y, constants, ureg)
-      │   │                        # Optional! If omitted, defaults to y[0] * ureg(units)
       │   ├── units: str           # Required - Pint-parseable units
       │   └── constants: List[ObservableConstant]
       └── rationale: str           # Why this submodel approximation is appropriate
 
+core/calibration/shared_models.py:
+  EstimateInput, SubmodelInput, ModelingAssumption, Source, Snippet
+
 core/calibration/observable.py:
   Observable, ObservableConstant, SupportType
   Submodel, SubmodelObservable, SubmodelStateVariable
+```
+
+**SubmodelStateVariable is self-contained:**
+State variables include their initial value and provenance directly (no referencing inputs by name):
+```yaml
+state_variables:
+  - name: spheroid_cells
+    units: cell
+    initial_value: 1000.0
+    source_ref: Smith2023
+    value_location: "Methods, p.3"
+    value_snippet: "Initial seeding: 1000 cells/well"
+```
 
 **Submodel observable simplification:**
 If the observable IS just a state variable (no transformation needed), omit `observable.code`:
@@ -487,7 +523,6 @@ observable:
   units: cell  # Just specify units - code defaults to return y[0] * ureg(units)
 ```
 Only write observable code if you need transformations (e.g., cell count → diameter).
-```
 
 **Import pattern:**
 ```python
@@ -495,6 +530,7 @@ Only write observable code if you need transformations (e.g., cell count → dia
 from qsp_llm_workflows.core.calibration import (
     CalibrationTarget, IsolatedSystemTarget, IndexType,
     Observable, Submodel, SubmodelStateVariable,
+    EstimateInput, SubmodelInput, ModelingAssumption,
     # Code validation
     CodeType, CodeValidator, validate_code_block, find_hardcoded_constants,
 )
@@ -507,8 +543,8 @@ from qsp_llm_workflows.core.calibration.enums import Species, Compartment
 - `CalibrationTarget`: For clinical/in vivo data where full model is used. Requires `observable` to define how to compute measurements from model species.
 - `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` with nested ODE code that shares parameter names with the full model for joint inference. Observable code is optional - defaults to `y[0] * ureg(units)`.
 - `Observable`: Defines `compute_observable(time, species_dict, constants, ureg)` for full model
-- `Submodel`: Contains ODE code, state variables, parameters, and a nested `SubmodelObservable`
-- `SubmodelObservable`: Defines `compute_observable(t, y, constants, ureg)` - code is optional, defaults to returning y[0] with units
+- `Submodel`: Contains ODE code, inputs, state variables, parameters, and a nested `SubmodelObservable`
+- `SubmodelStateVariable`: Self-contained with initial value + provenance (no reference indirection)
 - `ExperimentalContext`: Unified context supporting both clinical (indication, treatment, stage) and in vitro (cell_lines, culture_conditions) fields
 - `IndexType`: Enum for index dimension type (time, dose, ratio, concentration, other)
 
@@ -523,7 +559,7 @@ The LLM should query parameters BEFORE writing submodel code to get exact parame
 
 **Vector-valued data:**
 Both scalar and vector-valued data flow through the same pathway:
-- Scalar data: `median=[42.0]`, `iqr=[5.0]`, `ci95=[[37.0, 47.0]]` (length-1 lists)
+- Scalar data: `median=[42.0]`, `ci95=[[37.0, 47.0]]` (length-1 lists)
 - Vector data: Lists matching `index_values` length (e.g., time-course with 4 points)
 - `Input.value` can be `float` (broadcast to all index points) or `List[float]` (per-point values)
 

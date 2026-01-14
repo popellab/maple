@@ -171,66 +171,50 @@ class IsolatedSystemTarget(CalibrationTarget):
         return self
 
     @model_validator(mode="after")
-    def validate_initial_conditions_specified(self) -> "IsolatedSystemTarget":
+    def validate_state_variable_source_refs(self) -> "IsolatedSystemTarget":
         """
-        Validate that every state variable's initial_value_input references a valid input.
+        Validate that state variable source_refs point to defined sources.
 
-        Each SubmodelStateVariable.initial_value_input must match an Input.name.
+        Each SubmodelStateVariable.source_ref must match a source_tag in
+        primary_data_source or secondary_data_sources.
         """
         if self.submodel is None:
             return self
-        # Build set of valid input names
-        input_names = {inp.name for inp in self.calibration_target_estimates.inputs}
 
-        # Track which inputs are used for initial conditions (for duplicate detection)
-        used_inputs: dict[str, list[str]] = {}
+        # Build set of valid source tags
+        valid_tags = {self.primary_data_source.source_tag}
+        valid_tags.update(s.source_tag for s in self.secondary_data_sources)
 
         for sv in self.submodel.state_variables:
-            # Check that initial_value_input references a valid input
-            if sv.initial_value_input not in input_names:
+            if sv.source_ref not in valid_tags:
                 raise ValueError(
-                    f"State variable '{sv.name}' has initial_value_input='{sv.initial_value_input}' "
-                    f"which is not a valid input name.\n"
-                    f"Available inputs: {sorted(input_names)}"
+                    f"State variable '{sv.name}' has source_ref='{sv.source_ref}' "
+                    f"which is not a valid source tag.\n"
+                    f"Valid source tags: {sorted(valid_tags)}\n"
+                    f"Add the source to primary_data_source or secondary_data_sources."
                 )
-
-            # Track for duplicate detection
-            if sv.initial_value_input not in used_inputs:
-                used_inputs[sv.initial_value_input] = []
-            used_inputs[sv.initial_value_input].append(sv.name)
-
-        # Check for multiple state variables using the same input (warning, not error)
-        duplicates = {inp: svs for inp, svs in used_inputs.items() if len(svs) > 1}
-        if duplicates:
-            import warnings
-
-            warnings.warn(
-                f"Multiple state variables use the same initial value input: {duplicates}\n"
-                f"This is allowed but may indicate an error.",
-                UserWarning,
-            )
 
         return self
 
     @model_validator(mode="after")
-    def validate_no_initializes_state_without_submodel(self) -> "IsolatedSystemTarget":
+    def validate_submodel_inputs_source_refs(self) -> "IsolatedSystemTarget":
         """
-        Validate that inputs don't use initializes_state when there's no submodel.
-
-        In direct conversion mode (submodel=None), there are no state variables
-        to initialize, so initializes_state should not be set on any input.
+        Validate that submodel.inputs source_refs point to defined sources.
         """
-        if self.submodel is not None:
+        if self.submodel is None or not self.submodel.inputs:
             return self
 
-        # Check all inputs for initializes_state
-        for inp in self.calibration_target_estimates.inputs:
-            if inp.initializes_state is not None:
+        # Build set of valid source tags
+        valid_tags = {self.primary_data_source.source_tag}
+        valid_tags.update(s.source_tag for s in self.secondary_data_sources)
+
+        for inp in self.submodel.inputs:
+            if inp.source_ref not in valid_tags:
                 raise ValueError(
-                    f"Input '{inp.name}' has initializes_state='{inp.initializes_state}' "
-                    f"but submodel is null (direct conversion mode).\n"
-                    f"In direct conversion mode, there are no state variables to initialize.\n"
-                    f"Remove initializes_state from this input."
+                    f"submodel.inputs '{inp.name}' has source_ref='{inp.source_ref}' "
+                    f"which is not a valid source tag.\n"
+                    f"Valid source tags: {sorted(valid_tags)}\n"
+                    f"Add the source to primary_data_source or secondary_data_sources."
                 )
 
         return self
@@ -362,9 +346,9 @@ class IsolatedSystemTarget(CalibrationTarget):
             else:
                 params[param_name] = 1.0  # Fallback
 
-        # Build inputs dict from calibration_target_estimates.inputs
+        # Build inputs dict from submodel.inputs (experimental conditions)
         inputs = {}
-        for inp in self.calibration_target_estimates.inputs:
+        for inp in self.submodel.inputs:
             # Get scalar value (first element if vector)
             if isinstance(inp.value, list):
                 val = inp.value[0]
@@ -372,18 +356,9 @@ class IsolatedSystemTarget(CalibrationTarget):
                 val = inp.value
             inputs[inp.name] = val
 
-        # Build y0 from state variables' initial_value_input references
+        # Build y0 directly from state variables' initial_value (now self-contained)
         n_states = len(self.submodel.state_variables)
-        y0 = []
-        for sv in self.submodel.state_variables:
-            if sv.initial_value_input in inputs:
-                y0.append(inputs[sv.initial_value_input])
-            else:
-                # This shouldn't happen if validate_initial_conditions_specified ran
-                raise ValueError(
-                    f"State variable '{sv.name}' initial_value_input "
-                    f"'{sv.initial_value_input}' not found in inputs"
-                )
+        y0 = [sv.initial_value for sv in self.submodel.state_variables]
 
         # Create ODE function for solve_ivp (signature: f(t, y))
         def ode_func(t, y):
@@ -468,10 +443,9 @@ class IsolatedSystemTarget(CalibrationTarget):
             except Exception:
                 y_pint.append(1.0 * ureg.dimensionless)
 
-        # Build inputs with Pint quantities for dimensional analysis
-        # Both LiteratureInput and ModelingAssumption have 'units' fields
+        # Build inputs with Pint quantities for dimensional analysis from submodel.inputs
         inputs_pint = {}
-        for inp in self.calibration_target_estimates.inputs:
+        for inp in self.submodel.inputs:
             try:
                 if isinstance(inp.value, list):
                     inputs_pint[inp.name] = inp.value[0] * ureg(inp.units)
@@ -481,19 +455,6 @@ class IsolatedSystemTarget(CalibrationTarget):
                 # If unit parsing fails, fall back to dimensionless
                 val = inp.value[0] if isinstance(inp.value, list) else inp.value
                 inputs_pint[inp.name] = val * ureg.dimensionless
-
-        # Also include assumptions
-        for assumption in self.calibration_target_estimates.assumptions:
-            try:
-                if isinstance(assumption.value, list):
-                    inputs_pint[assumption.name] = assumption.value[0] * ureg(assumption.units)
-                else:
-                    inputs_pint[assumption.name] = assumption.value * ureg(assumption.units)
-            except Exception:
-                val = (
-                    assumption.value[0] if isinstance(assumption.value, list) else assumption.value
-                )
-                inputs_pint[assumption.name] = val * ureg.dimensionless
 
         # Execute submodel with Pint quantities
         try:
@@ -584,13 +545,14 @@ class IsolatedSystemTarget(CalibrationTarget):
             else:
                 params[param_name] = 1.0
 
+        # Build inputs from submodel.inputs
         inputs = {}
-        for inp in self.calibration_target_estimates.inputs:
+        for inp in self.submodel.inputs:
             val = inp.value[0] if isinstance(inp.value, list) else inp.value
             inputs[inp.name] = val
 
-        # Build y0 from state variables' initial_value_input references
-        y0 = [inputs[sv.initial_value_input] for sv in self.submodel.state_variables]
+        # Build y0 directly from state variables' initial_value (now self-contained)
+        y0 = [sv.initial_value for sv in self.submodel.state_variables]
 
         # Compile and run ODE
         local_scope: dict = {}

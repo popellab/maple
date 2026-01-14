@@ -5,7 +5,7 @@ Tests for IsolatedSystemTarget model validators.
 Tests validators specific to IsolatedSystemTarget:
 - t_span validation (positive, t_end > t_start)
 - t_unit validation (valid Pint time unit)
-- initial conditions validation (each state has exactly one input with initializes_state)
+- state variable validation (self-contained with initial value and provenance)
 - parameters existence validation (params in submodel_code exist in model)
 - submodel integration validation (ODE integrates without error)
 - dimensional consistency validation (d(state)/dt has correct dimensions)
@@ -125,8 +125,16 @@ def golden_isolated_target_data():
                 "    K_max = params['K_T_max']\n"
                 "    return [k_prolif * T * (1 - T / K_max)]"
             ),
+            "inputs": [],  # Experimental conditions for ODE (empty for this simple example)
             "state_variables": [
-                {"name": "T_cells", "units": "cell", "initial_value_input": "initial_T_cells"}
+                {
+                    "name": "T_cells",
+                    "units": "cell",
+                    "initial_value": 1e5,
+                    "source_ref": "smith_2020",
+                    "value_location": "Methods",
+                    "value_snippet": "T cells were seeded at 1e5 cells/well",
+                }
             ],
             "parameters": ["k_T_prolif", "K_T_max"],
             "t_span": [0, 3],
@@ -271,7 +279,7 @@ class TestTUnitValidation:
 
 
 class TestInitialConditionsValidation:
-    """Tests for initial conditions validator."""
+    """Tests for initial conditions and state variable validation."""
 
     def test_valid_initial_conditions_pass(
         self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
@@ -284,43 +292,45 @@ class TestInitialConditionsValidation:
         assert target is not None
         assert len(target.submodel.state_variables) == 1
         assert target.submodel.state_variables[0].name == "T_cells"
+        assert target.submodel.state_variables[0].initial_value == 1e5
 
-    def test_invalid_initial_value_input_reference_fails(
+    def test_invalid_source_ref_in_state_variable_fails(
         self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
     ):
-        """Test that initial_value_input pointing to non-existent input fails."""
+        """Test that state variable with invalid source_ref fails."""
         data = copy.deepcopy(golden_isolated_target_data)
-        # Set initial_value_input to a non-existent input name
-        data["submodel"]["state_variables"][0]["initial_value_input"] = "nonexistent_input"
+        # Set source_ref to a non-existent source tag
+        data["submodel"]["state_variables"][0]["source_ref"] = "nonexistent_source"
 
-        with pytest.raises(ValidationError, match="not a valid input name"):
+        with pytest.raises(ValidationError, match="not a valid source tag"):
             IsolatedSystemTarget.model_validate(
                 data,
                 context={"species_units": species_units, "model_structure": model_structure},
             )
 
-    def test_multiple_state_variables_each_need_initial_value_input(
+    def test_multiple_state_variables_with_self_contained_values(
         self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
     ):
-        """Test that multi-state system needs initial_value_input for each state."""
+        """Test that multi-state system works with self-contained state variables."""
         data = copy.deepcopy(golden_isolated_target_data)
-        # Add second input for tumor initial condition (use primary source for methods)
-        data["calibration_target_estimates"]["inputs"].append(
+        # Add second state variable with its own initial value (self-contained)
+        data["submodel"]["state_variables"] = [
             {
-                "name": "initial_tumor",
-                "value": 1e4,
+                "name": "T_cells",
                 "units": "cell",
-                "description": "Initial tumor count",
-                "source_ref": "smith_2020",  # Must use defined source tag
+                "initial_value": 1e5,
+                "source_ref": "smith_2020",
+                "value_location": "Methods",
+                "value_snippet": "T cells were seeded at 1e5 cells/well",
+            },
+            {
+                "name": "Tumor",
+                "units": "cell",
+                "initial_value": 1e4,
+                "source_ref": "smith_2020",
                 "value_location": "Methods",
                 "value_snippet": "Tumor cells seeded at 1e4",
-                "input_type": "experimental_condition",
-            }
-        )
-        # Add second state variable with proper initial_value_input
-        data["submodel"]["state_variables"] = [
-            {"name": "T_cells", "units": "cell", "initial_value_input": "initial_T_cells"},
-            {"name": "Tumor", "units": "cell", "initial_value_input": "initial_tumor"},
+            },
         ]
         # Update submodel to have 2 states (use k_T_death for tumor growth to keep params valid)
         data["submodel"]["code"] = (
@@ -335,22 +345,24 @@ class TestInitialConditionsValidation:
             "    ]"
         )
         data["submodel"]["parameters"].append("k_T_death")
-        # This should pass because both state variables have valid initial_value_input
+        # This should pass because both state variables are self-contained
         target = IsolatedSystemTarget.model_validate(
             data,
             context={"species_units": species_units, "model_structure": model_structure},
         )
         assert len(target.submodel.state_variables) == 2
+        assert target.submodel.state_variables[0].initial_value == 1e5
+        assert target.submodel.state_variables[1].initial_value == 1e4
 
-    def test_missing_initial_value_input_field_fails(
+    def test_missing_initial_value_field_fails(
         self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
     ):
-        """Test that state variable without initial_value_input field fails."""
+        """Test that state variable without initial_value field fails."""
         data = copy.deepcopy(golden_isolated_target_data)
-        # Remove initial_value_input from state variable (field is required)
-        del data["submodel"]["state_variables"][0]["initial_value_input"]
+        # Remove initial_value from state variable (field is required)
+        del data["submodel"]["state_variables"][0]["initial_value"]
 
-        with pytest.raises(ValidationError, match="initial_value_input"):
+        with pytest.raises(ValidationError, match="initial_value"):
             IsolatedSystemTarget.model_validate(
                 data,
                 context={"species_units": species_units, "model_structure": model_structure},
@@ -1040,19 +1052,18 @@ class TestDirectConversionMode:
         assert target.submodel is None
         assert target.get_parameters_used() == []
 
-    def test_direct_conversion_with_initializes_state_fails(
+    def test_direct_conversion_no_submodel_inputs_needed(
         self, species_units, model_structure, direct_conversion_data, mock_crossref_success
     ):
-        """Test that initializes_state on input fails when submodel is None."""
-        data = copy.deepcopy(direct_conversion_data)
-        # Add initializes_state to an input - this is invalid in direct conversion mode
-        data["calibration_target_estimates"]["inputs"][0]["initializes_state"] = "T_cells"
-
-        with pytest.raises(ValidationError, match="initializes_state.*direct conversion mode"):
-            IsolatedSystemTarget.model_validate(
-                data,
-                context={"species_units": species_units, "model_structure": model_structure},
-            )
+        """Test that direct conversion mode works without submodel.inputs (no submodel)."""
+        # Direct conversion mode has no submodel, so no submodel.inputs needed
+        target = IsolatedSystemTarget.model_validate(
+            direct_conversion_data,
+            context={"species_units": species_units, "model_structure": model_structure},
+        )
+        assert target.submodel is None
+        # All inputs are in calibration_target_estimates.inputs
+        assert len(target.calibration_target_estimates.inputs) > 0
 
 
 # ============================================================================

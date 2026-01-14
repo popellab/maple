@@ -10,6 +10,9 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+# Import SubmodelInput directly (not under TYPE_CHECKING) so Pydantic can resolve it
+from qsp_llm_workflows.core.calibration.shared_models import SubmodelInput
+
 
 # Support types for measurement output constraints
 SupportType = Literal["positive", "non_negative", "unit_interval", "positive_unbounded", "real"]
@@ -135,7 +138,17 @@ class Observable(BaseModel):
     )
 
     constants: List[ObservableConstant] = Field(
-        default_factory=list, description="List of constants used in the observable code."
+        default_factory=list,
+        description="List of geometric/modeling constants used in the observable code.",
+    )
+
+    inputs: List[SubmodelInput] = Field(
+        default_factory=list,
+        description=(
+            "List of literature inputs used in the observable code.\n"
+            "Use for values that come from experimental papers and need provenance tracking.\n"
+            "For derived geometric/modeling constants, use the 'constants' field instead."
+        ),
     )
 
     support: SupportType = Field(
@@ -160,16 +173,28 @@ class Observable(BaseModel):
 
 
 class SubmodelStateVariable(BaseModel):
-    """State variable in an isolated submodel."""
+    """
+    State variable in an isolated submodel with self-contained initial condition.
 
-    name: str = Field(description="Name of the state variable (e.g., 'PDAC_spheroid_cells')")
+    Each state variable includes its initial value and full provenance,
+    eliminating the need to reference inputs defined elsewhere.
+    """
+
+    name: str = Field(description="Name of the state variable in ODE (e.g., 'spheroid_cells')")
     units: str = Field(description="Pint-parseable units (e.g., 'cell', 'micrometer')")
-    initial_value_input: str = Field(
+    initial_value: float = Field(description="Initial condition value for this state variable")
+    # Provenance fields for the initial value
+    source_ref: str = Field(
         description=(
-            "Name of the Input that provides the initial condition for this state variable.\n"
-            "Must match an Input.name in calibration_target_estimates.inputs.\n"
-            "Example: 'initial_T_cells' for a T cell count state variable."
+            "Source reference tag for the initial value. MUST match a source_tag in "
+            "primary_data_source or secondary_data_sources."
         )
+    )
+    value_location: str = Field(
+        description="Where the initial value appears in the source (e.g., 'Methods p.3', 'Table 1')"
+    )
+    value_snippet: str = Field(
+        description="Exact text snippet from the source containing the initial value"
     )
 
 
@@ -227,7 +252,7 @@ class Submodel(BaseModel):
             "  t: time (float, in t_unit)\n"
             "  y: state vector (list of floats, order matches state_variables)\n"
             "  params: dict of parameter values (use full model parameter names)\n"
-            "  inputs: dict of experimental conditions (from Input objects)\n"
+            "  inputs: dict of experimental conditions (from submodel.inputs)\n"
             "  returns: list of derivatives (same length as y)\n\n"
             "Example:\n"
             "def submodel(t, y, params, inputs):\n"
@@ -237,6 +262,16 @@ class Submodel(BaseModel):
             "    dSdt = k_prolif * S * (1 - S / C_max)\n"
             "    return [dSdt]"
         )
+    )
+
+    inputs: List[SubmodelInput] = Field(
+        default_factory=list,
+        description=(
+            "Experimental inputs used in submodel code.\n"
+            "These are values from the paper like E:T ratio, drug concentration, etc.\n"
+            "Each input has full provenance (source_ref, value_location, value_snippet).\n"
+            "Accessed in submodel code via inputs['name']."
+        ),
     )
 
     state_variables: List[SubmodelStateVariable] = Field(
