@@ -169,3 +169,32 @@ class System(str, Enum):
     IN_VITRO_ORGANOID = "in_vitro.organoid"
     IN_VITRO_PRIMARY_CELLS = "in_vitro.primary_cells"
     IN_VITRO_CELL_LINE = "in_vitro.cell_line"
+
+
+class SourceType(str, Enum):
+    """Type of source from which a value was extracted."""
+
+    TEXT = "text"
+    """Value extracted from body text, results section, or abstract."""
+
+    TABLE = "table"
+    """Value extracted from a table."""
+
+    FIGURE = "figure"
+    """Value extracted from a figure (requires manual/digitizer extraction)."""
+
+
+class ExtractionMethod(str, Enum):
+    """Method used to extract values from figures."""
+
+    MANUAL = "manual"
+    """Manual reading from figure axes."""
+
+    DIGITIZER = "digitizer"
+    """Generic digitizer software."""
+
+    WEBPLOTDIGITIZER = "webplotdigitizer"
+    """WebPlotDigitizer (https://automeris.io/WebPlotDigitizer)."""
+
+    OTHER = "other"
+    """Other extraction method (specify in extraction_notes)."""

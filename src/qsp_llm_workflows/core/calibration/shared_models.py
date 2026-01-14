@@ -9,7 +9,9 @@ calibration_target_models.py and pydantic_models.py.
 from enum import Enum
 from typing import List, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from qsp_llm_workflows.core.calibration.enums import ExtractionMethod, SourceType
 
 
 class InputType(str, Enum):
@@ -85,6 +87,45 @@ class EstimateInput(BaseModel):
         ),
     )
 
+    # Figure extraction fields
+    source_type: SourceType = Field(
+        default=SourceType.TEXT,
+        description=(
+            "Type of source from which the value was extracted:\n"
+            "- text: Body text, results section, or abstract (default)\n"
+            "- table: Table\n"
+            "- figure: Figure (requires figure_id and extraction_method)"
+        ),
+    )
+
+    figure_id: Optional[str] = Field(
+        None,
+        description=(
+            "Figure identifier (e.g., 'Figure 2A', 'Fig. 3B'). "
+            "Required when source_type='figure'."
+        ),
+    )
+
+    extraction_method: Optional[ExtractionMethod] = Field(
+        None,
+        description=(
+            "Method used to extract value from figure. Required when source_type='figure'.\n"
+            "- manual: Manual reading from figure axes\n"
+            "- digitizer: Generic digitizer software\n"
+            "- webplotdigitizer: WebPlotDigitizer tool\n"
+            "- other: Other method (specify in extraction_notes)"
+        ),
+    )
+
+    extraction_notes: Optional[str] = Field(
+        None,
+        description=(
+            "Additional context for figure extraction.\n"
+            "Example: 'Read from y-axis at day 14 timepoint'\n"
+            "Example: 'Digitized all points from survival curve'"
+        ),
+    )
+
     @field_validator("value")
     @classmethod
     def ensure_list_not_empty(cls, v: Union[float, List[float]]) -> Union[float, List[float]]:
@@ -109,6 +150,21 @@ class EstimateInput(BaseModel):
                 UserWarning,
             )
         return v
+
+    @model_validator(mode="after")
+    def validate_figure_fields(self) -> "EstimateInput":
+        """Ensure figure sources have required figure_id and extraction_method."""
+        if self.source_type == SourceType.FIGURE:
+            missing = []
+            if not self.figure_id:
+                missing.append("figure_id")
+            if not self.extraction_method:
+                missing.append("extraction_method")
+            if missing:
+                raise ValueError(
+                    f"When source_type='figure', the following fields are required: {', '.join(missing)}"
+                )
+        return self
 
 
 # Backwards compatibility alias
@@ -191,6 +247,45 @@ class SubmodelInput(BaseModel):
         description="Exact text snippet from the source containing or supporting the value(s)"
     )
 
+    # Figure extraction fields
+    source_type: SourceType = Field(
+        default=SourceType.TEXT,
+        description=(
+            "Type of source from which the value was extracted:\n"
+            "- text: Body text, results section, or abstract (default)\n"
+            "- table: Table\n"
+            "- figure: Figure (requires figure_id and extraction_method)"
+        ),
+    )
+
+    figure_id: Optional[str] = Field(
+        None,
+        description=(
+            "Figure identifier (e.g., 'Figure 2A', 'Fig. 3B'). "
+            "Required when source_type='figure'."
+        ),
+    )
+
+    extraction_method: Optional[ExtractionMethod] = Field(
+        None,
+        description=(
+            "Method used to extract value from figure. Required when source_type='figure'.\n"
+            "- manual: Manual reading from figure axes\n"
+            "- digitizer: Generic digitizer software\n"
+            "- webplotdigitizer: WebPlotDigitizer tool\n"
+            "- other: Other method (specify in extraction_notes)"
+        ),
+    )
+
+    extraction_notes: Optional[str] = Field(
+        None,
+        description=(
+            "Additional context for figure extraction.\n"
+            "Example: 'Read from y-axis at day 14 timepoint'\n"
+            "Example: 'Digitized all points from survival curve'"
+        ),
+    )
+
     @field_validator("value")
     @classmethod
     def ensure_list_not_empty(cls, v: Union[float, List[float]]) -> Union[float, List[float]]:
@@ -198,6 +293,21 @@ class SubmodelInput(BaseModel):
         if isinstance(v, list) and len(v) == 0:
             raise ValueError("Vector-valued input cannot be an empty list")
         return v
+
+    @model_validator(mode="after")
+    def validate_figure_fields(self) -> "SubmodelInput":
+        """Ensure figure sources have required figure_id and extraction_method."""
+        if self.source_type == SourceType.FIGURE:
+            missing = []
+            if not self.figure_id:
+                missing.append("figure_id")
+            if not self.extraction_method:
+                missing.append("extraction_method")
+            if missing:
+                raise ValueError(
+                    f"When source_type='figure', the following fields are required: {', '.join(missing)}"
+                )
+        return self
 
 
 class KeyAssumption(BaseModel):

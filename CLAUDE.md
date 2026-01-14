@@ -310,7 +310,7 @@ qsp-llm-workflows/
 │       │       ├── isolated_system_target.py  # IsolatedSystemTarget for in vitro/preclinical
 │       │       ├── observable.py        # Observable, Submodel, SubmodelObservable
 │       │       ├── shared_models.py     # Input (scalar/vector), Source, Snippet
-│       │       ├── enums.py             # Species, Indication, Compartment, System
+│       │       ├── enums.py             # Species, Indication, Compartment, System, SourceType, ExtractionMethod
 │       │       ├── scenario.py          # Intervention, Scenario
 │       │       ├── experimental_context.py  # ExperimentalContext
 │       │       ├── validators.py        # Validation helper functions
@@ -454,6 +454,28 @@ Inputs are co-located with the code blocks that use them:
 - `ModelingAssumption`: Computational assumptions with rationale (n_mc_samples, etc.)
 - `ObservableConstant`: Geometric/modeling constants with biological_basis
 - `LiteratureInput`: Backwards-compatibility alias for `EstimateInput`
+
+**Figure source support:**
+Input classes (`EstimateInput`, `SubmodelInput`, `SubmodelStateVariable`) support figure-extracted data via:
+- `source_type`: `text` (default), `table`, or `figure`
+- `figure_id`: Figure identifier (e.g., "Figure 2A") - required when source_type is `figure`
+- `extraction_method`: `manual`, `digitizer`, `webplotdigitizer`, or `other` - required when source_type is `figure`
+- `extraction_notes`: Optional description of how value was extracted from figure
+
+Example:
+```yaml
+inputs:
+  - name: tumor_volume_day14
+    value: 150.0
+    units: mm**3
+    source_type: figure
+    figure_id: "Figure 2A"
+    extraction_method: manual
+    extraction_notes: "Read from y-axis at day 14 timepoint"
+    value_snippet: "Approximate value read from growth curve"
+```
+
+The `TextSnippetValidator` skips text-matching verification for figure sources (you can't Ctrl+F in a figure) but validates that `figure_id` and `extraction_method` are present.
 
 ```
 core/calibration/calibration_target_models.py:

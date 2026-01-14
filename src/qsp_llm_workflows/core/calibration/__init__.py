@@ -64,8 +64,10 @@ from qsp_llm_workflows.core.calibration.isolated_system_target import (
 # Enums
 from qsp_llm_workflows.core.calibration.enums import (
     Compartment,
+    ExtractionMethod,
     Indication,
     MouseSubspecifier,
+    SourceType,
     Species,
     StageBurden,
     StageExtent,
@@ -185,6 +187,8 @@ __all__ = [
     "Indication",
     "Compartment",
     "System",
+    "SourceType",
+    "ExtractionMethod",
     "enum_field_description",
     # Scenario
     "Intervention",

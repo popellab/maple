@@ -8,7 +8,9 @@ Defines how to compute observables from model state (full model or submodel).
 from enum import Enum
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from qsp_llm_workflows.core.calibration.enums import ExtractionMethod, SourceType
 
 # Import SubmodelInput directly (not under TYPE_CHECKING) so Pydantic can resolve it
 from qsp_llm_workflows.core.calibration.shared_models import SubmodelInput
@@ -196,6 +198,60 @@ class SubmodelStateVariable(BaseModel):
     value_snippet: str = Field(
         description="Exact text snippet from the source containing the initial value"
     )
+
+    # Figure extraction fields
+    source_type: SourceType = Field(
+        default=SourceType.TEXT,
+        description=(
+            "Type of source from which the value was extracted:\n"
+            "- text: Body text, results section, or abstract (default)\n"
+            "- table: Table\n"
+            "- figure: Figure (requires figure_id and extraction_method)"
+        ),
+    )
+
+    figure_id: Optional[str] = Field(
+        None,
+        description=(
+            "Figure identifier (e.g., 'Figure 2A', 'Fig. 3B'). "
+            "Required when source_type='figure'."
+        ),
+    )
+
+    extraction_method: Optional[ExtractionMethod] = Field(
+        None,
+        description=(
+            "Method used to extract value from figure. Required when source_type='figure'.\n"
+            "- manual: Manual reading from figure axes\n"
+            "- digitizer: Generic digitizer software\n"
+            "- webplotdigitizer: WebPlotDigitizer tool\n"
+            "- other: Other method (specify in extraction_notes)"
+        ),
+    )
+
+    extraction_notes: Optional[str] = Field(
+        None,
+        description=(
+            "Additional context for figure extraction.\n"
+            "Example: 'Read from y-axis at day 14 timepoint'\n"
+            "Example: 'Digitized all points from survival curve'"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_figure_fields(self) -> "SubmodelStateVariable":
+        """Ensure figure sources have required figure_id and extraction_method."""
+        if self.source_type == SourceType.FIGURE:
+            missing = []
+            if not self.figure_id:
+                missing.append("figure_id")
+            if not self.extraction_method:
+                missing.append("extraction_method")
+            if missing:
+                raise ValueError(
+                    f"When source_type='figure', the following fields are required: {', '.join(missing)}"
+                )
+        return self
 
 
 class SubmodelObservable(BaseModel):

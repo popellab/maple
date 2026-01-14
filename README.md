@@ -50,7 +50,7 @@ src/qsp_llm_workflows/
 │       ├── isolated_system_target.py     # IsolatedSystemTarget for in vitro data
 │       ├── observable.py                 # Observable, Submodel, SubmodelObservable
 │       ├── shared_models.py              # EstimateInput, SubmodelInput, Source, Snippet
-│       ├── enums.py                      # Species, Indication, Compartment, System
+│       ├── enums.py                      # Species, Indication, Compartment, System, SourceType, ExtractionMethod
 │       ├── scenario.py                   # Intervention, Scenario
 │       └── code_validator.py             # Unified code validation (CodeValidator)
 ├── prepare/    # CSV enrichment and prompt generation
@@ -66,7 +66,7 @@ src/qsp_llm_workflows/
 - `CalibrationTarget`: For clinical/in vivo data. Uses `observable` to compute measurements from full model species.
 - `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` to define a standalone ODE that shares parameter names with the full model for joint inference. State variables are self-contained with initial values and provenance. Observable code is optional—if omitted, defaults to the first state variable with units.
 
-**Input architecture:** Inputs are co-located with the code blocks that use them. `submodel.inputs` holds experimental conditions for ODE code, `observable.inputs` holds values for observable code, and `calibration_target_estimates.inputs` holds values for distribution derivation. State variables include their initial values directly (no reference indirection).
+**Input architecture:** Inputs are co-located with the code blocks that use them. `submodel.inputs` holds experimental conditions for ODE code, `observable.inputs` holds values for observable code, and `calibration_target_estimates.inputs` holds values for distribution derivation. State variables include their initial values directly (no reference indirection). Inputs support figure-extracted data via `source_type` field (`text`, `table`, or `figure`) with required `figure_id` and `extraction_method` for figure sources.
 
 **Vector-valued data:** Calibration targets support both scalar and time-course/dose-response data through a unified pathway. Scalar data uses length-1 lists; vector data uses `index_values` to specify the indexing dimension (time points, doses, etc.).
 
