@@ -108,6 +108,59 @@ Understanding the relationship between the data structure fields:
 
 **Key insight:** The `distribution_code` computes the **DATA** distribution (what the paper reports), NOT the parameter distribution.
 
+### Pint Units Golden Rule
+
+**Keep values tethered to their units throughout calculations.**
+
+```python
+def derive_distribution(inputs, ureg):
+    import numpy as np
+    # Inputs are already Pint Quantities - use directly
+    mean = inputs['cell_count_mean']
+    sd = inputs['cell_count_sd']
+    n_samples = int(inputs['n_mc_samples'].magnitude)  # Only extract for int conversion
+
+    # Extract magnitude only for numpy functions, reattach units immediately
+    rng = np.random.default_rng(42)
+    samples = rng.normal(mean.magnitude, sd.magnitude, n_samples) * mean.units
+
+    # Return Quantities - validator checks dimensionality
+    return {
+        'median_obs': np.array([np.median(samples.magnitude)]) * samples.units,
+        'ci95_obs': [[np.percentile(samples.magnitude, 2.5) * samples.units,
+                      np.percentile(samples.magnitude, 97.5) * samples.units]]
+    }
+```
+
+**Key principle:** Extract `.magnitude` ONLY when necessary (numpy functions, int conversion), then immediately reattach units.
+
+### Choosing Probability Distributions
+
+**Use lognormal for positive quantities** (cell counts, concentrations, volumes, rates).
+
+Normal distributions often yield negative draws → require clipping → **introduces bias**.
+
+```python
+# BAD: Normal + clipping introduces bias
+samples = rng.normal(mean, sd, n)
+samples = np.clip(samples, 0, None)  # Red flag!
+
+# GOOD: Lognormal naturally positive
+# Convert normal(mean, sd) to lognormal parameters:
+mu_log = np.log(mean**2 / np.sqrt(mean**2 + sd**2))
+sigma_log = np.sqrt(np.log(1 + sd**2 / mean**2))
+samples = rng.lognormal(mu_log, sigma_log, n) * units
+```
+
+**Distribution guide:**
+| Data Type | Distribution | Why |
+|-----------|--------------|-----|
+| Sizes, volumes, counts | Lognormal | Always positive, often right-skewed |
+| Proportions (0-1) | Beta or logit-normal | Bounded support |
+| Symmetric unbounded | Normal | No natural bounds |
+
+**Red flag:** If you need `np.clip()` or `np.maximum(..., 0)`, you probably need lognormal.
+
 ---
 
 ## Two Modes: Direct Conversion vs Submodel
@@ -417,15 +470,17 @@ empirical_data:
   distribution_code: |
     def derive_distribution(inputs, ureg):
         import numpy as np
-        np.random.seed(42)
+        rng = np.random.default_rng(42)
 
         # Sample from reported distribution (what literature observed)
         mean = inputs['final_cell_count'].magnitude
         sd = inputs['final_cell_count_sd'].magnitude
         n = int(inputs['n_mc_samples'].magnitude)
 
-        samples = np.random.normal(mean, sd, n)
-        samples = np.maximum(samples, 0)  # Cell counts can't be negative
+        # Use lognormal for positive quantities (cell counts)
+        mu_log = np.log(mean**2 / np.sqrt(mean**2 + sd**2))
+        sigma_log = np.sqrt(np.log(1 + sd**2 / mean**2))
+        samples = rng.lognormal(mu_log, sigma_log, n)
 
         median_obs = np.array([np.median(samples)]) * ureg.cell
         ci95 = np.percentile(samples, [2.5, 97.5])
