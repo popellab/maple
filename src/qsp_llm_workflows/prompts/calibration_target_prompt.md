@@ -230,7 +230,7 @@ measurements:
 - **Use Pint units** - inputs are pre-converted Pint Quantities, return Pint Quantities
 - Function signature: `derive_distribution(inputs, ureg)` returns dict with `median_obs`, `iqr_obs`, `ci95_obs`
 
-**GOLDEN RULE: Keep values tethered to their units throughout calculations.**
+**GOLDEN RULE: Reattach units immediately after sampling → units propagate naturally.**
 
 ```python
 def derive_distribution(inputs, ureg):
@@ -240,11 +240,11 @@ def derive_distribution(inputs, ureg):
     sd = inputs['cd8_density_sd']
     n_samples = int(inputs['n_mc_samples'].magnitude)  # Only extract for integer conversion
 
-    # Extract magnitude only for numpy functions, reattach units immediately
+    # Sampling strips units - reattach IMMEDIATELY
     rng = np.random.default_rng(42)
     samples = rng.normal(mean.magnitude, sd.magnitude, n_samples) * mean.units
 
-    # Return Quantities - validator checks dimensionality
+    # np.median, np.percentile, np.mean, np.std all preserve units!
     return {
         'median_obs': np.median(samples),
         'iqr_obs': np.percentile(samples, 75) - np.percentile(samples, 25),
@@ -252,7 +252,7 @@ def derive_distribution(inputs, ureg):
     }
 ```
 
-**Key principle:** Extract `.magnitude` ONLY when absolutely necessary (numpy distribution functions, integer conversion), then immediately reattach units.
+**Key principle:** Sampling strips units. Reattach immediately after, then units propagate through numpy operations (median, percentile, etc.).
 
 ### Choosing Probability Distributions
 

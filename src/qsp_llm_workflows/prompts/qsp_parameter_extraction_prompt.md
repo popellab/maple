@@ -83,7 +83,7 @@ Use this table when determining how much to widen confidence intervals. Effects 
 
 **Use Pint for unit-safe calculations.** Return Pint Quantities with units matching the parameter's declared units.
 
-**GOLDEN RULE:** Keep values tethered to their units as long as possible. Only extract `.magnitude` for distribution parameters (e.g., `rng.lognormal`).
+**GOLDEN RULE:** Sampling strips units - reattach IMMEDIATELY after. Then units propagate through numpy operations (median, percentile, etc.).
 
 ```python
 import numpy as np

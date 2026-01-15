@@ -70,11 +70,13 @@ Understanding the relationship between the data structure fields:
 │    → Returns: median_obs, ci95_obs (what we OBSERVED)                       │
 │                                                                             │
 │    def derive_distribution(inputs, ureg):                                   │
-│        samples = np.random.normal(                                          │
-│            inputs['cell_count_mean'].magnitude,                             │
-│            inputs['cell_count_sd'].magnitude, n)                            │
-│        median_obs = [np.median(samples)] * ureg.cell                        │
-│        ci95_obs = [[np.percentile(samples, 2.5), ...]]                      │
+│        mean = inputs['cell_count_mean']  # Keep as Quantity                 │
+│        sd = inputs['cell_count_sd']                                         │
+│        # Reattach units immediately after sampling → units propagate        │
+│        samples = rng.lognormal(mu, sigma, n) * mean.units                   │
+│        median_obs = np.array([np.median(samples)])  # Preserves units       │
+│        ci95 = np.percentile(samples, [2.5, 97.5])   # Preserves units       │
+│        ci95_obs = [[ci95[0], ci95[1]]]                                      │
 │        return {'median_obs': median_obs, 'ci95_obs': ci95_obs}              │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -110,7 +112,7 @@ Understanding the relationship between the data structure fields:
 
 ### Pint Units Golden Rule
 
-**Keep values tethered to their units throughout calculations.**
+**Reattach units immediately after operations that strip them → units propagate naturally.**
 
 ```python
 def derive_distribution(inputs, ureg):
@@ -120,19 +122,19 @@ def derive_distribution(inputs, ureg):
     sd = inputs['cell_count_sd']
     n_samples = int(inputs['n_mc_samples'].magnitude)  # Only extract for int conversion
 
-    # Extract magnitude only for numpy functions, reattach units immediately
+    # Random sampling strips units - reattach IMMEDIATELY
     rng = np.random.default_rng(42)
     samples = rng.normal(mean.magnitude, sd.magnitude, n_samples) * mean.units
 
-    # Return Quantities - validator checks dimensionality
+    # Now numpy operations preserve units automatically!
+    # np.median, np.percentile, np.mean, np.std all work on Quantities
     return {
-        'median_obs': np.array([np.median(samples.magnitude)]) * samples.units,
-        'ci95_obs': [[np.percentile(samples.magnitude, 2.5) * samples.units,
-                      np.percentile(samples.magnitude, 97.5) * samples.units]]
+        'median_obs': np.array([np.median(samples)]),  # Returns Quantity
+        'ci95_obs': [[np.percentile(samples, 2.5), np.percentile(samples, 97.5)]]
     }
 ```
 
-**Key principle:** Extract `.magnitude` ONLY when necessary (numpy functions, int conversion), then immediately reattach units.
+**Key principle:** Sampling (and sqrt, etc.) strips units. Reattach immediately after, then units propagate through subsequent numpy operations.
 
 ### Choosing Probability Distributions
 
@@ -202,11 +204,25 @@ empirical_data:
   distribution_code: |
     def derive_distribution(inputs, ureg):
         import numpy as np
-        t_double = inputs['doubling_time'].magnitude
-        t_sd = inputs['doubling_time_sd'].magnitude
-        samples = np.random.normal(t_double, t_sd, 10000)
-        k_samples = np.log(2) / samples  # Direct conversion!
-        # ... return median_obs, ci95_obs
+        rng = np.random.default_rng(42)
+
+        # Keep as Quantities
+        t_double = inputs['doubling_time']
+        t_sd = inputs['doubling_time_sd']
+
+        # Lognormal for positive doubling times
+        mu_log = np.log(t_double.magnitude**2 / np.sqrt(t_double.magnitude**2 + t_sd.magnitude**2))
+        sigma_log = np.sqrt(np.log(1 + t_sd.magnitude**2 / t_double.magnitude**2))
+        # Reattach units immediately → units propagate
+        t_samples = rng.lognormal(mu_log, sigma_log, 10000) * t_double.units
+
+        # Division inverts units automatically (hour → 1/hour)
+        k_samples = np.log(2) / t_samples
+
+        # np.median and np.percentile preserve units
+        median_obs = np.array([np.median(k_samples)])
+        ci95_obs = [[np.percentile(k_samples, 2.5), np.percentile(k_samples, 97.5)]]
+        return {'median_obs': median_obs, 'ci95_obs': ci95_obs}
 ```
 
 ### Submodel-Based (submodel provided)
@@ -472,19 +488,20 @@ empirical_data:
         import numpy as np
         rng = np.random.default_rng(42)
 
-        # Sample from reported distribution (what literature observed)
-        mean = inputs['final_cell_count'].magnitude
-        sd = inputs['final_cell_count_sd'].magnitude
+        # Keep as Quantities, extract magnitude only when needed
+        mean = inputs['final_cell_count']
+        sd = inputs['final_cell_count_sd']
         n = int(inputs['n_mc_samples'].magnitude)
 
         # Use lognormal for positive quantities (cell counts)
-        mu_log = np.log(mean**2 / np.sqrt(mean**2 + sd**2))
-        sigma_log = np.sqrt(np.log(1 + sd**2 / mean**2))
-        samples = rng.lognormal(mu_log, sigma_log, n)
+        mu_log = np.log(mean.magnitude**2 / np.sqrt(mean.magnitude**2 + sd.magnitude**2))
+        sigma_log = np.sqrt(np.log(1 + sd.magnitude**2 / mean.magnitude**2))
+        # Reattach units immediately after sampling → units propagate
+        samples = rng.lognormal(mu_log, sigma_log, n) * mean.units
 
-        median_obs = np.array([np.median(samples)]) * ureg.cell
-        ci95 = np.percentile(samples, [2.5, 97.5])
-        ci95_obs = [[ci95[0] * ureg.cell, ci95[1] * ureg.cell]]
+        # np.median and np.percentile preserve units automatically
+        median_obs = np.array([np.median(samples)])
+        ci95_obs = [[np.percentile(samples, 2.5), np.percentile(samples, 97.5)]]
 
         return {'median_obs': median_obs, 'ci95_obs': ci95_obs}
 ```
