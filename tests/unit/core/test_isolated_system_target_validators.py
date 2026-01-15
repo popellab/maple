@@ -60,7 +60,6 @@ def golden_isolated_target_data():
     - submodel.observable: SubmodelObservable for computing measurement from state
     """
     return {
-        "description": "T cell proliferation in vitro assay",
         "scenario": {
             "description": "In vitro T cell cytotoxicity assay",
             "interventions": [{"intervention_description": "Anti-CD3/CD28 stimulation"}],
@@ -70,12 +69,13 @@ def golden_isolated_target_data():
             "compartment": "in_vitro",
             "system": "in_vitro.cell_line",
         },
-        "study_overview": "T cell cytotoxicity kinetics study",
-        "study_design": "Time-course measurement of T cell count",
-        "derivation_explanation": "Direct cell count measurements",
-        "key_assumptions": [],
-        "key_study_limitations": "In vitro conditions may differ from in vivo",
-        "rationale": "Logistic growth model captures T cell expansion; ignores death for short-term assay.",
+        "study_interpretation": "Logistic growth model captures T cell expansion; ignores death for short-term assay.",
+        "key_assumptions": [
+            "Logistic growth model appropriate for T cell expansion",
+        ],
+        "key_study_limitations": [
+            "In vitro conditions may differ from in vivo",
+        ],
         "calibration_target_estimates": {
             "median": [1.0],
             "ci95": [[0.3737, 2.7]],
@@ -150,6 +150,7 @@ def golden_isolated_target_data():
                 "units": "dimensionless",
                 "constants": [],
             },
+            "rationale": "Logistic growth captures T cell expansion with carrying capacity; appropriate for in vitro assay.",
         },
     }
 
@@ -899,7 +900,6 @@ class TestGetParametersUsed:
         # samples = np.maximum(samples, 1.0); k_samples = np.log(2) / samples * 24
         # median = 2.078, ci95 = [1.668, 2.614]
         data = {
-            "description": "Direct conversion of doubling time to proliferation rate",
             "scenario": {
                 "description": "T cell doubling time measurement",
                 "interventions": [],
@@ -908,12 +908,13 @@ class TestGetParametersUsed:
                 "species": "human",
                 "system": "in_vitro.cell_line",
             },
-            "study_overview": "T cell kinetics study",
-            "study_design": "Doubling time measurement",
-            "derivation_explanation": "Direct conversion: k = ln(2) / t_double",
-            "key_assumptions": [],
-            "key_study_limitations": "In vitro conditions",
-            "rationale": "Simple analytical conversion from doubling time to rate.",
+            "study_interpretation": "Simple analytical conversion from doubling time to rate.",
+            "key_assumptions": [
+                "Direct conversion: k = ln(2) / t_double",
+            ],
+            "key_study_limitations": [
+                "In vitro conditions",
+            ],
             "calibration_target_estimates": {
                 "median": [2.0801],
                 "ci95": [[1.6679, 2.7581]],
@@ -985,7 +986,6 @@ class TestDirectConversionMode:
         median = 2.078, ci95 = [1.668, 2.614]
         """
         return {
-            "description": "Direct conversion of doubling time to proliferation rate",
             "scenario": {
                 "description": "T cell doubling time measurement",
                 "interventions": [],
@@ -994,12 +994,13 @@ class TestDirectConversionMode:
                 "species": "human",
                 "system": "in_vitro.cell_line",
             },
-            "study_overview": "T cell kinetics study",
-            "study_design": "Doubling time measurement",
-            "derivation_explanation": "Direct conversion: k = ln(2) / t_double",
-            "key_assumptions": [],
-            "key_study_limitations": "In vitro conditions",
-            "rationale": "Simple analytical conversion from doubling time to rate.",
+            "study_interpretation": "Simple analytical conversion from doubling time to rate.",
+            "key_assumptions": [
+                "Direct conversion: k = ln(2) / t_double",
+            ],
+            "key_study_limitations": [
+                "In vitro conditions",
+            ],
             "calibration_target_estimates": {
                 "median": [2.0801],
                 "ci95": [[1.6679, 2.7581]],
@@ -1085,7 +1086,6 @@ class TestCancerFieldsValidation:
         """Test that cancer stage fields with other_disease indication triggers warning."""
         # Use same title as mock_crossref_success fixture returns
         data = {
-            "description": "Viral infection data used for cancer model",
             "scenario": {
                 "description": "LCMV infection in mice",
                 "interventions": [],
@@ -1099,12 +1099,13 @@ class TestCancerFieldsValidation:
                     "burden": "high",
                 },
             },
-            "study_overview": "T cell kinetics in viral infection",
-            "study_design": "Time-course measurement",
-            "derivation_explanation": "Direct conversion",
-            "key_assumptions": [],
-            "key_study_limitations": "Mouse model",
-            "rationale": "Using viral infection data as proxy.",
+            "study_interpretation": "Using viral infection data as proxy.",
+            "key_assumptions": [
+                "Direct conversion from doubling time",
+            ],
+            "key_study_limitations": [
+                "Mouse model",
+            ],
             "calibration_target_estimates": {
                 "median": [2.079],  # ln(2) / (8/24) = 2.079 per day
                 "ci95": [[1.559, 2.599]],  # +/- 25%
@@ -1161,7 +1162,6 @@ class TestCancerFieldsValidation:
         """Test that no warning when stage is null for other_disease."""
         # Use same title as mock_crossref_success fixture returns
         data = {
-            "description": "Viral infection data used for cancer model",
             "scenario": {
                 "description": "LCMV infection in mice",
                 "interventions": [],
@@ -1172,12 +1172,13 @@ class TestCancerFieldsValidation:
                 "indication": "other_disease",
                 "stage": None,  # Correctly set to null
             },
-            "study_overview": "T cell kinetics in viral infection",
-            "study_design": "Time-course measurement",
-            "derivation_explanation": "Direct conversion",
-            "key_assumptions": [],
-            "key_study_limitations": "Mouse model",
-            "rationale": "Using viral infection data as proxy.",
+            "study_interpretation": "Using viral infection data as proxy.",
+            "key_assumptions": [
+                "Direct conversion from doubling time",
+            ],
+            "key_study_limitations": [
+                "Mouse model",
+            ],
             "calibration_target_estimates": {
                 "median": [2.079],  # ln(2) / (8/24) = 2.079 per day
                 "ci95": [[1.559, 2.599]],  # +/- 25%

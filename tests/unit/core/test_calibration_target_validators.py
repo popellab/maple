@@ -81,12 +81,15 @@ def golden_calibration_target_data():
             "treatment": {"history": ["treatment_naive"], "status": "off_treatment"},
             "stage": {"extent": "resectable", "burden": "moderate"},
         },
-        "rationale": (
+        "study_interpretation": (
             "CD8+ T cell density in resectable PDAC tumors measured via IHC. "
             "Parametric bootstrap from reported lognormal distribution (mean 1.0, sigma_log 0.5). "
             "Maps to CD8/tumor ratio in model for immune profiling comparison."
         ),
-        "caveats": [
+        "key_assumptions": [
+            "CD8+ T cell density follows lognormal distribution",
+        ],
+        "key_study_limitations": [
             "Single-center study with limited sample size",
             "Lognormal distribution assumed based on positive-only data",
         ],
@@ -190,7 +193,7 @@ class TestCalibrationTargetGolden:
         )
 
         assert target is not None
-        assert "CD8+ T cell density" in target.rationale
+        assert "CD8+ T cell density" in target.study_interpretation
         assert target.observable is not None
         assert target.observable.species == ["V_T.CD8", "V_T.C1"]
         # Scalar data uses length-1 lists
@@ -669,7 +672,7 @@ class TestCalibrationTargetValidators:
         data["calibration_target_estimates"]["ci95"] = [[0.0496, 2.9741]]
 
         # Don't mention variance in limitations
-        data["key_study_limitations"] = "Small sample size from single center"
+        data["key_study_limitations"] = ["Small sample size from single center"]
 
         with pytest.warns(UserWarning, match="Large coefficient of variation"):
             target = CalibrationTarget.model_validate(
@@ -896,8 +899,8 @@ class TestCalibrationTargetValidators:
     ):
         """Validator should catch control characters in text fields."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Add control character to rationale (CalibrationTarget doesn't have description)
-        data["rationale"] = "CD8+ T cell\x03 density in PDAC"  # ETX control character
+        # Add control character to study_interpretation (CalibrationTarget doesn't have description)
+        data["study_interpretation"] = "CD8+ T cell\x03 density in PDAC"  # ETX control character
 
         with pytest.raises(ValidationError, match="Control character"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
@@ -961,8 +964,8 @@ class TestCalibrationTargetValidators:
             **species_units,
             "V_T.CD8_exh": {"units": "cell", "description": "Exhausted CD8+ T cells"},
         }
-        # Change rationale to mention "total" CD8 (validator checks rationale, not description)
-        data["rationale"] = "Total CD8+ T cell to tumor cell ratio measured via IHC"
+        # Change study_interpretation to mention "total" CD8 (validator checks study_interpretation, not description)
+        data["study_interpretation"] = "Total CD8+ T cell to tumor cell ratio measured via IHC"
         # Only use V_T.CD8, missing V_T.CD8_exh
         data["observable"]["species"] = ["V_T.CD8", "V_T.C1"]
 

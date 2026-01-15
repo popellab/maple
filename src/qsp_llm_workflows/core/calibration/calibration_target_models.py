@@ -350,32 +350,42 @@ class CalibrationTarget(BaseModel):
         default=None,
         description=(
             "Experimental scenario with interventions. Optional - can be omitted if "
-            "no interventions or if intervention details are captured in rationale."
+            "no interventions or if intervention details are captured in study_interpretation."
         ),
     )
 
-    # --- Consolidated narrative (LLM-generated) ---
-    rationale: str = Field(
+    # --- Narrative and assumptions (LLM-generated) ---
+    study_interpretation: str = Field(
         description=(
-            "Single consolidated explanation covering:\n"
-            "- What observable is being measured and why it's relevant\n"
-            "- How the experimental data maps to model species/parameters\n"
-            "- Key assumptions made in the derivation\n"
-            "- Any interventions or experimental conditions\n\n"
-            "This replaces: description, study_overview, study_design, "
-            "derivation_explanation, scenario.description, and key_assumptions."
+            "Overall interpretation of the study and how it relates to the model.\n"
+            "Explain what observable is being measured, how the experimental context maps "
+            "to the model, and any key methodological considerations.\n"
+            "Keep focused on the scientific interpretation, not assumptions or limitations."
         )
     )
 
-    caveats: List[str] = Field(
+    key_assumptions: List[str] = Field(
+        min_length=1,
+        description=(
+            "List of key assumptions made in extracting or interpreting this calibration target.\n"
+            "Include both biological assumptions (e.g., cell type equivalence) and "
+            "statistical/methodological assumptions (e.g., normal distribution assumed).\n"
+            "Examples:\n"
+            "- 'CD8+ T cells measured include both effector and exhausted phenotypes'\n"
+            "- 'Normal distribution assumed for positive-only data (may introduce bias)'\n"
+            "- 'Mouse data assumed transferable to human with 5-10x rate reduction'"
+        ),
+    )
+
+    key_study_limitations: List[str] = Field(
         default_factory=list,
         description=(
-            "List of limitations, assumptions, or caveats as simple strings.\n"
+            "List of study limitations that affect the calibration target validity.\n"
+            "Focus on issues that could bias the estimates or limit generalizability.\n"
             "Examples:\n"
-            "- 'Values estimated from figures, not tabulated'\n"
             "- 'Single-center cohort (n~15), limited generalizability'\n"
-            "- 'Bulk CD3+ assay, not CD8-specific'\n"
-            "- 'Normal distribution assumed for positive-only data'"
+            "- 'Values estimated from figures, not tabulated data'\n"
+            "- 'Bulk CD3+ assay, not CD8-specific'"
         ),
     )
 
@@ -973,10 +983,10 @@ class CalibrationTarget(BaseModel):
                 cv = abs(std_val / mean_val)
 
                 if cv > 0.5:  # CV > 50%
-                    # Check if caveats or rationale mention variance/uncertainty
-                    caveats_text = " ".join(self.caveats).lower()
-                    rationale_lower = self.rationale.lower()
-                    combined_text = caveats_text + " " + rationale_lower
+                    # Check if key_study_limitations or study_interpretation mention variance/uncertainty
+                    limitations_text = " ".join(self.key_study_limitations).lower()
+                    interpretation_lower = self.study_interpretation.lower()
+                    combined_text = limitations_text + " " + interpretation_lower
                     variance_keywords = [
                         "variance",
                         "variability",
@@ -991,8 +1001,8 @@ class CalibrationTarget(BaseModel):
 
                     if not any(keyword in combined_text for keyword in variance_keywords):
                         warnings.warn(
-                            f"Large coefficient of variation (CV = {cv:.1%}) detected but not discussed in caveats. "
-                            f"Consider adding a caveat explaining whether this reflects biological variability, "
+                            f"Large coefficient of variation (CV = {cv:.1%}) detected but not discussed in key_study_limitations. "
+                            f"Consider adding a limitation explaining whether this reflects biological variability, "
                             f"measurement error, or heterogeneous population.",
                             UserWarning,
                         )
@@ -1034,7 +1044,7 @@ class CalibrationTarget(BaseModel):
         """
         Validator (WARNING): Check that conversion factors are documented.
 
-        Magic numbers in observable.code should be in observable.constants or rationale/caveats.
+        Magic numbers in observable.code should be in observable.constants or study_interpretation/key_study_limitations.
         """
         # Skip for IsolatedSystemTarget (uses submodel.observable instead)
         if type(self).__name__ == "IsolatedSystemTarget":
@@ -1091,17 +1101,17 @@ class CalibrationTarget(BaseModel):
             return self
 
         if literals:
-            # Check if these appear in observable.constants or rationale/caveats
+            # Check if these appear in observable.constants or study_interpretation/key_study_limitations
             constant_values: list[float] = [c.value for c in self.observable.constants]
 
-            # Check rationale and caveats for documentation
-            combined_text = self.rationale + " " + " ".join(self.caveats)
+            # Check study_interpretation and key_study_limitations for documentation
+            combined_text = self.study_interpretation + " " + " ".join(self.key_study_limitations)
 
             undocumented = []
             for lit in literals:
                 # Check if value appears in constants (with tolerance)
                 in_constants = any(abs(lit - v) < 1e-6 for v in constant_values)
-                # Check if value appears in rationale/caveats text
+                # Check if value appears in study_interpretation/key_study_limitations text
                 in_text = str(lit) in combined_text or f"{lit:.0e}" in combined_text
 
                 if not (in_constants or in_text):
@@ -1110,7 +1120,7 @@ class CalibrationTarget(BaseModel):
             if undocumented:
                 warnings.warn(
                     f"observable.code contains numeric literals {undocumented} that may be conversion factors. "
-                    f"Document these in observable.constants or explain in rationale. "
+                    f"Document these in observable.constants or explain in study_interpretation. "
                     f"Examples: cell sizes (µm), cellularity fractions, density values, geometric conversion factors.",
                     UserWarning,
                 )
@@ -1401,8 +1411,8 @@ class CalibrationTarget(BaseModel):
         # Keywords suggesting a "total" measurement
         TOTAL_KEYWORDS = ["total", "all", "overall", "pan-", "combined"]
 
-        rationale_lower = self.rationale.lower()
-        uses_total = any(kw in rationale_lower for kw in TOTAL_KEYWORDS)
+        interpretation_lower = self.study_interpretation.lower()
+        uses_total = any(kw in interpretation_lower for kw in TOTAL_KEYWORDS)
 
         if not uses_total:
             return self

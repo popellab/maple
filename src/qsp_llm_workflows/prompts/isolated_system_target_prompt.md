@@ -573,13 +573,13 @@ Experimental context often differs from model context. Always document mismatche
 
 ### Documentation Requirements
 
-Add to `caveats` for every context mismatch:
+Add to `key_study_limitations` for every context mismatch:
 1. Source context (what was measured)
 2. Target context (what model represents)
 3. Expected direction of bias
 4. Any scaling applied
 
-**Example caveat:** "Proliferation rate from acute LCMV infection in mice; tumor microenvironment likely 5-10× slower due to chronic exhaustion and immunosuppression"
+**Example limitation:** "Proliferation rate from acute LCMV infection in mice; tumor microenvironment likely 5-10× slower due to chronic exhaustion and immunosuppression"
 
 ---
 
@@ -608,7 +608,7 @@ for proper uncertainty quantification and pooling across studies.
 
 **If sample size is not explicitly reported:**
 - Check figure error bars - if SEM is reported, can sometimes back-calculate n from SD/SEM
-- Note uncertainty in rationale: "Sample size not explicitly reported; n≈X inferred from methods"
+- Note uncertainty in study_interpretation: "Sample size not explicitly reported; n≈X inferred from methods"
 - Use conservative estimate based on study type
 
 **Required fields:**
@@ -1302,9 +1302,66 @@ context_mismatches:
     adjustment_applied: "Will need separate in vivo half-life data for model"
 ```
 
-**Caveats:**
+**Key Study Limitations:**
 - "In vitro secretion rates; in vivo consumption by T cells not captured"
 - "Half-life in culture; in vivo half-life is shorter (~10 min) due to receptor-mediated uptake"
+
+---
+
+## Required Rationale and Assumptions
+
+Every calibration target MUST include the following narrative fields:
+
+### `key_assumptions` (Required - at least one)
+List ALL assumptions made in extracting or interpreting the data:
+- Biological equivalence assumptions (e.g., "Mouse proliferation rates assumed similar to human")
+- Statistical assumptions (e.g., "Normal distribution assumed for positive-only data")
+- Measurement assumptions (e.g., "Pan-CD8 staining includes exhausted cells")
+
+**At least ONE assumption is required.** Even simple extractions involve assumptions.
+
+### `key_study_limitations` (Required - can be empty list)
+Document limitations that affect validity or generalizability:
+- Sample size limitations (e.g., "n=3, limited statistical power")
+- Selection bias (e.g., "Resectable tumors only, excludes advanced cases")
+- Measurement method limitations (e.g., "Values estimated from figures, not tabulated")
+- Context mismatch impacts (from `context_mismatches`)
+
+### `study_interpretation`
+Provide overall scientific interpretation:
+- What the study measured and why it's relevant to calibration
+- How the experimental design maps to model species/parameters
+- Key methodological considerations
+
+### `submodel.rationale` (Required for all submodels)
+When providing a submodel, explain:
+- Why this ODE pattern was chosen (e.g., exponential vs logistic growth)
+- How it approximates the relevant full model dynamics
+- What simplifications were made and why they're justified
+
+**Example:**
+```yaml
+rationale: "Exponential growth valid for early expansion before contact inhibition. Single parameter k_pro matches full model's k_CD8_pro for joint inference."
+```
+
+### `submodel.observable.rationale` (Optional)
+When the observable transformation is non-trivial, explain:
+- Why this transformation is appropriate
+- Any geometric or biological assumptions in the conversion
+
+**Example (cell count to diameter conversion):**
+```yaml
+observable:
+  code: |
+    def compute_observable(t, y, constants, ureg):
+        cells = y[0]
+        cell_volume = constants['cell_volume']
+        volume = cells * cell_volume
+        radius = ((3 * volume) / (4 * np.pi)) ** (1/3)
+        return (2 * radius).to('micrometer')
+  units: micrometer
+  rationale: "Spheroid diameter computed from cell count assuming spherical geometry and uniform packing"
+```
 
 ---
 

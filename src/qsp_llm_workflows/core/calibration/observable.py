@@ -293,6 +293,17 @@ class SubmodelObservable(BaseModel):
         default_factory=list, description="List of constants used in the observable code."
     )
 
+    rationale: Optional[str] = Field(
+        default=None,
+        description=(
+            "Explanation of why this transformation from submodel state to observable is appropriate.\n"
+            "Only needed when the transformation is non-trivial (beyond simple unit conversion).\n\n"
+            "Examples:\n"
+            "- 'Spheroid diameter computed from cell count assuming spherical geometry and uniform packing'\n"
+            "- 'Fraction bound computed from equilibrium expression R_bound = L/(Kd + L)'"
+        ),
+    )
+
 
 class Submodel(BaseModel):
     """
@@ -377,4 +388,16 @@ class Submodel(BaseModel):
         ),
     )
 
-    # Note: rationale moved to top-level CalibrationTarget.rationale field
+    rationale: str = Field(
+        description=(
+            "Explanation of why this ODE structure is appropriate for the experimental system.\n"
+            "Address:\n"
+            "- Why this pattern (e.g., exponential vs logistic growth) was chosen\n"
+            "- How the submodel approximates the relevant full model dynamics\n"
+            "- Any simplifications made and their justification\n\n"
+            "Examples:\n"
+            "- 'Exponential growth valid for early expansion before contact inhibition'\n"
+            "- 'First-order decay appropriate for linear elimination regime'\n"
+            "- 'Two-species interaction captures E:T dynamics without modeling effector exhaustion'"
+        )
+    )

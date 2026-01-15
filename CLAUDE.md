@@ -500,6 +500,9 @@ core/calibration/calibration_target_models.py:
   │   ├── inputs: List[EstimateInput]  # Inputs for distribution_code ONLY
   │   ├── assumptions: List[ModelingAssumption]
   │   └── distribution_code: str
+  ├── study_interpretation: str    # Overall scientific interpretation of the study
+  ├── key_assumptions: List[str]   # Required (min 1) - biological/statistical assumptions
+  ├── key_study_limitations: List[str]  # Study limitations affecting validity
   ├── scenario (description + interventions)
   ├── experimental_context (species, compartment, system + optional clinical/in vitro fields)
   └── primary_data_source, secondary_data_sources
@@ -517,7 +520,8 @@ core/calibration/isolated_system_target.py:
       ├── observable: SubmodelObservable
       │   ├── code: Optional[str]  # compute_observable(t, y, constants, ureg)
       │   ├── units: str           # Required - Pint-parseable units
-      │   └── constants: List[ObservableConstant]
+      │   ├── constants: List[ObservableConstant]
+      │   └── rationale: Optional[str]  # Why this transformation is appropriate
       └── rationale: str           # Why this submodel approximation is appropriate
 
 core/calibration/shared_models.py:
