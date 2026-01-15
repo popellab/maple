@@ -23,7 +23,6 @@ from qsp_llm_workflows.core.calibration.exceptions import (
     HardcodedConstantError,
 )
 from qsp_llm_workflows.core.calibration.observable import Submodel
-from qsp_llm_workflows.core.calibration.shared_models import ContextMismatch
 
 
 class IsolatedSystemTarget(CalibrationTarget):
@@ -87,17 +86,6 @@ class IsolatedSystemTarget(CalibrationTarget):
             "parameters via simple analytical formulas (e.g., k = ln(2) / t_double).\n"
             "Provide a Submodel when dynamics don't have analytical solutions and "
             "require Bayesian inference over ODE simulations."
-        ),
-    )
-
-    context_mismatches: List[ContextMismatch] = Field(
-        default_factory=list,
-        description=(
-            "Structured documentation of context mismatches between experimental data and model.\n"
-            "Use this to explicitly document when the experimental context differs from the model context,\n"
-            "along with expected bias direction and any adjustments applied.\n\n"
-            "Example: Species mismatch (mouse data for human model), system mismatch "
-            "(in vitro data for in vivo model), activation state mismatch (activated vs exhausted)."
         ),
     )
 

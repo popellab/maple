@@ -105,14 +105,12 @@ from qsp_llm_workflows.core.calibration.experimental_context import (
 from qsp_llm_workflows.core.calibration.shared_models import (
     CellLine,
     CellSpecies,
-    ContextMismatch,
     CultureConditions,
     DoseResponseData,
     EstimateInput,
     InputType,
     KeyAssumption,  # Kept for backward compatibility with ParameterMetadata/TestStatistic
     LiteratureInput,  # Backwards compatibility alias for EstimateInput
-    MismatchDimension,
     ModelingAssumption,
     SecondarySource,
     Snippet,
@@ -216,8 +214,6 @@ __all__ = [
     "SecondarySource",
     "Snippet",
     "Validation",
-    "ContextMismatch",
-    "MismatchDimension",
     "CellSpecies",
     "CellLine",
     "CultureConditions",

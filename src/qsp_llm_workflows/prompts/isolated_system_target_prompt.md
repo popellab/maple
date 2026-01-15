@@ -720,7 +720,7 @@ The `experimental_context` describes where and how the data was collected.
 **For non-cancer data (e.g., viral infection, healthy tissue):**
 - Set `indication: other_disease`
 - Set `stage: null` - cancer staging (extent/burden) doesn't apply
-- Document what the data actually represents in `context_mismatches`
+- Document what the data represents in `study_interpretation` and `key_assumptions`
 
 ```yaml
 # Example for viral infection data used to inform cancer model
@@ -729,32 +729,10 @@ experimental_context:
   system: animal_in_vivo.syngeneic
   indication: other_disease  # Not cancer
   stage: null  # Cancer staging doesn't apply
-  treatment: null  # Or describe the infection protocol in context_mismatches
+  treatment: null
 ```
 
 **For cancer data:** Use `indication`, `stage`, and `treatment` as appropriate.
-
----
-
-## Context Mismatch Documentation
-
-Use `context_mismatches` to explicitly document when experimental data context differs from model context:
-
-```yaml
-context_mismatches:
-  - dimension: species
-    source_context: "Mouse splenocytes from LCMV infection model"
-    model_context: "Human tumor-infiltrating lymphocytes in PDAC"
-    expected_bias: "Proliferation rates likely 5-10× higher in acute infection vs chronic tumor"
-    adjustment_applied: "No adjustment; noted as caveat"
-
-  - dimension: system
-    source_context: "In vitro anti-CD3/CD28 stimulation"
-    model_context: "Tumor microenvironment"
-    expected_bias: "In vitro rates typically higher due to optimal stimulation"
-```
-
-**Available dimensions:** `species`, `system`, `indication`, `compartment`, `activation_state`, `treatment`, `protein_source`, `other`
 
 ---
 
@@ -863,15 +841,6 @@ calibration_target_estimates:
         ci95_obs = [[ci95[0] * ureg.cell, ci95[1] * ureg.cell]]
 
         return {'median_obs': median_obs, 'ci95_obs': ci95_obs}
-```
-
-**Context mismatches:**
-```yaml
-context_mismatches:
-  - dimension: system
-    source_context: "In vitro anti-CD3/CD28 stimulation with IL-2"
-    model_context: "Tumor microenvironment"
-    expected_bias: "In vitro rates typically 2-5× higher due to optimal stimulation"
 ```
 
 **Caveats:**
@@ -1011,15 +980,6 @@ def compute_observable(t, y, constants, ureg):
     return fraction_bound * ureg.dimensionless
 ```
 
-**Context mismatches:**
-```yaml
-context_mismatches:
-  - dimension: system
-    source_context: "SPR with purified recombinant proteins"
-    model_context: "Cell-surface receptor-ligand interaction"
-    expected_bias: "SPR Kd typically within 2-5× of cell-surface Kd"
-```
-
 **Caveats:**
 - "SPR with purified proteins; cell-surface binding may differ due to membrane environment"
 - "Human proteins; model uses human parameters"
@@ -1139,15 +1099,6 @@ calibration_target_estimates:
         ci95_obs = [[ci95[0] * ureg('milliliter / day'), ci95[1] * ureg('milliliter / day')]]
 
         return {'median_obs': median_obs, 'ci95_obs': ci95_obs}
-```
-
-**Context mismatches:**
-```yaml
-context_mismatches:
-  - dimension: indication
-    source_context: "Melanoma patients"
-    model_context: "PDAC patients"
-    expected_bias: "Clearance may differ ±20% between indications based on tumor burden"
 ```
 
 **Caveats:**
@@ -1287,21 +1238,6 @@ calibration_target_estimates:
         return {'median_obs': median_obs, 'ci95_obs': ci95_obs}
 ```
 
-**Context mismatches:**
-```yaml
-context_mismatches:
-  - dimension: system
-    source_context: "In vitro culture with anti-CD3/CD28 stimulation"
-    model_context: "Tumor microenvironment"
-    expected_bias: "In vitro secretion may be higher due to optimal stimulation"
-
-  - dimension: protein_source
-    source_context: "Secreted IL-2 in culture supernatant"
-    model_context: "IL-2 in tumor interstitium"
-    expected_bias: "In vivo half-life ~10 min (receptor-mediated uptake) vs ~2 h in culture"
-    adjustment_applied: "Will need separate in vivo half-life data for model"
-```
-
 **Key Study Limitations:**
 - "In vitro secretion rates; in vivo consumption by T cells not captured"
 - "Half-life in culture; in vivo half-life is shorter (~10 min) due to receptor-mediated uptake"
@@ -1325,7 +1261,7 @@ Document limitations that affect validity or generalizability:
 - Sample size limitations (e.g., "n=3, limited statistical power")
 - Selection bias (e.g., "Resectable tumors only, excludes advanced cases")
 - Measurement method limitations (e.g., "Values estimated from figures, not tabulated")
-- Context mismatch impacts (from `context_mismatches`)
+- Context mismatch impacts (e.g., "Mouse data used for human model")
 
 ### `study_interpretation`
 Provide overall scientific interpretation:
