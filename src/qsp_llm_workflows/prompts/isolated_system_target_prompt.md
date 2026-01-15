@@ -428,6 +428,90 @@ def submodel(t, y, params, inputs):
 
 ---
 
+### Pattern 9: Programmed Expansion
+**Use for:** T cell activation where cells undergo fixed number of divisions after activation
+
+```python
+def submodel(t, y, params, inputs):
+    aT = y[0]  # activated cells in division program
+    T = y[1]   # effector cells (completed divisions)
+
+    k_pro = params['k_proliferation']  # rate of completing divisions
+    N_div = params['n_divisions']      # number of division generations
+    k_death = params['k_death']
+
+    # Activated cells progress through division program
+    d_aT = -k_pro / N_div * aT
+
+    # Effector cells produced with 2^N amplification
+    d_T = k_pro / N_div * (2**N_div) * aT - k_death * T
+
+    return [d_aT, d_T]
+```
+
+**Key insight:** k_pro is the rate of completing the division program, NOT a simple birth rate. One activated cell produces 2^N_div effector cells.
+**Data needed:** Division number assay (CFSE), time to complete expansion, fold-expansion
+
+---
+
+### Pattern 10: Generation-Structured
+**Use for:** Tracking cell divisions via dye dilution (each division halves fluorescence)
+
+```python
+def submodel(t, y, params, inputs):
+    # y[i] = cells in generation i (i=0 is undivided)
+    k_div = params['k_division']
+    k_death = params['k_death']
+    n_gens = len(y)
+
+    dydt = []
+    for i in range(n_gens):
+        # Inflow from previous generation (2x due to division)
+        inflow = 2 * k_div * y[i-1] if i > 0 else 0
+        # Outflow to next generation
+        outflow = k_div * y[i] if i < n_gens - 1 else 0
+        # Death
+        death = k_death * y[i]
+
+        dydt.append(inflow - outflow - death)
+
+    return dydt
+```
+
+**Observable:** Mean division number = Σ(i × y[i]) / Σ(y[i])
+**Data needed:** CFSE/CTV dye dilution peaks over time
+
+---
+
+### Pattern 11: Transit Compartment
+**Use for:** Approximating a time delay without true delay differential equations
+
+```python
+def submodel(t, y, params, inputs):
+    # y[0:n] = transit compartments, y[n] = output
+    k_tr = params['k_transit']  # n/tau where tau is mean delay
+    n_transit = inputs['n_compartments']
+
+    dydt = [0] * (n_transit + 1)
+
+    # Input to first compartment
+    dydt[0] = inputs['input_rate'] - k_tr * y[0]
+
+    # Transit compartments
+    for i in range(1, n_transit):
+        dydt[i] = k_tr * (y[i-1] - y[i])
+
+    # Output compartment
+    dydt[n_transit] = k_tr * y[n_transit-1] - params['k_elimination'] * y[n_transit]
+
+    return dydt
+```
+
+**Key insight:** Chain of n compartments with rate k_tr = n/τ approximates gamma-distributed delay with mean τ.
+**Data needed:** Lag time data, absorption profiles, maturation delays
+
+---
+
 ### Choosing the Right Pattern
 
 | Observable Data Type | Recommended Pattern |
@@ -440,6 +524,9 @@ def submodel(t, y, params, inputs):
 | Kd, kon, koff binding data | Pattern 6 |
 | Saturation curve / Vmax, Km | Pattern 7 |
 | Killing assay / E:T response | Pattern 8 |
+| T cell expansion with fixed divisions | Pattern 9 |
+| CFSE/CTV dye dilution | Pattern 10 |
+| PK delay (absorption, maturation) | Pattern 11 |
 
 ---
 
@@ -599,6 +686,9 @@ Classify your submodel using the `pattern` field:
 | Receptor-ligand binding | `binding_equilibrium` | Kd, kon, koff estimation |
 | dS/dt = -Vmax*S/(Km+S) | `michaelis_menten` | Enzyme kinetics |
 | Two coupled ODEs | `two_species_interaction` | Effector-target killing |
+| Programmed expansion | `programmed_expansion` | T cell clonal expansion |
+| Generation-structured | `generation_structured` | CFSE/CTV dye dilution |
+| Transit compartments | `transit_compartment` | Delay approximation |
 | Other | `custom` | Non-standard patterns |
 
 Also add `identifiability_notes` to document which parameters can be independently estimated:
