@@ -93,7 +93,7 @@ def golden_calibration_target_data():
             "Single-center study with limited sample size",
             "Lognormal distribution assumed based on positive-only data",
         ],
-        "calibration_target_estimates": {
+        "empirical_data": {
             # Vector-valued outputs (length-1 for scalar data)
             "median": [1.0],
             "ci95": [[0.3737, 2.7]],
@@ -197,9 +197,9 @@ class TestCalibrationTargetGolden:
         assert target.observable is not None
         assert target.observable.species == ["V_T.CD8", "V_T.C1"]
         # Scalar data uses length-1 lists
-        assert target.calibration_target_estimates.median == [pytest.approx(1.0, rel=0.01)]
-        assert len(target.calibration_target_estimates.ci95) == 1
-        assert target.calibration_target_estimates.index_values is None  # Scalar case
+        assert target.empirical_data.median == [pytest.approx(1.0, rel=0.01)]
+        assert len(target.empirical_data.ci95) == 1
+        assert target.empirical_data.index_values is None  # Scalar case
 
 
 # ============================================================================
@@ -389,7 +389,7 @@ class TestCalibrationTargetValidators:
         """Validator should reject when computed values don't match reported."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Report wrong median (code will compute ~1.0, report as 200)
-        data["calibration_target_estimates"]["median"] = [200.0]
+        data["empirical_data"]["median"] = [200.0]
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
@@ -403,7 +403,7 @@ class TestCalibrationTargetValidators:
         """Validator should reject input.source_ref that doesn't reference defined source."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Reference non-existent source
-        data["calibration_target_estimates"]["inputs"][0]["source_ref"] = "nonexistent_source"
+        data["empirical_data"]["inputs"][0]["source_ref"] = "nonexistent_source"
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
@@ -417,8 +417,8 @@ class TestCalibrationTargetValidators:
         """Validator should reject inputs where value is not found in value_snippet."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Change value but keep snippet the same (snippet says 1.0, value is 999)
-        data["calibration_target_estimates"]["inputs"][0]["value"] = 999.0
-        data["calibration_target_estimates"]["inputs"][0][
+        data["empirical_data"]["inputs"][0]["value"] = 999.0
+        data["empirical_data"]["inputs"][0][
             "value_snippet"
         ] = "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
 
@@ -435,8 +435,8 @@ class TestCalibrationTargetValidators:
         """Validator should pass when values are found in snippets."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Ensure snippet contains the value
-        data["calibration_target_estimates"]["inputs"][0]["value"] = 1.0
-        data["calibration_target_estimates"]["inputs"][0][
+        data["empirical_data"]["inputs"][0]["value"] = 1.0
+        data["empirical_data"]["inputs"][0][
             "value_snippet"
         ] = "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
 
@@ -451,8 +451,8 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Use value with Unicode superscript notation in snippet
         # Value 1.0 can be written as 1×10⁰ to test superscript parsing
-        data["calibration_target_estimates"]["inputs"][0]["value"] = 1.0
-        data["calibration_target_estimates"]["inputs"][0][
+        data["empirical_data"]["inputs"][0]["value"] = 1.0
+        data["empirical_data"]["inputs"][0][
             "value_snippet"
         ] = "CD8+ T cell to tumor cell ratio: 1×10⁰ (mean from Figure 2)"
 
@@ -467,8 +467,8 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Use value that matches the observable scale (~1.0) but expressed as percentage
         # The check_value_in_text function should recognize 0.5 in "50%"
-        data["calibration_target_estimates"]["inputs"][1]["value"] = 0.5
-        data["calibration_target_estimates"]["inputs"][1][
+        data["empirical_data"]["inputs"][1]["value"] = 0.5
+        data["empirical_data"]["inputs"][1][
             "value_snippet"
         ] = "The log-scale SD was 50% of the mean"
 
@@ -482,16 +482,16 @@ class TestCalibrationTargetValidators:
         """Validator should reject vector inputs where not all values are in snippet."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Vector input where one value is not in snippet
-        data["calibration_target_estimates"]["inputs"][0]["value"] = [1.0, 2.0, 999.0]
-        data["calibration_target_estimates"]["inputs"][0][
+        data["empirical_data"]["inputs"][0]["value"] = [1.0, 2.0, 999.0]
+        data["empirical_data"]["inputs"][0][
             "value_snippet"
         ] = "Values were 1.0 at baseline, 2.0 at day 7"  # Missing 999.0
         # Set up as vector data
-        data["calibration_target_estimates"]["median"] = [1.0, 2.0, 2.5]
-        data["calibration_target_estimates"]["ci95"] = [[0.5, 1.5], [1.0, 3.0], [1.2, 3.8]]
-        data["calibration_target_estimates"]["index_values"] = [0, 7, 14]
-        data["calibration_target_estimates"]["index_unit"] = "day"
-        data["calibration_target_estimates"]["index_type"] = "time"
+        data["empirical_data"]["median"] = [1.0, 2.0, 2.5]
+        data["empirical_data"]["ci95"] = [[0.5, 1.5], [1.0, 3.0], [1.2, 3.8]]
+        data["empirical_data"]["index_values"] = [0, 7, 14]
+        data["empirical_data"]["index_unit"] = "day"
+        data["empirical_data"]["index_type"] = "time"
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
@@ -523,7 +523,7 @@ class TestCalibrationTargetValidators:
         """Validator should warn about unused inputs."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Add an assumption that's not used in derivation_code
-        data["calibration_target_estimates"]["assumptions"] = [
+        data["empirical_data"]["assumptions"] = [
             {
                 "name": "unused_assumption",
                 "value": 999.0,
@@ -539,7 +539,7 @@ class TestCalibrationTargetValidators:
             )
 
         assert target is not None
-        assert len(target.calibration_target_estimates.assumptions) == 1
+        assert len(target.empirical_data.assumptions) == 1
 
     def test_validate_observable_code_fails_on_scalar_return(
         self, species_units, golden_calibration_target_data, mock_crossref_success
@@ -589,7 +589,7 @@ class TestCalibrationTargetValidators:
         """Validator should warn when distribution_code uses clipping."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Add clipping to distribution_code (use new input names)
-        data["calibration_target_estimates"]["distribution_code"] = (
+        data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
             "    import math\n"
@@ -620,7 +620,7 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Large variance test requires inputs named with "mean" and "sd/std/se"
         # Add new inputs for this test that will trigger the CV check
-        data["calibration_target_estimates"]["inputs"] = [
+        data["empirical_data"]["inputs"] = [
             {
                 "name": "ratio_mean",
                 "value": 1.0,
@@ -640,7 +640,7 @@ class TestCalibrationTargetValidators:
                 "value_snippet": "ratio: 1.0 ± 1.0",
             },
         ]
-        data["calibration_target_estimates"]["assumptions"] = [
+        data["empirical_data"]["assumptions"] = [
             {
                 "name": "n_mc_samples",
                 "value": 10000.0,
@@ -651,7 +651,7 @@ class TestCalibrationTargetValidators:
         ]
 
         # Update distribution_code to use these inputs
-        data["calibration_target_estimates"]["distribution_code"] = (
+        data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
@@ -667,9 +667,9 @@ class TestCalibrationTargetValidators:
         )
 
         # Update calibration target estimates to match code output (vector format)
-        data["calibration_target_estimates"]["median"] = [1.0475]
-        data["calibration_target_estimates"]["iqr"] = [1.1671]
-        data["calibration_target_estimates"]["ci95"] = [[0.0496, 2.9741]]
+        data["empirical_data"]["median"] = [1.0475]
+        data["empirical_data"]["iqr"] = [1.1671]
+        data["empirical_data"]["ci95"] = [[0.0496, 2.9741]]
 
         # Don't mention variance in limitations
         data["key_study_limitations"] = ["Small sample size from single center"]
@@ -687,10 +687,10 @@ class TestCalibrationTargetValidators:
         """Validator should warn when using normal distribution for size data."""
         data = copy.deepcopy(golden_calibration_target_data)
         # Change units to size data (centimeter) and update values to be in cm range
-        data["calibration_target_estimates"]["units"] = "centimeter"
+        data["empirical_data"]["units"] = "centimeter"
 
         # Replace inputs with size-appropriate ones
-        data["calibration_target_estimates"]["inputs"] = [
+        data["empirical_data"]["inputs"] = [
             {
                 "name": "diameter_mean",
                 "value": 1.5,
@@ -710,7 +710,7 @@ class TestCalibrationTargetValidators:
                 "value_snippet": "tumor diameter: 1.5 ± 0.25 cm",
             },
         ]
-        data["calibration_target_estimates"]["assumptions"] = [
+        data["empirical_data"]["assumptions"] = [
             {
                 "name": "n_mc_samples",
                 "value": 10000.0,
@@ -719,9 +719,9 @@ class TestCalibrationTargetValidators:
                 "rationale": "Standard sample size for stable percentile estimates",
             },
         ]
-        data["calibration_target_estimates"]["median"] = [1.4994]
-        data["calibration_target_estimates"]["iqr"] = [0.3359]
-        data["calibration_target_estimates"]["ci95"] = [[1.0079, 1.9935]]
+        data["empirical_data"]["median"] = [1.4994]
+        data["empirical_data"]["iqr"] = [0.3359]
+        data["empirical_data"]["ci95"] = [[1.0079, 1.9935]]
 
         # Also update observable code to return centimeter (to avoid unit mismatch error)
         data["observable"]["code"] = (
@@ -737,7 +737,7 @@ class TestCalibrationTargetValidators:
         data["observable"]["units"] = "centimeter"
 
         # Use normal distribution (not lognormal)
-        data["calibration_target_estimates"]["distribution_code"] = (
+        data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
@@ -841,12 +841,12 @@ class TestCalibrationTargetValidators:
         )
 
         # But calibration target is on 0-3 score scale (>100x mismatch)
-        data["calibration_target_estimates"]["median"] = [2.42]
-        data["calibration_target_estimates"]["iqr"] = [0.50]
-        data["calibration_target_estimates"]["ci95"] = [[1.69, 3.15]]
+        data["empirical_data"]["median"] = [2.42]
+        data["empirical_data"]["iqr"] = [0.50]
+        data["empirical_data"]["ci95"] = [[1.69, 3.15]]
 
         # Update inputs to produce values in score range
-        data["calibration_target_estimates"]["inputs"] = [
+        data["empirical_data"]["inputs"] = [
             {
                 "name": "score_mean",
                 "value": 2.42,
@@ -866,7 +866,7 @@ class TestCalibrationTargetValidators:
                 "value_snippet": "score: 2.42 ± 0.37",
             },
         ]
-        data["calibration_target_estimates"]["assumptions"] = [
+        data["empirical_data"]["assumptions"] = [
             {
                 "name": "n_mc_samples",
                 "value": 10000.0,
@@ -876,7 +876,7 @@ class TestCalibrationTargetValidators:
             },
         ]
 
-        data["calibration_target_estimates"]["distribution_code"] = (
+        data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
@@ -1027,20 +1027,20 @@ class TestVectorValuedCalibrationTarget:
 
         # Use actual computed values from the distribution_code with seed=42
         # These are the values that lognormal(mu_log, 0.5) produces with the given means
-        data["calibration_target_estimates"]["median"] = [0.799, 1.008, 1.1965, 1.0943]
-        data["calibration_target_estimates"]["iqr"] = [0.5474, 0.6965, 0.8269, 0.7674]
-        data["calibration_target_estimates"]["ci95"] = [
+        data["empirical_data"]["median"] = [0.799, 1.008, 1.1965, 1.0943]
+        data["empirical_data"]["iqr"] = [0.5474, 0.6965, 0.8269, 0.7674]
+        data["empirical_data"]["ci95"] = [
             [0.299, 2.1467],
             [0.3768, 2.6694],
             [0.4546, 3.1404],
             [0.4106, 2.9389],
         ]
-        data["calibration_target_estimates"]["index_values"] = [0, 7, 14, 21]
-        data["calibration_target_estimates"]["index_unit"] = "day"
-        data["calibration_target_estimates"]["index_type"] = "time"
+        data["empirical_data"]["index_values"] = [0, 7, 14, 21]
+        data["empirical_data"]["index_unit"] = "day"
+        data["empirical_data"]["index_type"] = "time"
 
         # Update inputs to be vector-valued
-        data["calibration_target_estimates"]["inputs"] = [
+        data["empirical_data"]["inputs"] = [
             {
                 "name": "cd8_ratio_mean",
                 "value": [0.8, 1.0, 1.2, 1.1],  # Vector input
@@ -1060,7 +1060,7 @@ class TestVectorValuedCalibrationTarget:
                 "value_snippet": "variability σ=0.5 approximately constant across time",
             },
         ]
-        data["calibration_target_estimates"]["assumptions"] = [
+        data["empirical_data"]["assumptions"] = [
             {
                 "name": "n_mc_samples",
                 "value": 10000.0,
@@ -1071,7 +1071,7 @@ class TestVectorValuedCalibrationTarget:
         ]
 
         # Update distribution_code to return vector outputs
-        data["calibration_target_estimates"]["distribution_code"] = (
+        data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
             "    import math\n"
@@ -1098,10 +1098,10 @@ class TestVectorValuedCalibrationTarget:
         target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
 
         assert target is not None
-        assert len(target.calibration_target_estimates.median) == 4
-        assert target.calibration_target_estimates.index_values == [0, 7, 14, 21]
-        assert target.calibration_target_estimates.index_type == IndexType.TIME
-        assert target.calibration_target_estimates.index_unit == "day"
+        assert len(target.empirical_data.median) == 4
+        assert target.empirical_data.index_values == [0, 7, 14, 21]
+        assert target.empirical_data.index_type == IndexType.TIME
+        assert target.empirical_data.index_unit == "day"
 
     def test_vector_input_length_mismatch_fails(
         self, species_units, golden_calibration_target_data, mock_crossref_success
@@ -1110,20 +1110,20 @@ class TestVectorValuedCalibrationTarget:
         data = copy.deepcopy(golden_calibration_target_data)
 
         # Set up vector data with 4 time points
-        data["calibration_target_estimates"]["median"] = [0.8, 1.0, 1.2, 1.1]
-        data["calibration_target_estimates"]["iqr"] = [0.5, 0.68, 0.82, 0.75]
-        data["calibration_target_estimates"]["ci95"] = [
+        data["empirical_data"]["median"] = [0.8, 1.0, 1.2, 1.1]
+        data["empirical_data"]["iqr"] = [0.5, 0.68, 0.82, 0.75]
+        data["empirical_data"]["ci95"] = [
             [0.3, 2.2],
             [0.37, 2.7],
             [0.45, 3.2],
             [0.40, 2.95],
         ]
-        data["calibration_target_estimates"]["index_values"] = [0, 7, 14, 21]
-        data["calibration_target_estimates"]["index_unit"] = "day"
-        data["calibration_target_estimates"]["index_type"] = "time"
+        data["empirical_data"]["index_values"] = [0, 7, 14, 21]
+        data["empirical_data"]["index_unit"] = "day"
+        data["empirical_data"]["index_type"] = "time"
 
         # Vector input with wrong length (3 instead of 4)
-        data["calibration_target_estimates"]["inputs"] = [
+        data["empirical_data"]["inputs"] = [
             {
                 "name": "cd8_ratio_mean",
                 "value": [0.8, 1.0, 1.2],  # Wrong length!
@@ -1145,18 +1145,18 @@ class TestVectorValuedCalibrationTarget:
         data = copy.deepcopy(golden_calibration_target_data)
 
         # median has 4 elements, iqr has 3 - mismatch
-        data["calibration_target_estimates"]["median"] = [0.8, 1.0, 1.2, 1.1]
-        data["calibration_target_estimates"]["iqr"] = [0.5, 0.68, 0.82]  # Wrong length!
-        data["calibration_target_estimates"]["ci95"] = [
+        data["empirical_data"]["median"] = [0.8, 1.0, 1.2, 1.1]
+        data["empirical_data"]["iqr"] = [0.5, 0.68, 0.82]  # Wrong length!
+        data["empirical_data"]["ci95"] = [
             [0.3, 2.2],
             [0.37, 2.7],
             [0.45, 3.2],
             [0.40, 2.95],
         ]
         # Must set index_values to enable length mismatch validation (otherwise fails scalar check)
-        data["calibration_target_estimates"]["index_values"] = [0, 7, 14, 21]
-        data["calibration_target_estimates"]["index_unit"] = "day"
-        data["calibration_target_estimates"]["index_type"] = "time"
+        data["empirical_data"]["index_values"] = [0, 7, 14, 21]
+        data["empirical_data"]["index_unit"] = "day"
+        data["empirical_data"]["index_type"] = "time"
 
         with pytest.raises(ValidationError, match="(lengths must match|must be a list of 4)"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
@@ -1168,15 +1168,15 @@ class TestVectorValuedCalibrationTarget:
         data = copy.deepcopy(golden_calibration_target_data)
 
         # Vector outputs with index_values but missing index_unit
-        data["calibration_target_estimates"]["median"] = [0.8, 1.0, 1.2, 1.1]
-        data["calibration_target_estimates"]["iqr"] = [0.5, 0.68, 0.82, 0.75]
-        data["calibration_target_estimates"]["ci95"] = [
+        data["empirical_data"]["median"] = [0.8, 1.0, 1.2, 1.1]
+        data["empirical_data"]["iqr"] = [0.5, 0.68, 0.82, 0.75]
+        data["empirical_data"]["ci95"] = [
             [0.3, 2.2],
             [0.37, 2.7],
             [0.45, 3.2],
             [0.40, 2.95],
         ]
-        data["calibration_target_estimates"]["index_values"] = [0, 7, 14, 21]
+        data["empirical_data"]["index_values"] = [0, 7, 14, 21]
         # Missing index_unit and index_type
 
         with pytest.raises(ValidationError, match="index_unit is required"):
@@ -1189,9 +1189,9 @@ class TestVectorValuedCalibrationTarget:
         data = copy.deepcopy(golden_calibration_target_data)
 
         # No index_values but median has length > 1
-        data["calibration_target_estimates"]["median"] = [0.8, 1.0]  # Length 2 without index_values
-        data["calibration_target_estimates"]["iqr"] = [0.5, 0.68]
-        data["calibration_target_estimates"]["ci95"] = [[0.3, 2.2], [0.37, 2.7]]
+        data["empirical_data"]["median"] = [0.8, 1.0]  # Length 2 without index_values
+        data["empirical_data"]["iqr"] = [0.5, 0.68]
+        data["empirical_data"]["ci95"] = [[0.3, 2.2], [0.37, 2.7]]
         # No index_values set
 
         with pytest.raises(ValidationError, match="outputs must have length 1"):
@@ -1204,7 +1204,7 @@ class TestVectorValuedCalibrationTarget:
         data = copy.deepcopy(golden_calibration_target_data)
 
         # ci95 with wrong inner structure (3 elements instead of 2)
-        data["calibration_target_estimates"]["ci95"] = [[0.3, 1.0, 2.7]]  # Wrong!
+        data["empirical_data"]["ci95"] = [[0.3, 1.0, 2.7]]  # Wrong!
 
         with pytest.raises(ValidationError, match="\\[lower, upper\\] pair"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})

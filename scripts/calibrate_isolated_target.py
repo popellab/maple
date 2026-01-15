@@ -68,7 +68,7 @@ def estimate_sigma_from_ci95(ci95_lo: float, ci95_hi: float) -> float:
 def extract_calibration_data(target: dict) -> dict:
     """Extract all relevant data from the target for calibration."""
     submodel = target["submodel"]
-    estimates = target["calibration_target_estimates"]
+    estimates = target["empirical_data"]
 
     # Build inputs dict
     inputs = {}

@@ -76,7 +76,7 @@ def golden_isolated_target_data():
         "key_study_limitations": [
             "In vitro conditions may differ from in vivo",
         ],
-        "calibration_target_estimates": {
+        "empirical_data": {
             "median": [1.0],
             "ci95": [[0.3737, 2.7]],
             "units": "dimensionless",
@@ -669,9 +669,9 @@ class TestHardcodedConstantsValidation:
             "    return (T_cells * cell_volume).to('micrometer**3')"
         )
         data["submodel"]["observable"]["units"] = "micrometer**3"
-        data["calibration_target_estimates"]["units"] = "micrometer**3"
+        data["empirical_data"]["units"] = "micrometer**3"
         # Update distribution to match units
-        data["calibration_target_estimates"]["distribution_code"] = (
+        data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
@@ -683,9 +683,9 @@ class TestHardcodedConstantsValidation:
             "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
         )
         # Exact values from lognormal(10, 0.5) with seed 42
-        data["calibration_target_estimates"]["median"] = [21997.91]
-        data["calibration_target_estimates"]["iqr"] = [15072.36]
-        data["calibration_target_estimates"]["ci95"] = [[8231.66, 59104.89]]
+        data["empirical_data"]["median"] = [21997.91]
+        data["empirical_data"]["iqr"] = [15072.36]
+        data["empirical_data"]["ci95"] = [[8231.66, 59104.89]]
 
         with pytest.raises(ValidationError, match="Hardcoded numeric constants"):
             IsolatedSystemTarget.model_validate(
@@ -715,8 +715,8 @@ class TestHardcodedConstantsValidation:
                 "source_ref": "modeling_assumption",
             }
         ]
-        data["calibration_target_estimates"]["units"] = "micrometer**3"
-        data["calibration_target_estimates"]["distribution_code"] = (
+        data["empirical_data"]["units"] = "micrometer**3"
+        data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
@@ -728,9 +728,9 @@ class TestHardcodedConstantsValidation:
             "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
         )
         # Exact values from lognormal(18, 0.5) with seed 42
-        data["calibration_target_estimates"]["median"] = [6.56e7]
-        data["calibration_target_estimates"]["iqr"] = [4.49e7]
-        data["calibration_target_estimates"]["ci95"] = [[2.45e7, 1.76e8]]
+        data["empirical_data"]["median"] = [6.56e7]
+        data["empirical_data"]["iqr"] = [4.49e7]
+        data["empirical_data"]["ci95"] = [[2.45e7, 1.76e8]]
 
         # Should pass - constants are properly declared
         target = IsolatedSystemTarget.model_validate(
@@ -747,8 +747,8 @@ class TestHardcodedConstantsValidation:
         # Use default observable (no code)
         data["submodel"]["observable"]["code"] = None
         data["submodel"]["observable"]["units"] = "cell"
-        data["calibration_target_estimates"]["units"] = "cell"
-        data["calibration_target_estimates"]["distribution_code"] = (
+        data["empirical_data"]["units"] = "cell"
+        data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
@@ -759,9 +759,9 @@ class TestHardcodedConstantsValidation:
             "    ci95_obs = [[ci95[0] * ureg.cell, ci95[1] * ureg.cell]]\n"
             "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
         )
-        data["calibration_target_estimates"]["median"] = [98587.77]
-        data["calibration_target_estimates"]["iqr"] = [67549.62]
-        data["calibration_target_estimates"]["ci95"] = [[36891.73, 264889.72]]
+        data["empirical_data"]["median"] = [98587.77]
+        data["empirical_data"]["iqr"] = [67549.62]
+        data["empirical_data"]["ci95"] = [[36891.73, 264889.72]]
 
         # Should pass
         target = IsolatedSystemTarget.model_validate(
@@ -783,9 +783,9 @@ class TestObservableCodeValidation:
         data["submodel"]["observable"]["code"] = None
         # State is in cells, observable should return cells
         data["submodel"]["observable"]["units"] = "cell"
-        data["calibration_target_estimates"]["units"] = "cell"
+        data["empirical_data"]["units"] = "cell"
         # Update distribution_code to return cell units
-        data["calibration_target_estimates"]["distribution_code"] = (
+        data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
@@ -798,9 +798,9 @@ class TestObservableCodeValidation:
         )
         # Update median/iqr/ci95 values to match the distribution output
         # lognormal(11.5, 0.5) with seed 42 produces these exact values
-        data["calibration_target_estimates"]["median"] = [98587.77]
-        data["calibration_target_estimates"]["iqr"] = [67549.62]
-        data["calibration_target_estimates"]["ci95"] = [[36891.73, 264889.72]]
+        data["empirical_data"]["median"] = [98587.77]
+        data["empirical_data"]["iqr"] = [67549.62]
+        data["empirical_data"]["ci95"] = [[36891.73, 264889.72]]
 
         target = IsolatedSystemTarget.model_validate(
             data,
@@ -915,7 +915,7 @@ class TestGetParametersUsed:
             "key_study_limitations": [
                 "In vitro conditions",
             ],
-            "calibration_target_estimates": {
+            "empirical_data": {
                 "median": [2.0801],
                 "ci95": [[1.6679, 2.7581]],
                 "units": "1/day",
@@ -1001,7 +1001,7 @@ class TestDirectConversionMode:
             "key_study_limitations": [
                 "In vitro conditions",
             ],
-            "calibration_target_estimates": {
+            "empirical_data": {
                 "median": [2.0801],
                 "ci95": [[1.6679, 2.7581]],
                 "units": "1/day",
@@ -1068,8 +1068,8 @@ class TestDirectConversionMode:
             context={"species_units": species_units, "model_structure": model_structure},
         )
         assert target.submodel is None
-        # All inputs are in calibration_target_estimates.inputs
-        assert len(target.calibration_target_estimates.inputs) > 0
+        # All inputs are in empirical_data.inputs
+        assert len(target.empirical_data.inputs) > 0
 
 
 # ============================================================================
@@ -1106,7 +1106,7 @@ class TestCancerFieldsValidation:
             "key_study_limitations": [
                 "Mouse model",
             ],
-            "calibration_target_estimates": {
+            "empirical_data": {
                 "median": [2.079],  # ln(2) / (8/24) = 2.079 per day
                 "ci95": [[1.559, 2.599]],  # +/- 25%
                 "units": "1/day",
@@ -1179,7 +1179,7 @@ class TestCancerFieldsValidation:
             "key_study_limitations": [
                 "Mouse model",
             ],
-            "calibration_target_estimates": {
+            "empirical_data": {
                 "median": [2.079],  # ln(2) / (8/24) = 2.079 per day
                 "ci95": [[1.559, 2.599]],  # +/- 25%
                 "units": "1/day",

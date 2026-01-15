@@ -116,7 +116,7 @@ class Observable(BaseModel):
             "- species_dict: dict mapping species names to numpy arrays (Pint Quantities)\n"
             "- constants: dict mapping constant names to Pint Quantities (from constants field)\n"
             "- ureg: Pint UnitRegistry for unit conversions\n\n"
-            "Must return a Pint Quantity array with units matching calibration_target_estimates.units.\n\n"
+            "Must return a Pint Quantity array with units matching empirical_data.units.\n\n"
             "Example (cell density):\n"
             "def compute_observable(time, species_dict, constants, ureg):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
@@ -129,7 +129,7 @@ class Observable(BaseModel):
     )
 
     units: str = Field(
-        description="Pint-parseable units of the observable output (must match calibration_target_estimates.units)"
+        description="Pint-parseable units of the observable output (must match empirical_data.units)"
     )
 
     species: List[str] = Field(
@@ -273,7 +273,7 @@ class SubmodelObservable(BaseModel):
             "- y: state vector (list of floats, same order as state_variables)\n"
             "- constants: dict mapping constant names to Pint Quantities\n"
             "- ureg: Pint UnitRegistry for unit conversions\n\n"
-            "Must return a Pint Quantity with units matching calibration_target_estimates.units.\n\n"
+            "Must return a Pint Quantity with units matching empirical_data.units.\n\n"
             "Example (convert cell count to spheroid diameter):\n"
             "def compute_observable(t, y, constants, ureg):\n"
             "    import numpy as np\n"
@@ -286,7 +286,7 @@ class SubmodelObservable(BaseModel):
     )
 
     units: str = Field(
-        description="Pint-parseable units of the observable output (must match calibration_target_estimates.units)"
+        description="Pint-parseable units of the observable output (must match empirical_data.units)"
     )
 
     constants: List[ObservableConstant] = Field(

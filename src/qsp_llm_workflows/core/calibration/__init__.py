@@ -18,8 +18,8 @@ Inputs are co-located with the code blocks that use them for clarity:
 - `submodel.state_variables` (SubmodelStateVariable): Self-contained with initial values + provenance
 - `observable.inputs` (SubmodelInput): Literature inputs for observable code
 - `observable.constants` (ObservableConstant): Geometric/modeling constants
-- `calibration_target_estimates.inputs` (EstimateInput): Inputs for distribution_code derivation
-- `calibration_target_estimates.assumptions` (ModelingAssumption): Computational assumptions
+- `empirical_data.inputs` (EstimateInput): Inputs for distribution_code derivation
+- `empirical_data.assumptions` (ModelingAssumption): Computational assumptions
 
 CalibrationTarget:
 Uses the full QSP model. The `observable` field defines Python code to compute the

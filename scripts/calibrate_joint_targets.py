@@ -41,7 +41,7 @@ def extract_submodel_and_data(data: dict[str, Any], target_name: str) -> dict[st
         print(f"  {target_name}: No submodel (direct conversion mode) - skipping")
         return None
 
-    estimates = data.get("calibration_target_estimates", {})
+    estimates = data.get("empirical_data", {})
 
     # Get median and CI95
     median = estimates.get("median", [])

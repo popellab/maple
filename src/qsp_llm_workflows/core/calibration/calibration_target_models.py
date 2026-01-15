@@ -324,7 +324,7 @@ class CalibrationTarget(BaseModel):
     """
 
     # --- Observable fields (LLM-generated) ---
-    calibration_target_estimates: CalibrationTargetEstimates = Field(
+    empirical_data: CalibrationTargetEstimates = Field(
         description="Observable estimates with inputs and derivation"
     )
 
@@ -589,11 +589,11 @@ class CalibrationTarget(BaseModel):
                 raise MissingUnitsError("Function must return a Pint Quantity with units")
 
             # Check dimensionality matches calibration target units
-            expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
+            expected_quantity = 1.0 * ureg(self.empirical_data.units)
             if result.dimensionality != expected_quantity.dimensionality:
                 raise DimensionalityMismatchError(
                     f"Observable code unit dimensionality mismatch:\n"
-                    f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
+                    f"  Expected: {self.empirical_data.units} ({expected_quantity.dimensionality})\n"
                     f"  Got: {result.units} ({result.dimensionality})"
                 )
 
@@ -646,7 +646,7 @@ class CalibrationTarget(BaseModel):
         percentage, rounded variations).
 
         Checks inputs in:
-        - calibration_target_estimates.inputs (EstimateInput)
+        - empirical_data.inputs (EstimateInput)
         - observable.inputs (SubmodelInput)
 
         Raises SnippetValueMismatchError if a value is not found in its snippet.
@@ -682,8 +682,8 @@ class CalibrationTarget(BaseModel):
                         f"  - Snippet truncated before the value appears"
                     )
 
-        # Check calibration_target_estimates.inputs
-        check_inputs(self.calibration_target_estimates.inputs, "calibration_target_estimates")
+        # Check empirical_data.inputs
+        check_inputs(self.empirical_data.inputs, "empirical_data")
 
         # Check observable.inputs (if present and not IsolatedSystemTarget)
         if type(self).__name__ != "IsolatedSystemTarget" and self.observable.inputs:
@@ -705,7 +705,7 @@ class CalibrationTarget(BaseModel):
 
         # Use CodeValidator for syntax and signature checks
         result = validate_code_block(
-            self.calibration_target_estimates.distribution_code,
+            self.empirical_data.distribution_code,
             CodeType.DISTRIBUTION,
             check_hardcoded=True,  # Check for hardcoded constants with units
             check_execution=False,  # We do custom execution below
@@ -730,13 +730,13 @@ class CalibrationTarget(BaseModel):
             # Merge both literature inputs and modeling assumptions into a single dict
             mock_inputs = {}
             # Add literature inputs
-            for inp in self.calibration_target_estimates.inputs:
+            for inp in self.empirical_data.inputs:
                 if isinstance(inp.value, list):
                     mock_inputs[inp.name] = np.array(inp.value) * ureg(inp.units)
                 else:
                     mock_inputs[inp.name] = inp.value * ureg(inp.units)
             # Add modeling assumptions
-            for assumption in self.calibration_target_estimates.assumptions:
+            for assumption in self.empirical_data.assumptions:
                 if isinstance(assumption.value, list):
                     mock_inputs[assumption.name] = np.array(assumption.value) * ureg(
                         assumption.units
@@ -746,7 +746,7 @@ class CalibrationTarget(BaseModel):
 
             # Execute function
             local_scope = {"ureg": ureg, "np": np}
-            exec(self.calibration_target_estimates.distribution_code, local_scope)
+            exec(self.empirical_data.distribution_code, local_scope)
             derive_fn = local_scope["derive_distribution"]
 
             result = derive_fn(mock_inputs, ureg)
@@ -766,18 +766,18 @@ class CalibrationTarget(BaseModel):
                 raise MissingUnitsError("Result['median_obs'] must be a Pint Quantity with units")
 
             # Check dimensionality matches expected units
-            expected_quantity = 1.0 * ureg(self.calibration_target_estimates.units)
+            expected_quantity = 1.0 * ureg(self.empirical_data.units)
 
             # Check median
             if result["median_obs"].dimensionality != expected_quantity.dimensionality:
                 raise DimensionalityMismatchError(
                     f"median_obs unit dimensionality mismatch:\n"
-                    f"  Expected: {self.calibration_target_estimates.units} ({expected_quantity.dimensionality})\n"
+                    f"  Expected: {self.empirical_data.units} ({expected_quantity.dimensionality})\n"
                     f"  Got: {result['median_obs'].units} ({result['median_obs'].dimensionality})"
                 )
 
             # Check ci95_obs is list of [lower, upper] pairs matching expected length
-            n_expected = len(self.calibration_target_estimates.median)
+            n_expected = len(self.empirical_data.median)
             ci95_result = result["ci95_obs"]
 
             if not hasattr(ci95_result, "__len__") or len(ci95_result) != n_expected:
@@ -795,11 +795,11 @@ class CalibrationTarget(BaseModel):
                     )
 
             # Convert computed values to expected units for comparison
-            median_computed = result["median_obs"].to(self.calibration_target_estimates.units)
+            median_computed = result["median_obs"].to(self.empirical_data.units)
 
             # Get reported values (now lists)
-            median_reported = self.calibration_target_estimates.median
-            ci95_reported = self.calibration_target_estimates.ci95
+            median_reported = self.empirical_data.median
+            ci95_reported = self.empirical_data.ci95
 
             # Use relative tolerance of 1% for comparison
             rel_tol = 0.01
@@ -858,7 +858,7 @@ class CalibrationTarget(BaseModel):
         """Validator: Check all source_refs in inputs point to defined sources.
 
         Checks source_refs in:
-        - calibration_target_estimates.inputs (EstimateInput)
+        - empirical_data.inputs (EstimateInput)
         - observable.inputs (SubmodelInput)
         """
         # Build set of valid source tags from literature sources
@@ -876,8 +876,8 @@ class CalibrationTarget(BaseModel):
                         f"For values not from literature, use the 'assumptions' field instead."
                     )
 
-        # Check calibration_target_estimates.inputs
-        check_refs(self.calibration_target_estimates.inputs, "calibration_target_estimates")
+        # Check empirical_data.inputs
+        check_refs(self.empirical_data.inputs, "empirical_data")
 
         # Check observable.inputs (if present and not IsolatedSystemTarget)
         if type(self).__name__ != "IsolatedSystemTarget" and self.observable.inputs:
@@ -932,7 +932,7 @@ class CalibrationTarget(BaseModel):
         """
         import warnings
 
-        code = self.calibration_target_estimates.distribution_code
+        code = self.empirical_data.distribution_code
 
         # Check for clipping patterns
         clipping_patterns = ["np.clip", "np.maximum", "np.minimum", "max(0", "min("]
@@ -962,7 +962,7 @@ class CalibrationTarget(BaseModel):
         mean_input = None
         std_input = None
 
-        for inp in self.calibration_target_estimates.inputs:
+        for inp in self.empirical_data.inputs:
             # Skip vector-valued inputs for this check
             if isinstance(inp.value, list):
                 continue
@@ -1018,8 +1018,8 @@ class CalibrationTarget(BaseModel):
         """
         import warnings
 
-        units = self.calibration_target_estimates.units.lower()
-        code = self.calibration_target_estimates.distribution_code
+        units = self.empirical_data.units.lower()
+        code = self.empirical_data.distribution_code
 
         # Check if units suggest size/volume/mass
         size_units = ["meter", "liter", "gram", "cell", "mole", "molarity"]
@@ -1143,7 +1143,7 @@ class CalibrationTarget(BaseModel):
 
         # Parse distribution_code to find variable references
         try:
-            tree = ast.parse(self.calibration_target_estimates.distribution_code)
+            tree = ast.parse(self.empirical_data.distribution_code)
             visitor = InputAccessVisitor()
             visitor.visit(tree)
         except SyntaxError:
@@ -1152,8 +1152,8 @@ class CalibrationTarget(BaseModel):
 
         # Check which defined inputs/assumptions are not used in distribution_code
         # Both EstimateInputs and ModelingAssumptions are merged into the inputs dict
-        defined_inputs = {inp.name for inp in self.calibration_target_estimates.inputs}
-        defined_assumptions = {a.name for a in self.calibration_target_estimates.assumptions}
+        defined_inputs = {inp.name for inp in self.empirical_data.inputs}
+        defined_assumptions = {a.name for a in self.empirical_data.assumptions}
         all_defined = defined_inputs | defined_assumptions
         unused = all_defined - used_input_names
 
@@ -1220,7 +1220,7 @@ class CalibrationTarget(BaseModel):
         Validator: Check that observable.code output scale matches calibration target scale.
 
         Executes observable.code with mock species data spanning wide range and checks
-        if output range is compatible with calibration_target_estimates range.
+        if output range is compatible with empirical_data range.
 
         Catches scale mismatches like ratio (0-1) vs score (0-3) before calibration.
 
@@ -1242,7 +1242,7 @@ class CalibrationTarget(BaseModel):
 
         # Get calibration target range
         # For vector data, use overall statistics across all index points
-        estimates = self.calibration_target_estimates
+        estimates = self.empirical_data
 
         # Flatten ci95 to get overall min/max
         all_ci_values: list[float] = []

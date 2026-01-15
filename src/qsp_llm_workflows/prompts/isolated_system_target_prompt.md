@@ -72,7 +72,7 @@ Understanding the relationship between the data structure fields:
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  calibration_target_estimates                                               │
+│  empirical_data                                               │
 │    The DATA DISTRIBUTION we're trying to match                              │
 │    - median: [800000]      ← what literature reports                        │
 │    - ci95: [[604000, 996000]]                                               │
@@ -128,7 +128,7 @@ Use when literature value converts directly to parameter via simple algebra:
 ```yaml
 submodel: null  # No ODE needed
 
-calibration_target_estimates:
+empirical_data:
   inputs:
     - name: doubling_time
       value: 8.0
@@ -617,7 +617,7 @@ for proper uncertainty quantification and pooling across studies.
 
 **Example:**
 ```yaml
-calibration_target_estimates:
+empirical_data:
   median: [750000]
   ci95: [[456000, 1044000]]
   units: cell
@@ -816,7 +816,7 @@ assumptions:
 
 **Calibration target (the DATA distribution):**
 ```yaml
-calibration_target_estimates:
+empirical_data:
   median: [750000]
   ci95: [[456000, 1044000]]
   units: cell
@@ -944,7 +944,7 @@ assumptions:
 
 **Calibration target (the DATA distribution):**
 ```yaml
-calibration_target_estimates:
+empirical_data:
   median: [8.2]
   ci95: [[7.4, 9.0]]
   units: nanomolar
@@ -1071,7 +1071,7 @@ assumptions:
 
 **Calibration target (the DATA distribution):**
 ```yaml
-calibration_target_estimates:
+empirical_data:
   median: [228.0]
   ci95: [[109.0, 427.0]]
   units: milliliter / day
@@ -1212,7 +1212,7 @@ assumptions:
 
 **Calibration target (the DATA distribution):**
 ```yaml
-calibration_target_estimates:
+empirical_data:
   median: [1.0]
   ci95: [[0.52, 1.95]]
   units: picogram / cell / hour

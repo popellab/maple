@@ -444,8 +444,8 @@ Inputs are co-located with the code blocks that use them:
 - submodel.state_variables             # Self-contained with initial values + provenance
 - observable.inputs (SubmodelInput)    # Literature inputs for observable code
 - observable.constants                 # Geometric/modeling constants
-- calibration_target_estimates.inputs  # EstimateInput for distribution_code
-- calibration_target_estimates.assumptions  # ModelingAssumption for derivation
+- empirical_data.inputs  # EstimateInput for distribution_code
+- empirical_data.assumptions  # ModelingAssumption for derivation
 ```
 
 **Input classes:**
@@ -488,7 +488,7 @@ core/calibration/calibration_target_models.py:
   │   ├── inputs: List[SubmodelInput]  # Literature inputs for observable code
   │   ├── support: SupportType     # Mathematical support (positive, non_negative, etc.)
   │   └── mapping_rationale: str   # Explanation of measurement-to-model mapping
-  ├── calibration_target_estimates
+  ├── empirical_data
   │   ├── median: List[float]      # Vector-valued (length-1 for scalar data)
   │   ├── ci95: List[List[float]]  # [[lo, hi], [lo, hi], ...]
   │   ├── units: str

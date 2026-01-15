@@ -67,7 +67,7 @@ A biological observable measured in a **specific experimental scenario**, used t
 - **Validation:** Code is executed with mock species data and Pint unit registry
 
 ### 4. Measurement Code Units Must Match
-- `measurement_code` output units must match `calibration_target_estimates.units`
+- `measurement_code` output units must match `empirical_data.units`
 - **Validation:** Pint dimensional analysis checks measurement code output
 
 ### 5. Computed Values Must Match Reported Values
@@ -85,7 +85,7 @@ A biological observable measured in a **specific experimental scenario**, used t
 - **Validation:** Cross-reference checking against defined sources
 
 ### 8. Measurement Code Output Scale Must Match Calibration Target Scale
-- Ensure measurement_code output range is on the same scale as calibration_target_estimates
+- Ensure measurement_code output range is on the same scale as empirical_data
 - Example: Don't mix 0-1 ratios with 0-N scores - they must use consistent scaling
 - **Validation:** Code executed with mock data; output range compared to target range
 
@@ -162,7 +162,7 @@ Each measurement requires:
    - `species_dict`: dict mapping species names to numpy arrays (Pint Quantities, one value per timepoint)
    - `ureg`: Pint UnitRegistry for conversions
    - `constants`: dict mapping constant names to Pint Quantities (from measurement_constants)
-   - Must return Pint Quantity (scalar or array) with units matching `calibration_target_estimates.units`
+   - Must return Pint Quantity (scalar or array) with units matching `empirical_data.units`
    - **IMPORTANT**: Do NOT hardcode numbers with units. Use `constants` dict for all conversion factors.
    - **IMPORTANT**: Do NOT include time filtering logic. This function computes WHAT to measure. WHEN to measure is handled via threshold_description.
 
@@ -212,14 +212,14 @@ measurements:
 
 1. **Paper reports** statistics (mean, SD, median, IQR, range, etc.) → Put these in `inputs[]`
 2. **distribution_code** uses inputs to run Monte Carlo → Produces median, IQR, CI95
-3. **calibration_target_estimates** contains the COMPUTED values (from step 2), NOT the paper's reported values
+3. **empirical_data** contains the COMPUTED values (from step 2), NOT the paper's reported values
 
 **Example:** Paper reports "150 ± 25 cells/mm²" but doesn't report median/IQR/CI95:
 - `inputs`: `[{name: "mean", value: 150}, {name: "sd", value: 25}]` ← Paper's values
 - `distribution_code`: Runs MC sampling from normal(150, 25)
-- `calibration_target_estimates.median`: 149.94 ← Computed from MC, matches code output
-- `calibration_target_estimates.iqr`: 33.59 ← Computed from MC, matches code output
-- `calibration_target_estimates.ci95`: [100.79, 199.35] ← Computed from MC
+- `empirical_data.median`: 149.94 ← Computed from MC, matches code output
+- `empirical_data.iqr`: 33.59 ← Computed from MC, matches code output
+- `empirical_data.ci95`: [100.79, 199.35] ← Computed from MC
 
 **Validation:** Code is executed and outputs must match declared median/iqr/ci95 within 1% tolerance.
 
@@ -319,7 +319,7 @@ for proper uncertainty quantification and pooling across studies.
 - Patient/subject counts in study design
 - Number of samples/biopsies in clinical studies
 
-**Required fields in `calibration_target_estimates`:**
+**Required fields in `empirical_data`:**
 - `sample_size`: int or List[int] - the numeric value(s)
 - `sample_size_rationale`: str - explanation of how sample size was determined
 
@@ -330,7 +330,7 @@ for proper uncertainty quantification and pooling across studies.
 
 **Example:**
 ```yaml
-calibration_target_estimates:
+empirical_data:
   median: 149.94
   iqr: 33.59
   ci95: [100.79, 199.35]
