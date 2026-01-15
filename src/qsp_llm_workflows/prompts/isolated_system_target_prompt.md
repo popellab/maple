@@ -23,6 +23,14 @@ in the model BEFORE designing your submodel.
 Your submodel MUST replicate how these parameters are used mechanistically,
 not just use the same parameter names with different dynamics.
 
+**Using additional parameters:** Your submodel should calibrate the specified
+parameters, but you MAY (and often should) include additional model parameters
+when mechanistically necessary. For example, if calibrating a proliferation rate,
+you may also need death rates, carrying capacities, or other parameters from
+the same reactions. Use the model query service (`query_parameters()`,
+`query_reactions()`) to find exact parameter names. All parameters listed in
+`submodel.parameters` will be jointly inferred during Bayesian calibration.
+
 ---
 
 ## Your Task
@@ -184,7 +192,9 @@ submodel:
 2. **`query_reactions(compartment?, species?)`** - See which reactions use these parameters
 3. **`validate_entity(name, type)`** - Verify parameter names exist
 
-### Example Query Output
+### Example: Discovering Additional Parameters
+
+If asked to calibrate `k_CD8_pro`, first query related parameters:
 
 ```python
 query_parameters(name_pattern="CD8")
@@ -200,7 +210,24 @@ query_reactions(species="CD8")
 # Returns reactions where CD8 appears:
 # - "V_T.CD8 -> null : k_CD8_death * V_T.CD8"
 # - "V_T.CD8 -> 2*V_T.CD8 : k_CD8_pro * V_T.CD8 * IL2_signal"
+```
 
+**Decision point:** The model has separate proliferation and death rates. If your
+literature data includes both (e.g., Ki-67 for proliferation AND Annexin V for death),
+include BOTH parameters in `submodel.parameters`:
+
+```yaml
+parameters:
+  - k_CD8_pro    # Primary target
+  - k_CD8_death  # Also needed for birth-death dynamics
+```
+
+If literature only reports net expansion (e.g., fold-change), use exponential growth
+with just `k_CD8_pro` and document the limitation.
+
+### More Query Examples
+
+```python
 query_parameters(name_pattern="PD1")
 # Returns:
 # [
@@ -740,14 +767,28 @@ experimental_context:
 
 ### Example A: T Cell Expansion (cell count trajectory)
 
-**Parameters:** `k_CD8_pro`
+**Parameters requested:** `k_CD8_pro`
+
+**First, query the model to understand related parameters:**
+```python
+query_parameters(name_pattern="CD8")
+# Returns: k_CD8_pro (proliferation), k_CD8_death (death rate)
+
+query_reactions(species="CD8")
+# Shows: proliferation and death reactions both affect CD8 dynamics
+```
 
 **Literature found:** Smith et al. (2020) - In vitro T cell expansion
 - "CD8+ T cells expanded from 100,000 to 750,000 ± 150,000 cells over 72 hours"
 - "Anti-CD3/CD28 stimulation with IL-2"
 
-**What we observe:** Cell count at 72 hours
+**What we observe:** Cell count at 72 hours (net expansion only)
 **What we calibrate:** Proliferation rate k_CD8_pro
+
+**Parameter decision:** The model has separate `k_CD8_pro` and `k_CD8_death`, but this
+literature only reports net expansion (no separate death measurement). We use
+exponential growth with just `k_CD8_pro`. If the paper also reported apoptosis rates,
+we would include `k_CD8_death` and use Pattern 5 (Birth-Death) instead.
 
 **Submodel (Pattern 3 - Exponential Growth):**
 ```yaml
@@ -769,7 +810,7 @@ submodel:
   observable:
     units: cell
     # Default: returns y[0] (cell count)
-  identifiability_notes: "Single parameter k_pro identifiable from fold-expansion data"
+  identifiability_notes: "Single parameter k_pro identifiable from fold-expansion data; death rate not separable from net growth"
   rationale: "Exponential growth valid for early expansion before contact inhibition"
 ```
 
@@ -846,6 +887,56 @@ empirical_data:
 **Caveats:**
 - "In vitro expansion with optimal stimulation; tumor microenvironment rates likely lower"
 - "Healthy donor T cells; cancer patient T cells may have reduced proliferative capacity"
+
+---
+
+### Example A2: T Cell Dynamics with Death (adding parameters)
+
+**Parameters requested:** `k_CD8_pro`
+
+**Query reveals related parameters:**
+```python
+query_parameters(name_pattern="CD8")
+# Returns: k_CD8_pro, k_CD8_death
+```
+
+**Literature found:** Chen et al. (2019) - T cell kinetics with proliferation AND death
+- "Ki-67+ fraction: 45% ± 8% (proliferating cells)"
+- "Annexin V+ fraction: 12% ± 3% (dying cells)"
+- "Cell cycle duration: ~18 hours"
+
+**Parameter decision:** This paper provides SEPARATE measurements for proliferation
+(Ki-67) and death (Annexin V). We should include BOTH model parameters to properly
+capture the dynamics, even though only `k_CD8_pro` was originally requested.
+
+**Submodel (Pattern 5 - Birth-Death):**
+```yaml
+submodel:
+  code: |
+    def submodel(t, y, params, inputs):
+        T = y[0]
+        k_pro = params['k_CD8_pro']
+        k_death = params['k_CD8_death']
+        return [(k_pro - k_death) * T]
+  pattern: birth_death
+  state_variables:
+    - name: T_cells
+      units: cell
+      initial_value_input: initial_T_cells
+  parameters:
+    - k_CD8_pro    # Originally requested
+    - k_CD8_death  # Added - data supports separate estimation
+  t_span: [0, 72]
+  t_unit: hour
+  observable:
+    units: cell
+  identifiability_notes: "Both rates identifiable: Ki-67 constrains proliferation, Annexin V constrains death"
+  rationale: "Birth-death model appropriate when literature provides separate proliferation and death measurements"
+```
+
+**Key insight:** The submodel includes `k_CD8_death` even though it wasn't in the
+original request, because the literature data supports estimating both rates
+independently. Both parameters will be jointly inferred during Bayesian calibration.
 
 ---
 
