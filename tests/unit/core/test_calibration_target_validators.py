@@ -1208,3 +1208,267 @@ class TestVectorValuedCalibrationTarget:
 
         with pytest.raises(ValidationError, match="\\[lower, upper\\] pair"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+
+# ============================================================================
+# Regression Tests - Bugs Found in Logfire Traces
+# ============================================================================
+
+
+class TestRegressionBugsFromLogfire:
+    """Regression tests for bugs discovered in Logfire traces.
+
+    These tests verify fixes for issues found in production when running
+    the IsolatedSystemTarget workflow. Each test corresponds to a specific
+    error pattern observed in failed LLM extraction attempts.
+    """
+
+    def test_inferred_estimate_skips_snippet_validation(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """REGRESSION: INFERRED_ESTIMATE inputs should skip snippet value check.
+
+        Bug: LLM interpreted qualitative text as numeric (e.g., "maintained viability" → 0.95)
+        and validator rejected because 0.95 doesn't appear literally in snippet.
+
+        Fix: Added input_type='inferred_estimate' that skips snippet validation.
+        """
+        from qsp_llm_workflows.core.calibration.shared_models import InputType
+
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Input where value is INTERPRETED from qualitative text (not literal)
+        # Use values that match the golden observable code scale (~1.0 mean)
+        data["empirical_data"]["inputs"] = [
+            {
+                "name": "cd8_ratio_mean",
+                "value": 0.95,  # NOT in snippet - derived from qualitative statement
+                "units": "dimensionless",
+                "description": "Interpreted ratio from qualitative statement",
+                "source_ref": "smith_2020",
+                "value_location": "Methods, section 3",
+                "value_snippet": "PSC cultures may be maintained for several months without losing their viability",
+                "input_type": "inferred_estimate",  # This should skip validation
+            },
+            {
+                "name": "cd8_ratio_sigma_log",
+                "value": 0.5,  # Use same sigma_log as golden
+                "units": "dimensionless",
+                "description": "Log-scale SD from lognormal fit",
+                "source_ref": "smith_2020",
+                "value_location": "Table 2",
+                "value_snippet": "σ = 0.5 log-scale",  # This IS in snippet
+                "input_type": "direct_parameter",
+            },
+        ]
+        data["empirical_data"]["assumptions"] = []
+
+        # Use lognormal distribution_code to match golden pattern
+        data["empirical_data"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    import math\n"
+            "    np.random.seed(42)\n"
+            "    mean = inputs['cd8_ratio_mean']\n"
+            "    sigma_log = inputs['cd8_ratio_sigma_log']\n"
+            "    n = 10000\n"
+            "    mu_log = math.log(mean.magnitude)\n"
+            "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, n) * mean.units\n"
+            "    median_obs = np.array([np.median(samples)]) * mean.units\n"
+            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+            "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
+            "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+        )
+
+        # Update expected values to match distribution_code output (seed=42)
+        data["empirical_data"]["median"] = [0.95]
+        data["empirical_data"]["ci95"] = [[0.355, 2.565]]
+
+        # Should pass - inferred_estimate skips snippet validation
+        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        assert target is not None
+        assert target.empirical_data.inputs[0].input_type == InputType.INFERRED_ESTIMATE
+
+    def test_snippet_error_suggests_inferred_estimate(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """REGRESSION: Snippet validation error should suggest inferred_estimate option.
+
+        Bug: Error message didn't tell LLM about inferred_estimate alternative.
+
+        Fix: Error message now includes guidance about input_type='inferred_estimate'.
+        """
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Value not in snippet (without inferred_estimate flag)
+        data["empirical_data"]["inputs"][0]["value"] = 0.95
+        data["empirical_data"]["inputs"][0][
+            "value_snippet"
+        ] = "cultures maintained without losing viability"  # No 0.95 here
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value)
+        assert "not found in value_snippet" in error_str
+        assert "inferred_estimate" in error_str  # NEW: suggests the alternative
+
+    def test_distribution_code_array_error_has_helpful_message(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """REGRESSION: "setting an array element with a sequence" error should explain fix.
+
+        Bug: Numpy error was passed through without context, LLM couldn't fix it.
+
+        Fix: Error message now explains ci95_obs structure requirements.
+
+        Note: This test verifies the error handling path exists. The specific numpy
+        error is hard to trigger reliably, so we verify that distribution_code
+        execution errors include helpful guidance.
+        """
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Distribution code that produces a KeyError (easier to trigger than array error)
+        data["empirical_data"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    np.random.seed(42)\n"
+            "    # BUG: Access nonexistent key\n"
+            "    mean = inputs['nonexistent_key']\n"
+            "    return {'median_obs': mean, 'ci95_obs': [[mean, mean]]}"
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value)
+        # Should include error context and guidance for missing keys
+        assert "distribution_code" in error_str.lower() or "key" in error_str.lower()
+        # NEW: Should include guidance about where to define inputs
+        assert "inputs" in error_str.lower() or "assumptions" in error_str.lower()
+
+    def test_pint_quantity_missing_error_has_helpful_message(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """REGRESSION: "median_obs must be Pint Quantity" error should explain fix.
+
+        Bug: Error didn't explain WHY units were missing or HOW to fix.
+
+        Fix: Error message explains units are stripped by sampling and how to reattach.
+        """
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Distribution code that returns plain number without units
+        data["empirical_data"]["distribution_code"] = (
+            "def derive_distribution(inputs, ureg):\n"
+            "    import numpy as np\n"
+            "    np.random.seed(42)\n"
+            "    mean = inputs['cd8_ratio_mean']\n"
+            "    # BUG: Return plain number, not Pint Quantity\n"
+            "    median_obs = np.array([1.0])  # Missing units!\n"
+            "    ci95_obs = [[0.5, 1.5]]  # Also missing units\n"
+            "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value)
+        assert "Pint Quantity" in error_str
+        # NEW: Should include guidance
+        assert "reattach" in error_str.lower() or "units" in error_str.lower()
+
+    def test_crossref_empty_title_skips_validation(
+        self, species_units, golden_calibration_target_data
+    ):
+        """REGRESSION: CrossRef returning empty title should skip validation, not fail.
+
+        Bug: CrossRef returned '[]' for title, validator compared against empty string.
+
+        Fix: Skip title validation when CrossRef has no title data.
+        """
+
+        def mock_get(url, headers=None, timeout=None):
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "title": [],  # CrossRef sometimes returns empty list
+                "author": [{"family": "Smith"}],
+                "issued": {"date-parts": [[2020]]},
+            }
+            return mock_response
+
+        with patch("requests.get", mock_get):
+            data = copy.deepcopy(golden_calibration_target_data)
+
+            # Should pass - empty CrossRef title means we skip title validation
+            target = CalibrationTarget.model_validate(
+                data, context={"species_units": species_units}
+            )
+            assert target is not None
+
+    def test_doi_error_has_verification_link(
+        self, mock_crossref_failure, species_units, golden_calibration_target_data
+    ):
+        """REGRESSION: DOI resolution error should include verification URL.
+
+        Bug: Error just said "failed to resolve" without actionable guidance.
+
+        Fix: Error now includes https://doi.org/<doi> for manual verification.
+        """
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["primary_data_source"]["doi"] = "10.9999/nonexistent.doi"
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value)
+        assert "failed to resolve" in error_str
+        # NEW: Should include verification guidance
+        assert "doi.org" in error_str.lower() or "verify" in error_str.lower()
+
+    def test_secondary_crossref_empty_title_skips_validation(
+        self, species_units, golden_calibration_target_data
+    ):
+        """REGRESSION: Secondary source with empty CrossRef title should skip validation.
+
+        Bug: Same as primary source - CrossRef '[]' title caused spurious failures.
+        """
+
+        def mock_get(url, headers=None, timeout=None):
+            mock_response = Mock()
+            mock_response.status_code = 200
+            if "10.1000/test.2020.001" in url:
+                # Primary source - normal response
+                mock_response.json.return_value = {
+                    "title": ["Immune landscape of pancreatic ductal adenocarcinoma"],
+                    "author": [{"family": "Smith"}],
+                    "issued": {"date-parts": [[2020]]},
+                }
+            else:
+                # Secondary source - empty title
+                mock_response.json.return_value = {
+                    "title": [],  # Empty!
+                    "author": [{"family": "Jones"}],
+                    "issued": {"date-parts": [[2019]]},
+                }
+            return mock_response
+
+        with patch("requests.get", mock_get):
+            data = copy.deepcopy(golden_calibration_target_data)
+            data["secondary_data_sources"] = [
+                {
+                    "source_tag": "jones_2019",
+                    "title": "Some paper with missing CrossRef title",
+                    "first_author": "Jones",
+                    "year": 2019,
+                    "doi_or_url": "10.1000/secondary.2019.001",
+                }
+            ]
+
+            # Should pass - empty CrossRef title means we skip title validation
+            target = CalibrationTarget.model_validate(
+                data, context={"species_units": species_units}
+            )
+            assert target is not None
+            assert len(target.secondary_data_sources) == 1

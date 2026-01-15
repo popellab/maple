@@ -20,6 +20,7 @@ from qsp_llm_workflows.core.prompts import (
 )
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 from qsp_llm_workflows.core.calibration import CalibrationTarget, IsolatedSystemTarget
+from qsp_llm_workflows.core.model_structure import ModelStructure
 
 
 class PromptBuilder(ABC):
@@ -844,6 +845,9 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
         with open(model_definitions_file, "r", encoding="utf-8") as f:
             model_definitions = json.load(f)
 
+        # Create ModelStructure for validation context
+        model_structure = ModelStructure.model_validate(model_definitions)
+
         # Load model context (required)
         if not model_context_file or not model_context_file.exists():
             raise ValueError(
@@ -892,6 +896,7 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                     "pydantic_model": IsolatedSystemTarget,
                     "validation_context": {
                         "species_units": all_species_units,
+                        "model_structure": model_structure,
                     },
                 }
 

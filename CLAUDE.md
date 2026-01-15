@@ -455,6 +455,14 @@ Inputs are co-located with the code blocks that use them:
 - `ObservableConstant`: Geometric/modeling constants with biological_basis
 - `LiteratureInput`: Backwards-compatibility alias for `EstimateInput`
 
+**Input type classification (`EstimateInput.input_type`):**
+- `direct_parameter`: Value reported directly in paper (e.g., "mean = 42.0")
+- `proxy_measurement`: Requires conversion (e.g., "doubling time = 8h" → rate constant)
+- `experimental_condition`: Protocol choice from paper (e.g., seeding density, E:T ratio)
+- `inferred_estimate`: Value interpreted from qualitative text (e.g., "maintained viability" → 0.95)
+
+Use `inferred_estimate` when the numeric value doesn't appear literally in the paper but is a reasonable interpretation of qualitative statements. Snippet validation is skipped for this type since the value won't appear literally in the text.
+
 **Figure source support:**
 Input classes (`EstimateInput`, `SubmodelInput`, `SubmodelStateVariable`) support figure-extracted data via:
 - `source_type`: `text` (default), `table`, or `figure`
@@ -556,7 +564,7 @@ Only write observable code if you need transformations (e.g., cell count → dia
 ```python
 # Recommended: import from the calibration package
 from qsp_llm_workflows.core.calibration import (
-    CalibrationTarget, IsolatedSystemTarget, IndexType,
+    CalibrationTarget, IsolatedSystemTarget, IndexType, InputType,
     Observable, Submodel, SubmodelStateVariable,
     EstimateInput, SubmodelInput, ModelingAssumption,
     # Code validation

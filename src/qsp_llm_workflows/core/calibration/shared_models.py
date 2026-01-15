@@ -26,6 +26,18 @@ class InputType(str, Enum):
     EXPERIMENTAL_CONDITION = "experimental_condition"
     """Protocol/experimental choice from paper (e.g., seeding density, E:T ratio)."""
 
+    INFERRED_ESTIMATE = "inferred_estimate"
+    """Value interpreted from qualitative text (e.g., 'maintained viability' → 0.95).
+
+    Use when the numeric value does not appear literally in the paper but is
+    a reasonable interpretation of qualitative statements. The value_snippet
+    should contain the qualitative text that supports the interpretation,
+    and the description should explain how the value was derived.
+
+    Snippet validation is skipped for this input type since the value is
+    not expected to appear literally in the text.
+    """
+
 
 class EstimateInput(BaseModel):
     """
@@ -73,7 +85,10 @@ class EstimateInput(BaseModel):
             "Classification of this input:\n"
             "- direct_parameter: Literature reports the value directly (e.g., 'mean = 42.0')\n"
             "- proxy_measurement: Requires conversion (e.g., 'doubling time = 8h' → rate constant)\n"
-            "- experimental_condition: Protocol choice from paper (e.g., seeding density, E:T ratio)"
+            "- experimental_condition: Protocol choice from paper (e.g., seeding density, E:T ratio)\n"
+            "- inferred_estimate: Value interpreted from qualitative text (e.g., 'maintained viability' → 0.95).\n"
+            "  Use when numeric value doesn't appear literally but is a reasonable interpretation.\n"
+            "  Snippet validation is skipped for this type."
         ),
     )
 

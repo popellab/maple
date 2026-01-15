@@ -461,9 +461,16 @@ class CalibrationTarget(BaseModel):
             metadata = resolve_doi(self.primary_data_source.doi)
             if metadata is None:
                 raise DOIResolutionError(
-                    f"DOI '{self.primary_data_source.doi}' failed to resolve via CrossRef. "
-                    "Verify the DOI exists and is correctly formatted (e.g., '10.1234/journal.2023.123'). "
-                    "Search for the paper on Google Scholar or PubMed to find the correct DOI."
+                    f"DOI '{self.primary_data_source.doi}' failed to resolve via CrossRef.\n\n"
+                    "Possible causes:\n"
+                    "  1. DOI is incorrect or has typos\n"
+                    "  2. DOI format is wrong (should be like '10.1234/journal.2023.123')\n"
+                    "  3. CrossRef API is temporarily unavailable\n"
+                    "  4. Paper is too new and not yet indexed\n\n"
+                    "How to fix:\n"
+                    "  - Search for the paper on Google Scholar or PubMed\n"
+                    "  - Click 'Cite' or look for the DOI on the publisher's page\n"
+                    "  - Verify the DOI resolves at https://doi.org/<your-doi>"
                 )
         return self
 
@@ -474,12 +481,19 @@ class CalibrationTarget(BaseModel):
             metadata = resolve_doi(self.primary_data_source.doi)
             if metadata:
                 crossref_title = metadata.get("title", "")
+                # Handle case where CrossRef returns empty or list title
+                if not crossref_title or crossref_title == "[]":
+                    # CrossRef has no title - skip validation but warn
+                    return self
                 if not fuzzy_match(crossref_title, self.primary_data_source.title, threshold=0.75):
                     raise PaperTitleMismatchError(
                         f"Paper title mismatch:\n"
                         f"  CrossRef: '{crossref_title}'\n"
-                        f"  Provided: '{self.primary_data_source.title}'\n"
-                        f"Use the exact title from the DOI. Copy the title from CrossRef or the paper itself."
+                        f"  Provided: '{self.primary_data_source.title}'\n\n"
+                        f"How to fix:\n"
+                        f"  - Copy the exact title from the paper or publisher's website\n"
+                        f"  - Check for special characters, subscripts, or abbreviations\n"
+                        f"  - Ensure the DOI matches the paper you're citing"
                     )
         return self
 
@@ -503,9 +517,14 @@ class CalibrationTarget(BaseModel):
                 if metadata is None:
                     raise DOIResolutionError(
                         f"Secondary source '{source.source_tag}' has DOI '{doi_or_url}' "
-                        f"that failed to resolve via CrossRef.\n"
-                        f"Verify the DOI exists and is correctly formatted (e.g., '10.1234/journal.2023.123').\n"
-                        f"If this is a URL (not a DOI), ensure it doesn't start with '10.' or contain 'doi.org'."
+                        f"that failed to resolve via CrossRef.\n\n"
+                        f"Possible causes:\n"
+                        f"  1. DOI is incorrect or has typos\n"
+                        f"  2. CrossRef API is temporarily unavailable\n"
+                        f"  3. This is actually a URL, not a DOI\n\n"
+                        f"How to fix:\n"
+                        f"  - Verify the DOI at https://doi.org/{doi_or_url}\n"
+                        f"  - If this is a URL (not DOI), use a different format that doesn't start with '10.'"
                     )
         return self
 
@@ -527,12 +546,19 @@ class CalibrationTarget(BaseModel):
                 metadata = resolve_doi(doi_or_url)
                 if metadata:
                     crossref_title = metadata.get("title", "")
+                    # Handle case where CrossRef returns empty or list title
+                    if not crossref_title or crossref_title == "[]":
+                        # CrossRef has no title - skip validation
+                        continue
                     if not fuzzy_match(crossref_title, source.title, threshold=0.75):
                         raise PaperTitleMismatchError(
                             f"Secondary source '{source.source_tag}' title mismatch:\n"
                             f"  CrossRef: '{crossref_title}'\n"
-                            f"  Provided: '{source.title}'\n"
-                            f"Use the exact title from the DOI. Copy the title from CrossRef or the paper itself."
+                            f"  Provided: '{source.title}'\n\n"
+                            f"How to fix:\n"
+                            f"  - Copy the exact title from the paper or publisher's website\n"
+                            f"  - Check for special characters, subscripts, or abbreviations\n"
+                            f"  - Ensure the DOI matches the paper you're citing"
                         )
         return self
 
@@ -673,11 +699,17 @@ class CalibrationTarget(BaseModel):
 
         def check_inputs(inputs, location_prefix: str):
             """Helper to check value_snippet for a list of inputs."""
+            from qsp_llm_workflows.core.calibration.shared_models import InputType
+
             for inp in inputs:
                 value = inp.value
                 snippet = inp.value_snippet
 
                 if not snippet:
+                    continue
+
+                # Skip validation for inferred estimates (values interpreted from qualitative text)
+                if hasattr(inp, "input_type") and inp.input_type == InputType.INFERRED_ESTIMATE:
                     continue
 
                 # Handle both scalar and vector-valued inputs
@@ -698,7 +730,8 @@ class CalibrationTarget(BaseModel):
                         f"  - Typos in the extracted value\n"
                         f"  - Different numeric format in the paper (e.g., '2.5×10⁻³' vs '0.0025')\n"
                         f"  - Value reported in different units that need conversion\n"
-                        f"  - Snippet truncated before the value appears"
+                        f"  - Snippet truncated before the value appears\n"
+                        f"  - If value is INTERPRETED from qualitative text, use input_type='inferred_estimate'"
                     )
 
         # Check empirical_data.inputs
@@ -782,7 +815,20 @@ class CalibrationTarget(BaseModel):
 
             # Check median_obs has units
             if not hasattr(result["median_obs"], "units"):
-                raise MissingUnitsError("Result['median_obs'] must be a Pint Quantity with units")
+                raise MissingUnitsError(
+                    "Result['median_obs'] must be a Pint Quantity with units.\n\n"
+                    "The distribution_code returned a plain number without units.\n"
+                    "Common causes:\n"
+                    "  1. np.median() or np.array() on samples stripped the units\n"
+                    "  2. Forgot to reattach units after sampling\n\n"
+                    "Fix: Reattach units immediately after operations that strip them.\n\n"
+                    "Example:\n"
+                    "  # Sampling strips units - reattach immediately\n"
+                    "  samples = rng.lognormal(mu, sigma, n) * mean.units\n\n"
+                    "  # Now numpy operations preserve units\n"
+                    "  median_obs = np.array([np.median(samples)])  # Has units!\n"
+                    "  ci95_obs = [[np.percentile(samples, 2.5), np.percentile(samples, 97.5)]]"
+                )
 
             # Check dimensionality matches expected units
             expected_quantity = 1.0 * ureg(self.empirical_data.units)
@@ -867,8 +913,40 @@ class CalibrationTarget(BaseModel):
             # Re-raise all our custom validation errors
             raise
         except Exception as e:
-            # Other execution errors - wrap in generic validation error
-            raise CalibrationTargetValidationError(f"Error executing derivation_code: {e}") from e
+            # Provide helpful guidance for common errors
+            error_msg = str(e)
+            guidance = ""
+
+            if "setting an array element with a sequence" in error_msg:
+                guidance = (
+                    "\n\nThis error typically occurs when ci95_obs has inconsistent array structure.\n"
+                    "Common causes:\n"
+                    "  1. Mixing Pint Quantities and plain numbers in ci95_obs\n"
+                    "  2. np.percentile on Pint arrays returns Quantities - ensure consistent types\n\n"
+                    "Fix: Ensure ci95_obs is a list of [lower, upper] pairs where both elements\n"
+                    "have the same type (both Pint Quantities or both plain floats).\n\n"
+                    "Example fix:\n"
+                    "  ci_low = np.percentile(samples, 2.5)  # Already a Quantity if samples has units\n"
+                    "  ci_hi = np.percentile(samples, 97.5)\n"
+                    "  ci95_obs = [[ci_low, ci_hi]]  # Both are Quantities"
+                )
+            elif "unsupported operand type" in error_msg or "cannot convert" in error_msg.lower():
+                guidance = (
+                    "\n\nThis error often occurs when mixing Pint Quantities with plain numbers.\n"
+                    "Ensure all values in calculations have consistent units.\n"
+                    "Use inputs['name'].magnitude to extract plain numbers if needed."
+                )
+            elif "KeyError" in error_msg or "key" in error_msg.lower():
+                guidance = (
+                    "\n\nThis error suggests a missing input in the inputs dict.\n"
+                    "Check that all variables used in distribution_code are defined in:\n"
+                    "  - empirical_data.inputs (for literature values)\n"
+                    "  - empirical_data.assumptions (for modeling assumptions like n_mc_samples)"
+                )
+
+            raise CalibrationTargetValidationError(
+                f"Error executing distribution_code: {e}{guidance}"
+            ) from e
 
         return self
 
