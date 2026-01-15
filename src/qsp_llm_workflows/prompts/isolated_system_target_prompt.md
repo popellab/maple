@@ -328,242 +328,27 @@ k_prod = k_decay * C_ss  # = 17.3 pg/mL/hour
 
 ## Submodel Design Patterns
 
-Choose the simplest ODE structure that captures the experimental data.
+Choose the simplest ODE structure that captures the experimental data. The `pattern` field
+and `submodel.code` field descriptions include standard patterns with code examples.
 
-### Pattern 1: First-Order Decay
-**Use for:** Clearance, death, dissociation, protein degradation
+**Pattern selection guide:**
 
-```python
-def submodel(t, y, params, inputs):
-    X = y[0]
-    k = params['k_decay']  # or k_death, k_el, koff
-    return [-k * X]
-```
+| Observable Data Type | Pattern | ODE Structure |
+|---------------------|---------|---------------|
+| Half-life / decay curve | first_order_decay | dX/dt = -k*X |
+| Steady-state + turnover | production_decay | dC/dt = k_prod - k_decay*C |
+| Doubling time / fold expansion | exponential_growth | dN/dt = k*N |
+| Growth curve with plateau | logistic_growth | dN/dt = k*N*(1-N/K) |
+| Separate birth + death rates | birth_death | dN/dt = (k_pro - k_death)*N |
+| Kd, kon, koff binding data | binding_equilibrium | Receptor-ligand ODE |
+| Saturation curve / Vmax, Km | michaelis_menten | dS/dt = -Vmax*S/(Km+S) |
+| Killing assay / E:T response | two_species_interaction | Coupled ODEs |
+| Other (CFSE, delays, etc.) | custom | Define as needed |
 
-**Solution:** X(t) = X₀ × e^(-kt)
-**Data needed:** Half-life or decay time-course
-
----
-
-### Pattern 2: Production + First-Order Decay
-**Use for:** Cytokine steady-state, protein turnover, constant secretion
-
-```python
-def submodel(t, y, params, inputs):
-    C = y[0]
-    k_prod = params['k_secretion']
-    k_decay = params['k_clearance']
-    return [k_prod - k_decay * C]
-```
-
-**Solution:** C(t) → k_prod/k_decay at steady-state
-**Data needed:** Steady-state concentration + half-life (or turnover rate)
-
----
-
-### Pattern 3: Exponential Growth
-**Use for:** Cell proliferation, viral replication, early tumor growth
-
-```python
-def submodel(t, y, params, inputs):
-    N = y[0]
-    k = params['k_growth']
-    return [k * N]
-```
-
-**Solution:** N(t) = N₀ × e^(kt)
-**Data needed:** Doubling time or fold-expansion over time
-
----
-
-### Pattern 4: Logistic Growth
-**Use for:** Tumor growth to carrying capacity, confluent cultures, spheroid expansion
-
-```python
-def submodel(t, y, params, inputs):
-    N = y[0]
-    k = params['k_growth']
-    K = params['carrying_capacity']
-    return [k * N * (1 - N / K)]
-```
-
-**Solution:** Sigmoid growth to K
-**Data needed:** Growth curve with plateau, or growth rate + max size
-
----
-
-### Pattern 5: Birth-Death Balance
-**Use for:** Cell populations with separate proliferation and death
-
-```python
-def submodel(t, y, params, inputs):
-    N = y[0]
-    k_pro = params['k_proliferation']
-    k_death = params['k_death']
-    return [(k_pro - k_death) * N]
-```
-
-**Note:** Only identifiable if both rates measured independently. Otherwise use Pattern 3 with net rate.
-**Data needed:** Separate proliferation assay (BrdU/Ki-67) + death assay (Annexin V/caspase)
-
----
-
-### Pattern 6: Binding Equilibrium
-**Use for:** Receptor-ligand, drug-target, antibody-antigen
-
-```python
-def submodel(t, y, params, inputs):
-    R_free = y[0]  # free receptor
-    L = inputs['ligand_concentration']
-    R_total = inputs['total_receptor']
-    kon = params['kon']
-    koff = params['koff']  # or calculate: koff = Kd * kon
-
-    R_bound = R_total - R_free
-    dR_free = -kon * R_free * L + koff * R_bound
-    return [dR_free]
-```
-
-**At equilibrium:** R_bound/R_total = L / (Kd + L)
-**Data needed:** Kd (and optionally kon or koff), receptor expression level
-
----
-
-### Pattern 7: Michaelis-Menten (Saturable Process)
-**Use for:** Enzyme kinetics, receptor-mediated clearance, saturable transport
-
-```python
-def submodel(t, y, params, inputs):
-    S = y[0]  # substrate concentration
-    Vmax = params['Vmax']
-    Km = params['Km']
-    return [-Vmax * S / (Km + S)]
-```
-
-**Data needed:** Vmax and Km, or full saturation curve
-**Note:** At low [S]: first-order (rate ≈ Vmax/Km × S). At high [S]: zero-order (rate ≈ Vmax).
-
----
-
-### Pattern 8: Two-Species Interaction
-**Use for:** Effector-target killing, predator-prey, competition
-
-```python
-def submodel(t, y, params, inputs):
-    T = y[0]  # target cells
-    E = y[1]  # effector cells
-    k_kill = params['k_killing']
-    k_growth = params['k_tumor_growth']
-
-    dT = k_growth * T - k_kill * E * T
-    dE = 0  # or model effector dynamics
-    return [dT, dE]
-```
-
-**Data needed:** Killing assay at multiple E:T ratios, or time-course of target elimination
-**Note:** k_kill has units 1/(cell × time) or 1/(concentration × time)
-
----
-
-### Pattern 9: Programmed Expansion
-**Use for:** T cell activation where cells undergo fixed number of divisions after activation
-
-```python
-def submodel(t, y, params, inputs):
-    aT = y[0]  # activated cells in division program
-    T = y[1]   # effector cells (completed divisions)
-
-    k_pro = params['k_proliferation']  # rate of completing divisions
-    N_div = params['n_divisions']      # number of division generations
-    k_death = params['k_death']
-
-    # Activated cells progress through division program
-    d_aT = -k_pro / N_div * aT
-
-    # Effector cells produced with 2^N amplification
-    d_T = k_pro / N_div * (2**N_div) * aT - k_death * T
-
-    return [d_aT, d_T]
-```
-
-**Key insight:** k_pro is the rate of completing the division program, NOT a simple birth rate. One activated cell produces 2^N_div effector cells.
-**Data needed:** Division number assay (CFSE), time to complete expansion, fold-expansion
-
----
-
-### Pattern 10: Generation-Structured
-**Use for:** Tracking cell divisions via dye dilution (each division halves fluorescence)
-
-```python
-def submodel(t, y, params, inputs):
-    # y[i] = cells in generation i (i=0 is undivided)
-    k_div = params['k_division']
-    k_death = params['k_death']
-    n_gens = len(y)
-
-    dydt = []
-    for i in range(n_gens):
-        # Inflow from previous generation (2x due to division)
-        inflow = 2 * k_div * y[i-1] if i > 0 else 0
-        # Outflow to next generation
-        outflow = k_div * y[i] if i < n_gens - 1 else 0
-        # Death
-        death = k_death * y[i]
-
-        dydt.append(inflow - outflow - death)
-
-    return dydt
-```
-
-**Observable:** Mean division number = Σ(i × y[i]) / Σ(y[i])
-**Data needed:** CFSE/CTV dye dilution peaks over time
-
----
-
-### Pattern 11: Transit Compartment
-**Use for:** Approximating a time delay without true delay differential equations
-
-```python
-def submodel(t, y, params, inputs):
-    # y[0:n] = transit compartments, y[n] = output
-    k_tr = params['k_transit']  # n/tau where tau is mean delay
-    n_transit = inputs['n_compartments']
-
-    dydt = [0] * (n_transit + 1)
-
-    # Input to first compartment
-    dydt[0] = inputs['input_rate'] - k_tr * y[0]
-
-    # Transit compartments
-    for i in range(1, n_transit):
-        dydt[i] = k_tr * (y[i-1] - y[i])
-
-    # Output compartment
-    dydt[n_transit] = k_tr * y[n_transit-1] - params['k_elimination'] * y[n_transit]
-
-    return dydt
-```
-
-**Key insight:** Chain of n compartments with rate k_tr = n/τ approximates gamma-distributed delay with mean τ.
-**Data needed:** Lag time data, absorption profiles, maturation delays
-
----
-
-### Choosing the Right Pattern
-
-| Observable Data Type | Recommended Pattern |
-|---------------------|---------------------|
-| Half-life / single decay curve | Pattern 1 |
-| Steady-state + turnover | Pattern 2 |
-| Doubling time / fold expansion | Pattern 3 |
-| Growth curve with plateau | Pattern 4 |
-| Separate birth + death rates | Pattern 5 |
-| Kd, kon, koff binding data | Pattern 6 |
-| Saturation curve / Vmax, Km | Pattern 7 |
-| Killing assay / E:T response | Pattern 8 |
-| T cell expansion with fixed divisions | Pattern 9 |
-| CFSE/CTV dye dilution | Pattern 10 |
-| PK delay (absorption, maturation) | Pattern 11 |
+**Key identifiability notes:**
+- Birth-death: Only net rate identifiable unless both measured independently
+- Binding: Kd identifiable from equilibrium; kon/koff require kinetic data
+- Two-species: k_kill has units 1/(cell × time)
 
 ---
 

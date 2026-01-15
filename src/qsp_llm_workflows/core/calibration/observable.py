@@ -320,15 +320,32 @@ class Submodel(BaseModel):
             "  y: state vector (list of floats, order matches state_variables)\n"
             "  params: dict of parameter values (use full model parameter names)\n"
             "  inputs: dict of experimental conditions (from submodel.inputs)\n"
-            "  returns: list of derivatives (same length as y)\n\n"
-            "Example:\n"
+            "  returns: list of derivatives (same length as y)"
+        ),
+        examples=[
+            # Exponential growth
             "def submodel(t, y, params, inputs):\n"
-            "    S = y[0]  # spheroid cell count\n"
-            "    k_prolif = params['k_C1_growth']\n"
-            "    C_max = params['C_max']\n"
-            "    dSdt = k_prolif * S * (1 - S / C_max)\n"
-            "    return [dSdt]"
-        )
+            "    N = y[0]\n"
+            "    k = params['k_growth']\n"
+            "    return [k * N]",
+            # Logistic growth
+            "def submodel(t, y, params, inputs):\n"
+            "    N = y[0]\n"
+            "    k = params['k_growth']\n"
+            "    K = params['carrying_capacity']\n"
+            "    return [k * N * (1 - N / K)]",
+            # Birth-death
+            "def submodel(t, y, params, inputs):\n"
+            "    N = y[0]\n"
+            "    k_pro = params['k_proliferation']\n"
+            "    k_death = params['k_death']\n"
+            "    return [(k_pro - k_death) * N]",
+            # First-order decay
+            "def submodel(t, y, params, inputs):\n"
+            "    X = y[0]\n"
+            "    k = params['k_decay']\n"
+            "    return [-k * X]",
+        ],
     )
 
     inputs: List[SubmodelInput] = Field(
