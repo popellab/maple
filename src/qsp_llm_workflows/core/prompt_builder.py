@@ -630,17 +630,39 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                     if rxn.rate_law:
                         output.append(f"- Rate law: `{rxn.rate_law}`")
 
-                    # Related species
-                    all_species = rxn.reactants + rxn.products
-                    if all_species:
-                        output.append(f"- Species: {', '.join(f'`{s}`' for s in all_species)}")
+                    # Related species with descriptions (from reactants, products, AND rate law)
+                    all_species = set(rxn.reactants + rxn.products)
+                    # Also extract species from rate law (qualified names like V_T.PDGF)
+                    if rxn.rate_law:
+                        import re
 
-                    # Other parameters in this reaction
+                        # Match qualified species names (compartment.species pattern)
+                        rate_law_species = re.findall(
+                            r"\b([A-Z]_[A-Z]\.[A-Za-z0-9_]+)\b", rxn.rate_law
+                        )
+                        all_species.update(rate_law_species)
+
+                    if all_species:
+                        output.append("- **Species:**")
+                        for species_name in sorted(all_species):
+                            species_obj = model_structure._species_by_name.get(species_name)
+                            if species_obj and species_obj.description:
+                                output.append(f"  - `{species_name}`: {species_obj.description}")
+                            else:
+                                output.append(f"  - `{species_name}`")
+
+                    # Other parameters in this reaction (with descriptions)
                     other_params = [p for p in rxn.parameters if p != param_name]
                     if other_params:
-                        output.append(
-                            f"- Other parameters: {', '.join(f'`{p}`' for p in other_params)}"
-                        )
+                        output.append("- **Other parameters:**")
+                        for other_param_name in other_params:
+                            other_param = model_structure.get_parameter(other_param_name)
+                            if other_param and other_param.description:
+                                output.append(
+                                    f"  - `{other_param_name}`: {other_param.description}"
+                                )
+                            else:
+                                output.append(f"  - `{other_param_name}`")
 
                     output.append("")
             else:

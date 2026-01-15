@@ -79,7 +79,13 @@ class ExperimentalContext(BaseModel):
     )
     indication: Optional[Indication] = Field(
         None,
-        description=enum_field_description(Indication, "Cancer indication (for clinical contexts)"),
+        description=(
+            enum_field_description(Indication, "Cancer indication (for clinical contexts)")
+            + "\n\nFor non-cancer data (e.g., viral infection, healthy tissue):\n"
+            "- Set indication='other_disease'\n"
+            "- Set stage=null (cancer staging doesn't apply)\n"
+            "- Document what the data represents in study_interpretation and key_assumptions"
+        ),
     )
     treatment: Optional[TreatmentContext] = Field(
         None, description="Treatment context (for clinical contexts)"

@@ -408,17 +408,20 @@ class Submodel(BaseModel):
         default=SubmodelPattern.CUSTOM,
         description=(
             "Which standard ODE pattern this submodel follows.\n\n"
-            "Standard patterns:\n"
-            "- first_order_decay: dX/dt = -k*X (clearance, death, dissociation)\n"
-            "- production_decay: dC/dt = k_prod - k_decay*C (cytokine steady-state)\n"
-            "- exponential_growth: dN/dt = k*N (cell proliferation)\n"
-            "- logistic_growth: dN/dt = k*N*(1-N/K) (growth with carrying capacity)\n"
-            "- birth_death: dN/dt = (k_pro - k_death)*N (separate proliferation/death)\n"
-            "- binding_equilibrium: receptor-ligand binding (Kd, kon, koff)\n"
-            "- michaelis_menten: dS/dt = -Vmax*S/(Km+S) (enzyme kinetics)\n"
-            "- two_species_interaction: coupled ODEs (effector-target killing)\n"
-            "- custom: non-standard patterns\n\n"
-            "Use CUSTOM for patterns like clonal expansion, transit compartments, etc."
+            "Pattern selection by data type:\n"
+            "- Half-life/decay curve → first_order_decay: dX/dt = -k*X\n"
+            "- Steady-state + turnover → production_decay: dC/dt = k_prod - k_decay*C\n"
+            "- Doubling time/fold expansion → exponential_growth: dN/dt = k*N\n"
+            "- Growth curve with plateau → logistic_growth: dN/dt = k*N*(1-N/K)\n"
+            "- Separate birth + death rates → birth_death: dN/dt = (k_pro - k_death)*N\n"
+            "- Kd, kon, koff binding data → binding_equilibrium: receptor-ligand ODE\n"
+            "- Saturation curve (Vmax, Km) → michaelis_menten: dS/dt = -Vmax*S/(Km+S)\n"
+            "- Killing assay / E:T response → two_species_interaction: coupled ODEs\n"
+            "- Other (CFSE, delays, etc.) → custom\n\n"
+            "Key identifiability:\n"
+            "- birth_death: only net rate identifiable unless both measured separately\n"
+            "- binding_equilibrium: Kd from equilibrium; kon/koff require kinetic data\n"
+            "- two_species_interaction: k_kill has units 1/(cell × time)"
         ),
     )
 

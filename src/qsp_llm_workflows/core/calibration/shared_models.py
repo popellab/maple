@@ -80,9 +80,21 @@ class EstimateInput(BaseModel):
     conversion_formula: Optional[str] = Field(
         None,
         description=(
-            "For proxy_measurement type: formula showing how to convert to model parameter.\n"
-            "Example: 'k_pro = ln(2) / doubling_time'\n"
-            "Example: 'k_death = ln(2) / half_life'\n"
+            "For proxy_measurement type: formula showing how to convert to model parameter.\n\n"
+            "Common conversions by parameter type:\n"
+            "Rate constants (1/time):\n"
+            "- Doubling time → k = ln(2) / t_double\n"
+            "- Half-life → k = ln(2) / t_half\n"
+            "- Fold change → k = ln(fold) / time\n"
+            "- Mean residence time → k = 1 / MRT\n\n"
+            "Binding parameters:\n"
+            "- Ka (association) → Kd = 1 / Ka\n"
+            "- koff from Kd, kon → koff = Kd * kon\n\n"
+            "PK parameters:\n"
+            "- CL + Vd → kel = CL / Vd\n"
+            "- AUC → CL = Dose * F / AUC\n\n"
+            "Production rates:\n"
+            "- Steady-state → k_prod = k_decay * C_ss\n\n"
             "Not required for direct_parameter or experimental_condition types."
         ),
     )
