@@ -204,6 +204,14 @@ class ModelStructure(BaseModel):
         """Get reactions involving a species."""
         return [r for r in self.reactions if species in r.reactants + r.products]
 
+    def get_reactions_for_parameter(self, parameter: str) -> list[ModelReaction]:
+        """Get reactions that use a parameter in their rate law."""
+        return [r for r in self.reactions if parameter in r.parameters]
+
+    def get_parameter(self, name: str) -> ModelParameter | None:
+        """Get parameter by name, or None if not found."""
+        return self._parameters_by_name.get(name)
+
     # =========================================================================
     # Validation
     # =========================================================================

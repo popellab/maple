@@ -586,6 +586,72 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
     def get_workflow_type(self) -> str:
         return "isolated_system_target"
 
+    def format_parameter_context(self, parameters: str, model_structure: ModelStructure) -> str:
+        """
+        Build rich context block for parameters from the model structure.
+
+        Similar to ParameterPromptBuilder.format_model_context() but sources
+        data from ModelStructure instead of pre-built JSON.
+
+        Args:
+            parameters: Comma-separated parameter names (e.g., "k_CD8_pro,k_CD8_death")
+            model_structure: ModelStructure object with parameter and reaction data
+
+        Returns:
+            Formatted markdown text describing each parameter's role in the model
+        """
+        param_names = [p.strip() for p in parameters.split(",") if p.strip()]
+        output = []
+
+        for param_name in param_names:
+            param = model_structure.get_parameter(param_name)
+            reactions = model_structure.get_reactions_for_parameter(param_name)
+
+            # Parameter header
+            output.append(f"### Parameter: `{param_name}`")
+
+            # Parameter info
+            if param:
+                output.append(f"- **Units:** {param.units}")
+                if param.description:
+                    output.append(f"- **Description:** {param.description}")
+            else:
+                output.append("- **Warning:** Parameter not found in model structure")
+
+            output.append("")
+
+            # Reactions using this parameter
+            if reactions:
+                output.append(f"**Reactions using this parameter ({len(reactions)}):**")
+                output.append("")
+
+                for i, rxn in enumerate(reactions, 1):
+                    output.append(f"**{i}. `{rxn.name}`**")
+                    if rxn.rate_law:
+                        output.append(f"- Rate law: `{rxn.rate_law}`")
+
+                    # Related species
+                    all_species = rxn.reactants + rxn.products
+                    if all_species:
+                        output.append(f"- Species: {', '.join(f'`{s}`' for s in all_species)}")
+
+                    # Other parameters in this reaction
+                    other_params = [p for p in rxn.parameters if p != param_name]
+                    if other_params:
+                        output.append(
+                            f"- Other parameters: {', '.join(f'`{p}`' for p in other_params)}"
+                        )
+
+                    output.append("")
+            else:
+                output.append("**Reactions:** No reactions found using this parameter.")
+                output.append("")
+
+            output.append("---")
+            output.append("")
+
+        return "\n".join(output) if output else "No parameter context available."
+
     def process(
         self,
         input_csv: Path,
@@ -645,10 +711,14 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                     print(f"Warning: Empty parameters for {target_id}, skipping")
                     continue
 
+                # Build rich parameter context from model structure
+                parameter_context = self.format_parameter_context(parameters, model_structure)
+
                 # Build the prompt
                 prompt = build_isolated_system_target_prompt(
                     parameters=parameters,
                     model_context=model_context,
+                    parameter_context=parameter_context,
                     notes=notes,
                 )
 

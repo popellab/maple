@@ -146,6 +146,7 @@ def build_calibration_target_prompt(
 def build_isolated_system_target_prompt(
     parameters: str,
     model_context: str,
+    parameter_context: str = "",
     notes: str = "",
 ) -> str:
     """
@@ -154,6 +155,7 @@ def build_isolated_system_target_prompt(
     Args:
         parameters: Comma-separated parameter names to calibrate (e.g., "k_CD8_pro,k_CD8_death")
         model_context: High-level model description (from model_context.txt)
+        parameter_context: Rich context for each parameter (reactions, species, etc.)
         notes: Optional notes/guidance for the extraction
 
     Returns:
@@ -163,6 +165,9 @@ def build_isolated_system_target_prompt(
 
     prompt = prompt.replace("{{PARAMETERS}}", parameters)
     prompt = prompt.replace("{{MODEL_CONTEXT}}", model_context)
+    prompt = prompt.replace(
+        "{{PARAMETER_CONTEXT}}", parameter_context or "No parameter context available."
+    )
 
     # Handle optional notes with mustache-style conditional
     if notes and notes.strip():

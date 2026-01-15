@@ -13,6 +13,18 @@ Find experimental data to calibrate the specified model parameters and define a 
 
 ---
 
+## Parameter Context
+
+The following parameters need to be calibrated. Study their mechanistic usage
+in the model BEFORE designing your submodel.
+
+{{PARAMETER_CONTEXT}}
+
+Your submodel MUST replicate how these parameters are used mechanistically,
+not just use the same parameter names with different dynamics.
+
+---
+
 ## Your Task
 
 1. **Understand the parameters** - Query the model to see what reactions use these parameters
