@@ -54,7 +54,7 @@ Understanding the relationship between the data structure fields:
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  inputs (LiteratureInput)                                                   │
+│  inputs (EstimateInput)                                                     │
 │    - cell_count_mean: 800000 (from paper)                                   │
 │    - cell_count_sd: 100000 (from paper)                                     │
 │    - initial_cells: 100000 (experimental condition)                         │
@@ -129,7 +129,6 @@ Use when literature value converts directly to parameter via simple algebra:
 
 **Important constraints for direct conversion mode:**
 - Set `submodel: null` (or omit entirely)
-- **Do NOT set `initializes_state`** on any input - there are no state variables to initialize
 - Only include inputs needed for the conversion formula (literature values + uncertainty assumptions)
 - Do NOT include "initial condition" inputs - those are only for submodel mode
 
@@ -143,7 +142,6 @@ empirical_data:
       units: hour
       input_type: proxy_measurement
       conversion_formula: "k = ln(2) / doubling_time"
-      # NO initializes_state field!
       source_ref: Smith2020
       value_location: "Figure 2"
       value_snippet: "cells doubled every 8 hours"
@@ -617,126 +615,18 @@ Add to `key_study_limitations` for every context mismatch:
 
 ---
 
-## Sample Size Requirement
+## Field-Level Guidance
 
-You MUST extract the sample size (n) for each measurement. This is critical
-for proper uncertainty quantification and pooling across studies.
+Detailed guidance for individual fields is embedded in the schema itself. Key fields with
+embedded documentation:
 
-**Look for:**
-- "n = X" or "N = X" in methods/results sections
-- Sample sizes in figure legends (e.g., "n=5 per group")
-- Patient/subject counts in study design
-- Number of replicates in in vitro experiments
-- Number of animals per group in preclinical studies
+- **`sample_size`** - Where to look in papers, format, handling missing values
+- **`input_type`** - Classification (direct_parameter, proxy_measurement, experimental_condition)
+- **`state_variables`** - Self-contained format with provenance fields
+- **`pattern`** - Standard ODE patterns (exponential_growth, birth_death, etc.)
+- **`parameters`** - Include all mechanistically necessary parameters
 
-**For vector-valued data:**
-- If sample size differs at each index point, provide as a list: `sample_size: [5, 5, 4, 3]`
-- If same for all points, provide single int: `sample_size: 5`
-
-**If sample size is not explicitly reported:**
-- Check figure error bars - if SEM is reported, can sometimes back-calculate n from SD/SEM
-- Note uncertainty in study_interpretation: "Sample size not explicitly reported; n≈X inferred from methods"
-- Use conservative estimate based on study type
-
-**Required fields:**
-- `sample_size`: int or List[int] - the numeric value(s)
-- `sample_size_rationale`: str - explanation of how sample size was determined
-
-**Example:**
-```yaml
-empirical_data:
-  median: [750000]
-  ci95: [[456000, 1044000]]
-  units: cell
-  sample_size: 5
-  sample_size_rationale: "n=5 replicates per condition, stated in Methods section 2.3"
-```
-
----
-
-## Input Classification (input_type)
-
-Each input must be classified by type:
-
-| Type | Description | source_ref | conversion_formula |
-|------|-------------|------------|-------------------|
-| `direct_parameter` | Literature reports parameter directly (e.g., "k = 3/day") | Must be literature | Not needed |
-| `proxy_measurement` | Requires conversion (e.g., "doubling time = 8h") | Must be literature | **Required** |
-| `experimental_condition` | Protocol choice (e.g., seeding density) | Can use `experimental_protocol` | Not needed |
-
-**Example inputs:**
-```yaml
-# Direct parameter - literature reports the rate directly
-- name: proliferation_rate
-  value: 3.0
-  units: 1/day
-  input_type: direct_parameter
-  source_ref: DeBoer2001
-  # conversion_formula not needed
-
-# Proxy measurement - requires conversion
-- name: doubling_time
-  value: 8.0
-  units: hour
-  input_type: proxy_measurement
-  source_ref: Smith2020
-  conversion_formula: "k_pro = ln(2) / doubling_time"
-
-# Experimental condition - protocol choice
-- name: initial_cell_count
-  value: 1000.0
-  units: cell
-  input_type: experimental_condition
-  source_ref: experimental_protocol
-  # No literature citation needed for protocol choices
-```
-
----
-
-## State Variable Initial Conditions
-
-Each state variable declares which input provides its initial condition via `initial_value_input`:
-
-```yaml
-state_variables:
-  - name: T_cells
-    units: cell
-    initial_value_input: initial_cell_count  # Must match an Input.name
-  - name: tumor_cells
-    units: cell
-    initial_value_input: initial_tumor_size
-```
-
-The linkage is on the state variable, not the input. This makes the data flow clear.
-
----
-
-## Submodel Pattern Classification
-
-Classify your submodel using the `pattern` field:
-
-| Pattern | Enum Value | Use For |
-|---------|------------|---------|
-| dX/dt = -k*X | `first_order_decay` | Clearance, death, dissociation |
-| dC/dt = k_prod - k_decay*C | `production_decay` | Cytokine steady-state |
-| dN/dt = k*N | `exponential_growth` | Cell proliferation |
-| dN/dt = k*N*(1-N/K) | `logistic_growth` | Tumor growth with carrying capacity |
-| dN/dt = (k_pro - k_death)*N | `birth_death` | Separate proliferation and death |
-| Receptor-ligand binding | `binding_equilibrium` | Kd, kon, koff estimation |
-| dS/dt = -Vmax*S/(Km+S) | `michaelis_menten` | Enzyme kinetics |
-| Two coupled ODEs | `two_species_interaction` | Effector-target killing |
-| Programmed expansion | `programmed_expansion` | T cell clonal expansion |
-| Generation-structured | `generation_structured` | CFSE/CTV dye dilution |
-| Transit compartments | `transit_compartment` | Delay approximation |
-| Other | `custom` | Non-standard patterns |
-
-Also add `identifiability_notes` to document which parameters can be independently estimated:
-
-```yaml
-submodel:
-  pattern: birth_death
-  identifiability_notes: "Only net growth rate (k_pro - k_death) identifiable from this data; individual rates require separate proliferation and death assays"
-```
+See field descriptions in the output schema for detailed requirements and examples.
 
 ---
 
@@ -802,7 +692,10 @@ submodel:
   state_variables:
     - name: T_cells
       units: cell
-      initial_value_input: initial_T_cells
+      initial_value: 100000.0
+      source_ref: Smith2020
+      value_location: "Methods, Cell Culture"
+      value_snippet: "1×10^5 CD8+ T cells were seeded per well"
   parameters:
     - k_CD8_pro
   t_span: [0, 72]
@@ -814,36 +707,30 @@ submodel:
   rationale: "Exponential growth valid for early expansion before contact inhibition"
 ```
 
-**Inputs (from literature):**
+**Inputs for empirical_data (used in distribution_code):**
 ```yaml
-inputs:
-  - name: initial_T_cells
-    value: 100000.0
-    units: cell
-    input_type: experimental_condition
-    description: "Initial cell seeding density"
-    source_ref: Smith2020
-    value_location: "Methods, Cell Culture"
-    value_snippet: "1×10^5 CD8+ T cells were seeded per well"
+empirical_data:
+  inputs:
+    - name: final_cell_count
+      value: 750000.0
+      units: cell
+      input_type: direct_parameter
+      description: "Mean cell count at 72 hours"
+      source_ref: Smith2020
+      value_location: "Figure 2A"
+      value_snippet: "CD8+ T cells expanded to 7.5×10^5 ± 1.5×10^5 cells by day 3"
 
-  - name: final_cell_count
-    value: 750000.0
-    units: cell
-    input_type: direct_parameter
-    description: "Mean cell count at 72 hours"
-    source_ref: Smith2020
-    value_location: "Figure 2A"
-    value_snippet: "CD8+ T cells expanded to 7.5×10^5 ± 1.5×10^5 cells by day 3"
-
-  - name: final_cell_count_sd
-    value: 150000.0
-    units: cell
-    input_type: direct_parameter
-    description: "SD of cell count at 72 hours"
-    source_ref: Smith2020
-    value_location: "Figure 2A"
-    value_snippet: "CD8+ T cells expanded to 7.5×10^5 ± 1.5×10^5 cells by day 3"
+    - name: final_cell_count_sd
+      value: 150000.0
+      units: cell
+      input_type: direct_parameter
+      description: "SD of cell count at 72 hours"
+      source_ref: Smith2020
+      value_location: "Figure 2A"
+      value_snippet: "CD8+ T cells expanded to 7.5×10^5 ± 1.5×10^5 cells by day 3"
 ```
+
+Note: Initial cell count is now in `submodel.state_variables` with full provenance.
 
 **Assumptions:**
 ```yaml
@@ -922,7 +809,10 @@ submodel:
   state_variables:
     - name: T_cells
       units: cell
-      initial_value_input: initial_T_cells
+      initial_value: 100000.0
+      source_ref: Chen2019
+      value_location: "Methods, p.2"
+      value_snippet: "1×10^5 T cells were seeded per well"
   parameters:
     - k_CD8_pro    # Originally requested
     - k_CD8_death  # Added - data supports separate estimation
@@ -966,25 +856,28 @@ submodel:
   identifiability_notes: "Kd directly measured; kon from kinetic fitting. koff = Kd × kon is derived, not independently measured."
 ```
 
-**State variables:**
+**State variables (self-contained with provenance):**
 ```yaml
 state_variables:
   - name: PD1_free
     units: nanomolar
-    initial_value_input: PD1_total  # Starts fully free
-```
-
-**Inputs:**
-```yaml
-inputs:
-  - name: PD1_total
-    value: 10.0
-    units: nanomolar
-    input_type: experimental_condition
-    description: "Total PD-1 concentration in binding assay"
-    source_ref: experimental_protocol
+    initial_value: 10.0  # Starts fully free at total PD-1 concentration
+    source_ref: Cheng2013
     value_location: "Methods, SPR"
     value_snippet: "PD-1 immobilized at 10 nM equivalent surface density"
+```
+
+**Submodel inputs (used in ODE code):**
+```yaml
+submodel:
+  inputs:
+    - name: PD1_total
+      value: 10.0
+      units: nanomolar
+      description: "Total PD-1 concentration in binding assay"
+      source_ref: Cheng2013
+      value_location: "Methods, SPR"
+      value_snippet: "PD-1 immobilized at 10 nM equivalent surface density"
 
   - name: PDL1_concentration
     value: 100.0
@@ -1100,54 +993,48 @@ submodel:
   identifiability_notes: "CL and V jointly identifiable from concentration time-course; half-life constrains CL/V ratio"
 ```
 
-**State variables:**
+**State variables (self-contained):**
 ```yaml
 state_variables:
   - name: nivo_concentration
     units: microgram / milliliter
-    initial_value_input: initial_concentration
-```
-
-**Inputs:**
-```yaml
-inputs:
-  - name: initial_concentration
-    value: 30.0
-    units: microgram / milliliter
-    input_type: proxy_measurement
-    description: "Cmax after 3 mg/kg IV dose - approximates initial concentration"
+    initial_value: 30.0
     source_ref: Bajaj2017
     value_location: "Table 2"
     value_snippet: "Cmax of 30.2 μg/mL following 3 mg/kg dose"
-    conversion_formula: "C0 ≈ Cmax for IV bolus"
+```
 
-  - name: terminal_half_life
-    value: 26.7
-    units: day
-    input_type: proxy_measurement
-    description: "Terminal elimination half-life"
-    source_ref: Bajaj2017
-    value_location: "Results, p.5"
-    value_snippet: "terminal half-life of 26.7 days (95% CI: 19.9-35.8)"
-    conversion_formula: "k_el = ln(2) / t_half"
+**Inputs for empirical_data:**
+```yaml
+empirical_data:
+  inputs:
+    - name: terminal_half_life
+      value: 26.7
+      units: day
+      input_type: proxy_measurement
+      description: "Terminal elimination half-life"
+      source_ref: Bajaj2017
+      value_location: "Results, p.5"
+      value_snippet: "terminal half-life of 26.7 days (95% CI: 19.9-35.8)"
+      conversion_formula: "k_el = ln(2) / t_half"
 
-  - name: clearance
-    value: 228.0
-    units: milliliter / day
-    input_type: direct_parameter
-    description: "Typical clearance value"
-    source_ref: Bajaj2017
-    value_location: "Table 3"
-    value_snippet: "CL = 9.5 mL/h (CV 40%)"
+    - name: clearance
+      value: 228.0
+      units: milliliter / day
+      input_type: direct_parameter
+      description: "Typical clearance value"
+      source_ref: Bajaj2017
+      value_location: "Table 3"
+      value_snippet: "CL = 9.5 mL/h (CV 40%)"
 
-  - name: clearance_cv
-    value: 0.40
-    units: dimensionless
-    input_type: direct_parameter
-    description: "Coefficient of variation for clearance"
-    source_ref: Bajaj2017
-    value_location: "Table 3"
-    value_snippet: "CL = 9.5 mL/h (CV 40%)"
+    - name: clearance_cv
+      value: 0.40
+      units: dimensionless
+      input_type: direct_parameter
+      description: "Coefficient of variation for clearance"
+      source_ref: Bajaj2017
+      value_location: "Table 3"
+      value_snippet: "CL = 9.5 mL/h (CV 40%)"
 ```
 
 **Assumptions:**
@@ -1224,71 +1111,70 @@ submodel:
   identifiability_notes: "At steady-state, only ratio k_sec/k_clear identifiable. Separate measurements of secretion rate and half-life required for independent estimation."
 ```
 
-**State variables:**
+**State variables (self-contained):**
 ```yaml
 state_variables:
   - name: IL2_concentration
     units: picogram / milliliter
-    initial_value_input: initial_IL2
-```
-
-**Inputs:**
-```yaml
-inputs:
-  - name: initial_IL2
-    value: 0.0
-    units: picogram / milliliter
-    input_type: experimental_condition
-    description: "Initial IL-2 concentration (fresh medium)"
-    source_ref: experimental_protocol
+    initial_value: 0.0
+    source_ref: Marchingo2014
     value_location: "Methods"
     value_snippet: "Cells cultured in fresh medium without exogenous IL-2"
+```
 
-  - name: T_cell_count
-    value: 100000.0
-    units: cell
-    input_type: experimental_condition
-    description: "Number of T cells in culture well"
-    source_ref: experimental_protocol
-    value_location: "Methods"
-    value_snippet: "10^5 cells per well in 200 μL"
+**Submodel inputs (used in ODE code):**
+```yaml
+submodel:
+  inputs:
+    - name: T_cell_count
+      value: 100000.0
+      units: cell
+      description: "Number of T cells in culture well"
+      source_ref: Marchingo2014
+      value_location: "Methods"
+      value_snippet: "10^5 cells per well in 200 μL"
+```
 
-  - name: secretion_rate
-    value: 1.0
-    units: picogram / cell / hour
-    input_type: direct_parameter
-    description: "Per-cell IL-2 secretion rate"
-    source_ref: Marchingo2014
-    value_location: "Figure 2B"
-    value_snippet: "secretion rates of 0.5-2 pg/cell/hour depending on stimulation"
+**Inputs for empirical_data (used in distribution_code):**
+```yaml
+empirical_data:
+  inputs:
+    - name: secretion_rate
+      value: 1.0
+      units: picogram / cell / hour
+      input_type: direct_parameter
+      description: "Per-cell IL-2 secretion rate"
+      source_ref: Marchingo2014
+      value_location: "Figure 2B"
+      value_snippet: "secretion rates of 0.5-2 pg/cell/hour depending on stimulation"
 
-  - name: IL2_half_life
-    value: 2.0
-    units: hour
-    input_type: proxy_measurement
-    description: "IL-2 half-life in culture"
-    source_ref: Marchingo2014
-    value_location: "Supplementary"
-    value_snippet: "IL-2 half-life approximately 2 hours in culture conditions"
-    conversion_formula: "k_clear = ln(2) / t_half"
+    - name: IL2_half_life
+      value: 2.0
+      units: hour
+      input_type: proxy_measurement
+      description: "IL-2 half-life in culture"
+      source_ref: Marchingo2014
+      value_location: "Supplementary"
+      value_snippet: "IL-2 half-life approximately 2 hours in culture conditions"
+      conversion_formula: "k_clear = ln(2) / t_half"
 
-  - name: secretion_rate_low
-    value: 0.5
-    units: picogram / cell / hour
-    input_type: direct_parameter
-    description: "Lower bound of secretion rate range"
-    source_ref: Marchingo2014
-    value_location: "Figure 2B"
-    value_snippet: "secretion rates of 0.5-2 pg/cell/hour depending on stimulation"
+    - name: secretion_rate_low
+      value: 0.5
+      units: picogram / cell / hour
+      input_type: direct_parameter
+      description: "Lower bound of secretion rate range"
+      source_ref: Marchingo2014
+      value_location: "Figure 2B"
+      value_snippet: "secretion rates of 0.5-2 pg/cell/hour depending on stimulation"
 
-  - name: secretion_rate_high
-    value: 2.0
-    units: picogram / cell / hour
-    input_type: direct_parameter
-    description: "Upper bound of secretion rate range"
-    source_ref: Marchingo2014
-    value_location: "Figure 2B"
-    value_snippet: "secretion rates of 0.5-2 pg/cell/hour depending on stimulation"
+    - name: secretion_rate_high
+      value: 2.0
+      units: picogram / cell / hour
+      input_type: direct_parameter
+      description: "Upper bound of secretion rate range"
+      source_ref: Marchingo2014
+      value_location: "Figure 2B"
+      value_snippet: "secretion rates of 0.5-2 pg/cell/hour depending on stimulation"
 ```
 
 **Assumptions:**

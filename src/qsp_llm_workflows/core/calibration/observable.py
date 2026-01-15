@@ -342,13 +342,34 @@ class Submodel(BaseModel):
     )
 
     state_variables: List[SubmodelStateVariable] = Field(
-        description="State variables in order matching the y vector in submodel code."
+        description=(
+            "State variables in order matching the y vector in submodel code.\n\n"
+            "Each state variable is SELF-CONTAINED with:\n"
+            "- name: variable name in ODE (e.g., 'T_cells')\n"
+            "- units: Pint-parseable units (e.g., 'cell')\n"
+            "- initial_value: numeric initial condition\n"
+            "- source_ref: reference to source (must match a defined source_tag)\n"
+            "- value_location: where in the source (e.g., 'Methods p.3')\n"
+            "- value_snippet: exact text from source\n\n"
+            "For figure-extracted values, also include:\n"
+            "- source_type: 'figure'\n"
+            "- figure_id: e.g., 'Figure 2A'\n"
+            "- extraction_method: 'manual', 'digitizer', 'webplotdigitizer', or 'other'"
+        )
     )
 
     parameters: List[str] = Field(
         description=(
             "Parameter names from the full QSP model used in this submodel.\n"
-            "These enable joint inference across calibration targets."
+            "These enable joint inference across calibration targets.\n\n"
+            "IMPORTANT: Include ALL parameters needed to properly model the dynamics, not just\n"
+            "the parameters you were asked to calibrate. For example:\n"
+            "- If calibrating proliferation rate, you may also need death rate\n"
+            "- If calibrating binding affinity, you may need both kon and koff\n"
+            "- If calibrating growth rate, you may need carrying capacity\n\n"
+            "Use the model query service (query_parameters(), query_reactions()) to find\n"
+            "exact parameter names from the full model. All parameters listed here will be\n"
+            "jointly inferred during Bayesian calibration."
         )
     )
 
@@ -369,9 +390,18 @@ class Submodel(BaseModel):
     pattern: SubmodelPattern = Field(
         default=SubmodelPattern.CUSTOM,
         description=(
-            "Which standard ODE pattern this submodel follows.\n"
-            "Helps with validation, documentation, and understanding the model structure.\n"
-            "Use CUSTOM if the submodel doesn't fit a standard pattern."
+            "Which standard ODE pattern this submodel follows.\n\n"
+            "Standard patterns:\n"
+            "- first_order_decay: dX/dt = -k*X (clearance, death, dissociation)\n"
+            "- production_decay: dC/dt = k_prod - k_decay*C (cytokine steady-state)\n"
+            "- exponential_growth: dN/dt = k*N (cell proliferation)\n"
+            "- logistic_growth: dN/dt = k*N*(1-N/K) (growth with carrying capacity)\n"
+            "- birth_death: dN/dt = (k_pro - k_death)*N (separate proliferation/death)\n"
+            "- binding_equilibrium: receptor-ligand binding (Kd, kon, koff)\n"
+            "- michaelis_menten: dS/dt = -Vmax*S/(Km+S) (enzyme kinetics)\n"
+            "- two_species_interaction: coupled ODEs (effector-target killing)\n"
+            "- custom: non-standard patterns\n\n"
+            "Use CUSTOM for patterns like clonal expansion, transit compartments, etc."
         ),
     )
 

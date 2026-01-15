@@ -116,17 +116,31 @@ class CalibrationTargetEstimates(BaseModel):
     # Sample size metadata
     sample_size: Union[int, List[int]] = Field(
         description=(
-            "Sample size (n) for the measurement. Critical for uncertainty quantification "
-            "and pooling across studies. Single int for scalar data or same n for all index "
-            "points. List[int] for different sample sizes at each index point (must match "
-            "index_values length)."
+            "Sample size (n) for the measurement. CRITICAL for uncertainty quantification "
+            "and pooling across studies.\n\n"
+            "WHERE TO LOOK:\n"
+            "- 'n = X' or 'N = X' in methods/results sections\n"
+            "- Sample sizes in figure legends (e.g., 'n=5 per group')\n"
+            "- Patient/subject counts in study design\n"
+            "- Number of replicates in in vitro experiments\n"
+            "- Number of animals per group in preclinical studies\n\n"
+            "FORMAT:\n"
+            "- Single int for scalar data or same n for all index points\n"
+            "- List[int] for different sample sizes at each index point\n\n"
+            "IF NOT REPORTED:\n"
+            "- Check figure error bars - if SEM is reported, can back-calculate n from SD/SEM\n"
+            "- Use conservative estimate based on study type\n"
+            "- Document uncertainty in sample_size_rationale"
         )
     )
     sample_size_rationale: str = Field(
         description=(
-            "Explanation of how sample_size was determined. Document the source "
-            "(e.g., 'n=5 per group stated in Methods section', 'n inferred from "
-            "figure error bars using SEM formula', 'n estimated as typical for this study type')."
+            "Explanation of how sample_size was determined.\n\n"
+            "Examples:\n"
+            "- 'n=5 per group stated in Methods section 2.3'\n"
+            "- 'n inferred from figure error bars using SEM formula: n = (SD/SEM)²'\n"
+            "- 'n estimated as typical for this study type; not explicitly reported'\n"
+            "- 'n=3 replicates per condition, standard for in vitro T cell assays'"
         )
     )
 
