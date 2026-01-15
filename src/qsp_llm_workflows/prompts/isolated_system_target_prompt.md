@@ -257,9 +257,16 @@ The **Parameter Context** section above provides all the information you need ab
 the parameters to calibrate:
 
 - **Units** and **description** for each parameter
-- **Reactions** where the parameter appears, with rate laws
+- **Direct reactions** where the parameter appears, with rate laws
 - **Related species** involved in those reactions
 - **Other parameters** in the same reactions (candidates for joint calibration)
+- **Broader reaction network** - other reactions involving the same species, showing:
+  - What else affects these species (upstream influences)
+  - What these species do elsewhere in the model (downstream effects)
+  - Other parameters that might be relevant for a complete submodel
+
+Use the broader network to understand the biological context and identify whether
+your submodel needs additional parameters to capture the dynamics properly.
 
 ### Example: Including Additional Parameters
 
