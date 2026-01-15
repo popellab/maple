@@ -580,61 +580,22 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
     Processes CSV input with parameter names and generates prompts for
     finding experimental data to calibrate those parameters.
 
-    Requires model_definitions_file and model_context_file to be provided.
+    Requires model_structure_file and model_context_file to be provided.
     """
 
     def get_workflow_type(self) -> str:
         return "isolated_system_target"
 
-    def _build_species_reaction_index(
-        self, model_definitions: Dict[str, Any]
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    def format_parameter_context(self, parameters: str, model_structure: ModelStructure) -> str:
         """
-        Build an index mapping species names to all reactions that involve them.
-
-        Returns:
-            Dict mapping species name -> list of {param_name, reaction_info}
-        """
-        species_index: Dict[str, List[Dict[str, Any]]] = {}
-
-        for param_name, param_entry in model_definitions.items():
-            param_def = param_entry.get("definition", {}).get("parameter_definition", {})
-            model_context = param_def.get("model_context", {})
-            reactions = model_context.get("reactions_and_rules", [])
-
-            for rxn in reactions:
-                # Get all species in this reaction
-                species_list = rxn.get("other_species", [])
-                for species in species_list:
-                    species_name = species.get("name", "")
-                    if species_name:
-                        if species_name not in species_index:
-                            species_index[species_name] = []
-                        species_index[species_name].append(
-                            {
-                                "param_name": param_name,
-                                "param_description": param_def.get("description", ""),
-                                "reaction": rxn.get("reaction", ""),
-                                "reaction_rate": rxn.get("reaction_rate", ""),
-                                "rule": rxn.get("rule", ""),
-                                "rule_type": rxn.get("rule_type", ""),
-                                "other_species": species_list,
-                                "other_parameters": rxn.get("other_parameters", []),
-                            }
-                        )
-
-        return species_index
-
-    def format_parameter_context(self, parameters: str, model_definitions: Dict[str, Any]) -> str:
-        """
-        Build rich context block for parameters from model_definitions.json.
+        Build rich context block for parameters from ModelStructure.
 
         Includes the broader reaction network - other reactions that involve
         the same species as the target parameter's reactions.
 
         Args:
             parameters: Comma-separated parameter names (e.g., "k_CD8_pro,k_CD8_death")
-            model_definitions: Dict loaded from model_definitions.json
+            model_structure: ModelStructure instance with parameters, reactions, species
 
         Returns:
             Formatted markdown text describing each parameter's role in the model
@@ -642,87 +603,66 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
         param_names = [p.strip() for p in parameters.split(",") if p.strip()]
         output = []
 
-        # Build species -> reactions index for the broader network
-        species_index = self._build_species_reaction_index(model_definitions)
-
         for param_name in param_names:
-            # Look up parameter in model_definitions
-            param_entry = model_definitions.get(param_name, {})
-            param_def = param_entry.get("definition", {}).get("parameter_definition", {})
+            # Look up parameter in model structure
+            param = model_structure.get_parameter(param_name)
 
             # Parameter header
             output.append(f"### Parameter: `{param_name}`")
 
             # Parameter info
-            if param_def:
-                if param_def.get("units"):
-                    output.append(f"- **Units:** {param_def['units']}")
-                if param_def.get("description"):
-                    output.append(f"- **Description:** {param_def['description']}")
+            if param:
+                if param.units:
+                    output.append(f"- **Units:** {param.units}")
+                if param.description:
+                    output.append(f"- **Description:** {param.description}")
             else:
-                output.append("- **Warning:** Parameter not found in model definitions")
+                output.append("- **Warning:** Parameter not found in model structure")
 
             output.append("")
-
-            # Get model context (reactions and rules)
-            model_context = param_def.get("model_context", {})
-
-            # Add derived from context if available
-            derived_from = model_context.get("derived_from_context", [])
-            if derived_from:
-                output.append("**Derived from:**")
-                for item in derived_from:
-                    name = item.get("name", "Unknown")
-                    desc = item.get("description", "")
-                    if desc:
-                        output.append(f"- `{name}`: {desc}")
-                    else:
-                        output.append(f"- `{name}`")
-                output.append("")
 
             # Collect species from direct reactions for broader network lookup
             direct_species: set = set()
 
-            # Reactions and rules using this parameter
-            reactions = model_context.get("reactions_and_rules", [])
+            # Get reactions using this parameter
+            reactions = model_structure.get_reactions_for_parameter(param_name)
             if reactions:
                 output.append(f"**Direct reactions ({len(reactions)}):**")
                 output.append("")
 
                 for i, rxn in enumerate(reactions, 1):
-                    # Reaction or rule header
-                    if rxn.get("reaction"):
-                        output.append(f"**{i}. Reaction:** `{rxn['reaction']}`")
-                        if rxn.get("reaction_rate"):
-                            output.append(f"- **Rate:** `{rxn['reaction_rate']}`")
-                    elif rxn.get("rule"):
-                        rule_type = rxn.get("rule_type", "unknown")
-                        output.append(f"**{i}. Rule ({rule_type}):** `{rxn['rule']}`")
+                    # Reaction header with stoichiometry
+                    reactant_str = " + ".join(rxn.reactants) if rxn.reactants else "null"
+                    product_str = " + ".join(rxn.products) if rxn.products else "null"
+                    output.append(f"**{i}. Reaction:** `{reactant_str} -> {product_str}`")
+                    if rxn.rate_law:
+                        output.append(f"- **Rate:** `{rxn.rate_law}`")
 
-                    # Related species
-                    other_species = rxn.get("other_species", [])
-                    if other_species:
+                    # Related species (from reactants and products)
+                    all_species = rxn.reactants + rxn.products
+                    if all_species:
                         output.append("- **Species:**")
-                        for species in other_species:
-                            name = species.get("name", "Unknown")
-                            desc = species.get("description", "")
-                            direct_species.add(name)
+                        for species_name in all_species:
+                            direct_species.add(species_name)
+                            # Look up species description
+                            species_obj = model_structure._species_by_name.get(species_name)
+                            desc = species_obj.description if species_obj else ""
                             if desc:
-                                output.append(f"  - `{name}`: {desc}")
+                                output.append(f"  - `{species_name}`: {desc}")
                             else:
-                                output.append(f"  - `{name}`")
+                                output.append(f"  - `{species_name}`")
 
-                    # Other parameters in this reaction
-                    other_params = rxn.get("other_parameters", [])
+                    # Other parameters in this reaction (excluding current)
+                    other_params = [p for p in rxn.parameters if p != param_name]
                     if other_params:
                         output.append("- **Other parameters:**")
-                        for param in other_params:
-                            name = param.get("name", "Unknown")
-                            desc = param.get("description", "")
+                        for other_param_name in other_params:
+                            other_param = model_structure.get_parameter(other_param_name)
+                            desc = other_param.description if other_param else ""
                             if desc:
-                                output.append(f"  - `{name}`: {desc}")
+                                output.append(f"  - `{other_param_name}`: {desc}")
                             else:
-                                output.append(f"  - `{name}`")
+                                output.append(f"  - `{other_param_name}`")
 
                     output.append("")
             else:
@@ -735,73 +675,57 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                 # reaction and add noise. Real biological species have format "Compartment.Species"
                 biological_species = {s for s in direct_species if "." in s}
 
-                # Find all other reactions involving these species (excluding the current parameter)
-                # Group by unique reaction/rule to avoid repetition
-                reaction_to_info: Dict[str, Dict[str, Any]] = {}
+                # Find all other reactions involving these species
+                # Group by reaction name to avoid repetition
+                seen_reactions: set = set()
+                broader_reactions = []
+
                 for species_name in biological_species:
-                    related = species_index.get(species_name, [])
-                    for rxn_info in related:
-                        # Skip reactions from the current parameter
-                        if rxn_info["param_name"] == param_name:
+                    related_rxns = model_structure.get_reactions_for_species(species_name)
+                    for rxn in related_rxns:
+                        # Skip if already processed or uses current parameter
+                        if rxn.name in seen_reactions:
                             continue
-                        # Skip reactions from other target parameters (shown separately)
-                        if rxn_info["param_name"] in param_names:
+                        if param_name in rxn.parameters:
                             continue
-
-                        # Use reaction or rule as the unique key
-                        rxn_key = rxn_info["reaction"] or rxn_info["rule"]
-                        if not rxn_key:
+                        # Skip if uses any of the target parameters (shown separately)
+                        if any(p in rxn.parameters for p in param_names):
                             continue
 
-                        if rxn_key not in reaction_to_info:
-                            reaction_to_info[rxn_key] = {
-                                "is_rule": bool(rxn_info["rule"]),
-                                "reaction_rate": rxn_info.get("reaction_rate", ""),
-                                "params": {},  # param_name -> description
-                                "species": {},  # species_name -> description
-                            }
-                        # Add this parameter (deduplicates automatically via dict)
-                        reaction_to_info[rxn_key]["params"][rxn_info["param_name"]] = (
-                            rxn_info["param_description"] or ""
-                        )
-                        # Add species from this reaction
-                        for sp in rxn_info.get("other_species", []):
-                            sp_name = sp.get("name", "")
-                            if sp_name and "." in sp_name:  # Skip compartment volumes
-                                reaction_to_info[rxn_key]["species"][sp_name] = sp.get(
-                                    "description", ""
-                                )
+                        seen_reactions.add(rxn.name)
+                        broader_reactions.append(rxn)
 
-                if reaction_to_info:
+                if broader_reactions:
                     output.append(
                         "**Broader reaction network** (other reactions involving the same species):"
                     )
                     output.append("")
 
-                    for rxn_key, rxn_data in reaction_to_info.items():
-                        if rxn_data["is_rule"]:
-                            output.append(f"- Rule: `{rxn_key}`")
-                        else:
-                            output.append(f"- `{rxn_key}`")
-                            # Show rate law for reactions (not rules)
-                            if rxn_data["reaction_rate"]:
-                                output.append(f"  - Rate: `{rxn_data['reaction_rate']}`")
+                    for rxn in broader_reactions:
+                        reactant_str = " + ".join(rxn.reactants) if rxn.reactants else "null"
+                        product_str = " + ".join(rxn.products) if rxn.products else "null"
+                        output.append(f"- `{reactant_str} -> {product_str}`")
+                        if rxn.rate_law:
+                            output.append(f"  - Rate: `{rxn.rate_law}`")
+
                         # List species with descriptions
-                        species = rxn_data["species"]
-                        if species:
+                        rxn_species = [s for s in rxn.reactants + rxn.products if "." in s]
+                        if rxn_species:
                             output.append("  - Species:")
-                            for sp_name in sorted(species.keys()):
-                                desc = species[sp_name]
+                            for sp_name in sorted(set(rxn_species)):
+                                species_obj = model_structure._species_by_name.get(sp_name)
+                                desc = species_obj.description if species_obj else ""
                                 if desc:
                                     output.append(f"    - `{sp_name}`: {desc}")
                                 else:
                                     output.append(f"    - `{sp_name}`")
+
                         # List parameters with descriptions
-                        params = rxn_data["params"]
-                        if params:
+                        if rxn.parameters:
                             output.append("  - Parameters:")
-                            for p_name in sorted(params.keys()):
-                                desc = params[p_name]
+                            for p_name in sorted(rxn.parameters):
+                                p_obj = model_structure.get_parameter(p_name)
+                                desc = p_obj.description if p_obj else ""
                                 if desc:
                                     output.append(f"    - `{p_name}`: {desc}")
                                 else:
@@ -816,7 +740,7 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
     def process(
         self,
         input_csv: Path,
-        model_definitions_file: Path,
+        model_structure_file: Path,
         model_context_file: Path,
         species_units_file: Optional[Path] = None,
         reasoning_effort: str = "high",
@@ -826,7 +750,7 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
 
         Args:
             input_csv: CSV file with columns: target_id, parameters, notes (optional)
-            model_definitions_file: JSON file with model definitions (from qsp-export-model)
+            model_structure_file: JSON file with model structure (from qsp-export-model --export-structure)
             model_context_file: Text file with high-level model description
             species_units_file: Optional JSON file mapping species -> units
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
@@ -836,17 +760,14 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
         """
         import csv
 
-        # Load model definitions (required)
-        if not model_definitions_file or not model_definitions_file.exists():
+        # Load model structure (required) - single source of truth for parameters, reactions, species
+        if not model_structure_file or not model_structure_file.exists():
             raise ValueError(
-                f"model_definitions_file is required for IsolatedSystemTarget workflow. "
-                f"Got: {model_definitions_file}"
+                f"model_structure_file is required for IsolatedSystemTarget workflow. "
+                f"Got: {model_structure_file}. "
+                f"Run qsp-export-model with --export-structure flag to generate it."
             )
-        with open(model_definitions_file, "r", encoding="utf-8") as f:
-            model_definitions = json.load(f)
-
-        # Create ModelStructure for validation context
-        model_structure = ModelStructure.model_validate(model_definitions)
+        model_structure = ModelStructure.from_json(model_structure_file)
 
         # Load model context (required)
         if not model_context_file or not model_context_file.exists():
@@ -876,8 +797,8 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                     print(f"Warning: Empty parameters for {target_id}, skipping")
                     continue
 
-                # Build rich parameter context from model definitions
-                parameter_context = self.format_parameter_context(parameters, model_definitions)
+                # Build rich parameter context from model structure
+                parameter_context = self.format_parameter_context(parameters, model_structure)
 
                 # Build the prompt
                 prompt = build_isolated_system_target_prompt(

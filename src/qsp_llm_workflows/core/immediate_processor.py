@@ -35,7 +35,7 @@ class ImmediateRequestProcessor:
         self,
         base_dir: Path,
         api_key: str,
-        model_definitions_file: Optional[Path] = None,
+        model_structure_file: Optional[Path] = None,
         model_context_file: Optional[Path] = None,
     ):
         """
@@ -44,12 +44,12 @@ class ImmediateRequestProcessor:
         Args:
             base_dir: Base directory for prompt assembly
             api_key: OpenAI API key
-            model_definitions_file: Optional path to model_definitions.json for isolated system targets
+            model_structure_file: Optional path to model_structure.json for isolated system targets
             model_context_file: Optional path to model_context.txt for isolated system targets
         """
         self.base_dir = Path(base_dir)
         self.api_key = api_key
-        self.model_definitions_file = model_definitions_file
+        self.model_structure_file = model_structure_file
         self.model_context_file = model_context_file
 
         # Setup logfire once (optional instrumentation for debugging)
@@ -94,16 +94,16 @@ class ImmediateRequestProcessor:
                 input_csv, species_units_file, reasoning_effort
             )
         elif workflow_type == "isolated_system_target":
-            # Requires model_definitions_file and model_context_file
-            if not self.model_definitions_file:
+            # Requires model_structure_file and model_context_file
+            if not self.model_structure_file:
                 raise ValueError(
-                    "model_definitions_file required for isolated_system_target workflow"
+                    "model_structure_file required for isolated_system_target workflow"
                 )
             if not self.model_context_file:
                 raise ValueError("model_context_file required for isolated_system_target workflow")
             return self.isolated_system_target_creator.process(
                 input_csv,
-                self.model_definitions_file,
+                self.model_structure_file,
                 self.model_context_file,
                 species_units_file,
                 reasoning_effort,
@@ -169,7 +169,7 @@ class ImmediateRequestProcessor:
                 model_settings=settings,
                 builtin_tools=builtin_tools,
                 validation_context=validation_context,
-                retries=5,  # Increased for validation requirements
+                retries=7,  # Increased for validation requirements
             )
 
             # Run agent with prompt

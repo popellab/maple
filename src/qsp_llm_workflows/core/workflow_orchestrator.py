@@ -131,7 +131,7 @@ class WorkflowOrchestrator:
                 openai_api_key=config.openai_api_key,
                 openai_model=config.openai_model,
                 reasoning_effort=reasoning_effort,
-                model_definitions_file=config.model_definitions_file,
+                model_structure_file=config.model_structure_file,
                 model_context_file=config.model_context_file,
             )
 

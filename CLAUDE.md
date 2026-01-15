@@ -586,12 +586,15 @@ from qsp_llm_workflows.core.calibration.enums import Species, Compartment
 
 **Parameter Context (for IsolatedSystemTarget workflow):**
 When extracting IsolatedSystemTarget data, all parameter context is injected into the prompt at build time
-from `model_definitions.json`. The LLM receives:
-- Parameter units, descriptions, and derived-from relationships
+from `model_structure.json`. The LLM receives:
+- Parameter units and descriptions
 - Reactions using each parameter with rate laws
 - Related species and other parameters in the same reactions
+- Broader reaction network context (other reactions involving the same species)
 
 This eliminates the need for runtime tool calls - the LLM has all context needed to write correct submodel code.
+
+**Note:** The `model_structure.json` file (generated with `--export-structure` flag) is the single source of truth for validation context. It uses structured arrays format, unlike `model_definitions.json` which uses a flat dict format for prompt generation in other workflows.
 
 **Vector-valued data:**
 Both scalar and vector-valued data flow through the same pathway:

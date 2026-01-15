@@ -58,9 +58,9 @@ Examples:
     )
 
     parser.add_argument(
-        "--model-definitions",
+        "--model-structure",
         type=Path,
-        help="Path to model_definitions.json for parameter context (isolated_system_target)",
+        help="Path to model_structure.json for parameter context and validation (isolated_system_target)",
     )
 
     parser.add_argument(
@@ -87,9 +87,9 @@ Examples:
 
     # Validate required options for specific workflow types
     if args.type == "isolated_system_target":
-        if not args.model_definitions:
+        if not args.model_structure:
             print(
-                "Error: --model-definitions is required for isolated_system_target workflow",
+                "Error: --model-structure is required for isolated_system_target workflow",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -107,11 +107,11 @@ Examples:
     try:
         config = WorkflowConfig.from_env(storage_dir=output_dir)
 
-        # Add model_definitions_file if provided
-        if args.model_definitions:
-            if not args.model_definitions.exists():
+        # Add model_structure_file if provided
+        if args.model_structure:
+            if not args.model_structure.exists():
                 print(
-                    f"Error: Model definitions file not found: {args.model_definitions}",
+                    f"Error: Model structure file not found: {args.model_structure}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -122,7 +122,7 @@ Examples:
                 openai_api_key=config.openai_api_key,
                 openai_model=config.openai_model,
                 reasoning_effort=config.reasoning_effort,
-                model_definitions_file=args.model_definitions,
+                model_structure_file=args.model_structure,
                 model_context_file=args.model_context,
             )
     except ValueError as e:

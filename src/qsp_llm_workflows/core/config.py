@@ -45,10 +45,10 @@ class WorkflowConfig(BaseModel):
         description="Reasoning effort level for API requests",
     )
 
-    # Model definitions for parameter context (isolated system targets)
-    model_definitions_file: Optional[Path] = Field(
+    # Model structure for parameter context and validation (isolated system targets)
+    model_structure_file: Optional[Path] = Field(
         default=None,
-        description="Path to model_definitions.json for parameter context",
+        description="Path to model_structure.json for parameter context and validation",
     )
 
     # Model context for prompt generation (isolated system targets)
