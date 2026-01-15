@@ -221,14 +221,25 @@ measurements:
 - `empirical_data.iqr`: 33.59 ← Computed from MC, matches code output
 - `empirical_data.ci95`: [100.79, 199.35] ← Computed from MC
 
-**Validation:** Code is executed and outputs must match declared median/iqr/ci95 within 1% tolerance.
+**Validation:** Code is executed and outputs must match declared median/ci95 within tolerance (1% for median, 10% for CI bounds due to Monte Carlo variance).
 
 **Requirements:**
 - **Extract biological/experimental values via inputs** with source traceability
 - **Universal constants OK as literals**: percentiles (2.5, 25, 75, 97.5), mathematical constants (π, 2), MC sample sizes (10000)
 - **Use MC methods** (parametric bootstrap), NOT analytical approximations
 - **Use Pint units** - inputs are pre-converted Pint Quantities, return Pint Quantities
-- Function signature: `derive_distribution(inputs, ureg)` returns dict with `median_obs`, `iqr_obs`, `ci95_obs`
+- Function signature: `derive_distribution(inputs, ureg)` returns dict with `median_obs`, `ci95_lower`, `ci95_upper`
+
+**IMPORTANT: What distribution_code is (and is NOT) for:**
+
+distribution_code is **STATISTICAL ONLY** - it converts literature values (mean ± SD) into
+sampling distributions. It should NEVER contain:
+- Model compartment volumes (V_T, V_C, V_P) - these belong in observable.code
+- Physical constants or conversion factors - these belong in observable.constants
+- ODE parameters or dynamics - these belong in submodel.code
+
+**If you find yourself writing `V_T = 1.0 * ureg.milliliter` in distribution_code, STOP.**
+You're confusing statistical derivation with model simulation.
 
 **GOLDEN RULE: Reattach units immediately after sampling → units propagate naturally.**
 
@@ -247,8 +258,8 @@ def derive_distribution(inputs, ureg):
     # np.median, np.percentile, np.mean, np.std all preserve units!
     return {
         'median_obs': np.median(samples),
-        'iqr_obs': np.percentile(samples, 75) - np.percentile(samples, 25),
-        'ci95_obs': np.percentile(samples, [2.5, 97.5])
+        'ci95_lower': np.percentile(samples, 2.5),
+        'ci95_upper': np.percentile(samples, 97.5),
     }
 ```
 

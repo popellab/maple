@@ -130,10 +130,11 @@ def golden_calibration_target_data():
                 "    n = 10000\n"
                 "    mu_log = math.log(mean.magnitude)\n"
                 "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, n) * mean.units\n"
-                "    median_obs = np.array([np.median(samples)]) * mean.units\n"
+                "    median_obs = np.median(samples)\n"
                 "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-                "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
-                "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+                "    ci95_lower = ci95[0]\n"
+                "    ci95_upper = ci95[1]\n"
+                "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
             ),
         },
         "primary_data_source": {
@@ -600,10 +601,11 @@ class TestCalibrationTargetValidators:
             "    mu_log = math.log(mean.magnitude)\n"
             "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, n)\n"
             "    samples = np.clip(samples, 0.01, None) * mean.units  # Clipping!\n"
-            "    median_obs = np.array([np.median(samples)]) * mean.units\n"
+            "    median_obs = np.median(samples)\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
-            "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+            "    ci95_lower = ci95[0]\n"
+            "    ci95_upper = ci95[1]\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
 
         with pytest.warns(UserWarning, match="clipping.*lognormal"):
@@ -659,11 +661,11 @@ class TestCalibrationTargetValidators:
             "    sd = inputs['ratio_sd']\n"
             "    n = int(inputs['n_mc_samples'].magnitude)\n"
             "    samples = np.abs(np.random.normal(mean.magnitude, sd.magnitude, n)) * mean.units\n"
-            "    median_obs = np.array([np.median(samples)]) * mean.units\n"
-            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * mean.units\n"
+            "    median_obs = np.median(samples)\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
-            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+            "    ci95_lower = ci95[0]\n"
+            "    ci95_upper = ci95[1]\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
 
         # Update calibration target estimates to match code output (vector format)
@@ -745,13 +747,11 @@ class TestCalibrationTargetValidators:
             "    sd = inputs['diameter_sd']\n"
             "    n = int(inputs['n_mc_samples'].magnitude)\n"
             "    samples = np.random.normal(mean.magnitude, sd.magnitude, n)\n"
-            "    median_val = np.median(samples)\n"
-            "    iqr_val = np.percentile(samples, 75) - np.percentile(samples, 25)\n"
+            "    median_obs = np.median(samples) * ureg.centimeter\n"
             "    ci95_vals = np.percentile(samples, [2.5, 97.5])\n"
-            "    median_obs = np.array([median_val]) * ureg.centimeter\n"
-            "    iqr_obs = np.array([iqr_val]) * ureg.centimeter\n"
-            "    ci95_obs = [[ci95_vals[0] * ureg.centimeter, ci95_vals[1] * ureg.centimeter]]\n"
-            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+            "    ci95_lower = ci95_vals[0] * ureg.centimeter\n"
+            "    ci95_upper = ci95_vals[1] * ureg.centimeter\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
 
         with pytest.warns(UserWarning, match="normal distribution for size.*lognormal"):
@@ -884,11 +884,11 @@ class TestCalibrationTargetValidators:
             "    sd = inputs['score_sd']\n"
             "    n = int(inputs['n_mc_samples'].magnitude)\n"
             "    samples = np.random.normal(mean.magnitude, sd.magnitude, n) * mean.units\n"
-            "    median_obs = np.array([np.median(samples)]) * mean.units\n"
-            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * mean.units\n"
+            "    median_obs = np.median(samples)\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
-            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+            "    ci95_lower = ci95[0]\n"
+            "    ci95_upper = ci95[1]\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
 
         with pytest.raises(ValidationError, match="Scale mismatch|Magnitude mismatch"):
@@ -1081,17 +1081,17 @@ class TestVectorValuedCalibrationTarget:
             "    n = int(inputs['n_mc_samples'].magnitude)\n"
             "    units = inputs['cd8_ratio_mean'].units\n"
             "    n_points = len(means)\n"
-            "    medians, iqrs, ci95s = [], [], []\n"
+            "    medians, lowers, uppers = [], [], []\n"
             "    for i in range(n_points):\n"
             "        mu_log = math.log(means[i])\n"
             "        samples = np.random.lognormal(mu_log, sigma_log, n)\n"
             "        medians.append(np.median(samples))\n"
-            "        iqrs.append(np.percentile(samples, 75) - np.percentile(samples, 25))\n"
-            "        ci95s.append([np.percentile(samples, 2.5) * units, np.percentile(samples, 97.5) * units])\n"
+            "        lowers.append(np.percentile(samples, 2.5))\n"
+            "        uppers.append(np.percentile(samples, 97.5))\n"
             "    return {\n"
             "        'median_obs': np.array(medians) * units,\n"
-            "        'iqr_obs': np.array(iqrs) * units,\n"
-            "        'ci95_obs': ci95s\n"
+            "        'ci95_lower': np.array(lowers) * units,\n"
+            "        'ci95_upper': np.array(uppers) * units,\n"
             "    }"
         )
 
@@ -1158,7 +1158,7 @@ class TestVectorValuedCalibrationTarget:
         data["empirical_data"]["index_unit"] = "day"
         data["empirical_data"]["index_type"] = "time"
 
-        with pytest.raises(ValidationError, match="(lengths must match|must be a list of 4)"):
+        with pytest.raises(ValidationError, match="(length mismatch|must be a list of 4)"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
 
     def test_index_fields_required_together(
@@ -1274,10 +1274,11 @@ class TestRegressionBugsFromLogfire:
             "    n = 10000\n"
             "    mu_log = math.log(mean.magnitude)\n"
             "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, n) * mean.units\n"
-            "    median_obs = np.array([np.median(samples)]) * mean.units\n"
+            "    median_obs = np.median(samples)\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    ci95_obs = [[ci95[0] * mean.units, ci95[1] * mean.units]]\n"
-            "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+            "    ci95_lower = ci95[0]\n"
+            "    ci95_upper = ci95[1]\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
 
         # Update expected values to match distribution_code output (seed=42)
@@ -1320,7 +1321,7 @@ class TestRegressionBugsFromLogfire:
 
         Bug: Numpy error was passed through without context, LLM couldn't fix it.
 
-        Fix: Error message now explains ci95_obs structure requirements.
+        Fix: Error message now includes helpful guidance for common errors.
 
         Note: This test verifies the error handling path exists. The specific numpy
         error is hard to trigger reliably, so we verify that distribution_code
@@ -1335,7 +1336,7 @@ class TestRegressionBugsFromLogfire:
             "    np.random.seed(42)\n"
             "    # BUG: Access nonexistent key\n"
             "    mean = inputs['nonexistent_key']\n"
-            "    return {'median_obs': mean, 'ci95_obs': [[mean, mean]]}"
+            "    return {'median_obs': mean, 'ci95_lower': mean, 'ci95_upper': mean}"
         )
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1365,9 +1366,10 @@ class TestRegressionBugsFromLogfire:
             "    np.random.seed(42)\n"
             "    mean = inputs['cd8_ratio_mean']\n"
             "    # BUG: Return plain number, not Pint Quantity\n"
-            "    median_obs = np.array([1.0])  # Missing units!\n"
-            "    ci95_obs = [[0.5, 1.5]]  # Also missing units\n"
-            "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+            "    median_obs = 1.0  # Missing units!\n"
+            "    ci95_lower = 0.5  # Also missing units\n"
+            "    ci95_upper = 1.5  # Also missing units\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
 
         with pytest.raises(ValidationError) as exc_info:

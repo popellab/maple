@@ -67,17 +67,18 @@ Understanding the relationship between the data structure fields:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  distribution_code                                                          │
 │    Computes the DATA DISTRIBUTION from literature values                    │
-│    → Returns: median_obs, ci95_obs (what we OBSERVED)                       │
+│    → Returns: median_obs, ci95_lower, ci95_upper (what we OBSERVED)         │
 │                                                                             │
 │    def derive_distribution(inputs, ureg):                                   │
 │        mean = inputs['cell_count_mean']  # Keep as Quantity                 │
 │        sd = inputs['cell_count_sd']                                         │
 │        # Reattach units immediately after sampling → units propagate        │
 │        samples = rng.lognormal(mu, sigma, n) * mean.units                   │
-│        median_obs = np.array([np.median(samples)])  # Preserves units       │
-│        ci95 = np.percentile(samples, [2.5, 97.5])   # Preserves units       │
-│        ci95_obs = [[ci95[0], ci95[1]]]                                      │
-│        return {'median_obs': median_obs, 'ci95_obs': ci95_obs}              │
+│        return {                                                             │
+│            'median_obs': np.median(samples),                                │
+│            'ci95_lower': np.percentile(samples, 2.5),                       │
+│            'ci95_upper': np.percentile(samples, 97.5),                      │
+│        }                                                                    │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -110,6 +111,24 @@ Understanding the relationship between the data structure fields:
 
 **Key insight:** The `distribution_code` computes the **DATA** distribution (what the paper reports), NOT the parameter distribution.
 
+### IMPORTANT: What distribution_code is (and is NOT) for
+
+**distribution_code is STATISTICAL ONLY:**
+- Converts literature values (mean ± SD, median ± IQR) into sampling distributions
+- Uses Monte Carlo sampling to propagate uncertainty
+- Returns `median_obs`, `ci95_lower`, `ci95_upper`
+
+**distribution_code should NEVER contain:**
+- Model compartment volumes (V_T, V_C, V_P) - these belong in observable.code
+- Physical constants or conversion factors - these belong in observable.constants
+- ODE parameters or dynamics - these belong in submodel.code
+- Species concentrations or cell counts from the model
+
+**If you find yourself writing `V_T = 1.0 * ureg.milliliter` in distribution_code, STOP.**
+You're confusing statistical derivation with model simulation. The literature paper reports
+a measurement value (e.g., "density = 150 cells/mm²") - distribution_code just converts
+that into an uncertainty distribution. It doesn't need to know about model compartments.
+
 ### Pint Units Golden Rule
 
 **Reattach units immediately after operations that strip them → units propagate naturally.**
@@ -129,8 +148,9 @@ def derive_distribution(inputs, ureg):
     # Now numpy operations preserve units automatically!
     # np.median, np.percentile, np.mean, np.std all work on Quantities
     return {
-        'median_obs': np.array([np.median(samples)]),  # Returns Quantity
-        'ci95_obs': [[np.percentile(samples, 2.5), np.percentile(samples, 97.5)]]
+        'median_obs': np.median(samples),
+        'ci95_lower': np.percentile(samples, 2.5),
+        'ci95_upper': np.percentile(samples, 97.5),
     }
 ```
 
@@ -220,9 +240,11 @@ empirical_data:
         k_samples = np.log(2) / t_samples
 
         # np.median and np.percentile preserve units
-        median_obs = np.array([np.median(k_samples)])
-        ci95_obs = [[np.percentile(k_samples, 2.5), np.percentile(k_samples, 97.5)]]
-        return {'median_obs': median_obs, 'ci95_obs': ci95_obs}
+        return {
+            'median_obs': np.median(k_samples),
+            'ci95_lower': np.percentile(k_samples, 2.5),
+            'ci95_upper': np.percentile(k_samples, 97.5),
+        }
 ```
 
 ### Submodel-Based (submodel provided)
@@ -475,10 +497,11 @@ empirical_data:
         samples = rng.lognormal(mu_log, sigma_log, n) * mean.units
 
         # np.median and np.percentile preserve units automatically
-        median_obs = np.array([np.median(samples)])
-        ci95_obs = [[np.percentile(samples, 2.5), np.percentile(samples, 97.5)]]
-
-        return {'median_obs': median_obs, 'ci95_obs': ci95_obs}
+        return {
+            'median_obs': np.median(samples),
+            'ci95_lower': np.percentile(samples, 2.5),
+            'ci95_upper': np.percentile(samples, 97.5),
+        }
 ```
 
 **Caveats:**

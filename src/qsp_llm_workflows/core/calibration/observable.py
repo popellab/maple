@@ -81,15 +81,17 @@ class ObservableConstant(BaseModel):
         )
     )
 
-    biological_basis: str = Field(
+    biological_basis: Optional[str] = Field(
+        default=None,
         description=(
             "Explanation of where this value comes from biologically.\n"
-            "Must include the reasoning or calculation, not just the value.\n\n"
+            "Include the reasoning or calculation, not just the value.\n"
+            "Optional - can be added during human review if not provided.\n\n"
             "Examples:\n"
             "- 'Cancer cell diameter ~17 μm → cross-sectional area = π×(8.5 μm)² = 227 μm² = 2.27e-4 mm²'\n"
             "- 'T cell diameter ~7 μm → volume = 4/3×π×(3.5 μm)³ ≈ 180 μm³'\n"
             "- 'Assumed spherical packing with 74% density'"
-        )
+        ),
     )
 
     source_ref: str = Field(

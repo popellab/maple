@@ -102,11 +102,11 @@ def golden_isolated_target_data():
                 "    mu_log = 0.0  # log(1.0) = 0\n"
                 "    sigma_log = 0.5\n"
                 "    samples = np.random.lognormal(mu_log, sigma_log, 10000)\n"
-                "    median_obs = np.array([np.median(samples)]) * ureg.dimensionless\n"
-                "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * ureg.dimensionless\n"
+                "    median_obs = np.median(samples) * ureg.dimensionless\n"
                 "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-                "    ci95_obs = [[ci95[0] * ureg.dimensionless, ci95[1] * ureg.dimensionless]]\n"
-                "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+                "    ci95_lower = ci95[0] * ureg.dimensionless\n"
+                "    ci95_upper = ci95[1] * ureg.dimensionless\n"
+                "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
             ),
         },
         "primary_data_source": {
@@ -676,11 +676,11 @@ class TestHardcodedConstantsValidation:
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
             "    samples = np.random.lognormal(10, 0.5, 10000)\n"
-            "    median_obs = np.array([np.median(samples)]) * ureg.micrometer**3\n"
-            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * ureg.micrometer**3\n"
+            "    median_obs = np.median(samples) * ureg.micrometer**3\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    ci95_obs = [[ci95[0] * ureg.micrometer**3, ci95[1] * ureg.micrometer**3]]\n"
-            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+            "    ci95_lower = ci95[0] * ureg.micrometer**3\n"
+            "    ci95_upper = ci95[1] * ureg.micrometer**3\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
         # Exact values from lognormal(10, 0.5) with seed 42
         data["empirical_data"]["median"] = [21997.91]
@@ -721,11 +721,11 @@ class TestHardcodedConstantsValidation:
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
             "    samples = np.random.lognormal(18, 0.5, 10000)\n"
-            "    median_obs = np.array([np.median(samples)]) * ureg.micrometer**3\n"
-            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * ureg.micrometer**3\n"
+            "    median_obs = np.median(samples) * ureg.micrometer**3\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    ci95_obs = [[ci95[0] * ureg.micrometer**3, ci95[1] * ureg.micrometer**3]]\n"
-            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+            "    ci95_lower = ci95[0] * ureg.micrometer**3\n"
+            "    ci95_upper = ci95[1] * ureg.micrometer**3\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
         # Exact values from lognormal(18, 0.5) with seed 42
         data["empirical_data"]["median"] = [6.56e7]
@@ -753,11 +753,11 @@ class TestHardcodedConstantsValidation:
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
             "    samples = np.random.lognormal(11.5, 0.5, 10000)\n"
-            "    median_obs = np.array([np.median(samples)]) * ureg.cell\n"
-            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * ureg.cell\n"
+            "    median_obs = np.median(samples) * ureg.cell\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    ci95_obs = [[ci95[0] * ureg.cell, ci95[1] * ureg.cell]]\n"
-            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+            "    ci95_lower = ci95[0] * ureg.cell\n"
+            "    ci95_upper = ci95[1] * ureg.cell\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
         data["empirical_data"]["median"] = [98587.77]
         data["empirical_data"]["iqr"] = [67549.62]
@@ -790,11 +790,11 @@ class TestObservableCodeValidation:
             "    import numpy as np\n"
             "    np.random.seed(42)\n"
             "    samples = np.random.lognormal(11.5, 0.5, 10000)  # Around 1e5 cells\n"
-            "    median_obs = np.array([np.median(samples)]) * ureg.cell\n"
-            "    iqr_obs = np.array([np.percentile(samples, 75) - np.percentile(samples, 25)]) * ureg.cell\n"
+            "    median_obs = np.median(samples) * ureg.cell\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    ci95_obs = [[ci95[0] * ureg.cell, ci95[1] * ureg.cell]]\n"
-            "    return {'median_obs': median_obs, 'iqr_obs': iqr_obs, 'ci95_obs': ci95_obs}"
+            "    ci95_lower = ci95[0] * ureg.cell\n"
+            "    ci95_upper = ci95[1] * ureg.cell\n"
+            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
         )
         # Update median/iqr/ci95 values to match the distribution output
         # lognormal(11.5, 0.5) with seed 42 produces these exact values
@@ -943,10 +943,11 @@ class TestGetParametersUsed:
                     "    samples = np.random.normal(t_double, t_sd, 10000)\n"
                     "    samples = np.maximum(samples, 1.0)\n"
                     "    k_samples = np.log(2) / samples * 24  # Convert to per day\n"
-                    "    median_obs = np.array([np.median(k_samples)]) * ureg('1/day')\n"
+                    "    median_obs = np.median(k_samples) * ureg('1/day')\n"
                     "    ci95 = np.percentile(k_samples, [2.5, 97.5])\n"
-                    "    ci95_obs = [[ci95[0] * ureg('1/day'), ci95[1] * ureg('1/day')]]\n"
-                    "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+                    "    ci95_lower = ci95[0] * ureg('1/day')\n"
+                    "    ci95_upper = ci95[1] * ureg('1/day')\n"
+                    "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
                 ),
             },
             "primary_data_source": {
@@ -1029,10 +1030,11 @@ class TestDirectConversionMode:
                     "    samples = np.random.normal(t_double, t_sd, 10000)\n"
                     "    samples = np.maximum(samples, 1.0)\n"
                     "    k_samples = np.log(2) / samples * 24\n"
-                    "    median_obs = np.array([np.median(k_samples)]) * ureg('1/day')\n"
+                    "    median_obs = np.median(k_samples) * ureg('1/day')\n"
                     "    ci95 = np.percentile(k_samples, [2.5, 97.5])\n"
-                    "    ci95_obs = [[ci95[0] * ureg('1/day'), ci95[1] * ureg('1/day')]]\n"
-                    "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+                    "    ci95_lower = ci95[0] * ureg('1/day')\n"
+                    "    ci95_upper = ci95[1] * ureg('1/day')\n"
+                    "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
                 ),
             },
             "primary_data_source": {
@@ -1131,11 +1133,10 @@ class TestCancerFieldsValidation:
                     "    # k = ln(2) / doubling_time\n"
                     "    doubling_time = inputs['doubling_time']\n"
                     "    k = np.log(2) / doubling_time\n"
-                    "    median_obs = np.array([k.to('1/day').magnitude]) * ureg('1/day')\n"
-                    "    ci95_low = (k * 0.75).to('1/day').magnitude\n"
-                    "    ci95_high = (k * 1.25).to('1/day').magnitude\n"
-                    "    ci95_obs = [[ci95_low * ureg('1/day'), ci95_high * ureg('1/day')]]\n"
-                    "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+                    "    median_obs = k.to('1/day')\n"
+                    "    ci95_lower = (k * 0.75).to('1/day')\n"
+                    "    ci95_upper = (k * 1.25).to('1/day')\n"
+                    "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
                 ),
             },
             "primary_data_source": {
@@ -1204,11 +1205,10 @@ class TestCancerFieldsValidation:
                     "    # k = ln(2) / doubling_time\n"
                     "    doubling_time = inputs['doubling_time']\n"
                     "    k = np.log(2) / doubling_time\n"
-                    "    median_obs = np.array([k.to('1/day').magnitude]) * ureg('1/day')\n"
-                    "    ci95_low = (k * 0.75).to('1/day').magnitude\n"
-                    "    ci95_high = (k * 1.25).to('1/day').magnitude\n"
-                    "    ci95_obs = [[ci95_low * ureg('1/day'), ci95_high * ureg('1/day')]]\n"
-                    "    return {'median_obs': median_obs, 'ci95_obs': ci95_obs}"
+                    "    median_obs = k.to('1/day')\n"
+                    "    ci95_lower = (k * 0.75).to('1/day')\n"
+                    "    ci95_upper = (k * 1.25).to('1/day')\n"
+                    "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
                 ),
             },
             "primary_data_source": {

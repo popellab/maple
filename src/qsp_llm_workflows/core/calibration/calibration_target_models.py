@@ -183,10 +183,11 @@ class CalibrationTargetEstimates(BaseModel):
             "Python code defining a derive_distribution(inputs, ureg) function.\n"
             "inputs is a dict mapping input names to Pint Quantities (scalar or array).\n"
             "Must return dict with Pint Quantities:\n"
-            "  - median_obs: array of medians (length matching index_values, or length 1 for scalar)\n"
-            "  - ci95_obs: list of [lower, upper] pairs (same length)\n\n"
-            "For scalar data, return length-1 arrays.\n"
-            "For vector data, return arrays matching index_values length.\n\n"
+            "  - median_obs: median value(s) as Pint Quantity\n"
+            "  - ci95_lower: lower CI bound(s) as Pint Quantity\n"
+            "  - ci95_upper: upper CI bound(s) as Pint Quantity\n\n"
+            "For scalar data, return scalar Quantities.\n"
+            "For vector data, return array Quantities matching index_values length.\n\n"
             "GOLDEN RULE: Reattach units immediately after sampling, then they propagate.\n"
             "np.median, np.percentile, np.mean, np.std all preserve Pint units.\n\n"
             "Example (scalar - single measurement):\n"
@@ -199,8 +200,9 @@ class CalibrationTargetEstimates(BaseModel):
             "    samples = rng.normal(mean.magnitude, sd.magnitude, 10000) * mean.units\n"
             "    # np.median and np.percentile preserve units\n"
             "    return {\n"
-            "        'median_obs': np.array([np.median(samples)]),\n"
-            "        'ci95_obs': [[np.percentile(samples, 2.5), np.percentile(samples, 97.5)]]\n"
+            "        'median_obs': np.median(samples),\n"
+            "        'ci95_lower': np.percentile(samples, 2.5),\n"
+            "        'ci95_upper': np.percentile(samples, 97.5),\n"
             "    }\n\n"
             "Example (vector - time-course data):\n"
             "def derive_distribution(inputs, ureg):\n"
@@ -209,15 +211,17 @@ class CalibrationTargetEstimates(BaseModel):
             "    means = inputs['cd8_density_mean']  # Quantity array\n"
             "    sds = inputs['cd8_density_sd']  # Quantity array\n"
             "    n_points = len(means.magnitude)\n"
-            "    medians, ci95s = [], []\n"
+            "    medians, lowers, uppers = [], [], []\n"
             "    for i in range(n_points):\n"
             "        # Reattach units immediately\n"
             "        samples = rng.normal(means.magnitude[i], sds.magnitude[i], 10000) * means.units\n"
             "        medians.append(np.median(samples).magnitude)\n"
-            "        ci95s.append([np.percentile(samples, 2.5), np.percentile(samples, 97.5)])\n"
+            "        lowers.append(np.percentile(samples, 2.5).magnitude)\n"
+            "        uppers.append(np.percentile(samples, 97.5).magnitude)\n"
             "    return {\n"
             "        'median_obs': np.array(medians) * means.units,\n"
-            "        'ci95_obs': ci95s\n"
+            "        'ci95_lower': np.array(lowers) * means.units,\n"
+            "        'ci95_upper': np.array(uppers) * means.units,\n"
             "    }"
         )
     )
@@ -773,6 +777,22 @@ class CalibrationTarget(BaseModel):
                     )
                 elif first_error.category == "signature":
                     raise CodeStructureError(first_error.message)
+                elif first_error.category == "hardcoded":
+                    # Provide specific guidance for distribution_code
+                    raise CodeStructureError(
+                        f"{first_error.message}\n\n"
+                        "IMPORTANT: distribution_code is for STATISTICAL derivation only.\n"
+                        "It converts literature-reported values (mean ± SD) into uncertainty distributions.\n"
+                        "It should NOT need model compartment volumes (V_T, V_C, V_P) or physical constants.\n\n"
+                        "If you're seeing this error with compartment volumes like 'V_T = 1.0 * ureg.milliliter',\n"
+                        "you may be confusing distribution_code with observable.code or submodel.code:\n"
+                        "  • distribution_code: Statistical only (mean → samples → median/CI)\n"
+                        "  • observable.code: Model simulation (uses compartment volumes, species)\n"
+                        "  • submodel.code: ODE dynamics (uses model parameters)\n\n"
+                        "If this constant IS needed for statistical derivation, declare it in:\n"
+                        "  • empirical_data.inputs (if from literature)\n"
+                        "  • empirical_data.assumptions (if a modeling choice)"
+                    )
                 else:
                     raise CodeStructureError(first_error.message)
 
@@ -807,106 +827,97 @@ class CalibrationTarget(BaseModel):
             if not isinstance(result, dict):
                 raise ReturnStructureError("Function must return a dict")
 
-            required_keys = {"median_obs", "ci95_obs"}
+            required_keys = {"median_obs", "ci95_lower", "ci95_upper"}
             if not required_keys.issubset(result.keys()):
                 raise ReturnStructureError(
                     f"Function must return dict with keys: {required_keys}. Got: {result.keys()}"
                 )
 
-            # Check median_obs has units
-            if not hasattr(result["median_obs"], "units"):
-                raise MissingUnitsError(
-                    "Result['median_obs'] must be a Pint Quantity with units.\n\n"
-                    "The distribution_code returned a plain number without units.\n"
-                    "Common causes:\n"
-                    "  1. np.median() or np.array() on samples stripped the units\n"
-                    "  2. Forgot to reattach units after sampling\n\n"
-                    "Fix: Reattach units immediately after operations that strip them.\n\n"
-                    "Example:\n"
-                    "  # Sampling strips units - reattach immediately\n"
-                    "  samples = rng.lognormal(mu, sigma, n) * mean.units\n\n"
-                    "  # Now numpy operations preserve units\n"
-                    "  median_obs = np.array([np.median(samples)])  # Has units!\n"
-                    "  ci95_obs = [[np.percentile(samples, 2.5), np.percentile(samples, 97.5)]]"
-                )
+            # Check all returned values have units
+            for key in required_keys:
+                if not hasattr(result[key], "units"):
+                    raise MissingUnitsError(
+                        f"Result['{key}'] must be a Pint Quantity with units.\n\n"
+                        "The distribution_code returned a plain number without units.\n"
+                        "Common cause: Forgot to reattach units after sampling.\n\n"
+                        "Fix: Reattach units immediately after sampling.\n\n"
+                        "Example:\n"
+                        "  samples = rng.normal(mean.magnitude, sd.magnitude, n) * mean.units\n"
+                        "  return {\n"
+                        "      'median_obs': np.median(samples),\n"
+                        "      'ci95_lower': np.percentile(samples, 2.5),\n"
+                        "      'ci95_upper': np.percentile(samples, 97.5),\n"
+                        "  }"
+                    )
 
             # Check dimensionality matches expected units
             expected_quantity = 1.0 * ureg(self.empirical_data.units)
 
-            # Check median
-            if result["median_obs"].dimensionality != expected_quantity.dimensionality:
-                raise DimensionalityMismatchError(
-                    f"median_obs unit dimensionality mismatch:\n"
-                    f"  Expected: {self.empirical_data.units} ({expected_quantity.dimensionality})\n"
-                    f"  Got: {result['median_obs'].units} ({result['median_obs'].dimensionality})"
-                )
-
-            # Check ci95_obs is list of [lower, upper] pairs matching expected length
-            n_expected = len(self.empirical_data.median)
-            ci95_result = result["ci95_obs"]
-
-            if not hasattr(ci95_result, "__len__") or len(ci95_result) != n_expected:
-                raise ReturnStructureError(
-                    f"ci95_obs must be a list of {n_expected} [lower, upper] pairs, "
-                    f"got {len(ci95_result) if hasattr(ci95_result, '__len__') else 'non-list'}"
-                )
-
-            # Check each ci95 pair
-            for i, ci_pair in enumerate(ci95_result):
-                if not hasattr(ci_pair, "__len__") or len(ci_pair) != 2:
-                    raise ReturnStructureError(
-                        f"ci95_obs[{i}] must be [lower, upper] pair, "
-                        f"got {len(ci_pair) if hasattr(ci_pair, '__len__') else 'non-list'} elements"
+            for key in required_keys:
+                if result[key].dimensionality != expected_quantity.dimensionality:
+                    raise DimensionalityMismatchError(
+                        f"{key} unit dimensionality mismatch:\n"
+                        f"  Expected: {self.empirical_data.units} ({expected_quantity.dimensionality})\n"
+                        f"  Got: {result[key].units} ({result[key].dimensionality})"
                     )
 
             # Convert computed values to expected units for comparison
             median_computed = result["median_obs"].to(self.empirical_data.units)
+            ci95_lower_computed = result["ci95_lower"].to(self.empirical_data.units)
+            ci95_upper_computed = result["ci95_upper"].to(self.empirical_data.units)
 
-            # Get reported values (now lists)
+            # Get reported values
             median_reported = self.empirical_data.median
             ci95_reported = self.empirical_data.ci95
 
-            # Use relative tolerance of 1% for comparison
-            rel_tol = 0.01
+            # Tolerances: 1% for median (deterministic), 10% for CI bounds (Monte Carlo variance)
+            median_rel_tol = 0.01
+            ci95_rel_tol = 0.10
 
-            # Handle array magnitudes
+            # Handle array magnitudes (works for both scalar and vector)
             median_mag = np.atleast_1d(median_computed.magnitude)
+            ci95_lower_mag = np.atleast_1d(ci95_lower_computed.magnitude)
+            ci95_upper_mag = np.atleast_1d(ci95_upper_computed.magnitude)
 
-            # Element-wise comparison for median
-            for i in range(len(median_reported)):
-                if abs(median_mag[i] - median_reported[i]) > rel_tol * abs(median_reported[i]):
+            # Check lengths match
+            n_expected = len(median_reported)
+            if len(median_mag) != n_expected:
+                raise ReturnStructureError(
+                    f"median_obs length mismatch: expected {n_expected}, got {len(median_mag)}"
+                )
+            if len(ci95_lower_mag) != n_expected:
+                raise ReturnStructureError(
+                    f"ci95_lower length mismatch: expected {n_expected}, got {len(ci95_lower_mag)}"
+                )
+            if len(ci95_upper_mag) != n_expected:
+                raise ReturnStructureError(
+                    f"ci95_upper length mismatch: expected {n_expected}, got {len(ci95_upper_mag)}"
+                )
+
+            # Element-wise comparison for median (1% tolerance)
+            for i in range(n_expected):
+                if abs(median_mag[i] - median_reported[i]) > median_rel_tol * abs(
+                    median_reported[i]
+                ):
                     raise ComputedValueMismatchError(
                         f"Computed median[{i}] ({median_mag[i]:.4g}) does not match "
                         f"reported median[{i}] ({median_reported[i]:.4g}) within 1% tolerance"
                     )
 
-            # Element-wise comparison for CI95
-            for i in range(len(ci95_reported)):
-                ci_computed = ci95_result[i]
+            # Element-wise comparison for CI95 (10% tolerance for Monte Carlo variance)
+            for i in range(n_expected):
                 ci_rep = ci95_reported[i]
 
-                # Get magnitudes (handle Pint quantities)
-                lo_computed = (
-                    ci_computed[0].magnitude
-                    if hasattr(ci_computed[0], "magnitude")
-                    else ci_computed[0]
-                )
-                hi_computed = (
-                    ci_computed[1].magnitude
-                    if hasattr(ci_computed[1], "magnitude")
-                    else ci_computed[1]
-                )
-
-                if abs(lo_computed - ci_rep[0]) > rel_tol * abs(ci_rep[0]):
+                if abs(ci95_lower_mag[i] - ci_rep[0]) > ci95_rel_tol * abs(ci_rep[0]):
                     raise ComputedValueMismatchError(
-                        f"Computed CI95[{i}] lower ({lo_computed:.4g}) does not match "
-                        f"reported CI95[{i}] lower ({ci_rep[0]:.4g}) within 1% tolerance"
+                        f"Computed ci95_lower[{i}] ({ci95_lower_mag[i]:.4g}) does not match "
+                        f"reported CI95[{i}] lower ({ci_rep[0]:.4g}) within 10% tolerance"
                     )
 
-                if abs(hi_computed - ci_rep[1]) > rel_tol * abs(ci_rep[1]):
+                if abs(ci95_upper_mag[i] - ci_rep[1]) > ci95_rel_tol * abs(ci_rep[1]):
                     raise ComputedValueMismatchError(
-                        f"Computed CI95[{i}] upper ({hi_computed:.4g}) does not match "
-                        f"reported CI95[{i}] upper ({ci_rep[1]:.4g}) within 1% tolerance"
+                        f"Computed ci95_upper[{i}] ({ci95_upper_mag[i]:.4g}) does not match "
+                        f"reported CI95[{i}] upper ({ci_rep[1]:.4g}) within 10% tolerance"
                     )
 
         except CalibrationTargetValidationError:
@@ -919,16 +930,16 @@ class CalibrationTarget(BaseModel):
 
             if "setting an array element with a sequence" in error_msg:
                 guidance = (
-                    "\n\nThis error typically occurs when ci95_obs has inconsistent array structure.\n"
-                    "Common causes:\n"
-                    "  1. Mixing Pint Quantities and plain numbers in ci95_obs\n"
-                    "  2. np.percentile on Pint arrays returns Quantities - ensure consistent types\n\n"
-                    "Fix: Ensure ci95_obs is a list of [lower, upper] pairs where both elements\n"
-                    "have the same type (both Pint Quantities or both plain floats).\n\n"
-                    "Example fix:\n"
-                    "  ci_low = np.percentile(samples, 2.5)  # Already a Quantity if samples has units\n"
-                    "  ci_hi = np.percentile(samples, 97.5)\n"
-                    "  ci95_obs = [[ci_low, ci_hi]]  # Both are Quantities"
+                    "\n\nThis error typically occurs when array structures are inconsistent.\n"
+                    "Common cause: Mixing Pint Quantities and plain numbers.\n\n"
+                    "Fix: Return flat Pint Quantities for each key.\n\n"
+                    "Example:\n"
+                    "  samples = rng.normal(mean.magnitude, sd.magnitude, n) * mean.units\n"
+                    "  return {\n"
+                    "      'median_obs': np.median(samples),\n"
+                    "      'ci95_lower': np.percentile(samples, 2.5),\n"
+                    "      'ci95_upper': np.percentile(samples, 97.5),\n"
+                    "  }"
                 )
             elif "unsupported operand type" in error_msg or "cannot convert" in error_msg.lower():
                 guidance = (
