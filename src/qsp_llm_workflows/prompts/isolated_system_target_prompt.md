@@ -27,18 +27,18 @@ not just use the same parameter names with different dynamics.
 parameters, but you MAY (and often should) include additional model parameters
 when mechanistically necessary. For example, if calibrating a proliferation rate,
 you may also need death rates, carrying capacities, or other parameters from
-the same reactions. Use the model query service (`query_parameters()`,
-`query_reactions()`) to find exact parameter names. All parameters listed in
-`submodel.parameters` will be jointly inferred during Bayesian calibration.
+the same reactions. See the **Parameter Context** section above for related
+parameters in the same reactions. All parameters listed in `submodel.parameters`
+will be jointly inferred during Bayesian calibration.
 
 ---
 
 ## Your Task
 
-1. **Understand the parameters** - Query the model to see what reactions use these parameters
+1. **Understand the parameters** - Review the Parameter Context above to see reactions and related parameters
 2. **Find relevant experimental data** - Search literature for experiments that constrain these parameters
 3. **Extract the data** - Pull quantitative values with full provenance
-4. **Build a submodel** - Define an ODE using these exact parameter names
+4. **Build a submodel** - Define an ODE using the exact parameter names from the context above
 
 ---
 
@@ -251,37 +251,22 @@ submodel:
 
 ---
 
-## Using Model Query Tools
+## Using the Parameter Context
 
-**Query the model BEFORE searching literature.**
+The **Parameter Context** section above provides all the information you need about
+the parameters to calibrate:
 
-1. **`query_parameters()`** - Get parameter units, values, descriptions
-2. **`query_reactions(compartment?, species?)`** - See which reactions use these parameters
-3. **`validate_entity(name, type)`** - Verify parameter names exist
+- **Units** and **description** for each parameter
+- **Reactions** where the parameter appears, with rate laws
+- **Related species** involved in those reactions
+- **Other parameters** in the same reactions (candidates for joint calibration)
 
-### Example: Discovering Additional Parameters
+### Example: Including Additional Parameters
 
-If asked to calibrate `k_CD8_pro`, first query related parameters:
-
-```python
-query_parameters(name_pattern="CD8")
-# Returns:
-# [
-#   {"name": "k_CD8_pro", "value": 0.5, "units": "1/day",
-#    "description": "CD8+ T cell proliferation rate in tumor"},
-#   {"name": "k_CD8_death", "value": 0.1, "units": "1/day",
-#    "description": "CD8+ T cell death rate"}
-# ]
-
-query_reactions(species="CD8")
-# Returns reactions where CD8 appears:
-# - "V_T.CD8 -> null : k_CD8_death * V_T.CD8"
-# - "V_T.CD8 -> 2*V_T.CD8 : k_CD8_pro * V_T.CD8 * IL2_signal"
-```
-
-**Decision point:** The model has separate proliferation and death rates. If your
-literature data includes both (e.g., Ki-67 for proliferation AND Annexin V for death),
-include BOTH parameters in `submodel.parameters`:
+If the Parameter Context shows that `k_CD8_pro` (proliferation) and `k_CD8_death`
+(death) appear in related reactions, and your literature data includes both
+measurements (e.g., Ki-67 for proliferation AND Annexin V for death), include
+BOTH parameters in `submodel.parameters`:
 
 ```yaml
 parameters:
@@ -292,20 +277,7 @@ parameters:
 If literature only reports net expansion (e.g., fold-change), use exponential growth
 with just `k_CD8_pro` and document the limitation.
 
-### More Query Examples
-
-```python
-query_parameters(name_pattern="PD1")
-# Returns:
-# [
-#   {"name": "Kd_PD1_PDL1", "value": 8.2, "units": "nanomolar",
-#    "description": "PD-1/PD-L1 dissociation constant"},
-#   {"name": "kon_PD1_PDL1", "value": 1e5, "units": "1/(molar*second)",
-#    "description": "PD-1/PD-L1 association rate"}
-# ]
-```
-
-Use **exact parameter names** from query results in your submodel.
+**Use exact parameter names** from the Parameter Context in your submodel.
 
 ---
 
@@ -391,14 +363,10 @@ See field descriptions in the output schema for detailed requirements and exampl
 
 **Parameters requested:** `k_CD8_pro`
 
-**First, query the model to understand related parameters:**
-```python
-query_parameters(name_pattern="CD8")
-# Returns: k_CD8_pro (proliferation), k_CD8_death (death rate)
-
-query_reactions(species="CD8")
-# Shows: proliferation and death reactions both affect CD8 dynamics
-```
+**From the Parameter Context above:**
+- `k_CD8_pro`: proliferation rate (1/day)
+- Related parameter: `k_CD8_death` (death rate) in same reactions
+- Reactions show proliferation and death both affect CD8 dynamics
 
 **Literature found:** Smith et al. (2020) - In vitro T cell expansion
 - "CD8+ T cells expanded from 100,000 to 750,000 ± 150,000 cells over 72 hours"
@@ -516,11 +484,9 @@ empirical_data:
 
 **Parameters requested:** `k_CD8_pro`
 
-**Query reveals related parameters:**
-```python
-query_parameters(name_pattern="CD8")
-# Returns: k_CD8_pro, k_CD8_death
-```
+**From the Parameter Context above:**
+- `k_CD8_pro`: proliferation rate
+- Related parameter: `k_CD8_death` (death rate) in same reactions
 
 **Literature found:** Chen et al. (2019) - T cell kinetics with proliferation AND death
 - "Ki-67+ fraction: 45% ± 8% (proliferating cells)"

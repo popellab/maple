@@ -45,10 +45,10 @@ class WorkflowConfig(BaseModel):
         description="Reasoning effort level for API requests",
     )
 
-    # Model structure for LLM query tools (calibration targets)
-    model_structure_file: Optional[Path] = Field(
+    # Model definitions for parameter context (isolated system targets)
+    model_definitions_file: Optional[Path] = Field(
         default=None,
-        description="Path to model_structure.json for LLM query tools",
+        description="Path to model_definitions.json for parameter context",
     )
 
     # Model context for prompt generation (isolated system targets)

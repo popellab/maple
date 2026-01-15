@@ -576,14 +576,14 @@ from qsp_llm_workflows.core.calibration.enums import Species, Compartment
 - `ExperimentalContext`: Unified context supporting both clinical (indication, treatment, stage) and in vitro (cell_lines, culture_conditions) fields
 - `IndexType`: Enum for index dimension type (time, dose, ratio, concentration, other)
 
-**ModelQueryService (for IsolatedSystemTarget workflow):**
-When extracting IsolatedSystemTarget data, the LLM has access to tools that query the full QSP model:
-- `query_parameters()` - Get parameter names, values, and units
-- `query_species(compartment?)` - Get species in compartments
-- `query_reactions(compartment?, species?)` - Get reaction equations
-- `validate_entity(name, type)` - Verify a parameter/species exists
+**Parameter Context (for IsolatedSystemTarget workflow):**
+When extracting IsolatedSystemTarget data, all parameter context is injected into the prompt at build time
+from `model_definitions.json`. The LLM receives:
+- Parameter units, descriptions, and derived-from relationships
+- Reactions using each parameter with rate laws
+- Related species and other parameters in the same reactions
 
-The LLM should query parameters BEFORE writing submodel code to get exact parameter names for joint inference.
+This eliminates the need for runtime tool calls - the LLM has all context needed to write correct submodel code.
 
 **Vector-valued data:**
 Both scalar and vector-valued data flow through the same pathway:

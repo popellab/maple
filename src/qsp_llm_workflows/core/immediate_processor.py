@@ -18,7 +18,6 @@ from qsp_llm_workflows.core.prompt_builder import (
     CalibrationTargetPromptBuilder,
     IsolatedSystemTargetPromptBuilder,
 )
-from qsp_llm_workflows.core.model_query_service import ModelQueryService
 
 # Optional logfire instrumentation (comes with pydantic-ai)
 try:
@@ -36,7 +35,7 @@ class ImmediateRequestProcessor:
         self,
         base_dir: Path,
         api_key: str,
-        model_structure_file: Optional[Path] = None,
+        model_definitions_file: Optional[Path] = None,
         model_context_file: Optional[Path] = None,
     ):
         """
@@ -45,20 +44,13 @@ class ImmediateRequestProcessor:
         Args:
             base_dir: Base directory for prompt assembly
             api_key: OpenAI API key
-            model_structure_file: Optional path to model_structure.json for LLM query tools
+            model_definitions_file: Optional path to model_definitions.json for isolated system targets
             model_context_file: Optional path to model_context.txt for isolated system targets
         """
         self.base_dir = Path(base_dir)
         self.api_key = api_key
-        self.model_structure_file = model_structure_file
+        self.model_definitions_file = model_definitions_file
         self.model_context_file = model_context_file
-
-        # Initialize model query service if structure file provided
-        self.model_query_service: Optional[ModelQueryService] = None
-        if model_structure_file and Path(model_structure_file).exists():
-            self.model_query_service = ModelQueryService.from_json(model_structure_file)
-        elif model_structure_file:
-            print(f"Warning: model_structure_file not found: {model_structure_file}")
 
         # Setup logfire once (optional instrumentation for debugging)
         if LOGFIRE_AVAILABLE:
@@ -102,16 +94,16 @@ class ImmediateRequestProcessor:
                 input_csv, species_units_file, reasoning_effort
             )
         elif workflow_type == "isolated_system_target":
-            # Requires model_structure_file and model_context_file
-            if not self.model_structure_file:
+            # Requires model_definitions_file and model_context_file
+            if not self.model_definitions_file:
                 raise ValueError(
-                    "model_structure_file required for isolated_system_target workflow"
+                    "model_definitions_file required for isolated_system_target workflow"
                 )
             if not self.model_context_file:
                 raise ValueError("model_context_file required for isolated_system_target workflow")
             return self.isolated_system_target_creator.process(
                 input_csv,
-                self.model_structure_file,
+                self.model_definitions_file,
                 self.model_context_file,
                 species_units_file,
                 reasoning_effort,
@@ -168,23 +160,14 @@ class ImmediateRequestProcessor:
             # Get validation context from request (for species_units)
             validation_context = request.get("validation_context", {})
 
-            # Build tools list - always include web search and code execution
+            # Build tools list - web search and code execution
             builtin_tools = [WebSearchTool(), CodeExecutionTool()]
-
-            # Add model query tools for calibration targets and isolated system targets
-            custom_tools = []
-            if (
-                workflow_type in ("calibration_target", "isolated_system_target")
-                and self.model_query_service
-            ):
-                custom_tools = self.model_query_service.get_tools()
 
             agent = Agent(
                 model,
                 output_type=pydantic_model,
                 model_settings=settings,
                 builtin_tools=builtin_tools,
-                tools=custom_tools,
                 validation_context=validation_context,
                 retries=5,  # Increased for validation requirements
             )
@@ -255,11 +238,6 @@ class ImmediateRequestProcessor:
 
         if progress_callback:
             progress_callback(f"Processing {len(prompts)} requests via Pydantic AI...\n")
-            if (
-                workflow_type in ("calibration_target", "isolated_system_target")
-                and self.model_query_service
-            ):
-                progress_callback("  (Model query tools enabled)\n")
 
         # Create tasks for all requests
         tasks = [

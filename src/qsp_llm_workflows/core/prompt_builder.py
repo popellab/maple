@@ -20,7 +20,6 @@ from qsp_llm_workflows.core.prompts import (
 )
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 from qsp_llm_workflows.core.calibration import CalibrationTarget, IsolatedSystemTarget
-from qsp_llm_workflows.core.model_structure import ModelStructure
 
 
 class PromptBuilder(ABC):
@@ -580,22 +579,19 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
     Processes CSV input with parameter names and generates prompts for
     finding experimental data to calibrate those parameters.
 
-    Requires model_structure_file and model_context_file to be provided.
+    Requires model_definitions_file and model_context_file to be provided.
     """
 
     def get_workflow_type(self) -> str:
         return "isolated_system_target"
 
-    def format_parameter_context(self, parameters: str, model_structure: ModelStructure) -> str:
+    def format_parameter_context(self, parameters: str, model_definitions: Dict[str, Any]) -> str:
         """
-        Build rich context block for parameters from the model structure.
-
-        Similar to ParameterPromptBuilder.format_model_context() but sources
-        data from ModelStructure instead of pre-built JSON.
+        Build rich context block for parameters from model_definitions.json.
 
         Args:
             parameters: Comma-separated parameter names (e.g., "k_CD8_pro,k_CD8_death")
-            model_structure: ModelStructure object with parameter and reaction data
+            model_definitions: Dict loaded from model_definitions.json
 
         Returns:
             Formatted markdown text describing each parameter's role in the model
@@ -604,65 +600,79 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
         output = []
 
         for param_name in param_names:
-            param = model_structure.get_parameter(param_name)
-            reactions = model_structure.get_reactions_for_parameter(param_name)
+            # Look up parameter in model_definitions
+            param_entry = model_definitions.get(param_name, {})
+            param_def = param_entry.get("definition", {}).get("parameter_definition", {})
 
             # Parameter header
             output.append(f"### Parameter: `{param_name}`")
 
             # Parameter info
-            if param:
-                output.append(f"- **Units:** {param.units}")
-                if param.description:
-                    output.append(f"- **Description:** {param.description}")
+            if param_def:
+                if param_def.get("units"):
+                    output.append(f"- **Units:** {param_def['units']}")
+                if param_def.get("description"):
+                    output.append(f"- **Description:** {param_def['description']}")
             else:
-                output.append("- **Warning:** Parameter not found in model structure")
+                output.append("- **Warning:** Parameter not found in model definitions")
 
             output.append("")
 
-            # Reactions using this parameter
+            # Get model context (reactions and rules)
+            model_context = param_def.get("model_context", {})
+
+            # Add derived from context if available
+            derived_from = model_context.get("derived_from_context", [])
+            if derived_from:
+                output.append("**Derived from:**")
+                for item in derived_from:
+                    name = item.get("name", "Unknown")
+                    desc = item.get("description", "")
+                    if desc:
+                        output.append(f"- `{name}`: {desc}")
+                    else:
+                        output.append(f"- `{name}`")
+                output.append("")
+
+            # Reactions and rules using this parameter
+            reactions = model_context.get("reactions_and_rules", [])
             if reactions:
                 output.append(f"**Reactions using this parameter ({len(reactions)}):**")
                 output.append("")
 
                 for i, rxn in enumerate(reactions, 1):
-                    output.append(f"**{i}. `{rxn.name}`**")
-                    if rxn.rate_law:
-                        output.append(f"- Rate law: `{rxn.rate_law}`")
+                    # Reaction or rule header
+                    if rxn.get("reaction"):
+                        output.append(f"**{i}. Reaction:** `{rxn['reaction']}`")
+                        if rxn.get("reaction_rate"):
+                            output.append(f"- **Rate:** `{rxn['reaction_rate']}`")
+                    elif rxn.get("rule"):
+                        rule_type = rxn.get("rule_type", "unknown")
+                        output.append(f"**{i}. Rule ({rule_type}):** `{rxn['rule']}`")
 
-                    # Related species with descriptions (from reactants, products, AND rate law)
-                    all_species = set(rxn.reactants + rxn.products)
-                    # Also extract species from rate law (qualified names like V_T.PDGF)
-                    if rxn.rate_law:
-                        import re
-
-                        # Match qualified species names (compartment.species pattern)
-                        rate_law_species = re.findall(
-                            r"\b([A-Z]_[A-Z]\.[A-Za-z0-9_]+)\b", rxn.rate_law
-                        )
-                        all_species.update(rate_law_species)
-
-                    if all_species:
+                    # Related species
+                    other_species = rxn.get("other_species", [])
+                    if other_species:
                         output.append("- **Species:**")
-                        for species_name in sorted(all_species):
-                            species_obj = model_structure._species_by_name.get(species_name)
-                            if species_obj and species_obj.description:
-                                output.append(f"  - `{species_name}`: {species_obj.description}")
+                        for species in other_species:
+                            name = species.get("name", "Unknown")
+                            desc = species.get("description", "")
+                            if desc:
+                                output.append(f"  - `{name}`: {desc}")
                             else:
-                                output.append(f"  - `{species_name}`")
+                                output.append(f"  - `{name}`")
 
-                    # Other parameters in this reaction (with descriptions)
-                    other_params = [p for p in rxn.parameters if p != param_name]
+                    # Other parameters in this reaction
+                    other_params = rxn.get("other_parameters", [])
                     if other_params:
                         output.append("- **Other parameters:**")
-                        for other_param_name in other_params:
-                            other_param = model_structure.get_parameter(other_param_name)
-                            if other_param and other_param.description:
-                                output.append(
-                                    f"  - `{other_param_name}`: {other_param.description}"
-                                )
+                        for param in other_params:
+                            name = param.get("name", "Unknown")
+                            desc = param.get("description", "")
+                            if desc:
+                                output.append(f"  - `{name}`: {desc}")
                             else:
-                                output.append(f"  - `{other_param_name}`")
+                                output.append(f"  - `{name}`")
 
                     output.append("")
             else:
@@ -677,7 +687,7 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
     def process(
         self,
         input_csv: Path,
-        model_structure_file: Path,
+        model_definitions_file: Path,
         model_context_file: Path,
         species_units_file: Optional[Path] = None,
         reasoning_effort: str = "high",
@@ -687,7 +697,7 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
 
         Args:
             input_csv: CSV file with columns: target_id, parameters, notes (optional)
-            model_structure_file: JSON file with ModelStructure (for parameter validation)
+            model_definitions_file: JSON file with model definitions (from qsp-export-model)
             model_context_file: Text file with high-level model description
             species_units_file: Optional JSON file mapping species -> units
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
@@ -697,13 +707,14 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
         """
         import csv
 
-        # Load model structure (required)
-        if not model_structure_file or not model_structure_file.exists():
+        # Load model definitions (required)
+        if not model_definitions_file or not model_definitions_file.exists():
             raise ValueError(
-                f"model_structure_file is required for IsolatedSystemTarget workflow. "
-                f"Got: {model_structure_file}"
+                f"model_definitions_file is required for IsolatedSystemTarget workflow. "
+                f"Got: {model_definitions_file}"
             )
-        model_structure = ModelStructure.from_json(model_structure_file)
+        with open(model_definitions_file, "r", encoding="utf-8") as f:
+            model_definitions = json.load(f)
 
         # Load model context (required)
         if not model_context_file or not model_context_file.exists():
@@ -733,8 +744,8 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                     print(f"Warning: Empty parameters for {target_id}, skipping")
                     continue
 
-                # Build rich parameter context from model structure
-                parameter_context = self.format_parameter_context(parameters, model_structure)
+                # Build rich parameter context from model definitions
+                parameter_context = self.format_parameter_context(parameters, model_definitions)
 
                 # Build the prompt
                 prompt = build_isolated_system_target_prompt(
@@ -744,7 +755,7 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                     notes=notes,
                 )
 
-                # Create prompt dict with model_structure in validation context
+                # Create prompt dict
                 custom_id = f"isolated_target_{target_id}_{i}"
 
                 request = {
@@ -753,7 +764,6 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                     "pydantic_model": IsolatedSystemTarget,
                     "validation_context": {
                         "species_units": all_species_units,
-                        "model_structure": model_structure,
                     },
                 }
 
