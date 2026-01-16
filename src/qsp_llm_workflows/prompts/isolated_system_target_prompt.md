@@ -351,13 +351,44 @@ Experimental context often differs from model context. Always document mismatche
 | Recombinant protein | Endogenous | Concentrations may differ 10-1000× |
 | Peripheral blood | Tumor | TME concentrations often higher (cytokines) or lower (T cells) |
 
-### Activation State
+### Functional State Matching
 
-| From | To | Typical Adjustment |
+**CRITICAL:** The functional state of cells in your data must match the model compartment being calibrated.
+
+Many QSP models distinguish cell populations by functional state (e.g., quiescent vs. activated,
+naïve vs. effector, resting vs. proliferating). Parameters governing one state typically do NOT
+apply to another state—these are fundamentally different biological processes.
+
+**Before extracting data, verify:**
+1. What functional state does the parameter name indicate? (e.g., `k_qpsc_death` = quiescent PSC death)
+2. What functional state are the cells in the experimental data?
+3. Do these match?
+
+| Data State | Parameter State | Action |
+|------------|-----------------|--------|
+| Activated cells | Activated cell parameter | ✓ Proceed |
+| Quiescent cells | Quiescent cell parameter | ✓ Proceed |
+| Activated cells | Quiescent cell parameter | ✗ DO NOT USE - find different data |
+| Quiescent cells | Activated cell parameter | ✗ DO NOT USE - find different data |
+| Mixed/unclear state | Either | Document uncertainty, consider excluding |
+
+**Common functional state distinctions in QSP models:**
+- **Stellate cells:** quiescent (qPSC) vs. activated/myofibroblastic (aPSC)
+- **T cells:** naïve vs. effector vs. memory vs. exhausted
+- **Macrophages:** M0 vs. M1 vs. M2 polarization
+- **Fibroblasts:** resting vs. CAF (cancer-associated)
+- **Tumor cells:** proliferating vs. quiescent/G0-arrested
+
+**Why this matters:** Activated stellate cells have death rates ~2-10× higher than quiescent
+stellate cells. Using activated cell data to calibrate a quiescent death rate would systematically
+overestimate the parameter. This is NOT a scaling issue—it's using the wrong biological process.
+
+**Acceptable cross-state extrapolations (with documentation):**
+| From | To | When acceptable |
 |------|----|--------------------|
-| Activated T cells | Exhausted T cells | Proliferation 5-10× lower |
-| Acute infection | Chronic tumor | Sustained antigen alters kinetics |
-| Resting cells | Stimulated cells | Rates may differ 10-100× |
+| Activated T cells | Exhausted T cells | If adjusting rates 5-10× lower and documenting |
+| Acute infection kinetics | Chronic tumor | With explicit scaling for sustained antigen |
+| Resting → Stimulated | Initial activation | If early timepoints before full activation |
 
 ### Documentation Requirements
 
