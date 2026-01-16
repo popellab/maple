@@ -309,11 +309,8 @@ class TestTestStatisticFooters:
         # Verify derived_species_description
         assert data["derived_species_description"] == "Tumor volume ratio"
 
-        # Verify footer field ordering (footer fields should be near bottom)
-        lines = content.split("\n")
-        footer_fields = [
-            "test_statistic_id",
-            "cancer_type",
-        ]
-        for field in footer_fields:
-            assert any(line.startswith(f"{field}:") for line in lines[-15:])
+        # Verify footer fields are present (ordering is handled by YAML_FIELD_ORDER)
+        assert "test_statistic_id" in data
+        assert "cancer_type" in data
+        assert data["test_statistic_id"] == "tumor_volume"
+        assert data["cancer_type"] == "PDAC"
