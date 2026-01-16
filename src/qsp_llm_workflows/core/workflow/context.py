@@ -25,15 +25,13 @@ class WorkflowContext:
     # Input parameters (immutable)
     input_csv: Path
     workflow_type: str
-    immediate: bool
 
     # Configuration
     config: Any  # WorkflowConfig (avoiding circular import)
     progress_callback: Optional[Callable[[str], None]] = None
 
     # State accumulated during workflow (mutable)
-    batch_file: Optional[Path] = None
-    batch_id: Optional[str] = None
+    preview_file: Optional[Path] = None  # Used for preview mode output file
     results_file: Optional[Path] = None
     output_directory: Optional[Path] = None
     file_count: int = 0

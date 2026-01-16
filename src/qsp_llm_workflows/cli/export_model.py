@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from qsp_llm_workflows.core.model_definition_exporter import ModelDefinitionExporter
+from qsp_llm_workflows.core.model_structure_exporter import ModelStructureExporter
 
 
 def main():
@@ -16,11 +17,14 @@ def main():
         description="Export model definitions from SimBiology model",
         epilog="""
 Examples:
-    # Export from MATLAB script
-    qsp-export-model --matlab-model ../your-model-repo/scripts/your_model_file.m --output model_defs.json
+    # Export parameter definitions (for LLM extraction workflow)
+    qsp-export-model --matlab-model model.m --output model_defs.json
+
+    # Export model structure (for LLM query tools)
+    qsp-export-model --matlab-model model.m --output model_defs.json --structure
 
     # Export from SimBiology project
-    qsp-export-model --simbiology-project ../your-model-repo/models/your_model.sbproj --output model_defs.json
+    qsp-export-model --simbiology-project model.sbproj --output model_defs.json --structure
         """,
     )
 
@@ -41,6 +45,12 @@ Examples:
 
     parser.add_argument(
         "--output", required=True, type=Path, help="Output JSON file for model definitions"
+    )
+
+    parser.add_argument(
+        "--structure",
+        action="store_true",
+        help="Also export model_structure.json (species, compartments, parameters, reactions)",
     )
 
     args = parser.parse_args()
@@ -65,6 +75,16 @@ Examples:
         exporter.export_to_json(str(args.output))
 
         print(f"✓ Model definitions exported to {args.output}")
+
+        # Export model structure if requested
+        if args.structure:
+            structure_output = args.output.parent / "model_structure.json"
+            print("Exporting model structure...")
+
+            structure_exporter = ModelStructureExporter(str(model_file), model_type=model_type)
+            structure_exporter.export_to_json(str(structure_output))
+
+            print(f"✓ Model structure exported to {structure_output}")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

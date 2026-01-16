@@ -35,10 +35,8 @@ jobs:
       run: |
         qsp-extract --help
         qsp-validate --help
-        qsp-fix --help
         qsp-enrich-csv --help
         qsp-export-model --help
-        qsp-batch-monitor --help
 
   lint:
     runs-on: ubuntu-latest

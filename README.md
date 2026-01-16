@@ -2,130 +2,79 @@
 
 [![Tests](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml)
 
-Automated tools for extracting and validating quantitative systems pharmacology (QSP) metadata from scientific literature using Large Language Models.
+Extract parameter values and test statistics from scientific literature for quantitative systems pharmacology (QSP) models. This package uses OpenAI's API to read papers, pull out numeric values with uncertainty estimates, and generate reproducible Python code that derives distributions suitable for Bayesian model calibration.
 
 ## Installation
 
-### For Development
-
 ```bash
-# Clone the repository
-git clone https://github.com/yourorg/qsp-llm-workflows.git
+git clone https://github.com/popellab/qsp-llm-workflows.git
 cd qsp-llm-workflows
-
-# Create and activate virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install in editable mode
+source venv/bin/activate
 pip install -e .
 ```
 
-### For End Users
+This gives you several CLI commands: `qsp-extract`, `qsp-validate`, `qsp-enrich-csv`, and `qsp-export-model`.
+
+## Usage
+
+The typical workflow is: prepare an input CSV describing what you need, run extraction, and validate the results.
 
 ```bash
-# Install directly from GitHub
-pip install git+https://github.com/yourorg/qsp-llm-workflows.git
+# Extract parameter estimates from literature
+qsp-extract params.csv --type parameter --output-dir metadata-storage
 
-# Or from PyPI (if published)
-pip install qsp-llm-workflows
-```
-
-After installation, CLI commands are available system-wide:
-- `qsp-extract` - Run extraction workflows
-- `qsp-validate` - Validate extracted metadata
-- `qsp-fix` - Fix validation errors
-- `qsp-enrich-csv` - Enrich input CSVs with model context
-- `qsp-export-model` - Export model definitions from MATLAB scripts or SimBiology projects
-- `qsp-batch-monitor` - Monitor batch job progress
-
-## Quick Start
-
-**New users:** See [docs/automated_workflow.md](docs/automated_workflow.md) for complete setup instructions and beginner-friendly guide.
-
-**Developers:** See [CLAUDE.md](CLAUDE.md) for detailed architecture, package structure, and development guidelines.
-
-## What This Package Does
-
-This toolkit automates metadata extraction from scientific papers using OpenAI's API:
-
-- **Parameter extraction**: Extract parameter values, ranges, and distributions from literature
-- **Test statistics**: Create validation constraints from experimental data
-- **Validation suite**: 9 automated validators ensure quality and completeness
-- **Git integration**: Automated branch creation and review workflow
-
-All extracted metadata is validated and stored in a user-specified output directory within your project repository.
-
-## Basic Usage
-
-**Simple extraction workflow:**
-```bash
-# Run automated extraction
-qsp-extract input.csv --type parameter --output-dir metadata-storage
-
-# Validate results
+# Validate the outputs
 qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
-
-# Fix validation errors (if needed)
-qsp-fix parameter_estimates --dir metadata-storage/to-review/parameter_estimates --immediate
 ```
 
-**Use immediate mode for faster processing:**
-```bash
-qsp-extract input.csv --type parameter --output-dir metadata-storage --immediate
-```
+Extraction uses Pydantic AI to process requests via OpenAI's API.
 
-See [docs/automated_workflow.md](docs/automated_workflow.md) for complete instructions including:
-- First-time setup (Python, Git, API keys)
-- Creating input CSV files
-- Running extractions
-- Validation and review process
-- Troubleshooting
+For detailed setup instructions including API key configuration and input CSV format, see [docs/automated_workflow.md](docs/automated_workflow.md).
 
-## Package Structure
+## What gets extracted
 
-This repository is organized as an installable Python package:
+**Parameter estimates** include median values, interquartile ranges, and 95% confidence intervals derived from literature data. Each extraction includes the source papers, verbatim text snippets showing where values came from, and Python code that reproduces the statistical derivation.
+
+**Test statistics** define validation targets for model outputs—things like "tumor volume at day 14 should be X ± Y mm³ based on clinical trial data." These are used to check whether model simulations match observed biology.
+
+Both types go through a 9-validator suite that checks schema compliance, verifies DOIs resolve correctly, tests that derivation code runs, and confirms that text snippets actually contain the claimed values.
+
+## Project structure
 
 ```
-qsp-llm-workflows/
-├── src/qsp_llm_workflows/    # Main package
-│   ├── core/                  # Core libraries
-│   ├── prepare/               # Batch preparation
-│   ├── run/                   # Batch execution
-│   ├── process/               # Result processing
-│   ├── validate/              # Validation checks
-│   ├── cli/                   # CLI entry points
-│   ├── templates/             # YAML templates
-│   └── prompts/               # Prompt files
-├── pyproject.toml             # Package metadata
-└── docs/                      # Documentation
+src/qsp_llm_workflows/
+├── core/       # Prompt generation, workflow orchestration, validation utilities
+│   └── calibration/  # Calibration target models
+│       ├── calibration_target_models.py  # CalibrationTarget, CalibrationTargetEstimates
+│       ├── isolated_system_target.py     # IsolatedSystemTarget for in vitro data
+│       ├── observable.py                 # Observable, Submodel, SubmodelObservable
+│       ├── shared_models.py              # EstimateInput, SubmodelInput, Source, Snippet
+│       ├── enums.py                      # Species, Indication, Compartment, System, SourceType, ExtractionMethod
+│       ├── scenario.py                   # Intervention, Scenario
+│       └── code_validator.py             # Unified code validation (CodeValidator)
+├── prepare/    # CSV enrichment and prompt generation
+├── run/        # API request processing
+├── process/    # Result unpacking
+├── validate/   # The 9 validators
+├── cli/        # Command-line entry points
+├── templates/  # YAML output templates
+└── prompts/    # LLM instruction prompts
 ```
 
-## Features
+**Calibration target types:**
+- `CalibrationTarget`: For clinical/in vivo data. Uses `observable` to compute measurements from full model species.
+- `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` to define a standalone ODE that shares parameter names with the full model for joint inference. State variables are self-contained with initial values and provenance. Observable code is optional—if omitted, defaults to the first state variable with units.
 
-- **Installable Package**: `pip install` for easy distribution
-- **CLI Commands**: System-wide commands after installation
-- **Modular Architecture**: Clean separation of concerns
-- **Automated Workflows**: End-to-end extraction and validation
-- **Git Integration**: Automated branch creation and review
-- **Validation Suite**: 9 validators including DOI resolution, code execution, and unit validation
-- **Error Fixing**: Automatically resubmit failed extractions to OpenAI for correction
+**Input architecture:** Inputs are co-located with the code blocks that use them. `submodel.inputs` holds experimental conditions for ODE code, `observable.inputs` holds values for observable code, and `empirical_data.inputs` holds values for distribution derivation. State variables include their initial values directly (no reference indirection). Inputs support figure-extracted data via `source_type` field (`text`, `table`, or `figure`) with required `figure_id` and `extraction_method` for figure sources. Literature inputs can be classified via `input_type`: `direct_parameter` (literal values), `proxy_measurement` (requires conversion), `experimental_condition` (protocol choices), or `inferred_estimate` (values interpreted from qualitative text—skips snippet validation).
 
-## For Developers
+**Vector-valued data:** Calibration targets support both scalar and time-course/dose-response data through a unified pathway. Scalar data uses length-1 lists; vector data uses `index_values` to specify the indexing dimension (time points, doses, etc.).
 
-See [CLAUDE.md](CLAUDE.md) for:
-- Package architecture and organization
-- Modular prompt assembly system
-- Class-based batch creation
-- Validation suite implementation
-- Integration with metadata storage directories
-- Development guidelines and code standards
+**Sample size tracking:** All calibration targets require `sample_size` (int or List[int]) and `sample_size_rationale` (str) for proper uncertainty quantification and meta-analysis pooling across studies.
 
 ## Documentation
 
-- **[docs/automated_workflow.md](docs/automated_workflow.md)** - Beginner-friendly usage guide
-- **[CLAUDE.md](CLAUDE.md)** - Developer documentation and architecture
-- **[PACKAGE_STRUCTURE.md](PACKAGE_STRUCTURE.md)** - Package migration guide
+The [automated workflow guide](docs/automated_workflow.md) walks through first-time setup and basic usage. For package internals—how prompts are assembled, how validation works, how to add new validators—see [CLAUDE.md](CLAUDE.md).
 
 ## License
 

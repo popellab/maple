@@ -3,7 +3,7 @@
 Export model definitions from SimBiology model.
 
 This module extracts parameter and species definitions from a SimBiology model
-and generates JSON definition files with content-based hashes.
+and generates JSON definition files.
 """
 
 import json
@@ -13,8 +13,6 @@ import tempfile
 import shutil
 from pathlib import Path
 from typing import Dict, List, Any
-
-from qsp_llm_workflows.core.hash_utils import compute_definition_hash, generate_filename
 
 
 class ModelDefinitionExporter:
@@ -50,7 +48,7 @@ class ModelDefinitionExporter:
         when called via export_to_json().
 
         Returns:
-            Dict mapping parameter name -> {definition: dict, hash: str, filename: str}
+            Dict mapping parameter name -> {definition: dict}
         """
         print(f"Exporting definitions from {self.model_file}")
 
@@ -89,41 +87,44 @@ class ModelDefinitionExporter:
         simbio_species_df: pd.DataFrame,
         simbio_params_df: pd.DataFrame | None = None,
         simbio_compartments_df: pd.DataFrame | None = None,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict[str, str]]:
         """
-        Generate units dictionary from SimBiology species, parameters, and compartments.
+        Generate units and descriptions dictionary from SimBiology species, parameters, and compartments.
 
-        Includes species, parameters, and compartments since test statistic code
+        Includes species (with compartments), parameters, and compartments since test statistic code
         (required_species) can reference all three types.
 
         Returns:
-            Dict mapping name -> unit string
-            Example: {'V_T.CD8': 'cell', 'initial_tumour_diameter': 'centimeter', 'V_T': 'milliliter'}
+            Dict mapping name -> {units: str, description: str}
+            Example: {
+                'V_T.CD8': {'units': 'cell', 'description': 'CD8+ T cells in tumor'},
+                'initial_tumour_diameter': {'units': 'centimeter', 'description': 'Initial tumor diameter'},
+                'V_T': {'units': 'milliliter', 'description': 'Tumor compartment volume'}
+            }
         """
         units_dict = {}
 
-        # Add species units
+        # Add species units and descriptions (only qualified names with compartments)
         for _, row in simbio_species_df.iterrows():
             name = row["Name"]
             units = row["Units"] if pd.notna(row["Units"]) and row["Units"] else "dimensionless"
+            description = row["Notes"] if pd.notna(row["Notes"]) else ""
             compartment = row.get("Compartment", "")
 
-            # Store under simple name
-            units_dict[name] = units
-
-            # Also store under qualified name (Compartment.Species)
+            # Only store qualified name (Compartment.Species) - skip simple names
             if pd.notna(compartment) and compartment:
                 qualified_name = f"{compartment}.{name}"
-                units_dict[qualified_name] = units
+                units_dict[qualified_name] = {"units": units, "description": str(description)}
 
         # Add parameter units (for scalar parameters used in test statistics)
         if simbio_params_df is not None:
             for _, row in simbio_params_df.iterrows():
                 name = row["Name"]
                 units = row["Units"] if pd.notna(row["Units"]) and row["Units"] else "dimensionless"
+                description = row["Notes"] if pd.notna(row["Notes"]) else ""
                 # Only add if not already present (species take priority)
                 if name not in units_dict:
-                    units_dict[name] = units
+                    units_dict[name] = {"units": units, "description": str(description)}
 
         # Add compartment units (for compartment volumes like V_T, V_C, etc.)
         if simbio_compartments_df is not None and len(simbio_compartments_df) > 0:
@@ -134,9 +135,10 @@ class ModelDefinitionExporter:
                     if pd.notna(row["CapacityUnits"]) and row["CapacityUnits"]
                     else "milliliter"
                 )
+                description = row["Notes"] if pd.notna(row.get("Notes", "")) else ""
                 # Only add if not already present
                 if name not in units_dict:
-                    units_dict[name] = units
+                    units_dict[name] = {"units": units, "description": str(description)}
 
         return units_dict
 
@@ -334,14 +336,8 @@ class ModelDefinitionExporter:
                 }
             }
 
-            # Compute hash
-            content_hash = compute_definition_hash(definition["parameter_definition"], "parameter")
-            filename = generate_filename(param_name, content_hash)
-
             param_definitions[param_name] = {
                 "definition": definition,
-                "hash": content_hash,
-                "filename": filename,
             }
 
         return param_definitions

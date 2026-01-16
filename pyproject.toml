@@ -29,10 +29,12 @@ dependencies = [
     "pandas>=2.0.0",
     "requests>=2.31.0",
     "pydantic>=2.0.0",
+    "pydantic-ai>=0.0.14",  # For structured outputs with discriminated unions
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
     "pint>=0.25",  # For unit-aware test statistic calculations
     "ruamel.yaml>=0.18",  # Better YAML formatting with block scalars
+    "scipy>=1.11.0",  # For ODE integration in IsolatedSystemTarget validation
 ]
 
 [project.optional-dependencies]
@@ -47,12 +49,13 @@ dev = [
 # Main workflow commands
 qsp-extract = "qsp_llm_workflows.cli.extract:main"
 qsp-validate = "qsp_llm_workflows.cli.validate:main"
-qsp-fix = "qsp_llm_workflows.cli.fix:main"
+qsp-review = "qsp_llm_workflows.cli.review:main"
 
 # Individual tools
 qsp-enrich-csv = "qsp_llm_workflows.cli.enrich:main"
 qsp-export-model = "qsp_llm_workflows.cli.export_model:main"
-qsp-batch-monitor = "qsp_llm_workflows.cli.monitor:main"
+qsp-quick-estimate = "qsp_llm_workflows.cli.quick_estimate:main"
+qsp-quick-estimate-individual = "qsp_llm_workflows.cli.quick_estimate_individual:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

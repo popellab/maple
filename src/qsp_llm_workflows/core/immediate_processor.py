@@ -1,207 +1,190 @@
 #!/usr/bin/env python3
 """
-Direct immediate mode processing via OpenAI Responses API.
+Direct immediate mode processing via Pydantic AI.
 
-Processes CSV rows directly without creating intermediate batch files.
+Processes CSV rows directly using Pydantic AI.
+Uses Pydantic AI with tool calling for structured outputs (supports discriminated unions).
 """
 
 import asyncio
-import csv
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from openai import AsyncOpenAI
 
-from qsp_llm_workflows.core.prompts import (
-    build_parameter_extraction_prompt,
-    build_test_statistic_prompt,
+from pydantic_ai import Agent, WebSearchTool, CodeExecutionTool
+
+from qsp_llm_workflows.core.prompt_builder import (
+    ParameterPromptBuilder,
+    TestStatisticPromptBuilder,
+    CalibrationTargetPromptBuilder,
+    IsolatedSystemTargetPromptBuilder,
 )
-from qsp_llm_workflows.core.pydantic_models import (
-    ParameterMetadata,
-    TestStatistic,
-)
+
+# Optional logfire instrumentation (comes with pydantic-ai)
+try:
+    import logfire
+
+    LOGFIRE_AVAILABLE = True
+except ImportError:
+    LOGFIRE_AVAILABLE = False
 
 
 class ImmediateRequestProcessor:
-    """Process extraction requests directly via Responses API."""
+    """Process extraction requests directly via Pydantic AI."""
 
-    def __init__(self, base_dir: Path, api_key: str):
+    def __init__(
+        self,
+        base_dir: Path,
+        api_key: str,
+        model_structure_file: Optional[Path] = None,
+        model_context_file: Optional[Path] = None,
+    ):
         """
         Initialize immediate request processor.
 
         Args:
             base_dir: Base directory for prompt assembly
             api_key: OpenAI API key
+            model_structure_file: Optional path to model_structure.json for isolated system targets
+            model_context_file: Optional path to model_context.txt for isolated system targets
         """
         self.base_dir = Path(base_dir)
         self.api_key = api_key
-        self.client = AsyncOpenAI(api_key=api_key)
+        self.model_structure_file = model_structure_file
+        self.model_context_file = model_context_file
 
-    def read_csv_rows(self, input_csv: Path) -> List[Dict[str, str]]:
+        # Setup logfire once (optional instrumentation for debugging)
+        if LOGFIRE_AVAILABLE:
+            logfire.configure()
+            logfire.instrument_pydantic_ai()
+
+        # Initialize prompt builders for prompt building (DRY principle)
+        self.parameter_creator = ParameterPromptBuilder(base_dir)
+        self.test_statistic_creator = TestStatisticPromptBuilder(base_dir)
+        self.calibration_target_creator = CalibrationTargetPromptBuilder(base_dir)
+        self.isolated_system_target_creator = IsolatedSystemTargetPromptBuilder(base_dir)
+
+    def get_prompts(
+        self,
+        input_csv: Path,
+        workflow_type: str,
+        species_units_file: Optional[Path] = None,
+        reasoning_effort: str = "low",
+    ) -> List[Dict[str, Any]]:
         """
-        Read CSV file into list of row dictionaries.
+        Generate prompts using appropriate prompt builder.
+
+        This ensures DRY principle - all prompt building logic is in prompt builders.
 
         Args:
-            input_csv: Path to input CSV file
+            input_csv: Path to input CSV
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
+            species_units_file: Optional species units file for calibration targets
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
 
         Returns:
-            List of dictionaries, one per row
-        """
-        rows = []
-        with open(input_csv, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rows.append(row)
-        return rows
-
-    def create_custom_id(self, row: Dict[str, str], index: int, workflow_type: str) -> str:
-        """
-        Create custom ID for request.
-
-        Args:
-            row: CSV row data
-            index: Row index
-            workflow_type: "parameter" or "test_statistic"
-
-        Returns:
-            Custom ID string
+            List of prompt dictionaries
         """
         if workflow_type == "parameter":
-            cancer_type = row.get("cancer_type", "UNKNOWN")
-            param_name = row.get("parameter_name", "UNKNOWN")
-            return f"{cancer_type}_{param_name}_{index}"
+            # For parameters, pass storage_dir (though not used in immediate mode)
+            return self.parameter_creator.process(input_csv, None, reasoning_effort)
         elif workflow_type == "test_statistic":
-            test_stat_id = row.get("test_statistic_id", "UNKNOWN")
-            return f"test_stat_{test_stat_id}_{index}"
-        else:
-            return f"request_{index}"
-
-    def build_prompt(self, row: Dict[str, str], workflow_type: str) -> str:
-        """
-        Build prompt from CSV row data.
-
-        Args:
-            row: CSV row data
-            workflow_type: "parameter" or "test_statistic"
-
-        Returns:
-            Assembled prompt string
-        """
-        if workflow_type == "parameter":
-            # Extract parameter info from CSV
-            param_name = row.get("parameter_name", "")
-            param_units = row.get("parameter_units", "")
-            param_desc = row.get("parameter_description", "")
-            model_context = row.get("model_context", "")
-
-            cancer_type = row.get("cancer_type", "UNKNOWN")
-            parameter_info = f"**Parameter Name:** {param_name}\n"
-            parameter_info += f"**Units:** {param_units}\n"
-            parameter_info += f"**Description:** {param_desc}\n"
-
-            return build_parameter_extraction_prompt(
-                parameter_info=parameter_info,
-                model_context=model_context,
-                cancer_type=cancer_type,
-                used_primary_studies="",  # No used studies tracking in immediate mode yet
+            return self.test_statistic_creator.process(input_csv, None, reasoning_effort)
+        elif workflow_type == "calibration_target":
+            return self.calibration_target_creator.process(
+                input_csv, species_units_file, reasoning_effort
             )
-
-        elif workflow_type == "test_statistic":
-            # Extract test statistic info from CSV
-            cancer_type = row.get("cancer_type", "UNKNOWN")
-            required_species = row.get("required_species", "")
-            derived_desc = row.get("derived_species_description", "")
-            model_context = row.get("model_context", "")
-            scenario_context = row.get("scenario_context", "")
-
-            return build_test_statistic_prompt(
-                model_context=model_context,
-                scenario_context=scenario_context,
-                required_species_with_units=required_species,
-                derived_species_description=derived_desc,
-                cancer_type=cancer_type,
-                used_primary_studies="",  # No used studies tracking yet
+        elif workflow_type == "isolated_system_target":
+            # Requires model_structure_file and model_context_file
+            if not self.model_structure_file:
+                raise ValueError(
+                    "model_structure_file required for isolated_system_target workflow"
+                )
+            if not self.model_context_file:
+                raise ValueError("model_context_file required for isolated_system_target workflow")
+            return self.isolated_system_target_creator.process(
+                input_csv,
+                self.model_structure_file,
+                self.model_context_file,
+                species_units_file,
+                reasoning_effort,
             )
-
         else:
-            return ""
-
-    def get_pydantic_model(self, workflow_type: str):
-        """
-        Get Pydantic model for workflow type.
-
-        Args:
-            workflow_type: "parameter" or "test_statistic"
-
-        Returns:
-            Pydantic model class
-        """
-        if workflow_type == "parameter":
-            return ParameterMetadata
-        elif workflow_type == "test_statistic":
-            return TestStatistic
-        else:
-            raise ValueError(f"Unknown workflow type: {workflow_type}")
+            return []
 
     async def process_single_request(
         self,
-        row: Dict[str, str],
+        request: Dict[str, Any],
         index: int,
-        workflow_type: str,
+        reasoning_effort: str,
+        workflow_type: str = "parameter",
         progress_callback: Optional[callable] = None,
-        reasoning_effort: str = "high",
     ) -> Dict[str, Any]:
         """
-        Process a single extraction request.
+        Process a single extraction request using Pydantic AI.
 
         Args:
-            row: CSV row data
-            index: Row index
-            workflow_type: "parameter" or "test_statistic"
+            request: Prompt dictionary from prompt builder
+            index: Request index
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
+            workflow_type: Type of workflow for tool selection
             progress_callback: Optional callback for progress updates
-            reasoning_effort: Reasoning effort level
 
         Returns:
-            Result dictionary in batch-compatible format
+            Result dictionary in workflow-compatible format
         """
-        custom_id = self.create_custom_id(row, index, workflow_type)
+        # Import here to avoid circular imports and allow lazy loading
+        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-        # Get item name for logging
-        if workflow_type == "parameter":
-            item_name = row.get("parameter_name", f"item_{index}")
+        custom_id = request["custom_id"]
+        prompt = request["prompt"]
+        pydantic_model = request["pydantic_model"]
+
+        # Extract item name from custom_id for logging
+        # Format: cal_target_{id}_{i} or parameter_{name}_{cancer}_{i} or test_stat_{id}_{i}
+        parts = custom_id.split("_")
+        if len(parts) >= 3:
+            # Remove prefix (first 2 parts) and suffix (last part which is index)
+            item_name = "_".join(parts[2:-1])
         else:
-            item_name = row.get("test_statistic_id", f"item_{index}")
+            item_name = f"item_{index}"
 
         if progress_callback:
             progress_callback(f"  [{index + 1}] Processing {item_name}...")
 
         try:
-            # Build prompt from CSV data
-            prompt = self.build_prompt(row, workflow_type)
+            # Use Pydantic AI (supports discriminated unions via tool calling)
+            model = OpenAIResponsesModel("gpt-5.1")
+            settings = OpenAIResponsesModelSettings(
+                openai_reasoning_summary="concise", openai_reasoning_effort=reasoning_effort
+            )
+            # Get validation context from request (for species_units)
+            validation_context = request.get("validation_context", {})
 
-            # Get Pydantic model
-            pydantic_model = self.get_pydantic_model(workflow_type)
+            # Build tools list - web search and code execution
+            builtin_tools = [WebSearchTool(), CodeExecutionTool()]
 
-            # Call Responses API with structured outputs
-            response = await self.client.responses.parse(
-                model="gpt-5",
-                input=prompt,
-                reasoning={"effort": reasoning_effort},
-                tools=[{"type": "web_search"}],
-                text_format=pydantic_model,
+            agent = Agent(
+                model,
+                output_type=pydantic_model,
+                model_settings=settings,
+                builtin_tools=builtin_tools,
+                validation_context=validation_context,
+                retries=7,  # Increased for validation requirements
             )
 
-            # Use output_parsed and convert to dict
-            parsed_data = response.output_parsed.model_dump()
+            # Run agent with prompt
+            result = await agent.run(prompt)
+            parsed_data = result.output.model_dump()
+            request_id = "pydantic_ai_" + custom_id
 
             if progress_callback:
                 progress_callback(f"  [{index + 1}] ✓ Completed {item_name}")
 
-            # Return in simple format (unpacker will handle both batch and immediate formats)
             return {
                 "custom_id": custom_id,
                 "response": {
                     "status_code": 200,
-                    "request_id": response.id,
+                    "request_id": request_id,
                     "body": parsed_data,
                 },
                 "error": None,
@@ -211,7 +194,6 @@ class ImmediateRequestProcessor:
             if progress_callback:
                 progress_callback(f"  [{index + 1}] ✗ Failed {item_name}: {e}")
 
-            # Return error in batch-compatible format
             return {
                 "custom_id": custom_id,
                 "response": {
@@ -230,33 +212,50 @@ class ImmediateRequestProcessor:
         input_csv: Path,
         workflow_type: str,
         progress_callback: Optional[callable] = None,
-        reasoning_effort: str = "high",
+        result_callback: Optional[callable] = None,
+        reasoning_effort: str = "low",
     ) -> List[Dict[str, Any]]:
         """
-        Process all requests from CSV file.
+        Process all requests from CSV file using Pydantic AI.
 
         Args:
             input_csv: Path to input CSV file
-            workflow_type: "parameter" or "test_statistic"
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
             progress_callback: Optional callback for progress updates
+            result_callback: Optional callback called immediately as each result completes
+            reasoning_effort: Reasoning effort level
 
         Returns:
-            List of results in batch-compatible format
+            List of results in standard format
         """
-        # Read CSV rows
-        rows = self.read_csv_rows(input_csv)
+        # Get species_units_file for calibration/isolated system targets
+        species_units_file = None
+        if workflow_type in ("calibration_target", "isolated_system_target"):
+            species_units_file = self.base_dir / "jobs" / "input_data" / "species_units.json"
+
+        # Generate prompts using prompt builder (DRY principle)
+        prompts = self.get_prompts(input_csv, workflow_type, species_units_file, reasoning_effort)
 
         if progress_callback:
-            progress_callback(f"Processing {len(rows)} requests via Responses API...\n")
+            progress_callback(f"Processing {len(prompts)} requests via Pydantic AI...\n")
 
         # Create tasks for all requests
         tasks = [
-            self.process_single_request(row, i, workflow_type, progress_callback, reasoning_effort)
-            for i, row in enumerate(rows)
+            self.process_single_request(
+                prompt, i, reasoning_effort, workflow_type, progress_callback
+            )
+            for i, prompt in enumerate(prompts)
         ]
 
-        # Process concurrently
-        results = await asyncio.gather(*tasks)
+        # Process concurrently, calling result_callback as each completes
+        results = []
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            results.append(result)
+
+            # Call result_callback synchronously (it's quick I/O)
+            if result_callback:
+                result_callback(result)
 
         if progress_callback:
             success_count = sum(1 for r in results if r.get("error") is None)
@@ -269,20 +268,24 @@ class ImmediateRequestProcessor:
         input_csv: Path,
         workflow_type: str,
         progress_callback: Optional[callable] = None,
-        reasoning_effort: str = "high",
+        result_callback: Optional[callable] = None,
+        reasoning_effort: str = "low",
     ) -> List[Dict[str, Any]]:
         """
-        Synchronous wrapper for async processing.
+        Synchronous wrapper for async processing via Pydantic AI.
 
         Args:
             input_csv: Path to input CSV file
-            workflow_type: "parameter" or "test_statistic"
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
             progress_callback: Optional callback for progress updates
-            reasoning_effort: Reasoning effort level ("low", "medium", "high")
+            result_callback: Optional callback called immediately as each result completes
+            reasoning_effort: Reasoning effort level
 
         Returns:
-            List of results in batch-compatible format
+            List of results in standard format
         """
         return asyncio.run(
-            self.process_all_requests(input_csv, workflow_type, progress_callback, reasoning_effort)
+            self.process_all_requests(
+                input_csv, workflow_type, progress_callback, result_callback, reasoning_effort
+            )
         )

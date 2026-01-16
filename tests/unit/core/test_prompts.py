@@ -7,7 +7,6 @@ Tests that prompts are correctly assembled with placeholder substitutions.
 from qsp_llm_workflows.core.prompts import (
     build_parameter_extraction_prompt,
     build_test_statistic_prompt,
-    build_validation_fix_prompt,
 )
 
 
@@ -164,25 +163,6 @@ class TestBuildTestStatisticPrompt:
         # Cancer type should appear in data source hierarchy guidance
         assert "melanoma" in prompt
         assert "{{CANCER_TYPE}}" not in prompt
-
-
-class TestBuildValidationFixPrompt:
-    """Test validation fix prompt building."""
-
-    def test_basic_substitution(self):
-        """Test that all placeholders are replaced."""
-        prompt = build_validation_fix_prompt(
-            yaml_content="schema_version: v3\nparameter_name: k_growth",
-            validation_errors="Missing field: parameter_units",
-        )
-
-        # Check substitutions worked
-        assert "k_growth" in prompt
-        assert "Missing field: parameter_units" in prompt
-
-        # Check no placeholders remain
-        assert "{{" not in prompt
-        assert "}}" not in prompt
 
 
 class TestPromptContent:

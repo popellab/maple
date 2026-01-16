@@ -20,17 +20,14 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
         )
 
         assert context.input_csv == input_csv
         assert context.workflow_type == "parameter"
-        assert context.immediate is True
         assert context.config == config
         assert context.progress_callback is None
-        assert context.batch_file is None
-        assert context.batch_id is None
+        assert context.preview_file is None
         assert context.results_file is None
         assert context.output_directory is None
         assert context.file_count == 0
@@ -45,7 +42,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=False,
             config=config,
             progress_callback=callback,
         )
@@ -61,7 +57,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
             progress_callback=callback,
         )
@@ -78,7 +73,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
         )
 
@@ -93,7 +87,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
         )
 
@@ -111,7 +104,6 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=True,
             config=config,
         )
 
@@ -126,19 +118,16 @@ class TestWorkflowContext:
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type="parameter",
-            immediate=False,
             config=config,
         )
 
         # Simulate workflow steps modifying context
-        context.batch_file = tmp_path / "batch.jsonl"
-        context.batch_id = "batch_123"
+        context.preview_file = tmp_path / "preview.txt"
         context.results_file = tmp_path / "results.jsonl"
         context.output_directory = tmp_path / "output"
         context.file_count = 15
 
-        assert context.batch_file == tmp_path / "batch.jsonl"
-        assert context.batch_id == "batch_123"
+        assert context.preview_file == tmp_path / "preview.txt"
         assert context.results_file == tmp_path / "results.jsonl"
         assert context.output_directory == tmp_path / "output"
         assert context.file_count == 15

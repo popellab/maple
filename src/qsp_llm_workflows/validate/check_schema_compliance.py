@@ -55,7 +55,6 @@ class SchemaValidator(Validator):
                 for k, v in data.items()
                 if k
                 not in [
-                    "schema_version",
                     "parameter_name",
                     "parameter_units",
                     "parameter_definition",
@@ -64,7 +63,6 @@ class SchemaValidator(Validator):
                     "derivation_id",
                     "derivation_timestamp",
                     "model_context",
-                    "context_hash",
                     "test_statistic_id",
                     "scenario_context",
                     "required_species",

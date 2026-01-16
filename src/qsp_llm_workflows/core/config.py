@@ -44,21 +44,17 @@ class WorkflowConfig(BaseModel):
         default="high",
         description="Reasoning effort level for API requests",
     )
-    batch_completion_window: str = Field(
-        default="24h",
-        description="Completion window for batch API requests",
+
+    # Model structure for parameter context and validation (isolated system targets)
+    model_structure_file: Optional[Path] = Field(
+        default=None,
+        description="Path to model_structure.json for parameter context and validation",
     )
 
-    # Timeout settings
-    batch_timeout: int = Field(
-        default=3600,
-        ge=0,
-        description="Maximum seconds to wait for batch completion",
-    )
-    poll_interval: int = Field(
-        default=30,
-        ge=1,
-        description="Seconds between batch status checks",
+    # Model context for prompt generation (isolated system targets)
+    model_context_file: Optional[Path] = Field(
+        default=None,
+        description="Path to model_context.txt with high-level model description",
     )
 
     @field_validator("base_dir", "storage_dir", mode="before")
@@ -70,9 +66,9 @@ class WorkflowConfig(BaseModel):
         return v
 
     @property
-    def batch_jobs_dir(self) -> Path:
-        """Get batch jobs directory path."""
-        return self.base_dir / "batch_jobs"
+    def jobs_dir(self) -> Path:
+        """Get jobs directory path."""
+        return self.base_dir / "jobs"
 
     @property
     def to_review_dir(self) -> Path:
@@ -92,8 +88,6 @@ class WorkflowConfig(BaseModel):
             QSP_STORAGE_DIR: Storage directory (used if storage_dir param not provided)
             QSP_MODEL: OpenAI model (optional)
             QSP_REASONING_EFFORT: Reasoning effort level (optional)
-            QSP_BATCH_TIMEOUT: Batch timeout in seconds (optional)
-            QSP_POLL_INTERVAL: Poll interval in seconds (optional)
 
         Args:
             env_file: Optional path to .env file (defaults to .env in current directory)
@@ -146,12 +140,6 @@ class WorkflowConfig(BaseModel):
 
             if effort := os.getenv("QSP_REASONING_EFFORT"):
                 config_dict["reasoning_effort"] = effort
-
-            if timeout := os.getenv("QSP_BATCH_TIMEOUT"):
-                config_dict["batch_timeout"] = int(timeout)
-
-            if interval := os.getenv("QSP_POLL_INTERVAL"):
-                config_dict["poll_interval"] = int(interval)
 
             return cls(**config_dict)
 

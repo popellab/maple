@@ -46,10 +46,8 @@ class TestSchemaValidator:
                             "units": "dimensionless",
                             "description": "Test input description",
                             "source_ref": "src1",
-                            "value_table_or_section": "Table 1",
-                            "value_snippet": "The value was 1.0",
-                            "units_table_or_section": "Methods section",
-                            "units_snippet": "dimensionless",
+                            "value_location": "Table 1",
+                            "value_snippet": "The value was 1.0 (dimensionless)",
                         }
                     ],
                 },
@@ -517,7 +515,6 @@ def derive_parameter(inputs, ureg):
         with tempfile.TemporaryDirectory() as tmpdir:
             yaml_file = Path(tmpdir) / "test.yaml"
             content = """# Header comment
-schema_version: v3
 parameter_name: k_growth
 
 parameter_estimates:
@@ -558,7 +555,6 @@ key_assumptions:
 
             # Check other content is preserved
             assert "# Header comment" in updated
-            assert "schema_version: v3" in updated
             assert "parameter_name: k_growth" in updated
             assert 'description: "Important input"' in updated
             assert "key_assumptions:" in updated
@@ -995,7 +991,7 @@ class TestValueConsistencyChecker:
         """Test validator initializes data structures correctly."""
         validator = ValueConsistencyChecker("/tmp")
 
-        assert hasattr(validator, "context_groups")
+        assert hasattr(validator, "derivation_groups")
         assert hasattr(validator, "legacy_values")
         assert hasattr(validator, "all_files")
 

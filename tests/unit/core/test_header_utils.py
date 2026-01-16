@@ -2,7 +2,7 @@
 Unit tests for header management utilities.
 
 Tests the Pydantic-based header system including:
-- Header models (ParameterHeaders, TestStatisticHeaders)
+- Header models (ParameterFooters, TestStatisticFooters)
 - Split/merge methods on complete models
 - ModelRegistry
 - HeaderManager operations
@@ -15,11 +15,11 @@ import pytest
 
 from qsp_llm_workflows.core.pydantic_models import (
     ParameterMetadata,
-    ParameterHeaders,
+    ParameterFooters,
     TestStatistic,
-    TestStatisticHeaders,
+    TestStatisticFooters,
     ModelRegistry,
-    Input,
+    LiteratureInput,
     ParameterEstimates,
     KeyAssumption,
     BiologicalRelevance,
@@ -29,13 +29,12 @@ from qsp_llm_workflows.core.pydantic_models import (
 from qsp_llm_workflows.core.header_utils import HeaderManager
 
 
-class TestParameterHeaders:
-    """Test ParameterHeaders model."""
+class TestParameterFooters:
+    """Test ParameterFooters model."""
 
     def test_create_parameter_headers(self):
-        """Test creating ParameterHeaders instance."""
-        headers = ParameterHeaders(
-            schema_version="v3",
+        """Test creating ParameterFooters instance."""
+        headers = ParameterFooters(
             parameter_name="k_growth",
             parameter_units="1/day",
             parameter_definition="Growth rate of cancer cells",
@@ -44,7 +43,6 @@ class TestParameterHeaders:
             derivation_id="deriv123",
             derivation_timestamp="2025-01-01T00:00:00",
             model_context={"reactions": ["R1"], "rules": []},
-            context_hash="abc123",
         )
 
         assert headers.parameter_name == "k_growth"
@@ -52,9 +50,8 @@ class TestParameterHeaders:
         assert "immediate_mode" in headers.tags
 
     def test_parameter_headers_model_dump(self):
-        """Test converting ParameterHeaders to dict."""
-        headers = ParameterHeaders(
-            schema_version="v3",
+        """Test converting ParameterFooters to dict."""
+        headers = ParameterFooters(
             parameter_name="k_death",
             parameter_units="1/hour",
             parameter_definition="Death rate",
@@ -63,7 +60,6 @@ class TestParameterHeaders:
             derivation_id=None,
             derivation_timestamp=None,
             model_context={},
-            context_hash="def456",
         )
 
         data = headers.model_dump()
@@ -72,13 +68,12 @@ class TestParameterHeaders:
         assert data["derivation_id"] is None
 
 
-class TestTestStatisticHeaders:
-    """Test TestStatisticHeaders model."""
+class TestTestStatisticFooters:
+    """Test TestStatisticFooters model."""
 
     def test_create_test_statistic_headers(self):
-        """Test creating TestStatisticHeaders instance."""
-        headers = TestStatisticHeaders(
-            schema_version="v2",
+        """Test creating TestStatisticFooters instance."""
+        headers = TestStatisticFooters(
             test_statistic_id="tumor_vol_day14",
             cancer_type="PDAC",
             output_unit="millimeter ** 3",
@@ -87,7 +82,6 @@ class TestTestStatisticHeaders:
             required_species=["V_T.C"],
             derived_species_description="Tumor volume at day 14",
             tags=["validation"],
-            context_hash="xyz789",
         )
 
         assert headers.test_statistic_id == "tumor_vol_day14"
@@ -111,16 +105,14 @@ class TestParameterMetadataSplitMerge:
             study_design="In vitro experiments",
             parameter_estimates=ParameterEstimates(
                 inputs=[
-                    Input(
+                    LiteratureInput(
                         name="obs_growth",
                         value=0.05,
                         units="1/day",
                         description="Observed growth",
                         source_ref="Smith2020",
-                        value_table_or_section="Table 1",
-                        value_snippet="growth rate = 0.05",
-                        units_table_or_section="Table 1",
-                        units_snippet="units: 1/day",
+                        value_location="Table 1",
+                        value_snippet="growth rate = 0.05 (units: 1/day)",
                     )
                 ],
                 derivation_code="median = 0.05",
@@ -159,7 +151,6 @@ class TestParameterMetadataSplitMerge:
         """Test getting header field names."""
         header_fields = ParameterMetadata.get_header_fields()
 
-        assert "schema_version" in header_fields
         assert "parameter_name" in header_fields
         assert "cancer_type" in header_fields
         assert "model_context" in header_fields
@@ -186,8 +177,7 @@ class TestParameterMetadataSplitMerge:
         # creates an instance with extra fields that aren't part of the model.
         # This test verifies the content fields are properly set.
 
-        headers = ParameterHeaders(
-            schema_version="v3",
+        headers = ParameterFooters(
             parameter_name="k_growth",
             parameter_units="1/day",
             parameter_definition="Growth rate",
@@ -196,7 +186,6 @@ class TestParameterMetadataSplitMerge:
             derivation_id=None,
             derivation_timestamp=None,
             model_context={},
-            context_hash="abc123",
         )
 
         content = {
@@ -212,10 +201,8 @@ class TestParameterMetadataSplitMerge:
                         "units": "1/day",
                         "description": "Observed growth",
                         "source_ref": "Smith2020",
-                        "value_table_or_section": "Table 1",
-                        "value_snippet": "growth rate = 0.05",
-                        "units_table_or_section": "Table 1",
-                        "units_snippet": "units: 1/day",
+                        "value_location": "Table 1",
+                        "value_snippet": "growth rate = 0.05 (units: 1/day)",
                     }
                 ],
                 "derivation_code": "median = 0.05",
@@ -265,12 +252,12 @@ class TestModelRegistry:
     def test_get_header_model_for_parameter(self):
         """Test getting header model for ParameterMetadata."""
         header_class = ModelRegistry.get_header_model(ParameterMetadata)
-        assert header_class == ParameterHeaders
+        assert header_class == ParameterFooters
 
     def test_get_header_model_for_test_statistic(self):
         """Test getting header model for TestStatistic."""
         header_class = ModelRegistry.get_header_model(TestStatistic)
-        assert header_class == TestStatisticHeaders
+        assert header_class == TestStatisticFooters
 
     def test_get_header_model_unknown_raises(self):
         """Test that unknown model raises KeyError."""
@@ -357,8 +344,7 @@ class TestHeaderManager:
         """Test merging headers and content."""
         manager = HeaderManager()
 
-        headers = ParameterHeaders(
-            schema_version="v3",
+        headers = ParameterFooters(
             parameter_name="k_death",
             parameter_units="1/hour",
             parameter_definition="Death rate",
@@ -367,7 +353,6 @@ class TestHeaderManager:
             derivation_id=None,
             derivation_timestamp=None,
             model_context={},
-            context_hash="def456",
         )
 
         content = {
@@ -413,7 +398,6 @@ class TestHeaderManager:
         # Create temporary YAML file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml_data = {
-                "schema_version": "v3",
                 "parameter_name": "k_test",
                 "parameter_units": "1/day",
                 "parameter_definition": "Test parameter",
@@ -422,7 +406,6 @@ class TestHeaderManager:
                 "derivation_id": "test123",
                 "derivation_timestamp": "2025-01-01T00:00:00",
                 "model_context": {"reactions": []},
-                "context_hash": "test_hash",
                 "mathematical_role": "Test role",
                 "parameter_range": "positive_reals",
             }
@@ -432,7 +415,7 @@ class TestHeaderManager:
         try:
             headers = manager.extract_headers_from_yaml(yaml_path, ParameterMetadata)
 
-            assert isinstance(headers, ParameterHeaders)
+            assert isinstance(headers, ParameterFooters)
             assert headers.parameter_name == "k_test"
             assert headers.cancer_type == "PDAC"
             assert "test" in headers.tags
@@ -446,7 +429,6 @@ class TestHeaderManager:
         # Create temporary YAML file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml_data = {
-                "schema_version": "v3",
                 "parameter_name": "k_test",
                 "parameter_units": "1/day",
                 "parameter_definition": "Test parameter",
@@ -455,7 +437,6 @@ class TestHeaderManager:
                 "derivation_id": None,
                 "derivation_timestamp": None,
                 "model_context": {},
-                "context_hash": "test_hash",
                 "mathematical_role": "Test role",
                 "parameter_range": "positive_reals",
                 "study_overview": "Overview",
@@ -468,7 +449,7 @@ class TestHeaderManager:
             headers, content = manager.strip_headers_from_yaml(yaml_path, ParameterMetadata)
 
             # Check headers
-            assert isinstance(headers, ParameterHeaders)
+            assert isinstance(headers, ParameterFooters)
             assert headers.parameter_name == "k_test"
 
             # Check content
@@ -489,7 +470,6 @@ class TestHeaderManager:
         param_fields = manager.get_header_field_names(ParameterMetadata)
         assert "parameter_name" in param_fields
         assert "cancer_type" in param_fields
-        assert "schema_version" in param_fields
 
         test_stat_fields = manager.get_header_field_names(TestStatistic)
         assert "test_statistic_id" in test_stat_fields
@@ -510,8 +490,7 @@ class TestHeaderManager:
         """Test merging headers and content to YAML file."""
         manager = HeaderManager()
 
-        headers = ParameterHeaders(
-            schema_version="v3",
+        headers = ParameterFooters(
             parameter_name="k_output",
             parameter_units="1/day",
             parameter_definition="Output test",
@@ -520,7 +499,6 @@ class TestHeaderManager:
             derivation_id=None,
             derivation_timestamp=None,
             model_context={},
-            context_hash="output_hash",
         )
 
         content = {

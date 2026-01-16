@@ -803,7 +803,6 @@ class TestDataCollection:
                             "name": "input1",
                             "value": 1.0,
                             "value_snippet": "snippet one",
-                            "units_snippet": "units snippet",
                             "source_ref": "src1",
                         },
                         {
@@ -830,7 +829,7 @@ class TestDataCollection:
             verifier = AutomatedSnippetVerifier(tmpdir)
             source_data = verifier.collect_verification_data()
 
-            assert len(source_data["src1"]["snippets"]) == 3  # 2 value + 1 units
+            assert len(source_data["src1"]["snippets"]) == 2  # 2 value_snippets
 
     def test_skips_sources_without_doi(self):
         """Test skipping sources without DOI."""

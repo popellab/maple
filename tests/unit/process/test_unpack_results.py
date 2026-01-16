@@ -1,18 +1,18 @@
 """
 Unit tests for unpack_results module.
 
-Tests the unpacking logic for both batch and immediate mode responses.
+Tests the unpacking logic for extraction results.
 """
 
 import json
 import pytest
 import yaml
 
-from qsp_llm_workflows.process.unpack_results import process_results, add_header_fields
+from qsp_llm_workflows.process.unpack_results import process_results, add_footer_fields
 
 
 class TestUnpackResults:
-    """Test unpacking of batch and immediate mode results."""
+    """Test unpacking of extraction results."""
 
     @pytest.fixture
     def output_dir(self, tmp_path):
@@ -125,8 +125,7 @@ class TestUnpackResults:
         """Create original YAML file for validation fix testing."""
         yaml_file = output_dir / "test_param_PDAC_abc123_deriv001.yaml"
 
-        content = """schema_version: v3
-parameter_name: test_param
+        content = """parameter_name: test_param
 parameter_units: 1/day
 parameter_definition: Test parameter
 cancer_type: PDAC
@@ -136,7 +135,6 @@ derivation_timestamp: '2025-01-01T00:00:00'
 model_context:
   reactions: []
   rules: []
-context_hash: abc123
 mathematical_role: Old role
 parameter_range: positive_reals
 study_overview: Old overview
@@ -179,95 +177,23 @@ biological_relevance:
         yaml_file.write_text(content)
         return yaml_file
 
-    def test_immediate_mode_extracts_output_parsed(
-        self, immediate_results_with_output_parsed, output_dir, original_yaml_file
-    ):
-        """Test that immediate mode correctly extracts content from output_parsed wrapper."""
-        # Process results
-        process_results(immediate_results_with_output_parsed, output_dir, input_csv=None)
 
-        # Check that file was created
-        output_file = output_dir / "test_param_PDAC_abc123_deriv001.yaml"
-        assert output_file.exists()
-
-        # Read the output file
-        content = output_file.read_text()
-
-        # Verify that output_parsed is NOT in the file (bug fix)
-        assert "output_parsed:" not in content
-
-        # Verify that content fields are at top level
-        assert "mathematical_role: Test role" in content
-        assert "parameter_range: positive_reals" in content
-        assert "study_overview: Test overview" in content
-
-        # Verify headers were preserved
-        assert "schema_version: v3" in content
-        assert "parameter_name: test_param" in content
-        assert "cancer_type: PDAC" in content
-
-    def test_immediate_mode_without_wrapper_still_works(
-        self, immediate_results_without_wrapper, output_dir, original_yaml_file
-    ):
-        """Test that immediate mode without output_parsed wrapper still works (legacy format)."""
-        # Process results
-        process_results(immediate_results_without_wrapper, output_dir, input_csv=None)
-
-        # Check that file was created
-        output_file = output_dir / "test_param_PDAC_abc123_deriv001.yaml"
-        assert output_file.exists()
-
-        # Read the output file
-        content = output_file.read_text()
-
-        # Verify that content fields are at top level
-        assert "mathematical_role: Test role" in content
-        assert "parameter_range: positive_reals" in content
-
-    def test_validation_fix_preserves_headers(
-        self, immediate_results_with_output_parsed, output_dir, original_yaml_file
-    ):
-        """Test that validation fixes preserve original headers."""
-        # Process results
-        process_results(immediate_results_with_output_parsed, output_dir, input_csv=None)
-
-        # Read the output file
-        output_file = output_dir / "test_param_PDAC_abc123_deriv001.yaml"
-        content = output_file.read_text()
-
-        # Verify that headers were preserved from original file
-        assert "schema_version: v3" in content
-        assert "parameter_name: test_param" in content
-        assert "parameter_units: 1/day" in content
-        assert "cancer_type: PDAC" in content
-        assert "context_hash: abc123" in content
-
-        # Verify that content was updated from fixed response
-        assert "mathematical_role: Test role" in content
-        assert "study_overview: Test overview" in content
-
-        # Verify old content was replaced
-        assert "Old role" not in content
-        assert "Old overview" not in content
-
-
-class TestTestStatisticHeaders:
+class TestTestStatisticFooters:
     """Test test statistic header handling including required_species."""
 
-    def test_add_header_fields_includes_required_species(self):
-        """Test that add_header_fields parses required_species to list."""
+    def test_add_footer_fields_includes_required_species(self):
+        """Test that add_footer_fields parses required_species to list."""
         json_data = {}
         metadata = {
             "test_statistic_id": "tumor_volume_day14",
             "cancer_type": "PDAC",
-            "context_hash": "abc123",
             "model_context": "Test model",
             "scenario_context": "Test scenario",
             "required_species": "V_T.CD8, V_T.Treg, V_T.TumorVolume",
             "derived_species_description": "Tumor volume at day 14",
         }
 
-        result = add_header_fields(json_data, metadata, "test_statistic")
+        result = add_footer_fields(json_data, metadata, "test_statistic")
 
         # Check required_species is parsed to list
         assert "required_species" in result
@@ -280,41 +206,39 @@ class TestTestStatisticHeaders:
         # Check derived_species_description
         assert result["derived_species_description"] == "Tumor volume at day 14"
 
-    def test_add_header_fields_raises_error_for_empty_required_species(self):
+    def test_add_footer_fields_raises_error_for_empty_required_species(self):
         """Test that empty required_species raises ValueError."""
         json_data = {}
         metadata = {
             "test_statistic_id": "test_stat",
             "cancer_type": "PDAC",
-            "context_hash": "abc123",
             "required_species": "",
             "derived_species_description": "Some description",
         }
 
         with pytest.raises(ValueError, match="required_species is required"):
-            add_header_fields(json_data, metadata, "test_statistic")
+            add_footer_fields(json_data, metadata, "test_statistic")
 
-    def test_add_header_fields_raises_error_for_empty_derived_species_description(self):
+    def test_add_footer_fields_raises_error_for_empty_derived_species_description(self):
         """Test that empty derived_species_description raises ValueError."""
         json_data = {}
         metadata = {
             "test_statistic_id": "test_stat",
             "cancer_type": "PDAC",
-            "context_hash": "abc123",
             "required_species": "V_T.CD8",
             "derived_species_description": "",
         }
 
         with pytest.raises(ValueError, match="derived_species_description is required"):
-            add_header_fields(json_data, metadata, "test_statistic")
+            add_footer_fields(json_data, metadata, "test_statistic")
 
     def test_test_statistic_unpacking_with_required_species(self, tmp_path):
         """Test full unpacking of test statistic with required_species in header."""
         # Create input CSV with required_species
         input_csv = tmp_path / "input.csv"
         input_csv.write_text(
-            "test_statistic_id,cancer_type,context_hash,model_context,scenario_context,required_species,derived_species_description\n"
-            'tumor_volume,PDAC,abc123,Model context,Scenario context,"V_T.CD8,V_T.Treg",Tumor volume ratio\n'
+            "test_statistic_id,cancer_type,model_context,scenario_context,required_species,derived_species_description\n"
+            'tumor_volume,PDAC,Model context,Scenario context,"V_T.CD8,V_T.Treg",Tumor volume ratio\n'
         )
 
         # Create results file
@@ -385,13 +309,11 @@ class TestTestStatisticHeaders:
         # Verify derived_species_description
         assert data["derived_species_description"] == "Tumor volume ratio"
 
-        # Verify header field ordering (required_species should be near top)
+        # Verify footer field ordering (footer fields should be near bottom)
         lines = content.split("\n")
-        header_fields = [
-            "schema_version",
+        footer_fields = [
             "test_statistic_id",
             "cancer_type",
-            "context_hash",
         ]
-        for field in header_fields:
-            assert any(line.startswith(f"{field}:") for line in lines[:15])
+        for field in footer_fields:
+            assert any(line.startswith(f"{field}:") for line in lines[-15:])

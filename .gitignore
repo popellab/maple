@@ -1,5 +1,5 @@
-# Batch processing files (may contain API keys and sensitive data)
-batch_jobs
+# Workflow processing files (may contain API keys and sensitive data)
+jobs
 to-review
 input_data
 # Python cache and virtual environments
@@ -55,3 +55,4 @@ scratch/
 # Manuscript documentation (distributed via email, not in repo)
 docs-manuscript/
 validation-outputs
+notes

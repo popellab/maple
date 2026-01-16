@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 from datetime import datetime
 
 from qsp_llm_workflows.validate.validator import Validator
-from qsp_llm_workflows.validate.validation_utils import ValidationReport
+from qsp_llm_workflows.core.validation_utils import ValidationReport
 
 
 class ValidationResult:

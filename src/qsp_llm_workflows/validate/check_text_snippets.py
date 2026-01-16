@@ -429,8 +429,49 @@ class TextSnippetValidator(Validator):
             name = inp.get("name", "unnamed")
             value = inp.get("value")
             units = inp.get("units")
+            source_type = inp.get("source_type", "text")
 
-            # Check value_snippet contains the value
+            # Handle figure sources differently - can't do text search on figures
+            if source_type == "figure":
+                figure_id = inp.get("figure_id")
+                extraction_method = inp.get("extraction_method")
+
+                # Validate that required figure fields are present
+                missing_fields = []
+                if not figure_id:
+                    missing_fields.append("figure_id")
+                if not extraction_method:
+                    missing_fields.append("extraction_method")
+
+                if missing_fields:
+                    errors.append(
+                        f"Input '{name}': figure source missing required fields: {', '.join(missing_fields)}"
+                    )
+                    input_result = {
+                        "input_name": name,
+                        "value": value,
+                        "found": False,
+                        "matched_pattern": None,
+                        "source_type": "figure",
+                        "figure_id": figure_id,
+                        "status": "missing_figure_fields",
+                    }
+                else:
+                    # Figure source with valid fields - mark for manual review
+                    input_result = {
+                        "input_name": name,
+                        "value": value,
+                        "found": True,  # Consider valid if figure fields present
+                        "matched_pattern": f"figure:{figure_id} ({extraction_method})",
+                        "source_type": "figure",
+                        "figure_id": figure_id,
+                        "extraction_method": extraction_method,
+                        "status": "manual_review_required",
+                    }
+                input_results.append(input_result)
+                continue
+
+            # For text/table sources, check value_snippet contains the value
             value_snippet = inp.get("value_snippet")
             if value_snippet:
                 # Handle list values by checking each element
@@ -456,6 +497,7 @@ class TextSnippetValidator(Validator):
                         "matched_pattern": (
                             "; ".join(matched_patterns) if matched_patterns else None
                         ),
+                        "source_type": source_type,
                     }
                     input_results.append(input_result)
 
@@ -474,6 +516,7 @@ class TextSnippetValidator(Validator):
                         "value": value,
                         "found": found,
                         "matched_pattern": pattern,
+                        "source_type": source_type,
                     }
                     input_results.append(input_result)
 
@@ -508,10 +551,28 @@ class TextSnippetValidator(Validator):
                 value = inp_result["value"]
                 found = inp_result["found"]
                 pattern = inp_result["matched_pattern"]
+                source_type = inp_result.get("source_type", "text")
+                status = inp_result.get("status")
 
                 item_desc = f"{filename} / input '{input_name}' (value={value})"
 
-                if found:
+                # Handle figure sources specially
+                if source_type == "figure":
+                    if status == "manual_review_required":
+                        # Figure source with valid fields - pass but note manual review needed
+                        figure_id = inp_result.get("figure_id", "unknown")
+                        extraction_method = inp_result.get("extraction_method", "unknown")
+                        report.add_pass(
+                            item_desc,
+                            f"Figure source: {figure_id} (extracted via {extraction_method}) - manual verification required",
+                        )
+                    else:
+                        # Figure source missing required fields
+                        report.add_fail(
+                            item_desc,
+                            "Figure source missing required fields (figure_id and/or extraction_method)",
+                        )
+                elif found:
                     report.add_pass(item_desc, f"Found as: {pattern}")
                 else:
                     report.add_fail(

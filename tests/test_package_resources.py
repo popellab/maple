@@ -49,15 +49,6 @@ def test_test_statistic_prompt_exists():
     assert prompt_file.stat().st_size > 0, "Test statistic prompt is empty"
 
 
-def test_validation_fix_prompt_exists():
-    """Test that validation fix prompt exists."""
-    package_root = get_package_root()
-    prompt_file = package_root / "prompts" / "validation_fix_prompt.md"
-
-    assert prompt_file.exists(), f"Validation fix prompt not found: {prompt_file}"
-    assert prompt_file.stat().st_size > 0, "Validation fix prompt is empty"
-
-
 def test_all_matlab_scripts_are_readable():
     """Test that all MATLAB scripts can be read."""
     package_root = get_package_root()

@@ -14,7 +14,6 @@ Validation checks:
 
 import argparse
 import ast
-import hashlib
 import re
 import sys
 from pathlib import Path
@@ -269,7 +268,6 @@ def enrich_test_statistic_csv(
         scenario = yaml.safe_load(f)
 
     scenario_context = scenario["scenario_context"].strip()
-    context_hash = hashlib.md5(scenario_context.encode()).hexdigest()[:8]
 
     # Load species units
     species_units = load_species_units(species_file)
@@ -310,7 +308,6 @@ def enrich_test_statistic_csv(
 
     # Add enriched columns
     df["scenario_context"] = scenario_context
-    df["context_hash"] = context_hash
 
     # Reorder columns
     df = df[
@@ -319,7 +316,6 @@ def enrich_test_statistic_csv(
             "output_unit",
             "model_output_code",
             "scenario_context",
-            "context_hash",
         ]
     ]
 

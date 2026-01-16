@@ -20,15 +20,15 @@ from pydantic import BaseModel
 
 from qsp_llm_workflows.core.pydantic_models import (
     ParameterMetadata,
-    ParameterHeaders,
+    ParameterFooters,
     TestStatistic,
-    TestStatisticHeaders,
+    TestStatisticFooters,
     ModelRegistry,
 )
 
 # Type variables for generic methods
 T = TypeVar("T", bound=BaseModel)
-HeaderModel = Union[ParameterHeaders, TestStatisticHeaders]
+HeaderModel = Union[ParameterFooters, TestStatisticFooters]
 ContentModel = Union[ParameterMetadata, TestStatistic]
 
 
@@ -56,7 +56,7 @@ class HeaderManager:
 
         Example:
             headers, content = manager.split_model(param_metadata)
-            # headers: ParameterHeaders instance
+            # headers: ParameterFooters instance
             # content: dict with LLM-generated fields
         """
         if not hasattr(model, "split"):
@@ -74,7 +74,7 @@ class HeaderManager:
         Merge headers and content into a complete model.
 
         Args:
-            headers: Header model instance (ParameterHeaders or TestStatisticHeaders)
+            headers: Header model instance (ParameterFooters or TestStatisticFooters)
             content: Content dictionary with LLM-generated fields
             model_class: Target model class (ParameterMetadata or TestStatistic)
 
@@ -83,7 +83,7 @@ class HeaderManager:
 
         Example:
             full_model = manager.merge_headers_and_content(
-                headers=ParameterHeaders(...),
+                headers=ParameterFooters(...),
                 content={...},
                 model_class=ParameterMetadata
             )
@@ -109,7 +109,7 @@ class HeaderManager:
                 Path("file.yaml"),
                 ParameterMetadata
             )
-            # Returns ParameterHeaders instance
+            # Returns ParameterFooters instance
         """
         # Load YAML
         with open(yaml_path, "r", encoding="utf-8") as f:

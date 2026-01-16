@@ -5,7 +5,7 @@ Provides consistent interface for all validators using abstract base class patte
 """
 
 from abc import ABC, abstractmethod
-from qsp_llm_workflows.validate.validation_utils import ValidationReport
+from qsp_llm_workflows.core.validation_utils import ValidationReport
 
 
 class Validator(ABC):

@@ -321,9 +321,9 @@ def derive_distribution(inputs, ureg):
     }
 ```
 
-**GOLDEN RULE: Keep values tethered to their units as long as possible.**
+**GOLDEN RULE: Reattach units immediately after sampling → units propagate naturally.**
 
-Let Pint propagate units through your entire calculation. This catches dimensional errors automatically and makes unit conversions explicit. **Never extract `.magnitude` until absolutely necessary (e.g., for lognormal distribution parameters).**
+Sampling (and sqrt) strips units - reattach IMMEDIATELY after. Then let Pint propagate units through your calculation. NumPy operations like `np.median`, `np.percentile`, `np.mean` preserve units automatically.
 
 **Key Pint usage patterns:**
 

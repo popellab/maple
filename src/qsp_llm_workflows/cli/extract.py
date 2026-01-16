@@ -19,12 +19,12 @@ def print_progress(message: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run automated extraction workflow",
+        description="Run automated extraction workflow using Pydantic AI",
         epilog="""
 Examples:
     qsp-extract input.csv --type parameter --output-dir metadata-storage
-    qsp-extract input.csv --type test_statistic --output-dir metadata-storage --immediate
-    qsp-extract input.csv --type parameter --output-dir ../project-repo/metadata --timeout 7200
+    qsp-extract input.csv --type test_statistic --output-dir metadata-storage
+    qsp-extract input.csv --type parameter --output-dir metadata-storage --preview-prompts
         """,
     )
 
@@ -33,7 +33,7 @@ Examples:
     parser.add_argument(
         "--type",
         required=True,
-        choices=["parameter", "test_statistic"],
+        choices=["parameter", "test_statistic", "calibration_target", "isolated_system_target"],
         help="Type of extraction workflow",
     )
 
@@ -45,28 +45,28 @@ Examples:
     )
 
     parser.add_argument(
-        "--immediate",
-        action="store_true",
-        help="Use immediate mode (Responses API) instead of batch API",
-    )
-
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        help="Timeout in seconds for batch monitoring (default: from config or 3600)",
-    )
-
-    parser.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],
-        default="high",
-        help="Reasoning effort level for OpenAI API (default: high)",
+        default="low",
+        help="Reasoning effort level for OpenAI API (default: low)",
     )
 
     parser.add_argument(
         "--preview-prompts",
         action="store_true",
-        help="Preview prompts without sending to API (saves to batch_jobs/prompt_preview.jsonl)",
+        help="Preview prompts without sending to API (saves preview file to jobs/)",
+    )
+
+    parser.add_argument(
+        "--model-structure",
+        type=Path,
+        help="Path to model_structure.json for parameter context and validation (isolated_system_target)",
+    )
+
+    parser.add_argument(
+        "--model-context",
+        type=Path,
+        help="Path to model_context.txt with high-level model description (isolated_system_target)",
     )
 
     args = parser.parse_args()
@@ -85,9 +85,46 @@ Examples:
         print("Please create the directory or specify an existing path", file=sys.stderr)
         sys.exit(1)
 
+    # Validate required options for specific workflow types
+    if args.type == "isolated_system_target":
+        if not args.model_structure:
+            print(
+                "Error: --model-structure is required for isolated_system_target workflow",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not args.model_context:
+            print(
+                "Error: --model-context is required for isolated_system_target workflow",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not args.model_context.exists():
+            print(f"Error: Model context file not found: {args.model_context}", file=sys.stderr)
+            sys.exit(1)
+
     # Load configuration from environment with explicit storage directory
     try:
         config = WorkflowConfig.from_env(storage_dir=output_dir)
+
+        # Add model_structure_file if provided
+        if args.model_structure:
+            if not args.model_structure.exists():
+                print(
+                    f"Error: Model structure file not found: {args.model_structure}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            # Create new config with model files (config is frozen)
+            config = WorkflowConfig(
+                base_dir=config.base_dir,
+                storage_dir=config.storage_dir,
+                openai_api_key=config.openai_api_key,
+                openai_model=config.openai_model,
+                reasoning_effort=config.reasoning_effort,
+                model_structure_file=args.model_structure,
+                model_context_file=args.model_context,
+            )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         print("Make sure OPENAI_API_KEY is set in .env file", file=sys.stderr)
@@ -102,8 +139,7 @@ Examples:
             print("\n=== PREVIEW MODE ===")
             print(f"Building prompts for {args.type} extraction workflow...")
         else:
-            print(f"\nStarting {args.type} extraction workflow...")
-        print(f"Mode: {'immediate' if args.immediate else 'batch'}")
+            print(f"\nStarting {args.type} extraction workflow (Pydantic AI)...")
         print(f"Input: {args.input_csv}")
         print(f"Reasoning effort: {args.reasoning_effort}")
         print()
@@ -111,8 +147,6 @@ Examples:
         result = orchestrator.run_complete_workflow(
             input_csv=Path(args.input_csv),
             workflow_type=args.type,
-            immediate=args.immediate,
-            timeout=args.timeout,
             reasoning_effort=args.reasoning_effort,
             progress_callback=print_progress,
             preview_prompts=args.preview_prompts,
@@ -134,17 +168,18 @@ Examples:
             print("WORKFLOW COMPLETE")
             print("=" * 70)
             print(f"Status: {result.status}")
+            if result.error:
+                print(f"Error: {result.error}")
             print(f"Files extracted: {result.file_count}")
             print(f"Output directory: {result.output_directory}")
             print(f"Duration: {result.duration_seconds:.1f}s")
             print()
-            print("Next steps:")
-            print(f"  1. Review files in: {result.output_directory}")
-            print(f"  2. Run validation: qsp-validate {args.type} --dir {result.output_directory}")
-            print("  3. If satisfied, commit manually:")
-            print(f"       cd {config.storage_dir}")
-            print(f"       git add {result.output_directory}")
-            print(f'       git commit -m "Add {args.type} extractions"')
+            if result.status == "success":
+                print("Next steps:")
+                print(f"  1. Review files in: {result.output_directory}")
+                print(
+                    f"  2. Run validation: qsp-validate {args.type} --dir {result.output_directory}"
+                )
         print()
 
         sys.exit(0)
