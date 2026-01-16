@@ -2,7 +2,7 @@
 
 [![Tests](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml)
 
-Extract parameter values and test statistics from scientific literature for quantitative systems pharmacology (QSP) models. This package uses OpenAI's API to read papers, pull out numeric values with uncertainty estimates, and generate reproducible Python code that derives distributions suitable for Bayesian model calibration.
+Extract calibration targets from scientific literature for quantitative systems pharmacology (QSP) model calibration. This package uses OpenAI's API to read papers, extract experimental data with uncertainty estimates, and generate Python code for Bayesian inference.
 
 ## Installation
 
@@ -14,67 +14,112 @@ source venv/bin/activate
 pip install -e .
 ```
 
-This gives you several CLI commands: `qsp-extract`, `qsp-validate`, `qsp-enrich-csv`, and `qsp-export-model`.
-
-## Usage
-
-The typical workflow is: prepare an input CSV describing what you need, run extraction, and validate the results.
-
+Store your OpenAI API key:
 ```bash
-# Extract parameter estimates from literature
-qsp-extract params.csv --type parameter --output-dir metadata-storage
-
-# Validate the outputs
-qsp-validate parameter_estimates --dir metadata-storage/to-review/parameter_estimates
+echo "OPENAI_API_KEY=sk-your-key-here" > .env
 ```
 
-Extraction uses Pydantic AI to process requests via OpenAI's API.
+## Quick Start
 
-For detailed setup instructions including API key configuration and input CSV format, see [docs/automated_workflow.md](docs/automated_workflow.md).
+### 1. Export model structure
+
+```bash
+qsp-export-model \
+  --matlab-model ../your-model/model.m \
+  --output jobs/input_data/model_definitions.json \
+  --export-structure jobs/input_data/model_structure.json
+```
+
+### 2. Create input CSV
+
+```csv
+target_id,cancer_type,parameters,notes
+cd8_proliferation,PDAC,"k_CD8_pro","CD8 T cell proliferation from in vitro assays"
+spheroid_growth,PDAC,"k_C1_growth,C_max","Cancer growth from spheroid experiments"
+```
+
+### 3. Run extraction
+
+```bash
+qsp-extract \
+  targets.csv \
+  --type isolated_system_target \
+  --output-dir metadata-storage \
+  --model-structure jobs/input_data/model_structure.json
+```
+
+### 4. Review outputs
+
+Results are unpacked to `metadata-storage/to-review/isolated_system_targets/` as YAML files containing:
+- Study interpretation and key assumptions
+- ODE submodel code sharing parameter names with your full model
+- Empirical data with uncertainty (median, 95% CI, sample size)
+- Python code deriving distributions from literature values
+- Source tracking with DOIs and text snippets
 
 ## What gets extracted
 
-**Parameter estimates** include median values, interquartile ranges, and 95% confidence intervals derived from literature data. Each extraction includes the source papers, verbatim text snippets showing where values came from, and Python code that reproduces the statistical derivation.
+**IsolatedSystemTarget** (primary workflow): For in vitro, ex vivo, or preclinical data. Generates a simplified ODE submodel that captures experimental dynamics while sharing parameter names with your full QSP model. This enables joint Bayesian inference across multiple calibration targets.
 
-**Test statistics** define validation targets for model outputs—things like "tumor volume at day 14 should be X ± Y mm³ based on clinical trial data." These are used to check whether model simulations match observed biology.
+Example output structure:
+```yaml
+study_interpretation: |
+  CD8+ T cell proliferation measured via CFSE dilution in 7-day culture...
 
-Both types go through a 9-validator suite that checks schema compliance, verifies DOIs resolve correctly, tests that derivation code runs, and confirms that text snippets actually contain the claimed values.
+submodel:
+  code: |
+    def submodel(t, y, params, inputs):
+        N = y[0]
+        k_pro = params['k_CD8_pro']
+        return [k_pro * N]
+  parameters: [k_CD8_pro]
+  t_span: [0, 7]
+  t_unit: day
+
+empirical_data:
+  median: [2.5]
+  ci95: [[1.8, 3.2]]
+  units: 1/day
+  sample_size: 5
+  distribution_code: |
+    def derive_distribution(inputs, ureg):
+        # Converts literature values to parameter distribution
+        ...
+```
+
+**CalibrationTarget**: For clinical/in vivo data where the full model is needed. Uses an `observable` function to compute measurements from model species.
 
 ## Project structure
 
 ```
 src/qsp_llm_workflows/
-├── core/       # Prompt generation, workflow orchestration, validation utilities
-│   └── calibration/  # Calibration target models
-│       ├── calibration_target_models.py  # CalibrationTarget, CalibrationTargetEstimates
-│       ├── isolated_system_target.py     # IsolatedSystemTarget for in vitro data
-│       ├── observable.py                 # Observable, Submodel, SubmodelObservable
-│       ├── shared_models.py              # EstimateInput, SubmodelInput, Source, Snippet
-│       ├── enums.py                      # Species, Indication, Compartment, System, SourceType, ExtractionMethod
-│       ├── scenario.py                   # Intervention, Scenario
-│       └── code_validator.py             # Unified code validation (CodeValidator)
-├── prepare/    # CSV enrichment and prompt generation
-├── run/        # API request processing
-├── process/    # Result unpacking
-├── validate/   # The 9 validators
-├── cli/        # Command-line entry points
-├── templates/  # YAML output templates
-└── prompts/    # LLM instruction prompts
+├── core/
+│   └── calibration/              # Calibration target models
+│       ├── calibration_target_models.py  # CalibrationTarget base
+│       ├── isolated_system_target.py     # IsolatedSystemTarget
+│       ├── observable.py                 # Submodel, Observable
+│       ├── shared_models.py              # EstimateInput, Source
+│       └── code_validator.py             # Code validation
+├── cli/                          # qsp-extract, qsp-validate, etc.
+├── prompts/                      # LLM instruction prompts
+└── templates/                    # YAML output templates
 ```
 
-**Calibration target types:**
-- `CalibrationTarget`: For clinical/in vivo data. Uses `observable` to compute measurements from full model species.
-- `IsolatedSystemTarget`: For in vitro/preclinical data. Uses `submodel` to define a standalone ODE that shares parameter names with the full model for joint inference. State variables are self-contained with initial values and provenance. Observable code is optional—if omitted, defaults to the first state variable with units.
+## Key concepts
 
-**Input architecture:** Inputs are co-located with the code blocks that use them. `submodel.inputs` holds experimental conditions for ODE code, `observable.inputs` holds values for observable code, and `empirical_data.inputs` holds values for distribution derivation. State variables include their initial values directly (no reference indirection). Inputs support figure-extracted data via `source_type` field (`text`, `table`, or `figure`) with required `figure_id` and `extraction_method` for figure sources. Literature inputs can be classified via `input_type`: `direct_parameter` (literal values), `proxy_measurement` (requires conversion), `experimental_condition` (protocol choices), or `inferred_estimate` (values interpreted from qualitative text—skips snippet validation).
+**Submodel**: A standalone ODE system that approximates full model dynamics for the isolated experimental system. Uses the same parameter names as your full model.
 
-**Vector-valued data:** Calibration targets support both scalar and time-course/dose-response data through a unified pathway. Scalar data uses length-1 lists; vector data uses `index_values` to specify the indexing dimension (time points, doses, etc.).
+**Direct conversion mode**: For simple analytical relationships (k = ln(2) / t_half), omit the submodel and let `distribution_code` compute the parameter directly.
 
-**Sample size tracking:** All calibration targets require `sample_size` (int or List[int]) and `sample_size_rationale` (str) for proper uncertainty quantification and meta-analysis pooling across studies.
+**Input types**: Literature values can be classified as `direct_parameter` (literal values), `proxy_measurement` (requires conversion), `experimental_condition` (protocol choices), or `inferred_estimate` (interpreted from qualitative text).
+
+**Vector-valued data**: Time-course and dose-response data supported via `index_values`, `index_unit`, and `index_type` fields.
 
 ## Documentation
 
-The [automated workflow guide](docs/automated_workflow.md) walks through first-time setup and basic usage. For package internals—how prompts are assembled, how validation works, how to add new validators—see [CLAUDE.md](CLAUDE.md).
+- [Calibration workflow guide](docs/calibration_workflow.md) - Complete guide to IsolatedSystemTarget extraction
+- [Legacy workflows](docs/automated_workflow.md) - Parameter estimates and test statistics (legacy)
+- [CLAUDE.md](CLAUDE.md) - Package internals for developers
 
 ## License
 

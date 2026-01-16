@@ -1,4 +1,6 @@
-# Automated Extraction Workflow
+# Automated Extraction Workflow (Legacy)
+
+> **Note**: This documentation covers the legacy parameter extraction and test statistic workflows. For new projects, see [calibration_workflow.md](calibration_workflow.md) which covers the recommended **IsolatedSystemTarget** workflow for extracting calibration targets with ODE submodels.
 
 This guide walks you through extracting parameter estimates and test statistics from scientific literature using OpenAI's API via Pydantic AI. The workflow handles prompt generation, processing, and result unpacking automatically—you just provide an input CSV and run one command.
 
