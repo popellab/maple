@@ -54,9 +54,9 @@ def golden_isolated_target_data():
     """Complete valid IsolatedSystemTarget data that passes all validators.
 
     Uses the new nested submodel structure with:
+    - parameters: Top-level field listing full model parameter names
     - submodel.code: ODE function
     - submodel.state_variables: List of SubmodelStateVariable objects
-    - submodel.parameters: Parameter names from full model
     - submodel.observable: SubmodelObservable for computing measurement from state
     """
     return {
@@ -117,6 +117,8 @@ def golden_isolated_target_data():
             "year": 2020,
         },
         "secondary_data_sources": [],
+        # IsolatedSystemTarget specific: top-level parameters field
+        "parameters": ["k_T_prolif", "K_T_max"],
         # IsolatedSystemTarget specific field: nested submodel structure
         "submodel": {
             "code": (
@@ -137,7 +139,6 @@ def golden_isolated_target_data():
                     "value_snippet": "T cells were seeded at 1e5 cells/well",
                 }
             ],
-            "parameters": ["k_T_prolif", "K_T_max"],
             "t_span": [0, 3],
             "t_unit": "day",
             "observable": {
@@ -346,7 +347,8 @@ class TestInitialConditionsValidation:
             "        k_tumor * C  # Simple tumor growth\n"
             "    ]"
         )
-        data["submodel"]["parameters"].append("k_T_death")
+        # Add k_T_death to top-level parameters
+        data["parameters"].append("k_T_death")
         # This should pass because both state variables are self-contained
         target = IsolatedSystemTarget.model_validate(
             data,
@@ -394,8 +396,8 @@ class TestParameterExistenceValidation:
     ):
         """Test that using unknown parameter fails validation."""
         data = copy.deepcopy(golden_isolated_target_data)
-        # Add unknown parameter to the submodel.parameters list
-        data["submodel"]["parameters"] = ["k_T_prolif", "K_T_max", "k_unknown_param"]
+        # Add unknown parameter to the top-level parameters list
+        data["parameters"] = ["k_T_prolif", "K_T_max", "k_unknown_param"]
         data["submodel"]["code"] = (
             "def submodel(t, y, params, inputs):\n"
             "    T = y[0]\n"
@@ -871,9 +873,9 @@ class TestGetParametersUsed:
     def test_returns_multiple_parameters(
         self, species_units, model_structure, golden_isolated_target_data, mock_crossref_success
     ):
-        """Test that all submodel.parameters are returned."""
+        """Test that all top-level parameters are returned."""
         data = copy.deepcopy(golden_isolated_target_data)
-        data["submodel"]["parameters"] = ["k_T_prolif", "K_T_max", "k_T_death"]
+        data["parameters"] = ["k_T_prolif", "K_T_max", "k_T_death"]
         data["submodel"]["code"] = (
             "def submodel(t, y, params, inputs):\n"
             "    T = y[0]\n"
@@ -891,10 +893,10 @@ class TestGetParametersUsed:
         params = target.get_parameters_used()
         assert sorted(params) == ["K_T_max", "k_T_death", "k_T_prolif"]
 
-    def test_returns_empty_for_direct_conversion_mode(
+    def test_returns_parameters_for_direct_conversion_mode(
         self, species_units, model_structure, mock_crossref_success
     ):
-        """Test that get_parameters_used returns empty list when submodel is None."""
+        """Test that get_parameters_used returns top-level parameters for direct conversion."""
         # Direct conversion mode data (no submodel)
         # CI values computed from: np.random.seed(42); samples = np.random.normal(8, 1, 10000);
         # samples = np.maximum(samples, 1.0); k_samples = np.log(2) / samples * 24
@@ -915,6 +917,7 @@ class TestGetParametersUsed:
             "key_study_limitations": [
                 "In vitro conditions",
             ],
+            "parameters": ["k_T_prolif"],  # Direct conversion constrains this parameter
             "empirical_data": {
                 "median": [2.0801],
                 "ci95": [[1.6679, 2.7581]],
@@ -967,7 +970,7 @@ class TestGetParametersUsed:
         )
 
         assert target.submodel is None
-        assert target.get_parameters_used() == []
+        assert target.get_parameters_used() == ["k_T_prolif"]
 
 
 # ============================================================================
@@ -1002,6 +1005,7 @@ class TestDirectConversionMode:
             "key_study_limitations": [
                 "In vitro conditions",
             ],
+            "parameters": ["k_T_prolif"],  # Direct conversion constrains this parameter
             "empirical_data": {
                 "median": [2.0801],
                 "ci95": [[1.6679, 2.7581]],
@@ -1058,7 +1062,7 @@ class TestDirectConversionMode:
         )
 
         assert target.submodel is None
-        assert target.get_parameters_used() == []
+        assert target.get_parameters_used() == ["k_T_prolif"]
 
     def test_direct_conversion_no_submodel_inputs_needed(
         self, species_units, model_structure, direct_conversion_data, mock_crossref_success

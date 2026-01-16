@@ -377,21 +377,6 @@ class Submodel(BaseModel):
         )
     )
 
-    parameters: List[str] = Field(
-        description=(
-            "Parameter names from the full QSP model used in this submodel.\n"
-            "These enable joint inference across calibration targets.\n\n"
-            "IMPORTANT: Include ALL parameters needed to properly model the dynamics, not just\n"
-            "the parameters you were asked to calibrate. For example:\n"
-            "- If calibrating proliferation rate, you may also need death rate\n"
-            "- If calibrating binding affinity, you may need both kon and koff\n"
-            "- If calibrating growth rate, you may need carrying capacity\n\n"
-            "Use the model query service (query_parameters(), query_reactions()) to find\n"
-            "exact parameter names from the full model. All parameters listed here will be\n"
-            "jointly inferred during Bayesian calibration."
-        )
-    )
-
     t_span: List[float] = Field(
         description="Integration time span [t_start, t_end] for ODE solver.",
         min_length=2,

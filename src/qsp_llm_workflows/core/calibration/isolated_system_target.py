@@ -89,6 +89,21 @@ class IsolatedSystemTarget(CalibrationTarget):
         ),
     )
 
+    parameters: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Parameter names from the full QSP model constrained by this target.\n"
+            "These enable joint inference across calibration targets.\n\n"
+            "For submodel-based targets: Include ALL parameters needed to properly model\n"
+            "the dynamics, not just the parameters you were asked to calibrate.\n"
+            "For direct conversion targets: List the parameter(s) directly constrained\n"
+            "by the empirical data (e.g., ['PDGF_50_prolif'] for an EC50 measurement).\n\n"
+            "Use the model query service (query_parameters(), query_reactions()) to find\n"
+            "exact parameter names from the full model. All parameters listed here will be\n"
+            "jointly inferred during Bayesian calibration."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_t_span(self) -> "IsolatedSystemTarget":
         """Validate t_span is valid (t_start < t_end, both non-negative)."""
@@ -271,22 +286,24 @@ class IsolatedSystemTarget(CalibrationTarget):
     @model_validator(mode="after")
     def validate_parameters_exist(self, info: ValidationInfo) -> "IsolatedSystemTarget":
         """
-        Validate that all parameters listed in submodel.parameters exist in the full model.
+        Validate that all parameters listed in parameters exist in the full model.
+
+        Works for both submodel-based and direct conversion targets.
 
         Requires context:
             model_structure: ModelStructure instance with parameter definitions
         """
-        if self.submodel is None:
+        if not self.parameters:
             return self
         model_structure = self._require_model_structure(info)
 
         # Get valid parameter names from model
         valid_params = {p.name for p in model_structure.parameters}
 
-        unknown = set(self.submodel.parameters) - valid_params
+        unknown = set(self.parameters) - valid_params
         if unknown:
             raise ValueError(
-                f"Unknown parameters in submodel.parameters: {sorted(unknown)}\n"
+                f"Unknown parameters: {sorted(unknown)}\n"
                 f"These must match parameter names in the full QSP model.\n"
                 f"Use the model query service to find valid parameter names."
             )
@@ -328,7 +345,7 @@ class IsolatedSystemTarget(CalibrationTarget):
         # Build params from model structure (use actual values if available)
         param_lookup = {p.name: p for p in model_structure.parameters}
         params = {}
-        for param_name in self.submodel.parameters:
+        for param_name in self.parameters:
             if param_name in param_lookup and param_lookup[param_name].value is not None:
                 params[param_name] = param_lookup[param_name].value
             else:
@@ -416,7 +433,7 @@ class IsolatedSystemTarget(CalibrationTarget):
 
         # Build params dict with Pint quantities
         params_pint = {}
-        for param_name in self.submodel.parameters:
+        for param_name in self.parameters:
             units_str = param_units.get(param_name, "dimensionless")
             try:
                 params_pint[param_name] = 1.0 * ureg(units_str)
@@ -527,7 +544,7 @@ class IsolatedSystemTarget(CalibrationTarget):
         # Integrate ODE to get state at t_end
         param_lookup = {p.name: p for p in model_structure.parameters}
         params = {}
-        for param_name in self.submodel.parameters:
+        for param_name in self.parameters:
             if param_name in param_lookup and param_lookup[param_name].value is not None:
                 params[param_name] = param_lookup[param_name].value
             else:
@@ -674,10 +691,8 @@ class IsolatedSystemTarget(CalibrationTarget):
         return self
 
     def get_parameters_used(self) -> List[str]:
-        """Get the list of parameter names used in the submodel (empty if no submodel)."""
-        if self.submodel is None:
-            return []
-        return list(self.submodel.parameters)
+        """Get the list of parameter names constrained by this target."""
+        return list(self.parameters)
 
 
 __all__ = ["IsolatedSystemTarget"]

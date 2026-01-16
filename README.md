@@ -66,13 +66,14 @@ Example output structure:
 study_interpretation: |
   CD8+ T cell proliferation measured via CFSE dilution in 7-day culture...
 
+parameters: [k_CD8_pro]
+
 submodel:
   code: |
     def submodel(t, y, params, inputs):
         N = y[0]
         k_pro = params['k_CD8_pro']
         return [k_pro * N]
-  parameters: [k_CD8_pro]
   t_span: [0, 7]
   t_unit: day
 

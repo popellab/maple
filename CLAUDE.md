@@ -153,9 +153,9 @@ qsp-llm-workflows/
 The calibration target models use a modular, inheritance-based architecture with **co-located inputs** - each code block has its own inputs for clarity.
 
 **Key Models:**
-- `IsolatedSystemTarget`: Primary model for in vitro/preclinical data. Uses `submodel` with nested ODE code that shares parameter names with the full model for joint inference.
+- `IsolatedSystemTarget`: Primary model for in vitro/preclinical data. Uses `submodel` with nested ODE code. Has top-level `parameters` field listing full model parameter names for joint inference.
 - `CalibrationTarget`: Base class for clinical/in vivo data. Uses `observable` to compute measurements from full model species.
-- `Submodel`: ODE code, inputs, state variables, parameters, and a nested `SubmodelObservable`
+- `Submodel`: ODE code, inputs, state variables, and a nested `SubmodelObservable`
 - `SubmodelStateVariable`: Self-contained with initial value + provenance (no reference indirection)
 
 **Input Architecture:**
@@ -194,12 +194,12 @@ IsolatedSystemTarget(CalibrationTarget)
 ├── study_interpretation: str         # Scientific interpretation
 ├── key_assumptions: List[str]        # Required (min 1)
 ├── key_study_limitations: List[str]
-├── submodel                          # ODE submodel (replaces observable)
+├── parameters: List[str]             # Full model parameter names (top-level)
+├── submodel                          # ODE submodel (optional for direct conversion)
 │   ├── code: str                    # submodel(t, y, params, inputs) -> [dydt]
 │   ├── inputs: List[SubmodelInput]  # Experimental conditions
 │   ├── state_variables: List[SubmodelStateVariable]
 │   │   └── name, units, initial_value, source_ref, value_location, value_snippet
-│   ├── parameters: List[str]        # Full model parameter names
 │   ├── t_span: [t_start, t_end]
 │   ├── t_unit: str                  # e.g., "day", "hour"
 │   ├── observable: SubmodelObservable
