@@ -222,6 +222,65 @@ def _sanitize_null_bytes(obj):
         return obj
 
 
+# Field order for YAML output (narrative first, then model, then data, then metadata)
+YAML_FIELD_ORDER = [
+    # Narrative and interpretation first
+    "study_interpretation",
+    "key_assumptions",
+    "key_study_limitations",
+    # Model structure
+    "submodel",
+    "observable",
+    # Context
+    "experimental_context",
+    "scenario",
+    # Data
+    "empirical_data",
+    # Sources
+    "primary_data_source",
+    "secondary_data_sources",
+    # Metadata/footers
+    "calibration_target_id",
+    "cancer_type",
+    "target_id",
+    "tags",
+    "derivation_id",
+    "derivation_timestamp",
+    "model_context",
+    # Parameter extraction fields
+    "parameter_name",
+    "parameter_units",
+    "parameter_definition",
+    # Test statistic fields
+    "test_statistic_id",
+    "scenario_context",
+    "required_species",
+    "derived_species_description",
+]
+
+
+def _reorder_fields(data: dict) -> dict:
+    """
+    Reorder dict fields according to YAML_FIELD_ORDER.
+
+    Fields in YAML_FIELD_ORDER appear first in that order.
+    Fields not in YAML_FIELD_ORDER appear at the end in their original order.
+    """
+    ordered = {}
+
+    # Add fields in specified order
+    for key in YAML_FIELD_ORDER:
+        if key in data:
+            ordered[key] = data[key]
+
+    # Add remaining fields not in the order list
+    for key in data:
+        if key not in ordered:
+            ordered[key] = data[key]
+
+    return ordered
+
+
 def _add_blank_lines_between_sections(data: dict) -> CommentedMap:
     """
     Convert dict to CommentedMap with blank lines between root-level sections.
@@ -242,6 +301,9 @@ def convert_to_yaml(json_data: dict) -> str:
     """Convert JSON to YAML with proper formatting using ruamel.yaml."""
     # Sanitize null bytes from LLM output
     json_data = _sanitize_null_bytes(json_data)
+
+    # Reorder fields for consistent YAML output
+    json_data = _reorder_fields(json_data)
 
     # Convert long strings to block scalars
     processed_data = _convert_long_strings_to_block(json_data)
