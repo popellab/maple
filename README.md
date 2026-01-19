@@ -57,6 +57,20 @@ Results are unpacked to `metadata-storage/to-review/isolated_system_targets/` as
 - Python code deriving distributions from literature values
 - Source tracking with DOIs and text snippets
 
+### 5. Generate Julia inference code (optional)
+
+Translate YAML targets to Julia/Turing.jl for Bayesian inference:
+
+```bash
+# Single target
+python -m qsp_llm_workflows.core.calibration.julia_translator target.yaml
+
+# Joint inference across multiple targets (parameters with same name are shared)
+python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+    psc_proliferation.yaml psc_death.yaml psc_recruitment.yaml \
+    --output joint_calibration.jl
+```
+
 ## What gets extracted
 
 **IsolatedSystemTarget** (primary workflow): For in vitro, ex vivo, or preclinical data. Generates a simplified ODE submodel that captures experimental dynamics while sharing parameter names with your full QSP model. This enables joint Bayesian inference across multiple calibration targets.
@@ -98,6 +112,8 @@ src/qsp_llm_workflows/
 │   └── calibration/              # Calibration target models
 │       ├── calibration_target_models.py  # CalibrationTarget base
 │       ├── isolated_system_target.py     # IsolatedSystemTarget
+│       ├── simplified_isolated_target.py # SimplifiedIsolatedTarget (new)
+│       ├── julia_translator.py           # YAML → Julia/Turing.jl
 │       ├── observable.py                 # Submodel, Observable
 │       ├── shared_models.py              # EstimateInput, Source
 │       └── code_validator.py             # Code validation

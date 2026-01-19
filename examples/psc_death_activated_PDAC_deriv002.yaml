@@ -1,0 +1,185 @@
+# Translated from: qspio-pdac/metadata-storage/isolated_system_targets/psc_death_activated_PDAC_deriv002.yaml
+# Schema: SimplifiedIsolatedTarget
+
+target_id: psc_death_activated_PDAC_deriv002
+
+# =============================================================================
+# INPUTS: Extracted values with full provenance
+# =============================================================================
+inputs:
+  - name: fold_reduction_mean
+    value: 12.0
+    units: dimensionless
+    input_type: direct_measurement
+    role: target
+    source_ref: Iredale1998_HSCResolution
+    source_location: Abstract
+    value_snippet: |
+      alpha-Smooth muscle actin staining of liver sections demonstrated a 12-fold reduction in the number of activated HSC over the same time period.
+
+  - name: fold_reduction_cv
+    value: 0.25
+    units: dimensionless
+    input_type: assumed_value
+    role: auxiliary
+    source_ref: Iredale1998_HSCResolution
+    source_location: Not reported; assumed from typical histomorphometric variability (15-30% CV)
+
+# =============================================================================
+# CALIBRATION: Everything needed for inference
+# =============================================================================
+calibration:
+  parameters:
+    - name: k_apsc_death
+      units: 1/day
+      prior:
+        distribution: lognormal
+        mu: -1.897  # log(0.15) - expect ~0.1-0.2/day for 28-day decay
+        sigma: 0.5
+        rationale: |
+          Prior centered at 0.15/day based on 12-fold reduction over 28 days:
+          k = ln(12)/28 ≈ 0.089/day. Narrower sigma since we have two constraints
+          (direct rate estimate from deriv001 and this ODE-based estimate).
+
+  state_variables:
+    - name: aPSC_fraction
+      units: dimensionless
+      initial_condition:
+        value: 1.0
+        rationale: |
+          Normalized to 1.0 at peak fibrosis (day 0 of recovery) so that the 12-fold reduction corresponds to fraction 1/12 at day 28.
+
+  model:
+    type: first_order_decay
+    rate_constant: k_apsc_death
+    data_rationale: |
+      A 12-fold reduction in activated stellate cells over 28 days is consistent with first-order exponential decay. Single endpoint measurement at day 28 with known initial condition allows rate estimation.
+    submodel_rationale: |
+      In the full QSPIO_PDAC model, k_apsc_death appears in reaction V_T.aPSC → null with rate k_apsc_death * V_T.aPSC. This isolated first-order decay submodel preserves that mechanistic structure.
+
+  independent_variable:
+    name: time
+    units: day
+    span: [0.0, 28.0]
+    rationale: |
+      Measurements at peak fibrosis (day 0) and 28 days of spontaneous recovery.
+
+  measurements:
+    - name: fraction_remaining
+      observable:
+        type: identity
+        state_variables: [aPSC_fraction]
+        rationale: |
+          State variable directly represents fraction of initial activated stellate cell pool remaining.
+      units: dimensionless
+      uses_inputs:
+        - fold_reduction_mean
+        - fold_reduction_cv
+      evaluation_points: [28.0]
+      sample_size: 4
+      sample_size_rationale: |
+        Typical JCI histomorphometric studies use ~4-6 animals per group; assumed n=4 as conservative estimate.
+      distribution_code: |
+        def derive_distribution(inputs, ureg):
+            import numpy as np
+
+            rng = np.random.default_rng(42)
+            n_mc = 10000
+
+            # Fold reduction with lognormal uncertainty
+            mean = inputs['fold_reduction_mean'].magnitude
+            cv = inputs['fold_reduction_cv'].magnitude
+            sd = mean * cv
+
+            mu_log = np.log(mean**2 / np.sqrt(mean**2 + sd**2))
+            sigma_log = np.sqrt(np.log(1.0 + (sd**2) / (mean**2)))
+
+            fold_samples = rng.lognormal(mu_log, sigma_log, n_mc)
+
+            # Observable is fraction remaining = 1 / fold_reduction
+            frac_samples = 1.0 / fold_samples
+
+            return {
+                'median': [np.median(frac_samples)],
+                'ci95': [[np.percentile(frac_samples, 2.5), np.percentile(frac_samples, 97.5)]],
+                'units': 'dimensionless'
+            }
+      likelihood:
+        distribution: lognormal
+        rationale: |
+          Fold reductions are positive and multiplicative; their reciprocal (fraction remaining) inherits lognormal uncertainty.
+
+  identifiability_notes: |
+    With known initial fraction (1.0) and well-constrained endpoint measurement at 28 days (~1/12), k_apsc_death is identifiable under the assumption of pure exponential decay. However, the decline may include both apoptosis and deactivation to quiescent phenotype, so this represents an effective clearance rate.
+
+# =============================================================================
+# EXPERIMENTAL CONTEXT
+# =============================================================================
+experimental_context:
+  species: rat
+  system: in_vivo_disease_model
+  indication: liver_fibrosis
+  cell_types:
+    - name: hepatic stellate cell
+      phenotype: activated (alpha-SMA positive)
+
+# =============================================================================
+# STUDY INTERPRETATION
+# =============================================================================
+study_interpretation: |
+  Iredale et al. (1998) quantified the decline in alpha-SMA-positive activated hepatic stellate cells during spontaneous resolution of CCl4-induced liver fibrosis, reporting a 12-fold reduction over 28 days. Because pancreatic and hepatic stellate cells share similar biology (vitamin A storage, myofibroblastic activation), this provides a relevant estimate for activated PSC clearance in vivo. This in vivo rate complements in vitro estimates by capturing death kinetics in a tissue microenvironment with survival signals.
+
+key_assumptions:
+  - |
+    Hepatic and pancreatic stellate cells share sufficiently similar biology that HSC clearance kinetics apply to PSCs.
+  - |
+    The 12-fold reduction primarily reflects apoptosis, with smaller contribution from phenotypic reversion.
+  - |
+    Lognormal uncertainty (CV~25%) captures inter-animal and morphometric variability.
+  - |
+    In vivo clearance rate provides a lower bound on intrinsic death rate (tissue survival signals present).
+
+key_study_limitations:
+  - |
+    Data from hepatic stellate cells in resolving liver fibrosis, not pancreatic stellate cells in PDAC.
+  - |
+    Only net 12-fold reduction reported; detailed time-course not fully quantified.
+  - |
+    Decline includes both apoptosis and deactivation; modeling as pure death may overestimate apoptotic rate.
+  - |
+    Rat data may not quantitatively extrapolate to human kinetics.
+
+# =============================================================================
+# DATA SOURCES
+# =============================================================================
+primary_data_source:
+  doi: "10.1172/JCI1018"
+  title: "Mechanisms of spontaneous resolution of rat liver fibrosis. Hepatic stellate cell apoptosis and reduced hepatic expression of metalloproteinase inhibitors"
+  authors: [Iredale]
+  year: 1998
+  source_tag: Iredale1998_HSCResolution
+
+secondary_data_sources:
+  - doi: "10.1136/gut.43.1.128"
+    title: "Periacinar stellate shaped cells in rat pancreas: identification, isolation, and culture"
+    authors: [Apte]
+    year: 1998
+    source_tag: Apte1998_PancreaticStellateIdentification
+    contribution: |
+      Landmark paper establishing PSC isolation; supports biological similarity between HSCs and PSCs.
+
+  - doi: "10.1136/gut.2008.170233"
+    title: "Formation of vitamin A lipid droplets in pancreatic stellate cells requires albumin"
+    authors: [Kim]
+    year: 2009
+    source_tag: Kim2009_PSCAlbuminVitaminA
+    contribution: |
+      Confirms vitamin A storage as shared feature of HSCs and PSCs.
+
+  - doi: "10.1152/physrev.00013.2007"
+    title: "Hepatic stellate cells: Protean, multifunctional, and enigmatic cells of the liver"
+    authors: [Friedman]
+    year: 2008
+    source_tag: Friedman2008_HSCReview
+    contribution: |
+      Comprehensive HSC review supporting biological parallels with PSCs.

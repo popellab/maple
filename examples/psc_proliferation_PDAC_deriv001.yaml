@@ -1,0 +1,179 @@
+# Translated from: qspio-pdac/metadata-storage/isolated_system_targets/psc_proliferation_PDAC_deriv001.yaml
+# Schema: SimplifiedIsolatedTarget
+
+target_id: psc_proliferation_PDAC_deriv001
+
+# =============================================================================
+# INPUTS: Extracted values with full provenance
+# =============================================================================
+inputs:
+  - name: pdgf_fold_mean
+    value: 4.37
+    units: dimensionless
+    input_type: direct_measurement
+    role: target
+    source_ref: Schneider2001_PSC_PDGF
+    source_location: Abstract
+    value_snippet: "Cell proliferation (4.37 +/- 0.49- and 2.96 +/- 0.39-fold of control)."
+
+  - name: pdgf_fold_sd
+    value: 0.49
+    units: dimensionless
+    input_type: direct_measurement
+    role: auxiliary
+    source_ref: Schneider2001_PSC_PDGF
+    source_location: Abstract
+    value_snippet: "Cell proliferation (4.37 +/- 0.49- and 2.96 +/- 0.39-fold of control)."
+
+# =============================================================================
+# CALIBRATION: Everything needed for inference
+# =============================================================================
+calibration:
+  parameters:
+    - name: k_apsc_prolif
+      units: 1/day
+      prior:
+        distribution: lognormal
+        mu: 0.0  # log(1.0) - expect ~1/day for 4x fold-change in 1 day
+        sigma: 1.0
+        rationale: |
+          Wide log-normal prior centered at 1/day. A 4-fold increase in 1 day
+          implies k ≈ ln(4) ≈ 1.4/day, so prior median of 1/day is reasonable.
+
+  state_variables:
+    - name: aPSC_rel
+      units: dimensionless
+      initial_condition:
+        value: 1.0
+        rationale: |
+          PSC proliferation data are reported as fold of control. We normalize the initial aPSC population to 1.0 (100% control) to match this convention.
+
+  model:
+    type: exponential_growth
+    rate_constant: k_apsc_prolif
+    data_rationale: |
+      BrdU incorporation assay measures proliferation as fold-change over ~24 hours under constant PDGF stimulus. With a single high PDGF dose and short duration, exponential growth (dN/dt = k*N) fits the data structure.
+    submodel_rationale: |
+      The full QSPIO_PDAC model has aPSC proliferation via: k_apsc_prolif * aPSC * (PDGF / (PDGF_50_prolif + PDGF)). At 50 ng/mL PDGF >> PDGF_50_prolif, the saturation term ≈ 1, reducing to exponential growth with rate k_apsc_prolif.
+
+  independent_variable:
+    name: time
+    units: day
+    span: [0.0, 1.0]
+    rationale: |
+      Proliferation assay duration assumed to be ~24 hours based on typical cytokine incubation protocols for rat PSCs.
+
+  measurements:
+    - name: proliferation_fold_change
+      observable:
+        type: identity
+        state_variables: [aPSC_rel]
+        rationale: |
+          The state variable aPSC_rel is the fold-change in aPSC number relative to baseline (control = 1.0), which directly matches the reported proliferation fold-change.
+      units: dimensionless
+      uses_inputs:
+        - pdgf_fold_mean
+        - pdgf_fold_sd
+      evaluation_points: [1.0]
+      sample_size: 3
+      sample_size_rationale: |
+        Sample size not explicitly reported; assumed n=3 independent experiments, typical for in vitro PSC BrdU proliferation assays.
+      distribution_code: |
+        def derive_distribution(inputs, ureg):
+            import numpy as np
+
+            rng = np.random.default_rng(42)
+
+            mean = inputs['pdgf_fold_mean'].magnitude
+            sd = inputs['pdgf_fold_sd'].magnitude
+            n = 10000
+
+            # Use lognormal for positive fold-changes
+            mu_log = np.log(mean**2 / np.sqrt(mean**2 + sd**2))
+            sigma_log = np.sqrt(np.log(1 + sd**2 / mean**2))
+
+            samples = rng.lognormal(mu_log, sigma_log, n)
+
+            median_val = np.median(samples)
+            ci_lower = np.percentile(samples, 2.5)
+            ci_upper = np.percentile(samples, 97.5)
+
+            return {
+                'median': [median_val],
+                'ci95': [[ci_lower, ci_upper]],
+                'units': 'dimensionless'
+            }
+      likelihood:
+        distribution: lognormal
+        rationale: |
+          Fold-changes are positive and multiplicative, making lognormal appropriate.
+
+  identifiability_notes: |
+    With a single timepoint (~24h) and normalized initial condition (aPSC_rel(0)=1), only k_apsc_prolif is estimated. If substantial PSC death occurred over the assay interval, the inferred rate would represent net growth rather than pure proliferation.
+
+# =============================================================================
+# EXPERIMENTAL CONTEXT
+# =============================================================================
+experimental_context:
+  species: rat
+  system: in_vitro_primary_cells
+  indication: PDAC
+  cell_types:
+    - name: pancreatic stellate cell
+      phenotype: activated (alpha-SMA positive)
+      isolation_method: Isolated from normal Wistar rat pancreas, activated by culture on plastic
+  culture_conditions:
+    culture_type: 2d_monolayer
+
+# =============================================================================
+# STUDY INTERPRETATION
+# =============================================================================
+study_interpretation: |
+  Schneider et al. (2001) measured proliferation of cultured rat pancreatic stellate cells (PSCs) in response to growth factors using BrdU incorporation. Addition of 50 ng/mL PDGF increased PSC proliferation to 4.37 ± 0.49-fold of control, indicating that PDGF acts as a strong mitogen for activated PSCs. We interpret the 50 ng/mL PDGF condition as approximating a near-maximal PDGF stimulus and use the reported fold-change over ~24 hours as a quantitative constraint on the maximal PDGF-driven proliferation rate parameter k_apsc_prolif.
+
+key_assumptions:
+  - |
+    50 ng/mL PDGF corresponds to a near-saturating concentration for PSC proliferation, so PDGF/(PDGF_50_prolif + PDGF) ≈ 1.
+  - |
+    The proliferation assay duration is approximately 24 hours, consistent with typical cytokine incubation protocols.
+  - |
+    BrdU incorporation fold-change is proportional to fold-change in PSC cell number (negligible death over 24 hours).
+  - |
+    Rat activated PSC proliferation kinetics in vitro provide an upper bound for human tumor aPSC proliferation in vivo.
+
+key_study_limitations:
+  - |
+    Proliferation was measured via BrdU incorporation rather than direct cell counts.
+  - |
+    Single PDGF concentration and single assay interval constrain only the maximal rate.
+  - |
+    Data from rat PSCs in vitro, not human PDAC-associated stellate cells.
+  - |
+    Background serum proliferative signals not explicitly modeled.
+
+# =============================================================================
+# DATA SOURCES
+# =============================================================================
+primary_data_source:
+  doi: "10.1152/ajpcell.2001.281.2.C532"
+  title: "Identification of mediators stimulating proliferation and matrix synthesis of rat pancreatic stellate cells"
+  authors: [Schneider]
+  year: 2001
+  source_tag: Schneider2001_PSC_PDGF
+
+secondary_data_sources:
+  - doi: "10.1136/gut.44.4.534"
+    title: "Pancreatic stellate cells are activated by proinflammatory cytokines: implications for pancreatic fibrogenesis"
+    authors: [Apte]
+    year: 1999
+    source_tag: Apte1999_PSC_Cytokines
+    contribution: |
+      Provides context on PSC activation and cytokine response protocols.
+
+  - doi: "10.1136/gut.43.1.128"
+    title: "Periacinar stellate shaped cells in rat pancreas: identification, isolation, and culture"
+    authors: [Apte]
+    year: 1998
+    source_tag: Apte1998_PSC_Isolation
+    contribution: |
+      Describes PSC isolation methods and culture conventions.

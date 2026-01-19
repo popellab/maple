@@ -119,6 +119,8 @@ qsp-llm-workflows/
 │       │       ├── __init__.py      # Re-exports all calibration classes
 │       │       ├── calibration_target_models.py  # CalibrationTarget base class
 │       │       ├── isolated_system_target.py  # IsolatedSystemTarget
+│       │       ├── simplified_isolated_target.py  # SimplifiedIsolatedTarget (new schema)
+│       │       ├── julia_translator.py  # YAML to Julia Turing.jl translator
 │       │       ├── observable.py        # Observable, Submodel, SubmodelObservable
 │       │       ├── shared_models.py     # EstimateInput, SubmodelInput, Source
 │       │       ├── enums.py             # Species, Indication, Compartment, System
@@ -360,3 +362,112 @@ class MyValidator:
 ```
 
 Then import and call in `run_all_validations.py`.
+
+## SimplifiedIsolatedTarget Schema
+
+A streamlined schema for calibration targets designed for direct translation to Julia/Turing.jl inference code. Located in `simplified_isolated_target.py`.
+
+### Key Design Features
+
+**Separation of concerns:**
+- `inputs`: Raw values extracted from papers with full provenance
+- `calibration`: Everything needed for inference (parameters, model, measurements)
+
+**Input roles** (`InputRole` enum):
+- `initial_condition`: Used as IC for ODE integration (excluded from likelihood)
+- `target`: Used as calibration target (included in likelihood)
+- `fixed_parameter`: Fixed value in model (not estimated)
+- `auxiliary`: Supporting data (e.g., SD values)
+
+**Parameter priors** (`Prior` model):
+```yaml
+parameters:
+  - name: k_apsc_prolif
+    units: 1/day
+    prior:
+      distribution: lognormal
+      mu: 0.0  # log(1.0)
+      sigma: 1.0
+      rationale: "Wide prior centered at 1/day..."
+```
+
+Supported distributions: `lognormal`, `normal`, `uniform`, `half_normal`
+
+**Model types** (discriminated union):
+- `exponential_growth`: dy/dt = k * y
+- `first_order_decay`: dy/dt = -k * y
+- `two_state`: A → B transition
+- `saturation`: dy/dt = k * (1 - y)
+- `logistic`: dy/dt = k * y * (1 - y/K)
+- `michaelis_menten`: dy/dt = -Vmax * y / (Km + y)
+- `direct_conversion`: No ODE, analytical formula
+- `custom`: User-provided ODE code (requires `code_julia`)
+
+**Custom ODE models:**
+```yaml
+model:
+  type: custom
+  code: |
+    def ode(t, y, params, inputs):
+        ...
+  code_julia: |
+    function my_ode!(du, u, p, t)
+        ...
+    end
+```
+
+### Validation
+
+```bash
+python scripts/validate_simplified_target.py examples/*.yaml
+```
+
+## Julia Translator
+
+Translates SimplifiedIsolatedTarget YAMLs to Julia Turing.jl inference scripts. Located in `julia_translator.py`.
+
+### Single Target Translation
+
+```python
+from qsp_llm_workflows.core.calibration.julia_translator import JuliaTranslator
+
+translator = JuliaTranslator()
+julia_code = translator.generate_script("target.yaml")
+```
+
+### Joint Inference (Multiple Targets)
+
+```python
+from qsp_llm_workflows.core.calibration.julia_translator import JointInferenceBuilder
+
+builder = JointInferenceBuilder()
+julia_code = builder.build_from_files([
+    "psc_proliferation.yaml",
+    "psc_death.yaml",
+    "psc_recruitment_const.yaml",
+    "psc_recruitment_encounter.yaml",  # Shares k_psc_const with above
+])
+```
+
+**Automatic parameter sharing**: Parameters with the same name across targets are automatically identified and shared in the joint Turing model.
+
+### CLI Usage
+
+```bash
+# Single target
+python -m qsp_llm_workflows.core.calibration.julia_translator target.yaml
+
+# Joint inference
+python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+    target1.yaml target2.yaml target3.yaml \
+    --output joint_calibration.jl
+```
+
+### What Gets Generated
+
+The translator produces complete Julia scripts with:
+- Observed data constants (median, sigma from CI95)
+- ODE functions for each model type
+- Simulate wrapper functions
+- Turing `@model` with priors and likelihoods
+- NUTS sampling code with convergence diagnostics
