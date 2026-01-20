@@ -419,7 +419,7 @@ model:
 ### Validation
 
 ```bash
-python scripts/validate_submodel_target.py examples/*.yaml
+python scripts/validate_submodel_target.py path/to/target.yaml
 ```
 
 ## Julia Translator
