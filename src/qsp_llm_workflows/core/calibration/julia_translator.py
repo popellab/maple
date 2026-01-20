@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Translator from SimplifiedIsolatedTarget YAML to Julia Turing.jl inference code.
+Translator from SubmodelTarget YAML to Julia Turing.jl inference code.
 
 This module provides tools to:
 1. Load and validate YAML targets
@@ -22,7 +22,7 @@ from typing import Optional
 import numpy as np
 import yaml
 
-from qsp_llm_workflows.core.calibration.simplified_isolated_target import (
+from qsp_llm_workflows.core.calibration.submodel_target import (
     CustomModel,
     DirectConversionModel,
     ExponentialGrowthModel,
@@ -32,7 +32,7 @@ from qsp_llm_workflows.core.calibration.simplified_isolated_target import (
     MichaelisMentenModel,
     PriorDistribution,
     SaturationModel,
-    SimplifiedIsolatedTarget,
+    SubmodelTarget,
     TwoStateModel,
 )
 from qsp_llm_workflows.core.unit_registry import ureg
@@ -74,7 +74,7 @@ class TargetObservations:
 class ObservationExtractor:
     """Extract observation data by running distribution_code."""
 
-    def extract(self, target: SimplifiedIsolatedTarget) -> TargetObservations:
+    def extract(self, target: SubmodelTarget) -> TargetObservations:
         """
         Extract all observation data from a target.
 
@@ -181,7 +181,7 @@ class ObservationExtractor:
             parameter_names=parameter_names,
         )
 
-    def _build_inputs_dict(self, target: SimplifiedIsolatedTarget, input_names: list[str]) -> dict:
+    def _build_inputs_dict(self, target: SubmodelTarget, input_names: list[str]) -> dict:
         """Build inputs dict with Pint quantities for distribution_code."""
         inputs_dict = {}
         for inp in target.inputs:
@@ -257,7 +257,7 @@ end
 """,
     }
 
-    def generate_ode_function(self, target: SimplifiedIsolatedTarget) -> Optional[str]:
+    def generate_ode_function(self, target: SubmodelTarget) -> Optional[str]:
         """Generate Julia ODE function for a target's model."""
         model = target.calibration.model
         func_name = self._sanitize_name(target.target_id)
@@ -342,9 +342,7 @@ Random.seed!(42)
         self.extractor = ObservationExtractor()
         self.mapper = JuliaODEMapper()
 
-    def generate_single_target(
-        self, target: SimplifiedIsolatedTarget, source_file: str = "unknown"
-    ) -> str:
+    def generate_single_target(self, target: SubmodelTarget, source_file: str = "unknown") -> str:
         """Generate Julia code for a single target."""
         sections = []
 
@@ -379,9 +377,7 @@ Random.seed!(42)
 
         return "\n".join(sections)
 
-    def _generate_constants(
-        self, target: SimplifiedIsolatedTarget, obs_data: TargetObservations
-    ) -> str:
+    def _generate_constants(self, target: SubmodelTarget, obs_data: TargetObservations) -> str:
         """Generate observed data constants."""
         lines = ["# Observed Data Constants"]
         prefix = self._const_prefix(target.target_id)
@@ -406,7 +402,7 @@ Random.seed!(42)
         return "\n".join(lines)
 
     def _generate_simulate_function(
-        self, target: SimplifiedIsolatedTarget, obs_data: TargetObservations
+        self, target: SubmodelTarget, obs_data: TargetObservations
     ) -> Optional[str]:
         """Generate Julia simulate function."""
         model = target.calibration.model
@@ -464,9 +460,7 @@ end
 """
         return code
 
-    def _generate_turing_model(
-        self, target: SimplifiedIsolatedTarget, obs_data: TargetObservations
-    ) -> str:
+    def _generate_turing_model(self, target: SubmodelTarget, obs_data: TargetObservations) -> str:
         """Generate Turing @model block."""
         model = target.calibration.model
         func_name = self.mapper._sanitize_name(target.target_id)
@@ -523,9 +517,7 @@ end
             # Default: wide log-normal prior
             return f"{param.name} ~ LogNormal(0.0, 2.0)  # Default prior"
 
-    def _generate_sampling_code(
-        self, target: SimplifiedIsolatedTarget, obs_data: TargetObservations
-    ) -> str:
+    def _generate_sampling_code(self, target: SubmodelTarget, obs_data: TargetObservations) -> str:
         """Generate NUTS sampling code."""
         func_name = self.mapper._sanitize_name(target.target_id)
         prefix = self._const_prefix(target.target_id)
@@ -576,12 +568,12 @@ class JuliaTranslator:
     def __init__(self):
         self.generator = JuliaCodeGenerator()
 
-    def load_target(self, yaml_path: str) -> SimplifiedIsolatedTarget:
+    def load_target(self, yaml_path: str) -> SubmodelTarget:
         """Load and validate a target from YAML."""
         path = Path(yaml_path)
         with open(path) as f:
             data = yaml.safe_load(f)
-        return SimplifiedIsolatedTarget.model_validate(data)
+        return SubmodelTarget.model_validate(data)
 
     def generate_script(self, yaml_path: str) -> str:
         """Generate Julia script from a single YAML target."""
@@ -616,7 +608,7 @@ class TargetInfo:
     """Info about a single target for joint inference."""
 
     target_id: str
-    target: SimplifiedIsolatedTarget
+    target: SubmodelTarget
     observations: TargetObservations
     parameter_names: list[str]
 
@@ -663,12 +655,12 @@ class JointInferenceBuilder:
         # Generate script
         return self._generate_joint_script(targets_info, parameters)
 
-    def _load_target(self, yaml_path: str) -> SimplifiedIsolatedTarget:
+    def _load_target(self, yaml_path: str) -> SubmodelTarget:
         """Load and validate a target from YAML."""
         path = Path(yaml_path)
         with open(path) as f:
             data = yaml.safe_load(f)
-        return SimplifiedIsolatedTarget.model_validate(data)
+        return SubmodelTarget.model_validate(data)
 
     def _collect_parameters(self, targets_info: list[TargetInfo]) -> dict[str, ParameterInfo]:
         """

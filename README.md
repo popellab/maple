@@ -112,7 +112,7 @@ src/qsp_llm_workflows/
 │   └── calibration/              # Calibration target models
 │       ├── calibration_target_models.py  # CalibrationTarget base
 │       ├── isolated_system_target.py     # IsolatedSystemTarget
-│       ├── simplified_isolated_target.py # SimplifiedIsolatedTarget (new)
+│       ├── submodel_target.py            # SubmodelTarget
 │       ├── julia_translator.py           # YAML → Julia/Turing.jl
 │       ├── observable.py                 # Submodel, Observable
 │       ├── shared_models.py              # EstimateInput, Source

@@ -1,5 +1,5 @@
 # Translated from: qspio-pdac/metadata-storage/isolated_system_targets/psc_activation_rate_PDAC_deriv001.yaml
-# Schema: SimplifiedIsolatedTarget
+# Schema: SubmodelTarget
 
 target_id: psc_activation_rate_PDAC_deriv001
 

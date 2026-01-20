@@ -1,5 +1,5 @@
 # Translated from: qspio-pdac/metadata-storage/isolated_system_targets/psc_recruitment_encounter_PDAC_deriv001.yaml
-# Schema: SimplifiedIsolatedTarget
+# Schema: SubmodelTarget
 
 target_id: psc_recruitment_encounter_PDAC_deriv001
 

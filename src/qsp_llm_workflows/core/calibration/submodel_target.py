@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Simplified isolated system target models for calibration data extraction.
+Submodel-based calibration target models for QSP parameter inference.
 
-This module implements the simplified schema that separates:
+This module implements the SubmodelTarget schema that separates:
 - `inputs`: What was extracted from papers (with full provenance)
 - `calibration`: How to use those inputs for inference
 """
@@ -623,13 +623,13 @@ class ExperimentalContext(BaseModel):
 
 
 # =============================================================================
-# SIMPLIFIED ISOLATED TARGET (TOP-LEVEL)
+# SUBMODEL TARGET (TOP-LEVEL)
 # =============================================================================
 
 
-class SimplifiedIsolatedTarget(BaseModel):
+class SubmodelTarget(BaseModel):
     """
-    Simplified isolated system target for calibration data extraction.
+    Submodel-based calibration target for QSP parameter inference.
 
     Separates:
     - `inputs`: What was extracted from papers (with full provenance)
@@ -675,7 +675,7 @@ class SimplifiedIsolatedTarget(BaseModel):
     # -------------------------------------------------------------------------
 
     @model_validator(mode="after")
-    def validate_input_refs(self) -> "SimplifiedIsolatedTarget":
+    def validate_input_refs(self) -> "SubmodelTarget":
         """
         Validate that all input references point to existing inputs.
 
@@ -725,7 +725,7 @@ class SimplifiedIsolatedTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_source_refs(self) -> "SimplifiedIsolatedTarget":
+    def validate_source_refs(self) -> "SubmodelTarget":
         """Validate that all source_refs point to existing source tags."""
         source_tags = {self.primary_data_source.source_tag}
         if self.secondary_data_sources:
@@ -746,7 +746,7 @@ class SimplifiedIsolatedTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_parameter_roles(self) -> "SimplifiedIsolatedTarget":
+    def validate_parameter_roles(self) -> "SubmodelTarget":
         """
         Validate that parameter role strings reference existing parameters.
 
@@ -773,7 +773,7 @@ class SimplifiedIsolatedTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_observable_state_vars(self) -> "SimplifiedIsolatedTarget":
+    def validate_observable_state_vars(self) -> "SubmodelTarget":
         """
         Validate that observable state_variables reference existing state variables.
         """
@@ -802,7 +802,7 @@ class SimplifiedIsolatedTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_ode_model_requirements(self) -> "SimplifiedIsolatedTarget":
+    def validate_ode_model_requirements(self) -> "SubmodelTarget":
         """
         Validate that ODE-based models have required state_variables and span.
         """
@@ -841,7 +841,7 @@ class SimplifiedIsolatedTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_custom_code_syntax(self) -> "SimplifiedIsolatedTarget":
+    def validate_custom_code_syntax(self) -> "SubmodelTarget":
         """
         Validate syntax and function signature for custom code blocks.
 
@@ -922,7 +922,7 @@ class SimplifiedIsolatedTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_span_ordering(self) -> "SimplifiedIsolatedTarget":
+    def validate_span_ordering(self) -> "SubmodelTarget":
         """Validate that span[0] < span[1] and both are non-negative."""
         iv = self.calibration.independent_variable
         if iv is None or iv.span is None:
@@ -937,7 +937,7 @@ class SimplifiedIsolatedTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_input_values_in_snippets(self) -> "SimplifiedIsolatedTarget":
+    def validate_input_values_in_snippets(self) -> "SubmodelTarget":
         """
         Validate that extracted values appear in their value_snippet.
 
@@ -978,7 +978,7 @@ class SimplifiedIsolatedTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_doi_resolution_and_metadata(self) -> "SimplifiedIsolatedTarget":
+    def validate_doi_resolution_and_metadata(self) -> "SubmodelTarget":
         """
         Validate that DOIs resolve and metadata matches.
 
@@ -1061,7 +1061,7 @@ class SimplifiedIsolatedTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_units_are_valid_pint(self) -> "SimplifiedIsolatedTarget":
+    def validate_units_are_valid_pint(self) -> "SubmodelTarget":
         """
         Validate that all unit strings are valid Pint units.
 
@@ -1162,7 +1162,7 @@ __all__ = [
     "CultureConditions",
     "ExperimentalContext",
     # Top-level
-    "SimplifiedIsolatedTarget",
+    "SubmodelTarget",
 ]
 
 

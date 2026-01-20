@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Validate a YAML file against the SimplifiedIsolatedTarget schema.
+Validate a YAML file against the SubmodelTarget schema.
 
 Usage:
-    python scripts/validate_simplified_target.py path/to/target.yaml
+    python scripts/validate_submodel_target.py path/to/target.yaml
 """
 
 import sys
@@ -12,14 +12,14 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.calibration.simplified_isolated_target import (
-    SimplifiedIsolatedTarget,
+from qsp_llm_workflows.core.calibration.submodel_target import (
+    SubmodelTarget,
 )
 
 
 def validate_yaml(yaml_path: str) -> bool:
     """
-    Validate a YAML file against SimplifiedIsolatedTarget schema.
+    Validate a YAML file against SubmodelTarget schema.
 
     Args:
         yaml_path: Path to the YAML file
@@ -43,7 +43,7 @@ def validate_yaml(yaml_path: str) -> bool:
 
     # Validate against model
     try:
-        target = SimplifiedIsolatedTarget.model_validate(data)
+        target = SubmodelTarget.model_validate(data)
         print(f"✓ Valid: {path.name}")
         print(f"  target_id: {target.target_id}")
         print(f"  inputs: {len(target.inputs)}")

@@ -119,7 +119,7 @@ qsp-llm-workflows/
 │       │       ├── __init__.py      # Re-exports all calibration classes
 │       │       ├── calibration_target_models.py  # CalibrationTarget base class
 │       │       ├── isolated_system_target.py  # IsolatedSystemTarget
-│       │       ├── simplified_isolated_target.py  # SimplifiedIsolatedTarget (new schema)
+│       │       ├── submodel_target.py            # SubmodelTarget schema
 │       │       ├── julia_translator.py  # YAML to Julia Turing.jl translator
 │       │       ├── observable.py        # Observable, Submodel, SubmodelObservable
 │       │       ├── shared_models.py     # EstimateInput, SubmodelInput, Source
@@ -363,9 +363,9 @@ class MyValidator:
 
 Then import and call in `run_all_validations.py`.
 
-## SimplifiedIsolatedTarget Schema
+## SubmodelTarget Schema
 
-A streamlined schema for calibration targets designed for direct translation to Julia/Turing.jl inference code. Located in `simplified_isolated_target.py`.
+A streamlined schema for calibration targets designed for direct translation to Julia/Turing.jl inference code. Located in `submodel_target.py`.
 
 ### Key Design Features
 
@@ -419,12 +419,12 @@ model:
 ### Validation
 
 ```bash
-python scripts/validate_simplified_target.py examples/*.yaml
+python scripts/validate_submodel_target.py examples/*.yaml
 ```
 
 ## Julia Translator
 
-Translates SimplifiedIsolatedTarget YAMLs to Julia Turing.jl inference scripts. Located in `julia_translator.py`.
+Translates SubmodelTarget YAMLs to Julia Turing.jl inference scripts. Located in `julia_translator.py`.
 
 ### Single Target Translation
 
