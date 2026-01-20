@@ -705,12 +705,11 @@ class JointInferenceBuilder:
         # Header
         sections.append(self._generate_header(targets_info))
 
-        # Observed data constants for each target
+        # Observed data as Dict keyed by target_id
         sections.append("# " + "=" * 70)
-        sections.append("# OBSERVED DATA")
+        sections.append("# OBSERVED DATA (Dict keyed by target_id)")
         sections.append("# " + "=" * 70)
-        for ti in targets_info:
-            sections.append(self._generate_target_constants(ti))
+        sections.append(self._generate_data_dict(targets_info))
 
         # ODE functions
         sections.append("\n# " + "=" * 70)
@@ -727,7 +726,7 @@ class JointInferenceBuilder:
         sections.append("# SIMULATION FUNCTIONS")
         sections.append("# " + "=" * 70)
         for ti in targets_info:
-            sim_code = self._generate_simulate_function(ti)
+            sim_code = self._generate_simulate_function_dict(ti)
             if sim_code:
                 sections.append(sim_code)
 
@@ -735,13 +734,13 @@ class JointInferenceBuilder:
         sections.append("\n# " + "=" * 70)
         sections.append("# JOINT TURING MODEL")
         sections.append("# " + "=" * 70)
-        sections.append(self._generate_joint_turing_model(targets_info, parameters))
+        sections.append(self._generate_joint_turing_model_dict(targets_info, parameters))
 
         # Sampling code
         sections.append("\n# " + "=" * 70)
         sections.append("# RUN INFERENCE")
         sections.append("# " + "=" * 70)
-        sections.append(self._generate_joint_sampling_code(targets_info, parameters))
+        sections.append(self._generate_joint_sampling_code_dict(targets_info, parameters))
 
         return "\n".join(sections)
 
@@ -944,6 +943,204 @@ println("\\nParameters to estimate:")"""
             lines.append(f'println("  {pname} ({pinfo.units}) - constrained by: {targets_str}")')
 
         # Build Julia symbol list for params
+        param_symbols = ", ".join(f":{p}" for p in parameters.keys())
+
+        lines.append(
+            f"""
+println("\\nSampling with NUTS...")
+chain = sample(model, NUTS(0.65), MCMCThreads(), 1000, 4; progress=true)
+
+println("\\n" * "=" ^ 60)
+println("POSTERIOR SUMMARY")
+println("=" ^ 60)
+display(chain)
+
+# Convergence diagnostics
+println("\\nConvergence diagnostics:")
+params = [{param_symbols}]
+for p in params
+    rhat_val = rhat(chain[p])[1]
+    ess_val = ess(chain[p])[1]
+    status = rhat_val < 1.01 ? "✓" : "⚠"
+    println("  $p: R-hat=$(round(rhat_val, digits=3)) $status, ESS=$(round(ess_val, digits=0))")
+end
+
+println("\\n" * "=" ^ 60)
+println("POSTERIOR MEDIANS")
+println("=" ^ 60)"""
+        )
+
+        for pname, pinfo in parameters.items():
+            lines.append(
+                f'println("  {pname}: $(round(median(chain[:{pname}][:]), sigdigits=4)) {pinfo.units}")'
+            )
+
+        return "\n".join(lines)
+
+    def _generate_data_dict(self, targets_info: list[TargetInfo]) -> str:
+        """Generate observed data as a Julia Dict keyed by target_id."""
+        lines = ["\nconst DATA = Dict("]
+
+        for i, ti in enumerate(targets_info):
+            comma = "," if i < len(targets_info) - 1 else ""
+            obs = ti.observations
+
+            # Build observation arrays (convert numpy to plain Python floats)
+            medians = [float(o.median) for o in obs.observations]
+            sigmas = [float(o.sigma) for o in obs.observations]
+            eval_times = [float(o.eval_time) for o in obs.observations if o.eval_time is not None]
+
+            lines.append(f'    "{ti.target_id}" => (')
+            lines.append(f"        obs_median = {medians},")
+            lines.append(f"        obs_sigma = {sigmas},")
+
+            if obs.t_span:
+                lines.append(f"        t_span = {obs.t_span},")
+            if eval_times:
+                lines.append(f"        t_eval = {eval_times},")
+            if obs.initial_conditions:
+                lines.append(f"        y0 = {obs.initial_conditions},")
+
+            lines.append(f"    ){comma}")
+
+        lines.append(")\n")
+        return "\n".join(lines)
+
+    def _generate_simulate_function_dict(self, ti: TargetInfo) -> Optional[str]:
+        """Generate simulate function that reads from DATA dict."""
+        model = ti.target.calibration.model
+
+        # No simulate function for direct conversion
+        if isinstance(model, DirectConversionModel):
+            return None
+
+        func_name = self.mapper._sanitize_name(ti.target_id)
+        param_names = ti.parameter_names
+        param_sig = ", ".join(param_names)
+        param_vec = f"[{param_sig}]"
+
+        # Build return expression based on model type and observation count
+        n_obs = len(ti.observations.observations)
+        if n_obs == 1:
+            if isinstance(model, TwoStateModel):
+                return_expr = "sol[2, end] / (sol[1, end] + sol[2, end])"
+            else:
+                return_expr = "sol[1, end]"
+            saveat_expr = f'[DATA["{ti.target_id}"].t_span[2]]'
+        else:
+            if isinstance(model, TwoStateModel):
+                return_expr = (
+                    f'[sol(t)[2] / (sol(t)[1] + sol(t)[2]) for t in DATA["{ti.target_id}"].t_eval]'
+                )
+            else:
+                return_expr = f'[sol(t)[1] for t in DATA["{ti.target_id}"].t_eval]'
+            saveat_expr = f'DATA["{ti.target_id}"].t_eval'
+
+        # Get ODE function name
+        if isinstance(model, CustomModel):
+            import re
+
+            match = re.search(r"function\s+([\w!]+)\s*\(", model.code_julia)
+            ode_func_name = match.group(1) if match else f"{func_name}_ode!"
+        else:
+            ode_func_name = f"{func_name}_ode!"
+
+        return f"""
+function simulate_{func_name}({param_sig})
+    d = DATA["{ti.target_id}"]
+    prob = ODEProblem({ode_func_name}, d.y0, d.t_span, {param_vec})
+    sol = solve(prob, AutoTsit5(Rosenbrock23());
+                saveat={saveat_expr},
+                abstol=1e-8, reltol=1e-6, maxiters=1e6)
+    return {return_expr}
+end
+"""
+
+    def _generate_joint_turing_model_dict(
+        self,
+        targets_info: list[TargetInfo],
+        parameters: dict[str, ParameterInfo],
+    ) -> str:
+        """Generate joint Turing model using DATA dict."""
+        lines = []
+        lines.append("@model function joint_calibration(data)")
+
+        # Priors
+        lines.append("    # =========================================")
+        lines.append("    # PRIORS (shared across targets)")
+        lines.append("    # =========================================")
+        for pname, pinfo in parameters.items():
+            prior_code = self._generate_prior(pname, pinfo.prior)
+            targets_str = ", ".join(pinfo.targets)
+            lines.append(f"    {prior_code}  # Used by: {targets_str}")
+
+        # Likelihoods
+        lines.append("")
+        lines.append("    # =========================================")
+        lines.append("    # LIKELIHOODS")
+        lines.append("    # =========================================")
+
+        for ti in targets_info:
+            tid = ti.target_id
+            lines.append(f"\n    # {tid}")
+            model = ti.target.calibration.model
+            n_obs = len(ti.observations.observations)
+
+            if isinstance(model, DirectConversionModel):
+                param_name = ti.parameter_names[0]
+                lines.append(
+                    f'    data["{tid}"].obs_median[1] ~ Normal({param_name}, data["{tid}"].obs_sigma[1])'
+                )
+            else:
+                func_name = self.mapper._sanitize_name(tid)
+                param_call = ", ".join(ti.parameter_names)
+                lines.append(f"    pred_{func_name} = simulate_{func_name}({param_call})")
+
+                if n_obs == 1:
+                    lines.append(
+                        f'    data["{tid}"].obs_median[1] ~ Normal(pred_{func_name}, data["{tid}"].obs_sigma[1])'
+                    )
+                else:
+                    lines.append(f"    for i in 1:{n_obs}")
+                    lines.append(
+                        f'        data["{tid}"].obs_median[i] ~ Normal(pred_{func_name}[i], data["{tid}"].obs_sigma[i])'
+                    )
+                    lines.append("    end")
+
+        # Return
+        lines.append("")
+        param_returns = ", ".join(f"{p}={p}" for p in parameters.keys())
+        lines.append(f"    return ({param_returns})")
+        lines.append("end")
+
+        return "\n".join(lines)
+
+    def _generate_joint_sampling_code_dict(
+        self,
+        targets_info: list[TargetInfo],
+        parameters: dict[str, ParameterInfo],
+    ) -> str:
+        """Generate sampling code using DATA dict."""
+        lines = []
+
+        lines.append(
+            """
+model = joint_calibration(DATA)
+
+println("=" ^ 60)
+println("JOINT BAYESIAN CALIBRATION")
+println("=" ^ 60)
+println("\\nTargets:")"""
+        )
+
+        for ti in targets_info:
+            lines.append(f'println("  - {ti.target_id}")')
+
+        lines.append('println("\\nParameters to estimate:")')
+        for pname, pinfo in parameters.items():
+            targets_str = ", ".join(pinfo.targets)
+            lines.append(f'println("  {pname} ({pinfo.units}) - constrained by: {targets_str}")')
+
         param_symbols = ", ".join(f":{p}" for p in parameters.keys())
 
         lines.append(
