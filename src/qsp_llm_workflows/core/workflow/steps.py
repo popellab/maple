@@ -15,6 +15,7 @@ from qsp_llm_workflows.core.prompt_builder import (
     TestStatisticPromptBuilder,
     CalibrationTargetPromptBuilder,
     IsolatedSystemTargetPromptBuilder,
+    SubmodelTargetPromptBuilder,
 )
 from qsp_llm_workflows.core.immediate_processor import ImmediateRequestProcessor
 from qsp_llm_workflows.core.output_directory import create_unique_output_directory
@@ -51,6 +52,8 @@ class CreatePreviewStep(WorkflowStep):
             builder = CalibrationTargetPromptBuilder(context.config.base_dir)
         elif context.workflow_type == "isolated_system_target":
             builder = IsolatedSystemTargetPromptBuilder(context.config.base_dir)
+        elif context.workflow_type == "submodel_target":
+            builder = SubmodelTargetPromptBuilder(context.config.base_dir)
         else:
             raise ValueError(f"Unknown workflow type: {context.workflow_type}")
 
@@ -78,6 +81,28 @@ class CreatePreviewStep(WorkflowStep):
                 if not model_context_file:
                     raise ValueError(
                         "model_context_file is required for isolated_system_target workflow. "
+                        "Use --model-context option."
+                    )
+                species_units_file = context.config.jobs_dir / "input_data" / "species_units.json"
+                prompts = builder.process(
+                    context.input_csv,
+                    model_structure_file,
+                    model_context_file,
+                    species_units_file if species_units_file.exists() else None,
+                    context.config.reasoning_effort,
+                )
+            elif context.workflow_type == "submodel_target":
+                # Requires model_structure_file and model_context_file
+                model_structure_file = context.config.model_structure_file
+                if not model_structure_file:
+                    raise ValueError(
+                        "model_structure_file is required for submodel_target workflow. "
+                        "Use --model-structure option."
+                    )
+                model_context_file = context.config.model_context_file
+                if not model_context_file:
+                    raise ValueError(
+                        "model_context_file is required for submodel_target workflow. "
                         "Use --model-context option."
                     )
                 species_units_file = context.config.jobs_dir / "input_data" / "species_units.json"

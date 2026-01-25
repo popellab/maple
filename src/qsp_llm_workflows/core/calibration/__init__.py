@@ -60,6 +60,9 @@ from qsp_llm_workflows.core.calibration.calibration_target_models import (
 from qsp_llm_workflows.core.calibration.isolated_system_target import (
     IsolatedSystemTarget,
 )
+from qsp_llm_workflows.core.calibration.submodel_target import (
+    SubmodelTarget,
+)
 
 # Enums
 from qsp_llm_workflows.core.calibration.enums import (
@@ -175,6 +178,7 @@ __all__ = [
     "CalibrationTargetFooters",
     "IndexType",
     "IsolatedSystemTarget",
+    "SubmodelTarget",
     # Enums
     "Species",
     "MouseSubspecifier",

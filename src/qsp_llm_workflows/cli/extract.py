@@ -33,7 +33,13 @@ Examples:
     parser.add_argument(
         "--type",
         required=True,
-        choices=["parameter", "test_statistic", "calibration_target", "isolated_system_target"],
+        choices=[
+            "parameter",
+            "test_statistic",
+            "calibration_target",
+            "isolated_system_target",
+            "submodel_target",
+        ],
         help="Type of extraction workflow",
     )
 
@@ -86,16 +92,16 @@ Examples:
         sys.exit(1)
 
     # Validate required options for specific workflow types
-    if args.type == "isolated_system_target":
+    if args.type in ("isolated_system_target", "submodel_target"):
         if not args.model_structure:
             print(
-                "Error: --model-structure is required for isolated_system_target workflow",
+                f"Error: --model-structure is required for {args.type} workflow",
                 file=sys.stderr,
             )
             sys.exit(1)
         if not args.model_context:
             print(
-                "Error: --model-context is required for isolated_system_target workflow",
+                f"Error: --model-context is required for {args.type} workflow",
                 file=sys.stderr,
             )
             sys.exit(1)

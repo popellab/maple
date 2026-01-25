@@ -17,9 +17,11 @@ from qsp_llm_workflows.core.prompts import (
     build_test_statistic_prompt,
     build_calibration_target_prompt,
     build_isolated_system_target_prompt,
+    build_submodel_target_prompt,
 )
 from qsp_llm_workflows.core.pydantic_models import ParameterMetadata, TestStatistic
 from qsp_llm_workflows.core.calibration import CalibrationTarget, IsolatedSystemTarget
+from qsp_llm_workflows.core.calibration.submodel_target import SubmodelTarget
 from qsp_llm_workflows.core.model_structure import ModelStructure
 
 
@@ -815,6 +817,261 @@ class IsolatedSystemTargetPromptBuilder(PromptBuilder):
                     "custom_id": custom_id,
                     "prompt": prompt,
                     "pydantic_model": IsolatedSystemTarget,
+                    "validation_context": {
+                        "species_units": all_species_units,
+                        "model_structure": model_structure,
+                    },
+                }
+
+                requests.append(request)
+
+        return requests
+
+
+class SubmodelTargetPromptBuilder(PromptBuilder):
+    """
+    Creates prompts for submodel target extraction from in vitro/preclinical literature.
+
+    Processes CSV input with parameter names and generates prompts for
+    finding experimental data to calibrate those parameters using the SubmodelTarget schema.
+
+    This is the preferred schema for new calibration targets, replacing IsolatedSystemTarget.
+
+    Requires model_structure_file and model_context_file to be provided.
+    """
+
+    def get_workflow_type(self) -> str:
+        return "submodel_target"
+
+    def format_parameter_context(self, parameters: str, model_structure: ModelStructure) -> str:
+        """
+        Build rich context block for parameters from ModelStructure.
+
+        Includes the broader reaction network - other reactions that involve
+        the same species as the target parameter's reactions.
+
+        Args:
+            parameters: Comma-separated parameter names (e.g., "k_CD8_pro,k_CD8_death")
+            model_structure: ModelStructure instance with parameters, reactions, species
+
+        Returns:
+            Formatted markdown text describing each parameter's role in the model
+        """
+        param_names = [p.strip() for p in parameters.split(",") if p.strip()]
+        output = []
+
+        for param_name in param_names:
+            # Look up parameter in model structure
+            param = model_structure.get_parameter(param_name)
+
+            # Parameter header
+            output.append(f"### Parameter: `{param_name}`")
+
+            # Parameter info
+            if param:
+                if param.units:
+                    output.append(f"- **Units:** {param.units}")
+                if param.description:
+                    output.append(f"- **Description:** {param.description}")
+            else:
+                output.append("- **Warning:** Parameter not found in model structure")
+
+            output.append("")
+
+            # Collect species from direct reactions for broader network lookup
+            direct_species: set = set()
+
+            # Get reactions using this parameter
+            reactions = model_structure.get_reactions_for_parameter(param_name)
+            if reactions:
+                output.append(f"**Direct reactions ({len(reactions)}):**")
+                output.append("")
+
+                for i, rxn in enumerate(reactions, 1):
+                    # Reaction header with stoichiometry
+                    reactant_str = " + ".join(rxn.reactants) if rxn.reactants else "null"
+                    product_str = " + ".join(rxn.products) if rxn.products else "null"
+                    output.append(f"**{i}. Reaction:** `{reactant_str} -> {product_str}`")
+                    if rxn.rate_law:
+                        output.append(f"- **Rate:** `{rxn.rate_law}`")
+
+                    # Related species (from reactants and products)
+                    all_species = rxn.reactants + rxn.products
+                    if all_species:
+                        output.append("- **Species:**")
+                        for species_name in all_species:
+                            direct_species.add(species_name)
+                            # Look up species description
+                            species_obj = model_structure._species_by_name.get(species_name)
+                            desc = species_obj.description if species_obj else ""
+                            if desc:
+                                output.append(f"  - `{species_name}`: {desc}")
+                            else:
+                                output.append(f"  - `{species_name}`")
+
+                    # Other parameters in this reaction (excluding current)
+                    other_params = [p for p in rxn.parameters if p != param_name]
+                    if other_params:
+                        output.append("- **Other parameters:**")
+                        for other_param_name in other_params:
+                            other_param = model_structure.get_parameter(other_param_name)
+                            desc = other_param.description if other_param else ""
+                            if desc:
+                                output.append(f"  - `{other_param_name}`: {desc}")
+                            else:
+                                output.append(f"  - `{other_param_name}`")
+
+                    output.append("")
+            else:
+                output.append("**Direct reactions:** No reactions found using this parameter.")
+                output.append("")
+
+            # Add broader reaction network - other reactions involving the same species
+            if direct_species:
+                # Filter out compartment volumes (V_T, V_C, etc.) - they appear in nearly every
+                # reaction and add noise. Real biological species have format "Compartment.Species"
+                biological_species = {s for s in direct_species if "." in s}
+
+                # Find all other reactions involving these species
+                # Group by reaction name to avoid repetition
+                seen_reactions: set = set()
+                broader_reactions = []
+
+                for species_name in biological_species:
+                    related_rxns = model_structure.get_reactions_for_species(species_name)
+                    for rxn in related_rxns:
+                        # Skip if already processed or uses current parameter
+                        if rxn.name in seen_reactions:
+                            continue
+                        if param_name in rxn.parameters:
+                            continue
+                        # Skip if uses any of the target parameters (shown separately)
+                        if any(p in rxn.parameters for p in param_names):
+                            continue
+
+                        seen_reactions.add(rxn.name)
+                        broader_reactions.append(rxn)
+
+                if broader_reactions:
+                    output.append(
+                        "**Broader reaction network** (other reactions involving the same species):"
+                    )
+                    output.append("")
+
+                    for rxn in broader_reactions:
+                        reactant_str = " + ".join(rxn.reactants) if rxn.reactants else "null"
+                        product_str = " + ".join(rxn.products) if rxn.products else "null"
+                        output.append(f"- `{reactant_str} -> {product_str}`")
+                        if rxn.rate_law:
+                            output.append(f"  - Rate: `{rxn.rate_law}`")
+
+                        # List species with descriptions
+                        rxn_species = [s for s in rxn.reactants + rxn.products if "." in s]
+                        if rxn_species:
+                            output.append("  - Species:")
+                            for sp_name in sorted(set(rxn_species)):
+                                species_obj = model_structure._species_by_name.get(sp_name)
+                                desc = species_obj.description if species_obj else ""
+                                if desc:
+                                    output.append(f"    - `{sp_name}`: {desc}")
+                                else:
+                                    output.append(f"    - `{sp_name}`")
+
+                        # List parameters with descriptions
+                        if rxn.parameters:
+                            output.append("  - Parameters:")
+                            for p_name in sorted(rxn.parameters):
+                                p_obj = model_structure.get_parameter(p_name)
+                                desc = p_obj.description if p_obj else ""
+                                if desc:
+                                    output.append(f"    - `{p_name}`: {desc}")
+                                else:
+                                    output.append(f"    - `{p_name}`")
+                    output.append("")
+
+            output.append("---")
+            output.append("")
+
+        return "\n".join(output) if output else "No parameter context available."
+
+    def process(
+        self,
+        input_csv: Path,
+        model_structure_file: Path,
+        model_context_file: Path,
+        species_units_file: Optional[Path] = None,
+        reasoning_effort: str = "high",
+    ) -> List[Dict[str, Any]]:
+        """
+        Process submodel target inputs and generate prompts.
+
+        Args:
+            input_csv: CSV file with columns: target_id, parameters, notes (optional)
+            model_structure_file: JSON file with model structure (from qsp-export-model --export-structure)
+            model_context_file: Text file with high-level model description
+            species_units_file: Optional JSON file mapping species -> units
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
+
+        Returns:
+            List of prompt request dictionaries
+        """
+        import csv
+
+        # Load model structure (required) - single source of truth for parameters, reactions, species
+        if not model_structure_file or not model_structure_file.exists():
+            raise ValueError(
+                f"model_structure_file is required for SubmodelTarget workflow. "
+                f"Got: {model_structure_file}. "
+                f"Run qsp-export-model with --export-structure flag to generate it."
+            )
+        model_structure = ModelStructure.from_json(model_structure_file)
+
+        # Load model context (required)
+        if not model_context_file or not model_context_file.exists():
+            raise ValueError(
+                f"model_context_file is required for SubmodelTarget workflow. "
+                f"Got: {model_context_file}"
+            )
+        with open(model_context_file, "r", encoding="utf-8") as f:
+            model_context = f.read().strip()
+
+        # Load species units if provided
+        all_species_units = {}
+        if species_units_file and species_units_file.exists():
+            with open(species_units_file, "r") as f:
+                all_species_units = json.load(f)
+
+        requests = []
+        with open(input_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+
+            for i, row in enumerate(reader):
+                target_id = row.get("target_id", f"target_{i}")
+                parameters = row.get("parameters", "")
+                notes = row.get("notes", "")
+
+                if not parameters.strip():
+                    print(f"Warning: Empty parameters for {target_id}, skipping")
+                    continue
+
+                # Build rich parameter context from model structure
+                parameter_context = self.format_parameter_context(parameters, model_structure)
+
+                # Build the prompt
+                prompt = build_submodel_target_prompt(
+                    parameters=parameters,
+                    model_context=model_context,
+                    parameter_context=parameter_context,
+                    notes=notes,
+                )
+
+                # Create prompt dict
+                custom_id = f"submodel_target_{target_id}_{i}"
+
+                request = {
+                    "custom_id": custom_id,
+                    "prompt": prompt,
+                    "pydantic_model": SubmodelTarget,
                     "validation_context": {
                         "species_units": all_species_units,
                         "model_structure": model_structure,

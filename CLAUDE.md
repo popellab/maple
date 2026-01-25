@@ -84,6 +84,34 @@ model:
 python scripts/validate_submodel_target.py path/to/target.yaml
 ```
 
+### LLM Extraction
+
+Extract SubmodelTarget YAMLs from scientific literature using the CLI:
+
+```bash
+# Extract submodel targets (requires model context files)
+qsp-extract targets.csv \
+  --type submodel_target \
+  --model-structure model_structure.json \
+  --model-context model_context.txt \
+  --output-dir metadata-storage
+
+# Preview prompts without API call
+qsp-extract targets.csv \
+  --type submodel_target \
+  --model-structure model_structure.json \
+  --model-context model_context.txt \
+  --output-dir metadata-storage \
+  --preview-prompts
+```
+
+**Input CSV format:**
+```csv
+target_id,parameters,notes
+psc_proliferation,k_apsc_prolif,Focus on activated PSCs
+psc_death,k_apsc_death,
+```
+
 ## Julia Translator
 
 Translates SubmodelTarget YAMLs to Julia Turing.jl inference scripts. Located in `julia_translator.py`.

@@ -57,6 +57,18 @@ calibration:
 python scripts/validate_submodel_target.py path/to/target.yaml
 ```
 
+### LLM Extraction
+
+Extract SubmodelTarget YAMLs from scientific literature:
+
+```bash
+qsp-extract targets.csv \
+  --type submodel_target \
+  --model-structure model_structure.json \
+  --model-context model_context.txt \
+  --output-dir metadata-storage
+```
+
 ## Julia Code Generation
 
 Translate validated YAML targets to Julia/Turing.jl for Bayesian inference:

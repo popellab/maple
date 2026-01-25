@@ -181,3 +181,43 @@ def build_isolated_system_target_prompt(
         prompt = re.sub(r"\{\{#NOTES\}\}.*?\{\{/NOTES\}\}\n?", "", prompt, flags=re.DOTALL)
 
     return prompt
+
+
+def build_submodel_target_prompt(
+    parameters: str,
+    model_context: str,
+    parameter_context: str = "",
+    notes: str = "",
+) -> str:
+    """
+    Build submodel target extraction prompt.
+
+    Args:
+        parameters: Comma-separated parameter names to calibrate (e.g., "k_CD8_pro,k_CD8_death")
+        model_context: High-level model description (from model_context.txt)
+        parameter_context: Rich context for each parameter (reactions, species, etc.)
+        notes: Optional notes/guidance for the extraction
+
+    Returns:
+        Complete prompt with placeholders replaced
+    """
+    prompt = read_prompt("submodel_target_prompt.md")
+
+    prompt = prompt.replace("{{PARAMETERS}}", parameters)
+    prompt = prompt.replace("{{MODEL_CONTEXT}}", model_context)
+    prompt = prompt.replace(
+        "{{PARAMETER_CONTEXT}}", parameter_context or "No parameter context available."
+    )
+
+    # Handle optional notes with mustache-style conditional
+    if notes and notes.strip():
+        prompt = prompt.replace("{{#NOTES}}", "")
+        prompt = prompt.replace("{{/NOTES}}", "")
+        prompt = prompt.replace("{{NOTES}}", notes)
+    else:
+        # Remove the entire notes line if empty
+        import re
+
+        prompt = re.sub(r"\{\{#NOTES\}\}.*?\{\{/NOTES\}\}\n?", "", prompt, flags=re.DOTALL)
+
+    return prompt

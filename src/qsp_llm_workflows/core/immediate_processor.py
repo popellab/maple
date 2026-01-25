@@ -17,6 +17,7 @@ from qsp_llm_workflows.core.prompt_builder import (
     TestStatisticPromptBuilder,
     CalibrationTargetPromptBuilder,
     IsolatedSystemTargetPromptBuilder,
+    SubmodelTargetPromptBuilder,
 )
 
 # Optional logfire instrumentation (comes with pydantic-ai)
@@ -62,6 +63,7 @@ class ImmediateRequestProcessor:
         self.test_statistic_creator = TestStatisticPromptBuilder(base_dir)
         self.calibration_target_creator = CalibrationTargetPromptBuilder(base_dir)
         self.isolated_system_target_creator = IsolatedSystemTargetPromptBuilder(base_dir)
+        self.submodel_target_creator = SubmodelTargetPromptBuilder(base_dir)
 
     def get_prompts(
         self,
@@ -102,6 +104,19 @@ class ImmediateRequestProcessor:
             if not self.model_context_file:
                 raise ValueError("model_context_file required for isolated_system_target workflow")
             return self.isolated_system_target_creator.process(
+                input_csv,
+                self.model_structure_file,
+                self.model_context_file,
+                species_units_file,
+                reasoning_effort,
+            )
+        elif workflow_type == "submodel_target":
+            # Requires model_structure_file and model_context_file
+            if not self.model_structure_file:
+                raise ValueError("model_structure_file required for submodel_target workflow")
+            if not self.model_context_file:
+                raise ValueError("model_context_file required for submodel_target workflow")
+            return self.submodel_target_creator.process(
                 input_csv,
                 self.model_structure_file,
                 self.model_context_file,
@@ -228,9 +243,9 @@ class ImmediateRequestProcessor:
         Returns:
             List of results in standard format
         """
-        # Get species_units_file for calibration/isolated system targets
+        # Get species_units_file for calibration/isolated system/submodel targets
         species_units_file = None
-        if workflow_type in ("calibration_target", "isolated_system_target"):
+        if workflow_type in ("calibration_target", "isolated_system_target", "submodel_target"):
             species_units_file = self.base_dir / "jobs" / "input_data" / "species_units.json"
 
         # Generate prompts using prompt builder (DRY principle)
