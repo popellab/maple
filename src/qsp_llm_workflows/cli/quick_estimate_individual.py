@@ -157,7 +157,7 @@ async def process_quick_estimates_individual(
         output_type=QuickTargetEstimate,
         model_settings=settings,
         builtin_tools=[WebSearchTool()],
-        retries=7,  # Increased for validation requirements
+        retries=10,  # Increased for validation requirements
     )
 
     # Create tasks for all targets

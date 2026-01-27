@@ -81,8 +81,46 @@ model:
 ### Validation
 
 ```bash
+# Validate a single file
 python scripts/validate_submodel_target.py path/to/target.yaml
+
+# Validate multiple files
+python scripts/validate_submodel_target.py *.yaml
 ```
+
+**Built-in validators** (run automatically on model validation):
+
+| Validator | What it checks |
+|-----------|----------------|
+| `validate_input_refs` | All `uses_inputs`, `input_ref` references point to existing inputs |
+| `validate_source_refs` | All `source_ref` match a `source_tag` in data sources |
+| `validate_parameter_roles` | Model parameter strings match `calibration.parameters` |
+| `validate_ode_model_requirements` | ODE models have `state_variables` and `independent_variable.span` |
+| `validate_custom_code_syntax` | Python code has correct function signatures |
+| `validate_distribution_code_return_signature` | `distribution_code` returns `{median, ci95_lower, ci95_upper}` |
+| `validate_no_invisible_characters` | No invisible/control chars (zero-width spaces, soft hyphens, etc.) |
+| `validate_span_ordering` | `span[0] < span[1]` and both non-negative |
+| `validate_input_values_in_snippets` | Extracted values appear in `value_snippet` (anti-hallucination) |
+| `validate_doi_resolution_and_metadata` | DOIs resolve via CrossRef, metadata matches |
+| `validate_units_are_valid_pint` | All unit strings are valid Pint units |
+| `validate_distribution_code_required_with_formula` | `direct_conversion` models have `distribution_code` |
+| `validate_prior_predictive_scale` | Prior prediction matches observation scale (catches unit errors) |
+
+**distribution_code return signature** (required format):
+```python
+def derive_distribution(inputs, ureg):
+    # ... computation ...
+    return {
+        'median': float(np.median(samples)),
+        'ci95_lower': float(np.percentile(samples, 2.5)),
+        'ci95_upper': float(np.percentile(samples, 97.5)),
+    }
+```
+
+**No invisible characters** - catches PDF copy-paste issues:
+- Zero-width spaces, soft hyphens, byte order marks
+- Control characters (except tab, newline, carriage return)
+- Unicode letters (Greek, accents) and math symbols (±, ≥) are allowed
 
 ### LLM Extraction
 

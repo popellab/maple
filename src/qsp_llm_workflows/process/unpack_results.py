@@ -66,7 +66,15 @@ def load_metadata(input_csv: Path, workflow_type: str) -> Dict:
                 key = row["target_id"]
                 metadata[key] = {
                     "target_id": key,
-                    "cancer_type": row["cancer_type"],
+                    "cancer_type": row.get("cancer_type", ""),
+                    "parameters": row.get("parameters", ""),
+                    "notes": row.get("notes", ""),
+                }
+            elif workflow_type == "submodel_target":
+                key = row["target_id"]
+                metadata[key] = {
+                    "target_id": key,
+                    "cancer_type": row.get("cancer_type", ""),
                     "parameters": row.get("parameters", ""),
                     "notes": row.get("notes", ""),
                 }
@@ -125,6 +133,12 @@ def add_footer_fields(json_data: dict, metadata: dict, workflow_type: str) -> di
 
     elif workflow_type == "isolated_system_target":
         # Isolated system targets - the LLM output already contains all data
+        # Just add tags
+        tags = ["ai-generated"]
+        json_data["tags"] = tags
+
+    elif workflow_type == "submodel_target":
+        # Submodel targets - the LLM output already contains all data
         # Just add tags
         tags = ["ai-generated"]
         json_data["tags"] = tags
@@ -246,6 +260,7 @@ YAML_FIELD_ORDER = [
     "tags",
     "derivation_id",
     "derivation_timestamp",
+    "logfire_trace_id",
     "model_context",
     # Parameter extraction fields
     "parameter_name",
@@ -348,6 +363,10 @@ def parse_custom_id(custom_id: str) -> Tuple[str, str, str]:
         # isolated_target_TARGET_ID_INDEX
         return ("isolated_system_target", "", "_".join(parts[2:-1]))
 
+    elif parts[0] == "submodel" and parts[1] == "target":
+        # submodel_target_TARGET_ID_INDEX
+        return ("submodel_target", "", "_".join(parts[2:-1]))
+
     else:
         # CANCER_PARAMETER_INDEX (regular parameter extraction)
         return ("parameter", parts[0], "_".join(parts[1:-1]))
@@ -427,6 +446,10 @@ def unpack_single_result(
         meta = metadata.get(identifier)
         if meta:
             cancer_type = meta["cancer_type"]
+    elif workflow_type == "submodel_target":
+        meta = metadata.get(identifier)
+        if meta:
+            cancer_type = meta["cancer_type"]
     else:
         meta = metadata.get((cancer_type, identifier))
 
@@ -437,6 +460,11 @@ def unpack_single_result(
 
     # Add footer fields
     json_data = add_footer_fields(json_data, meta, workflow_type)
+
+    # Add logfire trace_id if present in result
+    logfire_trace_id = result.get("logfire_trace_id")
+    if logfire_trace_id:
+        json_data["logfire_trace_id"] = logfire_trace_id
 
     # Generate filename with derivation numbering
     if workflow_type == "test_statistic":
@@ -452,6 +480,12 @@ def unpack_single_result(
         filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
     elif workflow_type == "isolated_system_target":
+        # target_id_cancer_deriv001.yaml
+        base = f"{identifier}_{cancer_type}"
+        deriv_num = find_next_derivation_number(output_dir, base)
+        filename = f"{base}_deriv{deriv_num:03d}.yaml"
+
+    elif workflow_type == "submodel_target":
         # target_id_cancer_deriv001.yaml
         base = f"{identifier}_{cancer_type}"
         deriv_num = find_next_derivation_number(output_dir, base)
@@ -558,6 +592,10 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 meta = metadata.get(identifier)
                 if meta:
                     cancer_type = meta["cancer_type"]
+            elif workflow_type == "submodel_target":
+                meta = metadata.get(identifier)
+                if meta:
+                    cancer_type = meta["cancer_type"]
             else:
                 meta = metadata.get((cancer_type, identifier))
 
@@ -582,6 +620,12 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
             elif workflow_type == "isolated_system_target":
+                # target_id_cancer_deriv001.yaml
+                base = f"{identifier}_{cancer_type}"
+                deriv_num = find_next_derivation_number(output_dir, base)
+                filename = f"{base}_deriv{deriv_num:03d}.yaml"
+
+            elif workflow_type == "submodel_target":
                 # target_id_cancer_deriv001.yaml
                 base = f"{identifier}_{cancer_type}"
                 deriv_num = find_next_derivation_number(output_dir, base)

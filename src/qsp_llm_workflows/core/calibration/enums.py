@@ -198,3 +198,78 @@ class ExtractionMethod(str, Enum):
 
     OTHER = "other"
     """Other extraction method (specify in extraction_notes)."""
+
+
+# =============================================================================
+# SOURCE RELEVANCE ENUMS
+# =============================================================================
+
+
+class IndicationMatch(str, Enum):
+    """How well the source indication matches the target model indication."""
+
+    EXACT = "exact"
+    """Same disease (e.g., PDAC data for PDAC model)."""
+
+    RELATED = "related"
+    """Same organ or disease class (e.g., other pancreatic diseases, other adenocarcinomas)."""
+
+    PROXY = "proxy"
+    """Different tissue/disease used as mechanistic proxy (e.g., melanoma for PDAC)."""
+
+    UNRELATED = "unrelated"
+    """No clear biological connection to target indication."""
+
+
+class SourceQuality(str, Enum):
+    """Quality tier of the primary data source."""
+
+    PRIMARY_HUMAN_CLINICAL = "primary_human_clinical"
+    """Peer-reviewed original research with human clinical data."""
+
+    PRIMARY_HUMAN_IN_VITRO = "primary_human_in_vitro"
+    """Peer-reviewed original research with human cells/tissue in vitro."""
+
+    PRIMARY_ANIMAL_IN_VIVO = "primary_animal_in_vivo"
+    """Peer-reviewed original research with animal in vivo data."""
+
+    PRIMARY_ANIMAL_IN_VITRO = "primary_animal_in_vitro"
+    """Peer-reviewed original research with animal cells in vitro."""
+
+    REVIEW = "review_article"
+    """Review article summarizing primary data (cite original source if possible)."""
+
+    TEXTBOOK = "textbook"
+    """Textbook or reference work."""
+
+    NON_PEER_REVIEWED = "non_peer_reviewed"
+    """Non-peer-reviewed source (Wikipedia, preprints, etc.). Avoid if possible."""
+
+
+class PerturbationType(str, Enum):
+    """Type of experimental perturbation in the source study."""
+
+    PHYSIOLOGICAL_BASELINE = "physiological_baseline"
+    """Normal/homeostatic conditions without perturbation."""
+
+    PATHOLOGICAL_STATE = "pathological_state"
+    """Disease-relevant perturbation or condition."""
+
+    PHARMACOLOGICAL = "pharmacological"
+    """Drug-induced perturbation (often supraphysiological concentrations)."""
+
+    GENETIC = "genetic_perturbation"
+    """Knockout, knockdown, or overexpression."""
+
+
+class TMECompatibility(str, Enum):
+    """Tumor microenvironment compatibility for immune/stromal parameters."""
+
+    HIGH = "high"
+    """Source TME has similar characteristics to target (e.g., both desmoplastic)."""
+
+    MODERATE = "moderate"
+    """Some TME differences that may affect parameter values."""
+
+    LOW = "low"
+    """Major TME differences (e.g., T cell-permissive model for T cell-excluded tumor)."""

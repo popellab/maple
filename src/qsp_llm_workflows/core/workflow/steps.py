@@ -196,12 +196,13 @@ class ProcessPromptsStep(WorkflowStep):
                         output_dir,
                         context.workflow_type,
                         metadata,
-                        progress_callback=None,  # Don't print individual messages
+                        progress_callback=context.progress_callback,
                     )
                     if output_path:
                         unpacked_count[0] += 1
+                        context.report_progress(f"  ✓ Saved: {output_path.name}")
                 except Exception as e:
-                    logger.warning(f"Failed to unpack result: {e}")
+                    context.report_progress(f"  ✗ Failed to unpack: {e}")
 
             # Create immediate processor
             processor = ImmediateRequestProcessor(

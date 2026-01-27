@@ -173,6 +173,15 @@ def make_direct_conversion_target(
             "species": "human",
             "system": "in_vitro",
         },
+        "source_relevance": {
+            "indication_match": "exact",
+            "indication_match_justification": "Test justification for source relevance with exact indication match.",
+            "species_source": "human",
+            "species_target": "human",
+            "source_quality": "primary_human_in_vitro",
+            "perturbation_type": "physiological_baseline",
+            "estimated_translation_uncertainty_fold": 1.0,
+        },
         "study_interpretation": "Test interpretation of the study data",
         "key_assumptions": ["Assumption 1 for testing"],
         "primary_data_source": {
@@ -214,9 +223,9 @@ def derive_distribution(inputs, ureg):
     import numpy as np
     value = inputs['test_value'].magnitude
     return {
-        'median': [value] * ureg('1/day'),
-        'ci95': [[value * 0.5, value * 2.0]] * ureg('1/day'),
-        'units': '1/day',
+        'median': float(value),
+        'ci95_lower': float(value * 0.5),
+        'ci95_upper': float(value * 2.0),
     }
 """
         data = make_direct_conversion_target(
@@ -253,9 +262,9 @@ class TestPriorPredictiveScale:
 def derive_distribution(inputs, ureg):
     value = inputs['test_value'].magnitude
     return {
-        'median': [value] * ureg('1/day'),
-        'ci95': [[value * 0.5, value * 2.0]],
-        'units': '1/day',
+        'median': float(value),
+        'ci95_lower': float(value * 0.5),
+        'ci95_upper': float(value * 2.0),
     }
 """
         data = make_direct_conversion_target(
@@ -277,9 +286,9 @@ def derive_distribution(inputs, ureg):
 def derive_distribution(inputs, ureg):
     value = inputs['test_value'].magnitude
     return {
-        'median': [value] * ureg('1/day'),
-        'ci95': [[value * 0.5, value * 2.0]],
-        'units': '1/day',
+        'median': float(value),
+        'ci95_lower': float(value * 0.5),
+        'ci95_upper': float(value * 2.0),
     }
 """
         data = make_direct_conversion_target(
@@ -335,9 +344,9 @@ def derive_distribution(inputs, ureg):
     # Clipping to avoid negatives
     samples = np.clip(np.random.normal(value, 1, 1000), 0, None)
     return {
-        'median': [np.median(samples)] * ureg('1/day'),
-        'ci95': [[np.percentile(samples, 2.5), np.percentile(samples, 97.5)]],
-        'units': '1/day',
+        'median': float(np.median(samples)),
+        'ci95_lower': float(np.percentile(samples, 2.5)),
+        'ci95_upper': float(np.percentile(samples, 97.5)),
     }
 """
         data = make_direct_conversion_target(
@@ -366,9 +375,9 @@ def derive_distribution(inputs, ureg):
     value = inputs['test_value'].magnitude
     samples = np.maximum(np.random.normal(value, 1, 1000), 0)
     return {
-        'median': [np.median(samples)] * ureg('1/day'),
-        'ci95': [[np.percentile(samples, 2.5), np.percentile(samples, 97.5)]],
-        'units': '1/day',
+        'median': float(np.median(samples)),
+        'ci95_lower': float(np.percentile(samples, 2.5)),
+        'ci95_upper': float(np.percentile(samples, 97.5)),
     }
 """
         data = make_direct_conversion_target(
@@ -403,9 +412,9 @@ class TestLargeVarianceDocumented:
 def derive_distribution(inputs, ureg):
     value = inputs['mean_value'].magnitude
     return {
-        'median': [value] * ureg('1/day'),
-        'ci95': [[value * 0.5, value * 2.0]],
-        'units': '1/day',
+        'median': float(value),
+        'ci95_lower': float(value * 0.5),
+        'ci95_upper': float(value * 2.0),
     }
 """
         data = {
@@ -466,6 +475,15 @@ def derive_distribution(inputs, ureg):
                 "species": "human",
                 "system": "in_vitro",
             },
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "estimated_translation_uncertainty_fold": 1.0,
+            },
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -494,9 +512,9 @@ def derive_distribution(inputs, ureg):
 def derive_distribution(inputs, ureg):
     value = inputs['mean_value'].magnitude
     return {
-        'median': [value] * ureg('1/day'),
-        'ci95': [[value * 0.5, value * 2.0]],
-        'units': '1/day',
+        'median': float(value),
+        'ci95_lower': float(value * 0.5),
+        'ci95_upper': float(value * 2.0),
     }
 """
         data = {
@@ -557,6 +575,15 @@ def derive_distribution(inputs, ureg):
             "experimental_context": {
                 "species": "human",
                 "system": "in_vitro",
+            },
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "estimated_translation_uncertainty_fold": 1.0,
             },
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],

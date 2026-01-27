@@ -104,7 +104,7 @@ async def process_quick_estimates(input_csv: Path, output_csv: Path, api_key: st
         output_type=QuickEstimateResponse,
         model_settings=settings,
         builtin_tools=[WebSearchTool()],
-        retries=7,  # Increased for validation requirements
+        retries=10,  # Increased for validation requirements
     )
 
     result = await agent.run(prompt)

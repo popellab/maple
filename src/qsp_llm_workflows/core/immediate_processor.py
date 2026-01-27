@@ -23,10 +23,12 @@ from qsp_llm_workflows.core.prompt_builder import (
 # Optional logfire instrumentation (comes with pydantic-ai)
 try:
     import logfire
+    from opentelemetry import trace as otel_trace
 
     LOGFIRE_AVAILABLE = True
 except ImportError:
     LOGFIRE_AVAILABLE = False
+    otel_trace = None
 
 
 class ImmediateRequestProcessor:
@@ -184,11 +186,22 @@ class ImmediateRequestProcessor:
                 model_settings=settings,
                 builtin_tools=builtin_tools,
                 validation_context=validation_context,
-                retries=7,  # Increased for validation requirements
+                retries=10,  # Increased for validation requirements
             )
 
-            # Run agent with prompt
-            result = await agent.run(prompt)
+            # Run agent with prompt, capturing logfire trace_id if available
+            logfire_trace_id = None
+            if LOGFIRE_AVAILABLE:
+                with logfire.span(f"extract_{custom_id}"):
+                    result = await agent.run(prompt)
+                    # Get trace_id from current span context (OpenTelemetry)
+                    current_span = otel_trace.get_current_span()
+                    span_context = current_span.get_span_context()
+                    if span_context.is_valid:
+                        logfire_trace_id = format(span_context.trace_id, "032x")
+            else:
+                result = await agent.run(prompt)
+
             parsed_data = result.output.model_dump()
             request_id = "pydantic_ai_" + custom_id
 
@@ -197,6 +210,7 @@ class ImmediateRequestProcessor:
 
             return {
                 "custom_id": custom_id,
+                "logfire_trace_id": logfire_trace_id,
                 "response": {
                     "status_code": 200,
                     "request_id": request_id,

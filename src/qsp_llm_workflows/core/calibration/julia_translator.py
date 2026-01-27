@@ -93,14 +93,33 @@ class ObservationExtractor:
             if measurement.distribution_code:
                 # Execute distribution_code
                 result = self._exec_distribution_code(measurement.distribution_code, inputs_dict)
-                medians = result["median"]
-                ci95s = result["ci95"]
+                # Support both formats:
+                # New format: median, ci95_lower, ci95_upper (scalars or lists)
+                # Old format: median (list), ci95 (list of [lo, hi] pairs)
+                if "ci95_lower" in result:
+                    # New format
+                    median_val = result["median"]
+                    ci95_lo = result["ci95_lower"]
+                    ci95_hi = result["ci95_upper"]
+                    # Normalize to lists
+                    medians = [median_val] if not isinstance(median_val, list) else median_val
+                    ci95_lo = [ci95_lo] if not isinstance(ci95_lo, list) else ci95_lo
+                    ci95_hi = [ci95_hi] if not isinstance(ci95_hi, list) else ci95_hi
+                    ci95s = list(zip(ci95_lo, ci95_hi))
+                else:
+                    # Old format (for backwards compatibility)
+                    medians = result["median"]
+                    ci95s = result["ci95"]
+                    if not isinstance(medians, list):
+                        medians = [medians]
+                    if not isinstance(ci95s[0], (list, tuple)):
+                        ci95s = [ci95s]
                 units = result.get("units", measurement.units)
             else:
                 # No distribution_code - use inputs directly
                 # This handles simple cases where input IS the observation
                 medians = [inputs_dict[measurement.uses_inputs[0]].magnitude]
-                ci95s = [[medians[0] * 0.9, medians[0] * 1.1]]  # Assume 10% uncertainty
+                ci95s = [(medians[0] * 0.9, medians[0] * 1.1)]  # Assume 10% uncertainty
                 units = measurement.units
 
             # Determine which observations to include based on input roles
