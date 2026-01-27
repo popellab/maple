@@ -7,6 +7,7 @@ This module implements the SubmodelTarget schema that separates:
 - `calibration`: How to use those inputs for inference
 """
 
+import warnings
 from enum import Enum
 from typing import Annotated, List, Literal, Optional, Union
 
@@ -227,11 +228,7 @@ class Parameter(BaseModel):
 
     name: str = Field(description="Parameter name from the full QSP model")
     units: str = Field(description="Parameter units")
-    prior: Optional[Prior] = Field(
-        default=None,
-        description="Prior distribution for Bayesian inference. If not specified, "
-        "translator will use heuristics based on parameter units and expected range.",
-    )
+    prior: Prior = Field(description="Prior distribution for Bayesian inference")
 
 
 # =============================================================================
@@ -1108,6 +1105,270 @@ class SubmodelTarget(BaseModel):
 
         if errors:
             raise ValueError("Invalid Pint units:\n  - " + "\n  - ".join(errors))
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_distribution_code_required_with_formula(self) -> "SubmodelTarget":
+        """
+        Validate that distribution_code is provided when model has a formula.
+
+        For direct_conversion models with a formula, the measurement must have
+        distribution_code to implement the unit conversion. Without it, the
+        julia_translator will use the raw input value, which may be in wrong units.
+
+        This catches cases like k_CCL2_sec where formula specifies a unit conversion
+        but no distribution_code implements it, leading to ~10 order of magnitude errors.
+        """
+        model = self.calibration.model
+
+        # Only applies to direct_conversion models with formula
+        if not isinstance(model, DirectConversionModel):
+            return self
+
+        # Check if any measurement has distribution_code
+        has_distribution_code = any(
+            m.distribution_code is not None for m in self.calibration.measurements
+        )
+
+        if not has_distribution_code:
+            raise ValueError(
+                f"Model type is 'direct_conversion' with formula:\n"
+                f"  {model.formula}\n\n"
+                f"But no measurement has distribution_code to implement this conversion.\n"
+                f"Without distribution_code, the raw input value will be used as the observation,\n"
+                f"which may be in different units than the target parameter.\n\n"
+                f"Fix: Add distribution_code to the measurement that implements the formula,\n"
+                f"converting input units to parameter units."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_prior_predictive_scale(self) -> "SubmodelTarget":
+        """
+        Validate that prior predictive is on same scale as observation.
+
+        For all model types:
+        1. Sample parameter values from the prior (using median)
+        2. Run the model forward (ODE integration or direct conversion)
+        3. Compute the observable
+        4. Compare to the observation
+
+        Raises error if they differ by more than 3 orders of magnitude.
+
+        This catches unit conversion errors like k_CCL2_sec where:
+        - Prior: LogNormal(-20.8, 1.0) -> median ~ 9e-10
+        - Observation: 8.5 (raw input, not converted)
+        - Mismatch: ~10 orders of magnitude
+        """
+        import math
+        import numpy as np
+        from qsp_llm_workflows.core.unit_registry import ureg
+        from qsp_llm_workflows.core.calibration.submodel_utils import (
+            get_prior_median,
+            run_prior_predictive,
+            PriorPredictiveError,
+        )
+
+        # Get the parameter and its prior
+        if not self.calibration.parameters:
+            return self
+
+        param = self.calibration.parameters[0]
+        prior_median = get_prior_median(param.prior)
+        if prior_median is None:
+            return self
+
+        # Build inputs dict
+        input_values = {inp.name: inp.value for inp in self.inputs}
+
+        # Get observation from first measurement
+        obs_median = None
+        measurement = self.calibration.measurements[0] if self.calibration.measurements else None
+
+        if measurement:
+            if measurement.distribution_code:
+                # Execute distribution_code to get observation
+                try:
+                    inputs_pint = {}
+                    for inp in self.inputs:
+                        try:
+                            inputs_pint[inp.name] = inp.value * ureg(inp.units)
+                        except Exception:
+                            inputs_pint[inp.name] = inp.value
+
+                    local_scope = {"ureg": ureg, "np": np}
+                    exec(measurement.distribution_code, local_scope)
+                    derive_fn = local_scope.get("derive_distribution")
+
+                    if derive_fn:
+                        result = derive_fn(inputs_pint, ureg)
+                        if isinstance(result, dict) and "median" in result:
+                            obs_median = result["median"]
+                            if hasattr(obs_median, "__iter__"):
+                                obs_median = list(obs_median)[0]
+                            if hasattr(obs_median, "magnitude"):
+                                obs_median = obs_median.magnitude
+                except Exception as e:
+                    raise ValueError(
+                        f"Prior predictive check failed: distribution_code execution error.\n"
+                        f"  Error: {e}\n\n"
+                        f"Fix the distribution_code or check that all inputs are defined."
+                    ) from e
+            else:
+                # No distribution_code - use first input value directly
+                if measurement.uses_inputs:
+                    first_input = next(
+                        (inp for inp in self.inputs if inp.name == measurement.uses_inputs[0]),
+                        None,
+                    )
+                    if first_input:
+                        obs_median = first_input.value
+
+        if obs_median is None:
+            raise ValueError(
+                f"Prior predictive check failed: could not extract observation value.\n"
+                f"  Measurement: {measurement.name if measurement else 'None'}\n\n"
+                f"Check that:\n"
+                f"  - Measurement has uses_inputs defined\n"
+                f"  - Input names in uses_inputs match actual input names\n"
+                f"  - distribution_code returns dict with 'median' key"
+            )
+
+        if obs_median == 0:
+            return self  # Zero observation is valid, just can't do log comparison
+
+        # Run prior predictive to get model prediction
+        try:
+            predicted = run_prior_predictive(
+                model=self.calibration.model,
+                prior=param.prior,
+                param_name=param.name,
+                state_variables=self.calibration.state_variables,
+                independent_variable=self.calibration.independent_variable,
+                measurement=measurement,
+                input_values=input_values,
+            )
+        except PriorPredictiveError as e:
+            raise ValueError(
+                f"Prior predictive check failed:\n  {e}\n\n"
+                f"  Model type: {self.calibration.model.type}\n"
+                f"  Parameter: {param.name} = {prior_median:.2e}"
+            ) from e
+
+        if predicted == 0:
+            return self  # Zero prediction is valid, just can't do log comparison
+
+        # Compare prediction to observation
+        try:
+            log_diff = abs(math.log10(abs(predicted)) - math.log10(abs(obs_median)))
+        except (ValueError, ZeroDivisionError):
+            return self
+
+        if log_diff > 3:
+            raise ValueError(
+                f"Prior predictive check failed for parameter '{param.name}':\n"
+                f"  Prior median: {prior_median:.2e}\n"
+                f"  Model prediction: {predicted:.2e}\n"
+                f"  Observation: {obs_median:.2e}\n"
+                f"  Difference: ~{10**log_diff:.0e}x ({log_diff:.1f} orders of magnitude)\n\n"
+                f"This indicates a unit conversion error. Check:\n"
+                f"  1. Prior parameters (mu, sigma) match the parameter units\n"
+                f"  2. distribution_code correctly converts input units to parameter units\n"
+                f"  3. Input values and units are correct"
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_clipping_suggests_lognormal(self) -> "SubmodelTarget":
+        """
+        Warn if distribution_code uses clipping to avoid negative values.
+
+        Clipping (np.clip, np.maximum, max(0, ...)) suggests the data is
+        positive-only, which is better modeled with a lognormal distribution
+        than a normal distribution with clipping.
+
+        Normal distributions for positive-only data introduce bias when clipped.
+        """
+        for measurement in self.calibration.measurements:
+            if measurement.distribution_code is None:
+                continue
+
+            code = measurement.distribution_code
+            clipping_patterns = ["np.clip", "np.maximum", "np.minimum", "max(0", "min("]
+
+            if any(pattern in code for pattern in clipping_patterns):
+                warnings.warn(
+                    f"Measurement '{measurement.name}' distribution_code uses clipping "
+                    f"(np.clip/np.maximum/etc) to avoid negative values.\n"
+                    f"This suggests size/volume/mass data that may be better modeled with "
+                    f"a lognormal distribution.\n"
+                    f"Normal distributions for positive-only data introduce bias when clipped.\n"
+                    f"Consider converting mean +/- SD to lognormal parameters:\n"
+                    f"  mu_log = ln(mean^2 / sqrt(mean^2 + sd^2))\n"
+                    f"  sigma_log = sqrt(ln(1 + sd^2/mean^2))",
+                    UserWarning,
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_large_variance_documented(self) -> "SubmodelTarget":
+        """
+        Warn if large variance (CV > 50%) is not documented in identifiability_notes.
+
+        High coefficient of variation suggests substantial variability that should
+        be acknowledged and explained in the identifiability discussion.
+        """
+        # Find mean and SD/SE inputs
+        mean_input = None
+        std_input = None
+
+        for inp in self.inputs:
+            name_lower = inp.name.lower()
+            # Skip vector-valued inputs
+            if isinstance(inp.value, list):
+                continue
+
+            if "mean" in name_lower and mean_input is None:
+                mean_input = inp
+            if any(x in name_lower for x in ["sd", "std", "se", "stderr", "stdev"]):
+                std_input = inp
+
+        if mean_input and std_input:
+            mean_val = mean_input.value
+            std_val = std_input.value
+
+            if mean_val != 0:
+                cv = abs(std_val / mean_val)
+
+                if cv > 0.5:  # CV > 50%
+                    # Check if identifiability_notes mentions variance
+                    notes = self.calibration.identifiability_notes.lower()
+                    variance_keywords = [
+                        "variance",
+                        "variability",
+                        "uncertain",
+                        "cv",
+                        "wide",
+                        "heterogen",
+                        "variation",
+                        "spread",
+                        "dispersion",
+                    ]
+
+                    if not any(keyword in notes for keyword in variance_keywords):
+                        warnings.warn(
+                            f"Large coefficient of variation (CV = {cv:.1%}) detected "
+                            f"but not discussed in identifiability_notes.\n"
+                            f"Consider adding discussion of whether this reflects:\n"
+                            f"  - Biological variability\n"
+                            f"  - Measurement error\n"
+                            f"  - Heterogeneous population",
+                            UserWarning,
+                        )
 
         return self
 
