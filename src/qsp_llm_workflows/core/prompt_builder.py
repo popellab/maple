@@ -1001,6 +1001,7 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
         model_context_file: Path,
         species_units_file: Optional[Path] = None,
         reasoning_effort: str = "high",
+        previous_extractions_dir: Optional[Path] = None,
     ) -> List[Dict[str, Any]]:
         """
         Process submodel target inputs and generate prompts.
@@ -1011,11 +1012,17 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
             model_context_file: Text file with high-level model description
             species_units_file: Optional JSON file mapping species -> units
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
+            previous_extractions_dir: Optional path to directory with previous extractions
+                                      to avoid re-using the same primary sources
 
         Returns:
             List of prompt request dictionaries
         """
         import csv
+
+        from qsp_llm_workflows.core.parameter_utils import (
+            collect_existing_studies_for_submodel_target,
+        )
 
         # Load model structure (required) - single source of truth for parameters, reactions, species
         if not model_structure_file or not model_structure_file.exists():
@@ -1049,6 +1056,7 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
                 target_id = row.get("target_id", f"target_{i}")
                 parameters = row.get("parameters", "")
                 notes = row.get("notes", "")
+                cancer_type = row.get("cancer_type", "")
 
                 if not parameters.strip():
                     print(f"Warning: Empty parameters for {target_id}, skipping")
@@ -1057,12 +1065,22 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
                 # Build rich parameter context from model structure
                 parameter_context = self.format_parameter_context(parameters, model_structure)
 
+                # Collect existing studies from previous extractions
+                used_primary_studies = ""
+                if previous_extractions_dir and cancer_type:
+                    used_primary_studies = collect_existing_studies_for_submodel_target(
+                        target_id=target_id,
+                        cancer_type=cancer_type,
+                        previous_extractions_dir=previous_extractions_dir,
+                    )
+
                 # Build the prompt
                 prompt = build_submodel_target_prompt(
                     parameters=parameters,
                     model_context=model_context,
                     parameter_context=parameter_context,
                     notes=notes,
+                    used_primary_studies=used_primary_studies,
                 )
 
                 # Create prompt dict

@@ -28,6 +28,8 @@ parameters, but you MAY (and often should) include additional model parameters
 when mechanistically necessary. All parameters in `calibration.parameters`
 will be jointly inferred during Bayesian calibration.
 
+{{USED_PRIMARY_STUDIES}}
+
 ---
 
 ## Your Task

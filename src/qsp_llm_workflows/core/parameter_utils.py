@@ -111,3 +111,88 @@ def collect_existing_studies(
         output.append("")
 
     return header + "\n".join(output)
+
+
+def collect_existing_studies_for_submodel_target(
+    target_id: str,
+    cancer_type: str,
+    previous_extractions_dir: Path,
+) -> str:
+    """
+    Collect information about existing studies for a given submodel target.
+
+    Args:
+        target_id: Target ID (e.g., "psc_activation")
+        cancer_type: Cancer type for the target (e.g., "PDAC")
+        previous_extractions_dir: Path to directory containing previous extraction YAML files
+
+    Returns:
+        Formatted string describing existing studies, or empty string if none exist
+    """
+    import yaml
+
+    if not previous_extractions_dir or not previous_extractions_dir.exists():
+        return ""
+
+    # Find all YAML files matching {target_id}_{cancer_type}_deriv*.yaml pattern
+    yaml_files = list(previous_extractions_dir.glob(f"{target_id}_{cancer_type}_deriv*.yaml"))
+
+    if not yaml_files:
+        return ""
+
+    # Collect source fields from all matching files
+    all_sources = []
+
+    for yaml_file in sorted(yaml_files):
+        try:
+            with open(yaml_file, "r", encoding="utf-8") as f:
+                study_data = yaml.safe_load(f)
+
+            if not study_data:
+                continue
+
+            # Extract primary_data_source (SubmodelTarget schema)
+            if "primary_data_source" in study_data and study_data["primary_data_source"]:
+                source = study_data["primary_data_source"]
+                # Include filename for reference
+                all_sources.append((yaml_file.name, "primary_data_source", source))
+
+            # Extract secondary_data_sources if present
+            if "secondary_data_sources" in study_data and study_data["secondary_data_sources"]:
+                for secondary in study_data["secondary_data_sources"]:
+                    all_sources.append((yaml_file.name, "secondary_data_source", secondary))
+
+        except Exception as e:
+            print(f"Warning: Could not process {yaml_file}: {e}")
+            continue
+
+    if not all_sources:
+        return ""
+
+    # Format the complete section with verbatim YAML
+    header = "\n## Sources Already Used for This Target\n\n"
+    header += "**IMPORTANT:** The following sources have already been used in previous extractions for this target. "
+    header += "DO NOT re-use these primary sources. Instead, find NEW sources not listed below.\n\n"
+
+    # Dump sources as YAML, grouped by file
+    output = []
+    current_file = None
+    import yaml as yaml_lib
+
+    for filename, source_type, source_data in all_sources:
+        if filename != current_file:
+            if current_file is not None:
+                output.append("")
+            output.append(f"### From `{filename}`")
+            current_file = filename
+
+        output.append(f"**{source_type}:**")
+        output.append("```yaml")
+        output.append(
+            yaml_lib.dump(
+                source_data, default_flow_style=False, sort_keys=False, allow_unicode=True
+            ).strip()
+        )
+        output.append("```")
+
+    return header + "\n".join(output)

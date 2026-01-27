@@ -57,6 +57,12 @@ class WorkflowConfig(BaseModel):
         description="Path to model_context.txt with high-level model description",
     )
 
+    # Previous extractions directory for submodel targets
+    previous_extractions_dir: Optional[Path] = Field(
+        default=None,
+        description="Path to directory with previous extractions (avoids re-using sources)",
+    )
+
     @field_validator("base_dir", "storage_dir", mode="before")
     @classmethod
     def convert_to_path(cls, v) -> Path:

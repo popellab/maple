@@ -75,6 +75,13 @@ Examples:
         help="Path to model_context.txt with high-level model description (isolated_system_target)",
     )
 
+    parser.add_argument(
+        "--previous-extractions",
+        type=Path,
+        help="Path to directory with previous extractions (submodel_target). "
+        "Sources from matching targets will be excluded from new extractions.",
+    )
+
     args = parser.parse_args()
 
     # Validate input file
@@ -121,6 +128,16 @@ Examples:
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            # Validate previous-extractions if provided
+            previous_extractions_dir = None
+            if hasattr(args, "previous_extractions") and args.previous_extractions:
+                if not args.previous_extractions.exists():
+                    print(
+                        f"Error: Previous extractions directory not found: {args.previous_extractions}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                previous_extractions_dir = args.previous_extractions
             # Create new config with model files (config is frozen)
             config = WorkflowConfig(
                 base_dir=config.base_dir,
@@ -130,6 +147,7 @@ Examples:
                 reasoning_effort=config.reasoning_effort,
                 model_structure_file=args.model_structure,
                 model_context_file=args.model_context,
+                previous_extractions_dir=previous_extractions_dir,
             )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)

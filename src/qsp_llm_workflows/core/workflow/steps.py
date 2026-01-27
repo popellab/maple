@@ -112,6 +112,7 @@ class CreatePreviewStep(WorkflowStep):
                     model_context_file,
                     species_units_file if species_units_file.exists() else None,
                     context.config.reasoning_effort,
+                    previous_extractions_dir=context.config.previous_extractions_dir,
                 )
             else:
                 prompts = builder.process(context.input_csv, None, context.config.reasoning_effort)
@@ -197,6 +198,7 @@ class ProcessPromptsStep(WorkflowStep):
                         context.workflow_type,
                         metadata,
                         progress_callback=context.progress_callback,
+                        previous_extractions_dir=context.config.previous_extractions_dir,
                     )
                     if output_path:
                         unpacked_count[0] += 1
@@ -210,6 +212,7 @@ class ProcessPromptsStep(WorkflowStep):
                 context.config.openai_api_key,
                 model_structure_file=context.config.model_structure_file,
                 model_context_file=context.config.model_context_file,
+                previous_extractions_dir=context.config.previous_extractions_dir,
             )
 
             # Process requests with streaming unpacker

@@ -188,6 +188,7 @@ def build_submodel_target_prompt(
     model_context: str,
     parameter_context: str = "",
     notes: str = "",
+    used_primary_studies: str = "",
 ) -> str:
     """
     Build submodel target extraction prompt.
@@ -197,6 +198,7 @@ def build_submodel_target_prompt(
         model_context: High-level model description (from model_context.txt)
         parameter_context: Rich context for each parameter (reactions, species, etc.)
         notes: Optional notes/guidance for the extraction
+        used_primary_studies: Formatted list of already-used primary studies (optional)
 
     Returns:
         Complete prompt with placeholders replaced
@@ -208,6 +210,7 @@ def build_submodel_target_prompt(
     prompt = prompt.replace(
         "{{PARAMETER_CONTEXT}}", parameter_context or "No parameter context available."
     )
+    prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
 
     # Handle optional notes with mustache-style conditional
     if notes and notes.strip():
