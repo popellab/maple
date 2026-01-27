@@ -105,6 +105,9 @@ python scripts/validate_submodel_target.py *.yaml
 | `validate_units_are_valid_pint` | All unit strings are valid Pint units |
 | `validate_distribution_code_required_with_formula` | `direct_conversion` models have `distribution_code` |
 | `validate_prior_predictive_scale` | Prior prediction matches observation scale (catches unit errors) |
+| `validate_source_quality_peer_reviewed` | Warns if `source_quality` is `non_peer_reviewed` |
+| `validate_secondary_sources_quality` | Warns if secondary sources have `non_peer_reviewed` quality |
+| `validate_prior_reflects_translation_uncertainty` | Warns if prior σ is too narrow for `estimated_translation_uncertainty_fold` |
 
 **distribution_code return signature** (required format):
 ```python
@@ -121,6 +124,40 @@ def derive_distribution(inputs, ureg):
 - Zero-width spaces, soft hyphens, byte order marks
 - Control characters (except tab, newline, carriage return)
 - Unicode letters (Greek, accents) and math symbols (±, ≥) are allowed
+
+### Source Relevance Assessment
+
+The `source_relevance` field captures how well the source data translates to the target model context. Required enums are in `enums.py`.
+
+```yaml
+source_relevance:
+  indication_match: proxy  # exact, related, proxy, unrelated
+  indication_match_justification: "Prostate stromal cells used for PDAC CCL2..."
+  species_source: mouse
+  species_target: human
+  source_quality: primary_animal_in_vitro  # primary_human_clinical, ..., non_peer_reviewed
+  perturbation_type: pharmacological  # physiological_baseline, pathological_state, etc.
+  tme_compatibility: low  # high, moderate, low
+  tme_compatibility_notes: "EG7 thymoma is T cell-permissive; PDAC is excluded..."
+  estimated_translation_uncertainty_fold: 10.0
+```
+
+**Key fields:**
+
+| Field | Purpose | When to flag |
+|-------|---------|--------------|
+| `indication_match` | Does disease match? | `proxy`/`unrelated` require justification |
+| `source_quality` | Peer review status | `non_peer_reviewed` (Wikipedia, preprints) triggers warning |
+| `tme_compatibility` | TME similarity | `low` for PDAC if source is T cell-permissive tumor |
+| `estimated_translation_uncertainty_fold` | Expected translation error | Should match prior σ: `σ ≈ ln(fold)` |
+
+**Translation uncertainty → prior width:**
+```
+fold = 3.0  →  σ = ln(3.0) ≈ 1.1
+fold = 10.0 →  σ = ln(10.0) ≈ 2.3
+```
+
+The `validate_prior_reflects_translation_uncertainty` validator warns if prior σ is less than 70% of `ln(estimated_translation_uncertainty_fold)`.
 
 ### LLM Extraction
 

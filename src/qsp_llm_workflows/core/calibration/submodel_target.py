@@ -563,12 +563,42 @@ class SecondaryDataSource(BaseModel):
         default=None,
         description="What this source contributed",
     )
+    source_quality: Optional[SourceQuality] = Field(
+        default=None,
+        description=(
+            "Quality tier of this secondary source. Important when secondary sources "
+            "provide quantitative values (e.g., half-lives, cell densities). "
+            "Flag non_peer_reviewed sources like Wikipedia."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_doi_or_url(self) -> "SecondaryDataSource":
         """Ensure at least one of doi or url is provided."""
         if not self.doi and not self.url:
             raise ValueError(f"Secondary source '{self.source_tag}' must have either doi or url")
+        return self
+
+    @model_validator(mode="after")
+    def warn_non_peer_reviewed_secondary(self) -> "SecondaryDataSource":
+        """Warn if secondary source is non-peer-reviewed."""
+        if self.source_quality == SourceQuality.NON_PEER_REVIEWED:
+            warnings.warn(
+                f"Secondary source '{self.source_tag}' is non-peer-reviewed.\n"
+                f"If this source provides quantitative values used in calibration, "
+                f"consider finding a peer-reviewed primary source instead.",
+                UserWarning,
+            )
+        # Also warn if URL suggests non-peer-reviewed but source_quality not set
+        if self.url and not self.source_quality:
+            non_peer_domains = ["wikipedia.org", "reddit.com", "quora.com", "stackexchange.com"]
+            if any(domain in self.url.lower() for domain in non_peer_domains):
+                warnings.warn(
+                    f"Secondary source '{self.source_tag}' URL suggests non-peer-reviewed source "
+                    f"({self.url}), but source_quality is not set.\n"
+                    f"Set source_quality to 'non_peer_reviewed' and document rationale.",
+                    UserWarning,
+                )
         return self
 
 
@@ -1675,14 +1705,46 @@ class SubmodelTarget(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_quality_peer_reviewed(self) -> "SubmodelTarget":
-        """Flag non-peer-reviewed sources (Wikipedia, preprints)."""
+        """Warn about non-peer-reviewed primary sources (Wikipedia, preprints)."""
         if self.source_relevance.source_quality == SourceQuality.NON_PEER_REVIEWED:
-            raise ValueError(
-                "Source quality is 'non_peer_reviewed' (e.g., Wikipedia, preprint).\n"
-                "Replace with primary peer-reviewed literature if possible.\n"
-                "If no peer-reviewed source exists, document extensively in "
-                "key_study_limitations and increase estimated_translation_uncertainty_fold."
+            warnings.warn(
+                f"Primary source quality is 'non_peer_reviewed' for target '{self.target_id}'.\n"
+                "This includes Wikipedia, preprints, and unreviewed sources.\n\n"
+                "Recommended actions:\n"
+                "  1. Replace with peer-reviewed primary literature if possible\n"
+                "  2. Document rationale in key_study_limitations\n"
+                "  3. Increase estimated_translation_uncertainty_fold (recommend 3x minimum)\n"
+                "  4. Ensure prior σ reflects this additional uncertainty",
+                UserWarning,
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_secondary_sources_quality(self) -> "SubmodelTarget":
+        """Warn about non-peer-reviewed secondary sources providing quantitative values."""
+        if not self.secondary_data_sources:
+            return self
+
+        for source in self.secondary_data_sources:
+            if source.source_quality == SourceQuality.NON_PEER_REVIEWED:
+                # Check if this source is referenced in any input
+                source_used_for_values = False
+                for inp in self.inputs:
+                    if inp.source_ref == source.source_tag:
+                        source_used_for_values = True
+                        break
+
+                if source_used_for_values:
+                    warnings.warn(
+                        f"Secondary source '{source.source_tag}' is non-peer-reviewed "
+                        f"AND provides values used in calibration.\n"
+                        f"This is a significant reliability concern. Consider:\n"
+                        f"  1. Finding a peer-reviewed source for these values\n"
+                        f"  2. Documenting in key_study_limitations\n"
+                        f"  3. Widening the prior to reflect additional uncertainty",
+                        UserWarning,
+                    )
+
         return self
 
     @model_validator(mode="after")
@@ -1774,6 +1836,61 @@ class SubmodelTarget(BaseModel):
                     f"to account for species-specific biology.\n\n"
                     f"Increase estimated_translation_uncertainty_fold."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_prior_reflects_translation_uncertainty(self) -> "SubmodelTarget":
+        """
+        Warn if prior σ doesn't reflect the estimated translation uncertainty.
+
+        For lognormal priors, σ on the log scale corresponds to multiplicative uncertainty:
+        - σ = 0.69 → ~2x uncertainty (e^0.69 ≈ 2)
+        - σ = 1.10 → ~3x uncertainty (e^1.10 ≈ 3)
+        - σ = 2.30 → ~10x uncertainty (e^2.30 ≈ 10)
+        - σ = 3.00 → ~20x uncertainty (e^3.00 ≈ 20)
+
+        The prior σ should be at least ln(estimated_translation_uncertainty_fold) to
+        properly capture source-to-target translation uncertainty.
+        """
+        import math
+
+        sr = self.source_relevance
+        translation_fold = sr.estimated_translation_uncertainty_fold
+
+        # Only check if translation uncertainty is significant (>1.5x)
+        if translation_fold <= 1.5:
+            return self
+
+        # Compute minimum recommended σ for lognormal prior
+        min_recommended_sigma = math.log(translation_fold)
+
+        for param in self.calibration.parameters:
+            if param.prior is None:
+                continue
+
+            # Only applies to lognormal priors (most common for rate constants)
+            if param.prior.distribution != "lognormal":
+                continue
+
+            actual_sigma = param.prior.sigma
+            if actual_sigma is None:
+                continue
+
+            # Check if prior σ is at least 70% of recommended (allow some flexibility)
+            if actual_sigma < 0.7 * min_recommended_sigma:
+                warnings.warn(
+                    f"Parameter '{param.name}' has lognormal prior σ={actual_sigma:.2f}, "
+                    f"but estimated_translation_uncertainty_fold={translation_fold}x "
+                    f"suggests σ should be at least {min_recommended_sigma:.2f}.\n\n"
+                    f"The prior may be too narrow to capture source-to-target translation "
+                    f"uncertainty. Consider:\n"
+                    f"  - Increasing prior σ to ~{min_recommended_sigma:.1f}\n"
+                    f"  - Or reducing estimated_translation_uncertainty_fold if justified\n\n"
+                    f"Reference: σ=ln(fold) for lognormal → "
+                    f"σ={math.log(3):.2f} for 3x, σ={math.log(10):.2f} for 10x",
+                    UserWarning,
+                )
+
         return self
 
     def _compute_confidence_score(self) -> float:
