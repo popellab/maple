@@ -174,7 +174,7 @@ class ImmediateRequestProcessor:
 
         try:
             # Use Pydantic AI (supports discriminated unions via tool calling)
-            model = OpenAIResponsesModel("gpt-5.1")
+            model = OpenAIResponsesModel("gpt-5.2")
             settings = OpenAIResponsesModelSettings(
                 openai_reasoning_summary="concise", openai_reasoning_effort=reasoning_effort
             )

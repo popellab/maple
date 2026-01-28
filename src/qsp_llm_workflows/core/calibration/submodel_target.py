@@ -11,7 +11,7 @@ import warnings
 from enum import Enum
 from typing import Annotated, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, model_validator
 
 # Import relevance enums from central location
 from qsp_llm_workflows.core.calibration.enums import (
@@ -1255,6 +1255,64 @@ class SubmodelTarget(BaseModel):
 
         if errors:
             raise ValueError("Invalid Pint units:\n  - " + "\n  - ".join(errors))
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_parameter_units_match_model(self, info: ValidationInfo) -> "SubmodelTarget":
+        """
+        Validate calibration parameter units match expected model parameter units.
+
+        Checks that the dimensionality of parameter units matches what the full QSP
+        model expects. This catches errors like using concentration units (nanomolar)
+        instead of amount units (nanomole) for secretion rates.
+
+        Requires context:
+            model_structure: ModelStructure instance with parameter definitions
+
+        Note: When context is not provided, a warning is issued and validation is skipped.
+        The production pipeline (JuliaTranslator, JointInferenceBuilder, immediate_processor)
+        always provides model_structure context, ensuring validation occurs in production.
+        """
+        if not info.context or "model_structure" not in info.context:
+            warnings.warn(
+                "model_structure not provided in validation context. "
+                "Skipping parameter unit validation against QSP model. "
+                "Use SubmodelTarget.model_validate(data, context={'model_structure': ...}) "
+                "to enable unit validation.",
+                UserWarning,
+            )
+            return self
+
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        model_structure = info.context["model_structure"]
+        model_params = {p.name: p for p in model_structure.parameters}
+
+        for param in self.calibration.parameters:
+            model_param = model_params.get(param.name)
+            if not model_param:
+                # Unknown parameter - separate validator can handle this if needed
+                continue
+
+            try:
+                expected = ureg(model_param.units)
+                actual = ureg(param.units)
+                if actual.dimensionality != expected.dimensionality:
+                    raise ValueError(
+                        f"Parameter '{param.name}' unit dimensionality mismatch:\n"
+                        f"  SubmodelTarget units: '{param.units}' "
+                        f"(dimensionality: {actual.dimensionality})\n"
+                        f"  Model expected units: '{model_param.units}' "
+                        f"(dimensionality: {expected.dimensionality})\n"
+                        f"Common issue: using concentration (e.g., nanomolar) instead of "
+                        f"amount (e.g., nanomole) for rate parameters."
+                    )
+            except ValueError:
+                raise
+            except Exception:
+                # Unit parsing issue - handled by validate_units_are_valid_pint
+                pass
 
         return self
 

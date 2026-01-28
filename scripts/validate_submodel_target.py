@@ -3,9 +3,15 @@
 Validate a YAML file against the SubmodelTarget schema.
 
 Usage:
+    python scripts/validate_submodel_target.py --model-structure path/to/model_structure.json path/to/target.yaml
+
+    # Or set MODEL_STRUCTURE_PATH environment variable:
+    export MODEL_STRUCTURE_PATH=path/to/model_structure.json
     python scripts/validate_submodel_target.py path/to/target.yaml
 """
 
+import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -15,14 +21,16 @@ from pydantic import ValidationError
 from qsp_llm_workflows.core.calibration.submodel_target import (
     SubmodelTarget,
 )
+from qsp_llm_workflows.core.model_structure import ModelStructure
 
 
-def validate_yaml(yaml_path: str) -> bool:
+def validate_yaml(yaml_path: str, model_structure: ModelStructure) -> bool:
     """
     Validate a YAML file against SubmodelTarget schema.
 
     Args:
         yaml_path: Path to the YAML file
+        model_structure: ModelStructure instance for unit validation
 
     Returns:
         True if valid, False otherwise
@@ -41,9 +49,12 @@ def validate_yaml(yaml_path: str) -> bool:
         print(f"Error: Invalid YAML syntax:\n{e}")
         return False
 
-    # Validate against model
+    # Validate against model with model_structure context
     try:
-        target = SubmodelTarget.model_validate(data)
+        target = SubmodelTarget.model_validate(
+            data,
+            context={"model_structure": model_structure},
+        )
         print(f"✓ Valid: {path.name}")
         print(f"  target_id: {target.target_id}")
         print(f"  inputs: {len(target.inputs)}")
@@ -64,17 +75,49 @@ def validate_yaml(yaml_path: str) -> bool:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
+    parser = argparse.ArgumentParser(
+        description="Validate SubmodelTarget YAML files",
+        epilog="Model structure is required for unit validation against the QSP model.",
+    )
+    parser.add_argument(
+        "--model-structure",
+        type=str,
+        default=os.environ.get("MODEL_STRUCTURE_PATH"),
+        help="Path to model_structure.json (or set MODEL_STRUCTURE_PATH env var)",
+    )
+    parser.add_argument(
+        "yaml_files",
+        nargs="+",
+        help="YAML file(s) to validate",
+    )
+    args = parser.parse_args()
+
+    # Require model_structure
+    if not args.model_structure:
+        print("Error: --model-structure is required (or set MODEL_STRUCTURE_PATH env var)")
+        print("This is needed to validate parameter units against the QSP model.")
         sys.exit(1)
 
-    yaml_paths = sys.argv[1:]
-    results = []
+    model_structure_path = Path(args.model_structure)
+    if not model_structure_path.exists():
+        print(f"Error: Model structure file not found: {args.model_structure}")
+        sys.exit(1)
 
-    for yaml_path in yaml_paths:
-        valid = validate_yaml(yaml_path)
+    # Load model structure
+    try:
+        model_structure = ModelStructure.from_json(str(model_structure_path))
+        print(f"Loaded model structure: {len(model_structure.parameters)} parameters")
+        print()
+    except Exception as e:
+        print(f"Error loading model structure: {e}")
+        sys.exit(1)
+
+    # Validate each YAML file
+    results = []
+    for yaml_path in args.yaml_files:
+        valid = validate_yaml(yaml_path, model_structure)
         results.append((yaml_path, valid))
-        if len(yaml_paths) > 1:
+        if len(args.yaml_files) > 1:
             print()
 
     # Summary for multiple files

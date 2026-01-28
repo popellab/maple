@@ -140,7 +140,7 @@ def collect_existing_studies_for_submodel_target(
     if not yaml_files:
         return ""
 
-    # Collect source fields from all matching files
+    # Collect primary sources from all matching files
     all_sources = []
 
     for yaml_file in sorted(yaml_files):
@@ -151,16 +151,10 @@ def collect_existing_studies_for_submodel_target(
             if not study_data:
                 continue
 
-            # Extract primary_data_source (SubmodelTarget schema)
+            # Extract primary_data_source only (not secondary sources)
             if "primary_data_source" in study_data and study_data["primary_data_source"]:
                 source = study_data["primary_data_source"]
-                # Include filename for reference
-                all_sources.append((yaml_file.name, "primary_data_source", source))
-
-            # Extract secondary_data_sources if present
-            if "secondary_data_sources" in study_data and study_data["secondary_data_sources"]:
-                for secondary in study_data["secondary_data_sources"]:
-                    all_sources.append((yaml_file.name, "secondary_data_source", secondary))
+                all_sources.append((yaml_file.name, source))
 
         except Exception as e:
             print(f"Warning: Could not process {yaml_file}: {e}")
@@ -169,30 +163,22 @@ def collect_existing_studies_for_submodel_target(
     if not all_sources:
         return ""
 
-    # Format the complete section with verbatim YAML
+    # Format the complete section
     header = "\n## Sources Already Used for This Target\n\n"
-    header += "**IMPORTANT:** The following sources have already been used in previous extractions for this target. "
-    header += "DO NOT re-use these primary sources. Instead, find NEW sources not listed below.\n\n"
+    header += "**IMPORTANT:** The following primary sources have already been used in previous extractions for this target. "
+    header += "DO NOT re-use these sources. Instead, find NEW sources not listed below.\n\n"
 
-    # Dump sources as YAML, grouped by file
+    # List only doi/url and title
     output = []
-    current_file = None
-    import yaml as yaml_lib
+    for filename, source_data in all_sources:
+        doi = source_data.get("doi", "")
+        url = source_data.get("url", "")
+        title = source_data.get("title", "").strip()
 
-    for filename, source_type, source_data in all_sources:
-        if filename != current_file:
-            if current_file is not None:
-                output.append("")
-            output.append(f"### From `{filename}`")
-            current_file = filename
-
-        output.append(f"**{source_type}:**")
-        output.append("```yaml")
-        output.append(
-            yaml_lib.dump(
-                source_data, default_flow_style=False, sort_keys=False, allow_unicode=True
-            ).strip()
-        )
-        output.append("```")
+        identifier = doi or url or "unknown"
+        if title:
+            output.append(f"- **{identifier}**: {title}")
+        else:
+            output.append(f"- {identifier}")
 
     return header + "\n".join(output)

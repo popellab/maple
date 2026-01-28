@@ -28,6 +28,7 @@ from qsp_llm_workflows.core.calibration.submodel_target import (
     Likelihood,
     PrimaryDataSource,
 )
+from qsp_llm_workflows.core.model_structure import ModelStructure, ModelParameter
 
 
 # ============================================================================
@@ -52,6 +53,39 @@ def mock_doi_resolution():
         side_effect=mock_resolve,
     ):
         yield
+
+
+@pytest.fixture
+def mock_model_structure():
+    """
+    Mock model structure for unit validation.
+
+    Contains common test parameters with expected units.
+    """
+    return ModelStructure(
+        parameters=[
+            ModelParameter(name="k_test", units="1/day"),
+            ModelParameter(name="k_prolif", units="1/day"),
+            ModelParameter(name="k_death", units="1/day"),
+            ModelParameter(name="k_CCL2_sec", units="nanomole/cell/day"),
+            ModelParameter(name="test_param", units="1/day"),
+        ],
+        species=[],
+        compartments=[],
+        reactions=[],
+    )
+
+
+def validate_target(data: dict, model_structure: ModelStructure) -> SubmodelTarget:
+    """
+    Helper to validate SubmodelTarget with model_structure context.
+
+    All tests should use this instead of SubmodelTarget(**data) directly.
+    """
+    return SubmodelTarget.model_validate(
+        data,
+        context={"model_structure": model_structure},
+    )
 
 
 # ============================================================================
@@ -606,3 +640,99 @@ def derive_distribution(inputs, ureg):
                 x for x in w if "coefficient of variation" in str(x.message).lower()
             ]
             assert len(variance_warnings) == 0
+
+
+# ============================================================================
+# Tests for validate_parameter_units_match_model
+# ============================================================================
+
+
+class TestParameterUnitsMatchModel:
+    """Tests for validate_parameter_units_match_model."""
+
+    def test_unit_dimensionality_mismatch_fails(self, mock_model_structure):
+        """Parameter with wrong dimensionality should fail when context provided."""
+        distribution_code = """
+def derive_distribution(inputs, ureg):
+    value = inputs['test_value'].magnitude
+    return {
+        'median': float(value),
+        'ci95_lower': float(value * 0.5),
+        'ci95_upper': float(value * 2.0),
+    }
+"""
+        data = make_direct_conversion_target(
+            input_value=1e-9,
+            prior_mu=-20.0,
+            formula="k = value",
+            distribution_code=distribution_code,
+        )
+        # Change parameter units to concentration (wrong dimensionality)
+        # k_CCL2_sec expects nanomole/cell/day but we'll use nanomolar/cell/day
+        data["calibration"]["parameters"][0]["name"] = "k_CCL2_sec"
+        data["calibration"]["parameters"][0]["units"] = "nanomolar/cell/day"
+        data["calibration"]["measurements"][0]["units"] = "nanomolar/cell/day"
+
+        with pytest.raises(ValidationError) as exc_info:
+            validate_target(data, mock_model_structure)
+
+        assert "dimensionality mismatch" in str(exc_info.value).lower()
+
+    def test_correct_units_passes(self, mock_model_structure):
+        """Parameter with correct dimensionality should pass."""
+        distribution_code = """
+def derive_distribution(inputs, ureg):
+    value = inputs['test_value'].magnitude
+    return {
+        'median': float(value),
+        'ci95_lower': float(value * 0.5),
+        'ci95_upper': float(value * 2.0),
+    }
+"""
+        data = make_direct_conversion_target(
+            input_value=1e-9,
+            prior_mu=-20.0,
+            formula="k = value",
+            distribution_code=distribution_code,
+        )
+        # Use correct units for k_CCL2_sec
+        data["calibration"]["parameters"][0]["name"] = "k_CCL2_sec"
+        data["calibration"]["parameters"][0]["units"] = "nanomole/cell/day"
+        data["calibration"]["measurements"][0]["units"] = "nanomole/cell/day"
+
+        # Should not raise dimensionality error
+        try:
+            target = validate_target(data, mock_model_structure)
+            assert target.calibration.parameters[0].name == "k_CCL2_sec"
+        except ValidationError as e:
+            # Make sure it's not a dimensionality error
+            assert "dimensionality mismatch" not in str(e).lower()
+
+    def test_missing_context_warns(self):
+        """Missing model_structure context should warn, not error."""
+        distribution_code = """
+def derive_distribution(inputs, ureg):
+    value = inputs['test_value'].magnitude
+    return {
+        'median': float(value),
+        'ci95_lower': float(value * 0.5),
+        'ci95_upper': float(value * 2.0),
+    }
+"""
+        data = make_direct_conversion_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            formula="k = value",
+            distribution_code=distribution_code,
+        )
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                # No context provided
+                SubmodelTarget(**data)
+            except ValidationError:
+                pass  # May fail other validators
+
+            context_warnings = [x for x in w if "model_structure not provided" in str(x.message)]
+            assert len(context_warnings) >= 1

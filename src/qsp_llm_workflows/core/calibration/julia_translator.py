@@ -11,8 +11,15 @@ This module provides tools to:
 Usage:
     from qsp_llm_workflows.core.calibration.julia_translator import JuliaTranslator
 
-    translator = JuliaTranslator()
+    # Create translator with model structure for unit validation
+    translator = JuliaTranslator.from_model_structure_file("model_structure.json")
     julia_code = translator.generate_script("path/to/target.yaml")
+
+    # Or for joint inference from multiple targets:
+    from qsp_llm_workflows.core.calibration.julia_translator import JointInferenceBuilder
+
+    builder = JointInferenceBuilder.from_model_structure_file("model_structure.json")
+    julia_code = builder.build_from_files(["target1.yaml", "target2.yaml"])
 """
 
 from dataclasses import dataclass
@@ -35,6 +42,7 @@ from qsp_llm_workflows.core.calibration.submodel_target import (
     SubmodelTarget,
     TwoStateModel,
 )
+from qsp_llm_workflows.core.model_structure import ModelStructure
 from qsp_llm_workflows.core.unit_registry import ureg
 
 
@@ -584,15 +592,40 @@ display(chain)
 class JuliaTranslator:
     """Main translator class for YAML to Julia conversion."""
 
-    def __init__(self):
+    def __init__(self, model_structure: ModelStructure):
+        """
+        Initialize translator with model structure for validation.
+
+        Args:
+            model_structure: ModelStructure instance containing parameter definitions
+                            with expected units. Required for unit validation.
+        """
+        self.model_structure = model_structure
         self.generator = JuliaCodeGenerator()
+
+    @classmethod
+    def from_model_structure_file(cls, model_structure_path: str) -> "JuliaTranslator":
+        """
+        Create translator from a model_structure.json file.
+
+        Args:
+            model_structure_path: Path to model_structure.json file
+
+        Returns:
+            JuliaTranslator instance
+        """
+        model_structure = ModelStructure.from_json(model_structure_path)
+        return cls(model_structure)
 
     def load_target(self, yaml_path: str) -> SubmodelTarget:
         """Load and validate a target from YAML."""
         path = Path(yaml_path)
         with open(path) as f:
             data = yaml.safe_load(f)
-        return SubmodelTarget.model_validate(data)
+        return SubmodelTarget.model_validate(
+            data,
+            context={"model_structure": self.model_structure},
+        )
 
     def generate_script(self, yaml_path: str) -> str:
         """Generate Julia script from a single YAML target."""
@@ -640,9 +673,31 @@ class JointInferenceBuilder:
     across different targets are treated as shared in the joint model.
     """
 
-    def __init__(self):
+    def __init__(self, model_structure: ModelStructure):
+        """
+        Initialize builder with model structure for validation.
+
+        Args:
+            model_structure: ModelStructure instance containing parameter definitions
+                            with expected units. Required for unit validation.
+        """
+        self.model_structure = model_structure
         self.extractor = ObservationExtractor()
         self.mapper = JuliaODEMapper()
+
+    @classmethod
+    def from_model_structure_file(cls, model_structure_path: str) -> "JointInferenceBuilder":
+        """
+        Create builder from a model_structure.json file.
+
+        Args:
+            model_structure_path: Path to model_structure.json file
+
+        Returns:
+            JointInferenceBuilder instance
+        """
+        model_structure = ModelStructure.from_json(model_structure_path)
+        return cls(model_structure)
 
     def build_from_files(self, yaml_paths: list[str]) -> str:
         """
@@ -679,7 +734,10 @@ class JointInferenceBuilder:
         path = Path(yaml_path)
         with open(path) as f:
             data = yaml.safe_load(f)
-        return SubmodelTarget.model_validate(data)
+        return SubmodelTarget.model_validate(
+            data,
+            context={"model_structure": self.model_structure},
+        )
 
     def _collect_parameters(self, targets_info: list[TargetInfo]) -> dict[str, ParameterInfo]:
         """
