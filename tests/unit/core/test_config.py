@@ -31,7 +31,7 @@ class TestWorkflowConfig:
 
         # Check defaults
         assert config.openai_model == "gpt-5"
-        assert config.reasoning_effort == "high"
+        assert config.reasoning_effort == "medium"
 
     def test_create_config_with_overrides(self, tmp_path):
         """Test creating config with custom values."""

@@ -41,7 +41,7 @@ class WorkflowConfig(BaseModel):
         description="OpenAI model to use for requests",
     )
     reasoning_effort: Literal["low", "medium", "high"] = Field(
-        default="high",
+        default="medium",
         description="Reasoning effort level for API requests",
     )
 

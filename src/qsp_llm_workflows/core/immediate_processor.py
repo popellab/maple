@@ -75,7 +75,7 @@ class ImmediateRequestProcessor:
         input_csv: Path,
         workflow_type: str,
         species_units_file: Optional[Path] = None,
-        reasoning_effort: str = "low",
+        reasoning_effort: str = "medium",
     ) -> List[Dict[str, Any]]:
         """
         Generate prompts using appropriate prompt builder.
@@ -250,7 +250,7 @@ class ImmediateRequestProcessor:
         workflow_type: str,
         progress_callback: Optional[callable] = None,
         result_callback: Optional[callable] = None,
-        reasoning_effort: str = "low",
+        reasoning_effort: str = "medium",
         model: str = "gpt-5.1",
     ) -> List[Dict[str, Any]]:
         """
@@ -308,7 +308,7 @@ class ImmediateRequestProcessor:
         workflow_type: str,
         progress_callback: Optional[callable] = None,
         result_callback: Optional[callable] = None,
-        reasoning_effort: str = "low",
+        reasoning_effort: str = "medium",
         model: str = "gpt-5.1",
     ) -> List[Dict[str, Any]]:
         """
