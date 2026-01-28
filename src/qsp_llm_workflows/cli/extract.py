@@ -51,6 +51,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--model",
+        type=str,
+        default="gpt-5.1",
+        help="OpenAI model to use (default: gpt-5.1)",
+    )
+
+    parser.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],
         default="low",
@@ -147,7 +154,7 @@ Examples:
             base_dir=env_config.base_dir,
             storage_dir=env_config.storage_dir,
             openai_api_key=env_config.openai_api_key,
-            openai_model=env_config.openai_model,
+            openai_model=args.model,
             reasoning_effort=args.reasoning_effort,
             model_structure_file=model_structure_file,
             model_context_file=model_context_file,
@@ -169,6 +176,7 @@ Examples:
         else:
             print(f"\nStarting {args.type} extraction workflow (Pydantic AI)...")
         print(f"Input: {args.input_csv}")
+        print(f"Model: {args.model}")
         print(f"Reasoning effort: {args.reasoning_effort}")
         print()
 

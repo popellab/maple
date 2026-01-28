@@ -222,6 +222,7 @@ class ProcessPromptsStep(WorkflowStep):
                 progress_callback=context.progress_callback,
                 result_callback=unpack_result,  # Unpack as each completes
                 reasoning_effort=context.config.reasoning_effort,
+                model=context.config.openai_model,
             )
 
             # Write results to file (for audit trail and debugging)

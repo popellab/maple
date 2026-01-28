@@ -139,6 +139,7 @@ class ImmediateRequestProcessor:
         reasoning_effort: str,
         workflow_type: str = "parameter",
         progress_callback: Optional[callable] = None,
+        model: str = "gpt-5.1",
     ) -> Dict[str, Any]:
         """
         Process a single extraction request using Pydantic AI.
@@ -149,6 +150,7 @@ class ImmediateRequestProcessor:
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
             workflow_type: Type of workflow for tool selection
             progress_callback: Optional callback for progress updates
+            model: OpenAI model to use
 
         Returns:
             Result dictionary in workflow-compatible format
@@ -174,7 +176,7 @@ class ImmediateRequestProcessor:
 
         try:
             # Use Pydantic AI (supports discriminated unions via tool calling)
-            model = OpenAIResponsesModel("gpt-5.2")
+            openai_model = OpenAIResponsesModel(model)
             settings = OpenAIResponsesModelSettings(
                 openai_reasoning_summary="concise", openai_reasoning_effort=reasoning_effort
             )
@@ -185,7 +187,7 @@ class ImmediateRequestProcessor:
             builtin_tools = [WebSearchTool(), CodeExecutionTool()]
 
             agent = Agent(
-                model,
+                openai_model,
                 output_type=pydantic_model,
                 model_settings=settings,
                 builtin_tools=builtin_tools,
@@ -215,6 +217,8 @@ class ImmediateRequestProcessor:
             return {
                 "custom_id": custom_id,
                 "logfire_trace_id": logfire_trace_id,
+                "model": model,
+                "reasoning_effort": reasoning_effort,
                 "response": {
                     "status_code": 200,
                     "request_id": request_id,
@@ -247,6 +251,7 @@ class ImmediateRequestProcessor:
         progress_callback: Optional[callable] = None,
         result_callback: Optional[callable] = None,
         reasoning_effort: str = "low",
+        model: str = "gpt-5.1",
     ) -> List[Dict[str, Any]]:
         """
         Process all requests from CSV file using Pydantic AI.
@@ -257,6 +262,7 @@ class ImmediateRequestProcessor:
             progress_callback: Optional callback for progress updates
             result_callback: Optional callback called immediately as each result completes
             reasoning_effort: Reasoning effort level
+            model: OpenAI model to use
 
         Returns:
             List of results in standard format
@@ -275,7 +281,7 @@ class ImmediateRequestProcessor:
         # Create tasks for all requests
         tasks = [
             self.process_single_request(
-                prompt, i, reasoning_effort, workflow_type, progress_callback
+                prompt, i, reasoning_effort, workflow_type, progress_callback, model
             )
             for i, prompt in enumerate(prompts)
         ]
@@ -303,6 +309,7 @@ class ImmediateRequestProcessor:
         progress_callback: Optional[callable] = None,
         result_callback: Optional[callable] = None,
         reasoning_effort: str = "low",
+        model: str = "gpt-5.1",
     ) -> List[Dict[str, Any]]:
         """
         Synchronous wrapper for async processing via Pydantic AI.
@@ -313,12 +320,18 @@ class ImmediateRequestProcessor:
             progress_callback: Optional callback for progress updates
             result_callback: Optional callback called immediately as each result completes
             reasoning_effort: Reasoning effort level
+            model: OpenAI model to use
 
         Returns:
             List of results in standard format
         """
         return asyncio.run(
             self.process_all_requests(
-                input_csv, workflow_type, progress_callback, result_callback, reasoning_effort
+                input_csv,
+                workflow_type,
+                progress_callback,
+                result_callback,
+                reasoning_effort,
+                model,
             )
         )

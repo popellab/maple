@@ -276,6 +276,8 @@ YAML_FIELD_ORDER = [
     "derivation_id",
     "derivation_timestamp",
     "logfire_trace_id",
+    "extraction_model",
+    "extraction_reasoning_effort",
     "model_context",
     # Parameter extraction fields
     "parameter_name",
@@ -479,10 +481,18 @@ def unpack_single_result(
     # Add footer fields
     json_data = add_footer_fields(json_data, meta, workflow_type)
 
-    # Add logfire trace_id if present in result
+    # Add extraction metadata if present in result
     logfire_trace_id = result.get("logfire_trace_id")
     if logfire_trace_id:
         json_data["logfire_trace_id"] = logfire_trace_id
+
+    extraction_model = result.get("model")
+    if extraction_model:
+        json_data["extraction_model"] = extraction_model
+
+    extraction_reasoning_effort = result.get("reasoning_effort")
+    if extraction_reasoning_effort:
+        json_data["extraction_reasoning_effort"] = extraction_reasoning_effort
 
     # Generate filename with derivation numbering
     if workflow_type == "test_statistic":
