@@ -97,7 +97,6 @@ class WorkflowOrchestrator:
         self,
         input_csv: Path,
         workflow_type: str,
-        reasoning_effort: str = "high",
         progress_callback: Optional[Callable[[str], None]] = None,
         preview_prompts: bool = False,
     ) -> WorkflowResult:
@@ -109,7 +108,6 @@ class WorkflowOrchestrator:
         Args:
             input_csv: Path to input CSV file
             workflow_type: Type of workflow (parameter/test_statistic/calibration_target)
-            reasoning_effort: Reasoning effort level (low/medium/high, default: high)
             progress_callback: Optional callback for progress updates
             preview_prompts: If True, only build and save prompts without sending to API
 
@@ -121,25 +119,11 @@ class WorkflowOrchestrator:
         """
         start_time = time.time()
 
-        # Override config with runtime reasoning_effort if provided
-        config = self.config
-        if reasoning_effort != config.reasoning_effort:
-            # Create new config with updated reasoning_effort
-            config = WorkflowConfig(
-                base_dir=config.base_dir,
-                storage_dir=config.storage_dir,
-                openai_api_key=config.openai_api_key,
-                openai_model=config.openai_model,
-                reasoning_effort=reasoning_effort,
-                model_structure_file=config.model_structure_file,
-                model_context_file=config.model_context_file,
-            )
-
         # Create workflow context
         context = WorkflowContext(
             input_csv=input_csv,
             workflow_type=workflow_type,
-            config=config,
+            config=self.config,
             progress_callback=progress_callback,
         )
 

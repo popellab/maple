@@ -116,39 +116,43 @@ Examples:
             print(f"Error: Model context file not found: {args.model_context}", file=sys.stderr)
             sys.exit(1)
 
-    # Load configuration from environment with explicit storage directory
-    try:
-        config = WorkflowConfig.from_env(storage_dir=output_dir)
+    # Validate optional paths
+    model_structure_file = None
+    model_context_file = None
+    previous_extractions_dir = None
 
-        # Add model_structure_file if provided
-        if args.model_structure:
-            if not args.model_structure.exists():
-                print(
-                    f"Error: Model structure file not found: {args.model_structure}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            # Validate previous-extractions if provided
-            previous_extractions_dir = None
-            if hasattr(args, "previous_extractions") and args.previous_extractions:
-                if not args.previous_extractions.exists():
-                    print(
-                        f"Error: Previous extractions directory not found: {args.previous_extractions}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                previous_extractions_dir = args.previous_extractions
-            # Create new config with model files (config is frozen)
-            config = WorkflowConfig(
-                base_dir=config.base_dir,
-                storage_dir=config.storage_dir,
-                openai_api_key=config.openai_api_key,
-                openai_model=config.openai_model,
-                reasoning_effort=config.reasoning_effort,
-                model_structure_file=args.model_structure,
-                model_context_file=args.model_context,
-                previous_extractions_dir=previous_extractions_dir,
+    if args.model_structure:
+        if not args.model_structure.exists():
+            print(f"Error: Model structure file not found: {args.model_structure}", file=sys.stderr)
+            sys.exit(1)
+        model_structure_file = args.model_structure.resolve()
+
+    if args.model_context:
+        model_context_file = args.model_context.resolve()
+
+    if args.previous_extractions:
+        previous_extractions_dir = args.previous_extractions.resolve()
+        if not previous_extractions_dir.exists():
+            print(
+                f"Error: Previous extractions directory not found: {previous_extractions_dir}",
+                file=sys.stderr,
             )
+            sys.exit(1)
+
+    # Load API key from environment, then create single config with all values
+    try:
+        env_config = WorkflowConfig.from_env(storage_dir=output_dir)
+
+        config = WorkflowConfig(
+            base_dir=env_config.base_dir,
+            storage_dir=env_config.storage_dir,
+            openai_api_key=env_config.openai_api_key,
+            openai_model=env_config.openai_model,
+            reasoning_effort=args.reasoning_effort,
+            model_structure_file=model_structure_file,
+            model_context_file=model_context_file,
+            previous_extractions_dir=previous_extractions_dir,
+        )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         print("Make sure OPENAI_API_KEY is set in .env file", file=sys.stderr)
@@ -171,7 +175,6 @@ Examples:
         result = orchestrator.run_complete_workflow(
             input_csv=Path(args.input_csv),
             workflow_type=args.type,
-            reasoning_effort=args.reasoning_effort,
             progress_callback=print_progress,
             preview_prompts=args.preview_prompts,
         )
