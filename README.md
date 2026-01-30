@@ -41,14 +41,29 @@ calibration:
         distribution: lognormal
         mu: 0.0
         sigma: 1.0
-  model:
+  forward_model:
     type: exponential_growth
-    state_variable: N
-    t_span: [0, 3]
-    t_unit: day
-  measurements:
+    rate_constant: k_apsc_prolif
+    state_variables:
+      - name: N
+        units: dimensionless
+        initial_condition: {value: 1.0, rationale: "Normalized"}
+    independent_variable:
+      name: time
+      units: day
+      span: [0, 3]
+  error_model:
     - name: fold_increase
-      uses_inputs: [fold_increase_mean]
+      units: dimensionless
+      uses_inputs: [fold_increase_mean, fold_increase_sd]
+      evaluation_points: [3.0]
+      observation_code: |
+        def derive_observation(inputs, sample_size, ureg):
+            return {
+                'value': inputs['fold_increase_mean'],
+                'sd': inputs['fold_increase_sd'].magnitude,
+            }
+      likelihood: {distribution: lognormal}
 ```
 
 ### Validation
@@ -74,16 +89,30 @@ qsp-extract targets.csv \
 Translate validated YAML targets to Julia/Turing.jl for Bayesian inference:
 
 ```bash
-# Single target
-python -m qsp_llm_workflows.core.calibration.julia_translator target.yaml
+# Single target (--model-structure required)
+python -m qsp_llm_workflows.core.calibration.julia_translator \
+    --model-structure model_structure.json \
+    target.yaml
 
 # Joint inference (parameters with same name are shared)
 python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+    --model-structure model_structure.json \
     target1.yaml target2.yaml target3.yaml \
     --output joint_calibration.jl
+
+# Use --fixed-sigma to treat all sigmas as fixed (faster sampling)
+python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+    --model-structure model_structure.json \
+    --fixed-sigma \
+    target1.yaml target2.yaml target3.yaml
 ```
 
-The translator generates complete Julia scripts with ODE functions, Turing `@model` blocks, priors, likelihoods, and NUTS sampling code.
+The translator generates complete Julia scripts with:
+- ODE functions (or algebraic compute functions)
+- Turing `@model` blocks with priors and likelihoods (normal or lognormal)
+- Optional priors on sigma when `sd_uncertain: true`
+- NUTS sampling code with convergence diagnostics
+- Posterior marginal plots with prior overlays
 
 ## Project Structure
 

@@ -55,20 +55,36 @@ parameters:
 
 Supported distributions: `lognormal`, `normal`, `uniform`, `half_normal`
 
-**Model types** (discriminated union):
+**Forward model types** (discriminated union in `calibration.forward_model`):
 - `exponential_growth`: dy/dt = k * y
 - `first_order_decay`: dy/dt = -k * y
 - `two_state`: A → B transition
 - `saturation`: dy/dt = k * (1 - y)
 - `logistic`: dy/dt = k * y * (1 - y/K)
 - `michaelis_menten`: dy/dt = -Vmax * y / (Km + y)
-- `direct_conversion`: No ODE, analytical formula
-- `custom`: User-provided ODE code (requires `code_julia`)
+- `algebraic`: No ODE, forward model maps params → observable (e.g., `t_half = ln(2) / k`)
+- `custom_ode`: User-provided ODE code (requires `code_julia`)
+
+**Algebraic models** (params → observable):
+```yaml
+forward_model:
+  type: algebraic
+  formula: "t_half = ln(2) / k"
+  code: |
+    def compute(params, inputs, ureg):
+        import numpy as np
+        k = params['k']
+        return np.log(2) / k * ureg('day')
+  code_julia: |
+    function compute(params, inputs)
+        return log(2) / params["k"]
+    end
+```
 
 **Custom ODE models:**
 ```yaml
-model:
-  type: custom
+forward_model:
+  type: custom_ode
   code: |
     def ode(t, y, params, inputs):
         ...
@@ -76,6 +92,23 @@ model:
     function my_ode!(du, u, p, t)
         ...
     end
+```
+
+**Error model** (`calibration.error_model`):
+```yaml
+error_model:
+  - name: t_half_measurement
+    units: day
+    uses_inputs: [t_half_mean, t_half_sd]
+    observation_code: |
+      def derive_observation(inputs, sample_size, ureg):
+          return {
+              'value': inputs['t_half_mean'],
+              'sd': inputs['t_half_sd'].magnitude,
+              'sd_uncertain': False,
+          }
+    likelihood:
+      distribution: lognormal
 ```
 
 ### Validation
@@ -97,26 +130,36 @@ python scripts/validate_submodel_target.py *.yaml
 | `validate_parameter_roles` | Model parameter strings match `calibration.parameters` |
 | `validate_ode_model_requirements` | ODE models have `state_variables` and `independent_variable.span` |
 | `validate_custom_code_syntax` | Python code has correct function signatures |
-| `validate_distribution_code_return_signature` | `distribution_code` returns `{median, ci95_lower, ci95_upper}` |
+| `validate_observation_code_return_signature` | `observation_code` returns `{value, sd}` |
+| `validate_observation_code_execution` | `observation_code` executes and returns valid dict |
+| `validate_observation_sd_units_for_likelihood` | SD units match likelihood type (dimensionless for lognormal) |
 | `validate_no_invisible_characters` | No invisible/control chars (zero-width spaces, soft hyphens, etc.) |
 | `validate_span_ordering` | `span[0] < span[1]` and both non-negative |
+| `validate_evaluation_points_within_span` | Evaluation points within independent_variable.span |
 | `validate_input_values_in_snippets` | Extracted values appear in `value_snippet` (anti-hallucination) |
 | `validate_doi_resolution_and_metadata` | DOIs resolve via CrossRef, metadata matches |
 | `validate_units_are_valid_pint` | All unit strings are valid Pint units |
-| `validate_distribution_code_required_with_formula` | `direct_conversion` models have `distribution_code` |
+| `validate_algebraic_model_output_units` | AlgebraicModel.code returns correct units |
+| `validate_no_hardcoded_values_in_observation_code` | All numeric values come through inputs |
 | `validate_prior_predictive_scale` | Prior prediction matches observation scale (catches unit errors) |
+| `validate_algebraic_prior_predictive` | AlgebraicModel forward prediction matches data scale |
+| `validate_ode_requires_observable` | ODE models have observable in error_model |
 | `validate_source_quality_peer_reviewed` | Warns if `source_quality` is `non_peer_reviewed` |
 | `validate_secondary_sources_quality` | Warns if secondary sources have `non_peer_reviewed` quality |
 | `validate_prior_reflects_translation_uncertainty` | Warns if prior σ is too narrow for `estimated_translation_uncertainty_fold` |
+| `warn_multi_param_algebraic_identifiability` | Warns when AlgebraicModel has more params than measurements |
+| `warn_unused_parameters_in_algebraic_code` | Warns if parameters not referenced in code |
+| `warn_observation_sd_unreasonable` | Warns if SD is >100x or <0.001x observed value |
 
-**distribution_code return signature** (required format):
+**observation_code return signature** (required format):
 ```python
-def derive_distribution(inputs, ureg):
+def derive_observation(inputs, sample_size, ureg):
     # ... computation ...
     return {
-        'median': float(np.median(samples)),
-        'ci95_lower': float(np.percentile(samples, 2.5)),
-        'ci95_upper': float(np.percentile(samples, 97.5)),
+        'value': mean_value * ureg('pg/mL'),  # Pint Quantity, required
+        'sd': sd_value,                        # float or Quantity, required
+        'sd_uncertain': False,                 # bool, optional (True → prior on sigma)
+        'n': sample_size,                      # int, optional
     }
 ```
 
@@ -218,23 +261,34 @@ julia_code = builder.build_from_files([
 ### CLI Usage
 
 ```bash
-# Single target
-python -m qsp_llm_workflows.core.calibration.julia_translator target.yaml
+# Single target (--model-structure required)
+python -m qsp_llm_workflows.core.calibration.julia_translator \
+    --model-structure model_structure.json \
+    target.yaml
 
 # Joint inference
 python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+    --model-structure model_structure.json \
     target1.yaml target2.yaml target3.yaml \
     --output joint_calibration.jl
+
+# Joint inference with fixed sigmas (faster sampling)
+python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+    --model-structure model_structure.json \
+    --fixed-sigma \
+    target1.yaml target2.yaml target3.yaml
 ```
 
 ### What Gets Generated
 
 The translator produces complete Julia scripts with:
-- Observed data constants (median, sigma from CI95)
-- ODE functions for each model type
+- Observed data constants (value, sigma from observation_code)
+- ODE functions for each model type (or compute functions for algebraic)
 - Simulate wrapper functions
-- Turing `@model` with priors and likelihoods
+- Turing `@model` with priors and likelihoods (normal or lognormal)
+- Priors on sigma when `sd_uncertain: true` in observation_code
 - NUTS sampling code with convergence diagnostics
+- Posterior marginal plots with prior overlays
 
 ## Package Structure
 
