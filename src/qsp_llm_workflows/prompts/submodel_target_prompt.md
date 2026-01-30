@@ -55,10 +55,17 @@ SubmodelTarget
 │   └── source_ref, source_location, value_snippet
 ├── calibration
 │   ├── parameters: [{name, units, prior: {distribution, mu, sigma, ...}}]
-│   ├── state_variables: [{name, units, initial_condition}]  # For ODE models
-│   ├── model: Model                       # See Model Types below
-│   ├── independent_variable: {name, units, span}
-│   ├── measurements: [{uses_inputs, evaluation_points, sample_size, likelihood}]
+│   ├── forward_model: ForwardModel        # Physics/math: params → predictions
+│   │   ├── type: exponential_growth | first_order_decay | algebraic | custom_ode | ...
+│   │   ├── state_variables: [{name, units, initial_condition}]  # For ODE models
+│   │   ├── independent_variable: {name, units, span}            # For ODE models
+│   │   └── (type-specific fields: rate_constant, formula, code, code_julia, ...)
+│   ├── error_model: List[ErrorModel]      # Statistics: predictions + data → likelihood
+│   │   ├── name, units, uses_inputs
+│   │   ├── evaluation_points: [float]     # For ODE models only
+│   │   ├── observation_code: str          # Returns {value, sd, sd_uncertain}
+│   │   ├── sample_size, observable, likelihood
+│   │   └── ...
 │   └── identifiability_notes: str
 ├── experimental_context: {species, system, cell_lines, cell_types, ...}
 ├── source_relevance: SourceRelevanceAssessment  # REQUIRED - see below
@@ -68,7 +75,7 @@ SubmodelTarget
 
 ---
 
-## Model Types
+## Forward Model Types
 
 ### ODE-based (require state_variables, independent_variable with span)
 
@@ -80,13 +87,13 @@ SubmodelTarget
 | `michaelis_menten` | dy/dt = -Vmax * y / (Km + y) | Saturable kinetics |
 | `two_state` | dA/dt = -k*A, dB/dt = +k*A | State transitions |
 | `saturation` | dy/dt = k * (1 - y) | Approach to saturation |
-| `custom` | User-defined | Complex dynamics |
+| `custom_ode` | User-defined ODE | Complex dynamics |
 
-### Non-ODE
+### Non-ODE (Algebraic)
 
 | Type | Use When |
 |------|----------|
-| `direct_conversion` | Analytical formula (e.g., k = ln(2) / t_half). **Requires distribution_code** |
+| `algebraic` | Forward model maps params → observable (e.g., t_half = ln(2) / k). **Requires code and code_julia** |
 | `direct_fit` | Curve fitting (Hill equation for IC50, etc.) |
 
 ---
@@ -114,7 +121,7 @@ Many papers report mean +/- SEM (standard error of the mean) rather than SD (sta
 **When SEM is reported:**
 1. Extract `n` (sample size) as a separate input with `role: auxiliary`
 2. Name the uncertainty input `*_sem` not `*_sd` to be explicit
-3. In `distribution_code`, convert: `sd = sem * np.sqrt(n)`
+3. In `observation_code`, convert: `sd = sem * np.sqrt(n)`
 4. Add a `notes` field explaining the conversion
 
 **Example:**
@@ -134,10 +141,17 @@ inputs:
 ```
 
 ```python
-# In distribution_code:
-sem = inputs['treg_fraction_sem'].magnitude
-n = int(inputs['n_patients'].magnitude)
-sd = sem * np.sqrt(n)  # Convert SEM to SD before sampling
+# In observation_code:
+def derive_observation(inputs, sample_size, ureg):
+    mean = inputs['treg_fraction_mean']
+    sem = inputs['treg_fraction_sem'].magnitude
+    n = int(inputs['n_patients'].magnitude)
+    sd = sem * np.sqrt(n)  # Convert SEM to SD
+    return {
+        'value': mean,
+        'sd': sd,
+        'sd_uncertain': True,  # SD derived from SEM, some uncertainty
+    }
 ```
 
 **Red flag:** If reported uncertainty seems implausibly small (e.g., 17.8 +/- 0.7% for a biological fraction), it's almost certainly SEM.
@@ -157,52 +171,150 @@ Always include `rationale` explaining the prior choice.
 
 ---
 
-## Direct Conversion Models
+## Algebraic Models
 
-**Important:** `direct_conversion` models MUST have `distribution_code` in the measurement to implement the unit conversion. Without it, validation will fail.
+Use `algebraic` forward models when there's an analytical relationship between parameters and observables (no ODE needed).
 
-### distribution_code Return Signature
+**Key concept:** The forward model maps **parameters → predicted observable**. For example, if you're inferring rate constant `k` but the paper reports half-life `t_half`, the forward model predicts `t_half = ln(2) / k`.
 
-The `derive_distribution` function MUST return a dict with these keys:
-- `median`: median value (float)
-- `ci95_lower`: 2.5th percentile (float)
-- `ci95_upper`: 97.5th percentile (float)
+### Required Fields
+
+- `formula`: Human-readable description of the relationship
+- `code`: Python forward model: `def compute(params, inputs, ureg) -> Quantity`
+- `code_julia`: Julia forward model: `function compute(params, inputs) -> value`
+
+### observation_code Return Signature
+
+The `derive_observation` function in `error_model` MUST return:
+- `value`: Observed point estimate (Pint Quantity with units matching error_model.units) **[required]**
+- `sd`: Measurement uncertainty (dimensionless for lognormal likelihood, units for normal) **[required]**
+- `sd_uncertain`: If True, inference adds a prior on sigma (optional, default False)
+- `n`: Sample size for reference (optional)
 
 ```python
-return {
-    'median': float(np.median(samples)),
-    'ci95_lower': float(np.percentile(samples, 2.5)),
-    'ci95_upper': float(np.percentile(samples, 97.5)),
-}
+def derive_observation(inputs, sample_size, ureg):
+    return {
+        'value': inputs['half_life_mean'],  # Pint Quantity
+        'sd': inputs['half_life_sd'].magnitude / inputs['half_life_mean'].magnitude,  # CV for lognormal
+        'sd_uncertain': False,
+    }
 ```
 
-### Example
+### Example: Inferring rate from half-life
 
 ```yaml
-model:
-  type: direct_conversion
-  formula: "k = ln(2) / half_life"
+forward_model:
+  type: algebraic
+  formula: "t_half = ln(2) / k"
+  code: |
+    def compute(params, inputs, ureg):
+        import numpy as np
+        k = params['k_clearance']
+        return np.log(2) / k * ureg('day')
+  code_julia: |
+    function compute(params, inputs)
+        return log(2) / params["k_clearance"]
+    end
   data_rationale: "Paper reports half-life directly"
   submodel_rationale: "First-order kinetics in full model"
 
-measurements:
-  - name: derived_rate
-    uses_inputs: [half_life, half_life_sd]
-    distribution_code: |
-      def derive_distribution(inputs, ureg):
-          import numpy as np
-          t_half = inputs['half_life'].magnitude
-          t_half_sd = inputs['half_life_sd'].magnitude
-          # Convert mean±SD to lognormal, then transform
-          mu_log = np.log(t_half**2 / np.sqrt(t_half**2 + t_half_sd**2))
-          sigma_log = np.sqrt(np.log(1 + t_half_sd**2 / t_half**2))
-          samples = np.random.lognormal(mu_log, sigma_log, 10000)
-          k_samples = np.log(2) / samples
+error_model:
+  - name: half_life_measurement
+    units: day
+    uses_inputs: [half_life_mean, half_life_sd]
+    observation_code: |
+      def derive_observation(inputs, sample_size, ureg):
+          t_half = inputs['half_life_mean']
+          t_half_sd = inputs['half_life_sd']
+          # For lognormal likelihood, SD is in log-space (CV)
+          cv = t_half_sd.magnitude / t_half.magnitude
           return {
-              'median': float(np.median(k_samples)),
-              'ci95_lower': float(np.percentile(k_samples, 2.5)),
-              'ci95_upper': float(np.percentile(k_samples, 97.5)),
+              'value': t_half,
+              'sd': cv,
           }
+    likelihood:
+      distribution: lognormal
+      rationale: "Half-lives are positive and often log-distributed"
+```
+
+### No Hardcoded Values
+
+**All numeric values must come through `inputs`**, not hardcoded in code. This ensures:
+- Full provenance tracking
+- Sensitivity analysis capability
+- Transparent assumptions
+
+Allowed constants: `0`, `1`, `2`, `1.96` (for CI calculations)
+
+❌ **Wrong:**
+```python
+def derive_observation(inputs, sample_size, ureg):
+    sd = inputs['mean'].magnitude * 0.3  # Hardcoded 30% CV!
+    return {'value': inputs['mean'], 'sd': sd}
+```
+
+✓ **Correct:**
+```yaml
+inputs:
+  - name: assumed_cv
+    value: 0.3
+    input_type: assumed_value
+    notes: "Assumed 30% CV based on typical biological variability"
+```
+```python
+def derive_observation(inputs, sample_size, ureg):
+    cv = inputs['assumed_cv'].magnitude
+    return {'value': inputs['mean'], 'sd': cv}
+```
+
+---
+
+## Custom ODE Models
+
+Use `custom_ode` when the built-in ODE types don't capture your dynamics.
+
+### Required Fields
+
+- `code`: Python ODE function: `def ode(t, y, params, inputs) -> dy`
+- `code_julia`: Julia ODE function: `function ode!(du, u, p, t)`
+
+### Example: Two-compartment model
+
+```yaml
+forward_model:
+  type: custom_ode
+  code: |
+    def ode(t, y, params, inputs):
+        A, B = y
+        k_ab = params['k_transfer']
+        k_ba = params['k_return']
+        dA = -k_ab * A + k_ba * B
+        dB = k_ab * A - k_ba * B
+        return [dA, dB]
+  code_julia: |
+    function two_compartment!(du, u, p, t)
+        A, B = u
+        k_ab, k_ba = p
+        du[1] = -k_ab * A + k_ba * B
+        du[2] = k_ab * A - k_ba * B
+    end
+  data_rationale: "Two-compartment kinetics observed"
+  submodel_rationale: "Maps to transfer rates in full model"
+  state_variables:
+    - name: A
+      units: cell
+      initial_condition:
+        input_ref: initial_A
+        rationale: "Initial cells in compartment A"
+    - name: B
+      units: cell
+      initial_condition:
+        value: 0.0
+        rationale: "No cells initially in compartment B"
+  independent_variable:
+    name: time
+    units: day
+    span: [0, 14]
 ```
 
 ---
@@ -220,17 +332,25 @@ inputs:
     role: initial_condition
     source_ref: Smith2020
     source_location: "Methods"
-    value_snippet: "1×10^5 CD8+ T cells were seeded"
+    value_snippet: "1x10^5 CD8+ T cells were seeded"
 
-  - name: final_cells
+  - name: final_cells_mean
     value: 750000.0
     units: cell
-    uncertainty: {sd: 150000.0}
     input_type: direct_measurement
     role: target
     source_ref: Smith2020
     source_location: "Figure 2A"
-    value_snippet: "7.5×10^5 ± 1.5×10^5 cells by day 3"
+    value_snippet: "7.5x10^5 +/- 1.5x10^5 cells by day 3"
+
+  - name: final_cells_sd
+    value: 150000.0
+    units: cell
+    input_type: direct_measurement
+    role: auxiliary
+    source_ref: Smith2020
+    source_location: "Figure 2A"
+    value_snippet: "7.5x10^5 +/- 1.5x10^5 cells by day 3"
 
 calibration:
   parameters:
@@ -242,30 +362,38 @@ calibration:
         sigma: 1.0
         rationale: "Wide prior centered at 1/day"
 
-  state_variables:
-    - name: T_cells
-      units: cell
-      initial_condition:
-        input_ref: initial_cells
-        rationale: "Experimental seeding density"
-
-  model:
+  forward_model:
     type: exponential_growth
     rate_constant: k_CD8_pro
     data_rationale: "Early expansion before contact inhibition"
     submodel_rationale: "Maps to k_CD8_pro in full model"
+    state_variables:
+      - name: T_cells
+        units: cell
+        initial_condition:
+          input_ref: initial_cells
+          rationale: "Experimental seeding density"
+    independent_variable:
+      name: time
+      units: hour
+      span: [0, 72]
 
-  independent_variable:
-    name: time
-    units: hour
-    span: [0, 72]
-
-  measurements:
+  error_model:
     - name: cell_count_72h
       units: cell
-      uses_inputs: [final_cells]
+      uses_inputs: [final_cells_mean, final_cells_sd]
       evaluation_points: [72]
       sample_size: 3
+      observation_code: |
+        def derive_observation(inputs, sample_size, ureg):
+            mean = inputs['final_cells_mean']
+            sd = inputs['final_cells_sd']
+            # CV for lognormal likelihood
+            cv = sd.magnitude / mean.magnitude
+            return {
+                'value': mean,
+                'sd': cv,
+            }
       observable:
         type: identity
         state_variables: [T_cells]
@@ -391,9 +519,13 @@ source_relevance:
 
 The schema automatically validates:
 - All references (`input_ref`, `uses_inputs`, `source_ref`) point to existing items
-- ODE models have `state_variables` and `independent_variable.span`
-- `direct_conversion` models have `distribution_code`
+- ODE models have `state_variables`, `independent_variable.span`, and `evaluation_points`
+- ODE models have `observable` defined in error_model
+- `algebraic` models have `code` and `code_julia`
+- `observation_code` returns `{value, sd}` with correct units
+- `observation_code` has no hardcoded numeric values (all through inputs)
 - Prior predictive matches observation scale (catches unit errors)
+- AlgebraicModel forward prediction matches data scale
 - Values appear in their `value_snippet` (catches hallucinations)
 - Units are valid Pint units
 - DOIs resolve via CrossRef
@@ -404,6 +536,12 @@ The schema automatically validates:
 - `pharmacological` or `genetic_perturbation` requires `perturbation_relevance`
 - `low` TME compatibility requires uncertainty >= 10x and `tme_compatibility_notes`
 - Cross-species requires uncertainty >= 2x
+
+**Warnings (won't fail, but review carefully):**
+- AlgebraicModel has more parameters than measurements (identifiability)
+- Parameters not referenced in AlgebraicModel.code
+- SD is >100x or <0.001x observed value (units mismatch)
+- Input units don't match measurement units
 
 ---
 
