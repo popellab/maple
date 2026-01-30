@@ -4,7 +4,7 @@ Translator from SubmodelTarget YAML to Julia Turing.jl inference code.
 
 This module provides tools to:
 1. Load and validate YAML targets
-2. Execute distribution_code to extract observations
+2. Execute observation_code to get {value, sd, sd_uncertain}
 3. Map model types to Julia ODE functions
 4. Generate complete Julia scripts for Bayesian inference
 
@@ -30,8 +30,8 @@ import numpy as np
 import yaml
 
 from qsp_llm_workflows.core.calibration.submodel_target import (
-    CustomModel,
-    DirectConversionModel,
+    AlgebraicModel,
+    CustomODEModel,
     ExponentialGrowthModel,
     FirstOrderDecayModel,
     InputRole,
@@ -59,6 +59,8 @@ class ObservationData:
     sigma: float
     eval_time: Optional[float]  # None for direct mode
     units: str
+    sd_uncertain: bool = False  # If True, put a prior on sigma
+    likelihood_distribution: str = "normal"  # "normal" or "lognormal"
 
 
 @dataclass
@@ -80,95 +82,66 @@ class TargetObservations:
 
 
 class ObservationExtractor:
-    """Extract observation data by running distribution_code."""
+    """Extract observation data from target inputs and observation_code."""
 
     def extract(self, target: SubmodelTarget) -> TargetObservations:
         """
         Extract all observation data from a target.
 
-        Runs distribution_code for each measurement to get median/CI95,
-        then converts CI95 to sigma.
-
-        Filters out observations where the corresponding input has
-        role=initial_condition (these are used for IC, not likelihood).
+        For each error_model entry:
+        - Executes observation_code to get {value, sd, sd_uncertain, n}
         """
         observations = []
 
         for measurement in target.calibration.measurements:
-            # Build inputs dict for distribution_code
+            # Build inputs dict for observation_code
             inputs_dict = self._build_inputs_dict(target, measurement.uses_inputs)
 
-            if measurement.distribution_code:
-                # Execute distribution_code
-                result = self._exec_distribution_code(measurement.distribution_code, inputs_dict)
-                # Support both formats:
-                # New format: median, ci95_lower, ci95_upper (scalars or lists)
-                # Old format: median (list), ci95 (list of [lo, hi] pairs)
-                if "ci95_lower" in result:
-                    # New format
-                    median_val = result["median"]
-                    ci95_lo = result["ci95_lower"]
-                    ci95_hi = result["ci95_upper"]
-                    # Normalize to lists
-                    medians = [median_val] if not isinstance(median_val, list) else median_val
-                    ci95_lo = [ci95_lo] if not isinstance(ci95_lo, list) else ci95_lo
-                    ci95_hi = [ci95_hi] if not isinstance(ci95_hi, list) else ci95_hi
-                    ci95s = list(zip(ci95_lo, ci95_hi))
-                else:
-                    # Old format (for backwards compatibility)
-                    medians = result["median"]
-                    ci95s = result["ci95"]
-                    if not isinstance(medians, list):
-                        medians = [medians]
-                    if not isinstance(ci95s[0], (list, tuple)):
-                        ci95s = [ci95s]
-                units = result.get("units", measurement.units)
-            else:
-                # No distribution_code - use inputs directly
-                # This handles simple cases where input IS the observation
-                medians = [inputs_dict[measurement.uses_inputs[0]].magnitude]
-                ci95s = [(medians[0] * 0.9, medians[0] * 1.1)]  # Assume 10% uncertainty
-                units = measurement.units
+            # Execute observation_code to get {value, sd, ...}
+            obs_result = self._exec_observation_code(
+                measurement.observation_code,
+                inputs_dict,
+                measurement.sample_size,
+            )
 
-            # Determine which observations to include based on input roles
-            # Group inputs by their evaluation point index (heuristic: inputs come in pairs
-            # of mean/sd for each timepoint)
-            eval_points = measurement.evaluation_points or [None]
-            n_points = len(eval_points) if eval_points[0] is not None else 1
-
-            # Check if any inputs have role=initial_condition
-            # If so, identify which evaluation point they correspond to
-            ic_indices = set()
-            target_inputs = [inp for inp in target.inputs if inp.name in measurement.uses_inputs]
-
-            # Heuristic: inputs with role=initial_condition correspond to first evaluation point(s)
-            for inp in target_inputs:
-                if inp.role == InputRole.INITIAL_CONDITION:
-                    # Try to determine which eval point this corresponds to
-                    # If input name contains "day1" or "week4" etc, match to first point
-                    if any(x in inp.name.lower() for x in ["day1", "week4", "_1_", "_1"]):
-                        ic_indices.add(0)
-                    elif any(x in inp.name.lower() for x in ["day2", "week8", "_2_", "_2"]):
-                        ic_indices.add(1)
-                    # Default: assume first point if IC role is set
-                    elif n_points > 1:
-                        ic_indices.add(0)
-
-            # Convert CI95 to sigma and create ObservationData, filtering IC points
-            for i, (median, ci95) in enumerate(zip(medians, ci95s)):
-                if i in ic_indices:
-                    continue  # Skip initial condition observations
-
-                sigma = self._ci95_to_sigma(ci95)
-                eval_time = eval_points[i] if i < len(eval_points) else eval_points[-1]
-                observations.append(
-                    ObservationData(
-                        median=median,
-                        sigma=sigma,
-                        eval_time=eval_time,
-                        units=units,
-                    )
+            # Extract value (observation point estimate)
+            value = obs_result.get("value")
+            if value is None:
+                raise ValueError(
+                    f"observation_code for '{measurement.name}' did not return 'value'"
                 )
+            median = float(getattr(value, "magnitude", value))
+
+            # Extract sd (measurement uncertainty)
+            sd_val = obs_result.get("sd")
+            if sd_val is None:
+                raise ValueError(
+                    f"observation_code for '{measurement.name}' did not return 'sd'"
+                )
+            sigma = float(getattr(sd_val, "magnitude", sd_val))
+
+            sd_uncertain = obs_result.get("sd_uncertain", False)
+
+            # Get evaluation time (for ODE models)
+            eval_time = None
+            if measurement.evaluation_points:
+                eval_time = measurement.evaluation_points[0]
+
+            # Get likelihood distribution type (normal or lognormal)
+            likelihood_distribution = "normal"
+            if measurement.likelihood and measurement.likelihood.distribution:
+                likelihood_distribution = measurement.likelihood.distribution.lower()
+
+            observations.append(
+                ObservationData(
+                    median=median,
+                    sigma=sigma,
+                    eval_time=eval_time,
+                    units=measurement.units,
+                    sd_uncertain=sd_uncertain,
+                    likelihood_distribution=likelihood_distribution,
+                )
+            )
 
         # Extract time span and initial conditions
         t_span = None
@@ -209,30 +182,30 @@ class ObservationExtractor:
         )
 
     def _build_inputs_dict(self, target: SubmodelTarget, input_names: list[str]) -> dict:
-        """Build inputs dict with Pint quantities for distribution_code."""
+        """Build inputs dict with Pint quantities for observation_code."""
         inputs_dict = {}
         for inp in target.inputs:
             if inp.name in input_names or not input_names:
                 inputs_dict[inp.name] = inp.value * ureg(inp.units)
         return inputs_dict
 
-    def _exec_distribution_code(self, code: str, inputs: dict) -> dict:
-        """Execute distribution_code and return result dict."""
-        # Create execution namespace
-        namespace = {"inputs": inputs, "ureg": ureg, "np": np}
+    def _exec_observation_code(
+        self, code: str, inputs: dict, sample_size: Optional[int]
+    ) -> dict:
+        """
+        Execute observation_code and return result dict.
 
-        # Execute the code to define the function
+        The code should define: def derive_observation(inputs, sample_size, ureg) -> dict
+        Required return keys: 'value', 'sd'
+        Optional return keys: 'sd_uncertain', 'n'
+        """
+        namespace = {"inputs": inputs, "ureg": ureg, "np": np}
         exec(code, namespace)
 
-        # Call derive_distribution
-        if "derive_distribution" not in namespace:
-            raise ValueError("distribution_code must define 'derive_distribution'")
+        if "derive_observation" not in namespace:
+            raise ValueError("observation_code must define 'derive_observation'")
 
-        return namespace["derive_distribution"](inputs, ureg)
-
-    def _ci95_to_sigma(self, ci95: list[float]) -> float:
-        """Convert 95% CI to standard deviation (assuming normal)."""
-        return (ci95[1] - ci95[0]) / (2 * 1.96)
+        return namespace["derive_observation"](inputs, sample_size, ureg)
 
 
 # =============================================================================
@@ -290,11 +263,11 @@ end
         func_name = self._sanitize_name(target.target_id)
 
         # Handle custom models - use code_julia directly
-        if isinstance(model, CustomModel):
+        if isinstance(model, CustomODEModel):
             return model.code_julia
 
-        # Handle direct conversion - no ODE needed
-        if isinstance(model, DirectConversionModel):
+        # Handle algebraic models - no ODE needed, uses code_julia compute function
+        if isinstance(model, AlgebraicModel):
             return None
 
         # Get template for model type
@@ -434,21 +407,41 @@ Random.seed!(42)
         """Generate Julia simulate function."""
         model = target.calibration.model
 
-        # No simulate function for direct conversion
-        if isinstance(model, DirectConversionModel):
-            return None
-
         func_name = self.mapper._sanitize_name(target.target_id)
         prefix = self._const_prefix(target.target_id)
         param_names = obs_data.parameter_names
 
-        # Build parameter unpacking
+        # Build parameter signature
         if len(param_names) == 1:
             param_sig = param_names[0]
-            param_vec = f"[{param_names[0]}]"
         else:
             param_sig = ", ".join(param_names)
-            param_vec = f"[{param_sig}]"
+
+        # Handle algebraic models - use code_julia compute function directly
+        if isinstance(model, AlgebraicModel):
+            if not model.code_julia:
+                return None
+
+            # Build inputs dict for compute function
+            inputs_code = self._generate_inputs_dict(target)
+
+            # Build params dict
+            params_dict = "Dict(" + ", ".join(f'"{p}" => {p}' for p in param_names) + ")"
+
+            code = f"""
+# Forward model (algebraic)
+{model.code_julia}
+
+function simulate_{func_name}({param_sig})
+    params = {params_dict}
+    inputs = {inputs_code}
+    return compute(params, inputs)
+end
+"""
+            return code
+
+        # ODE models
+        param_vec = f"[{param_sig}]"
 
         # Build evaluation times
         if len(obs_data.observations) == 1:
@@ -463,11 +456,8 @@ Random.seed!(42)
             return_expr = "sol[2, end] / (sol[1, end] + sol[2, end])"
 
         # Get ODE function name - for custom models, extract from code_julia
-        if isinstance(model, CustomModel):
-            # Extract function name from code_julia (e.g., "function foo_ode!(du, u, p, t)")
-            # Note: Julia function names can include ! so we use [\w!]+ pattern
+        if isinstance(model, CustomODEModel):
             import re
-
             match = re.search(r"function\s+([\w!]+)\s*\(", model.code_julia)
             if match:
                 ode_func_name = match.group(1)
@@ -487,6 +477,13 @@ end
 """
         return code
 
+    def _generate_inputs_dict(self, target: SubmodelTarget) -> str:
+        """Generate Julia Dict for inputs from target inputs."""
+        items = []
+        for inp in target.inputs:
+            items.append(f'"{inp.name}" => {inp.value}')
+        return "Dict(" + ", ".join(items) + ")"
+
     def _generate_turing_model(self, target: SubmodelTarget, obs_data: TargetObservations) -> str:
         """Generate Turing @model block."""
         model = target.calibration.model
@@ -503,22 +500,27 @@ end
         lines.append("")
         lines.append("    # Likelihood")
 
-        # Direct conversion mode
-        if isinstance(model, DirectConversionModel):
-            param_name = target.calibration.parameters[0].name
-            lines.append(f"    obs ~ Normal({param_name}, sigma)")
-        else:
-            # ODE mode
-            param_names = [p.name for p in target.calibration.parameters]
-            param_call = ", ".join(param_names)
-            lines.append(f"    pred = simulate_{func_name}({param_call})")
+        # ODE or algebraic mode
+        param_names = [p.name for p in target.calibration.parameters]
+        param_call = ", ".join(param_names)
+        lines.append(f"    pred = simulate_{func_name}({param_call})")
 
-            if len(obs_data.observations) == 1:
-                lines.append("    obs ~ Normal(pred, sigma)")
+        if len(obs_data.observations) == 1:
+            obs = obs_data.observations[0]
+            if obs.likelihood_distribution == "lognormal":
+                # LogNormal(log(pred), sigma) has median = pred, sigma is log-scale
+                lines.append("    obs ~ LogNormal(log(pred), sigma)")
             else:
-                lines.append("    for i in eachindex(obs)")
+                lines.append("    obs ~ Normal(pred, sigma)")
+        else:
+            # Multiple observations - check if any use lognormal
+            lines.append("    for i in eachindex(obs)")
+            # For simplicity, assume all observations use same likelihood type
+            if obs_data.observations[0].likelihood_distribution == "lognormal":
+                lines.append("        obs[i] ~ LogNormal(log(pred[i]), sigma[i])")
+            else:
                 lines.append("        obs[i] ~ Normal(pred[i], sigma[i])")
-                lines.append("    end")
+            lines.append("    end")
 
         lines.append("")
         lines.append(
@@ -699,12 +701,15 @@ class JointInferenceBuilder:
         model_structure = ModelStructure.from_json(model_structure_path)
         return cls(model_structure)
 
-    def build_from_files(self, yaml_paths: list[str]) -> str:
+    def build_from_files(self, yaml_paths: list[str], force_fixed_sigma: bool = False) -> str:
         """
         Build joint inference Julia script from multiple YAML files.
 
         Args:
             yaml_paths: List of paths to YAML target files
+            force_fixed_sigma: If True, treat all sigmas as fixed (not sampled),
+                              regardless of sd_uncertain in measurement_error_code.
+                              This reduces model dimensionality and speeds up sampling.
 
         Returns:
             Complete Julia script for joint Bayesian inference
@@ -714,6 +719,12 @@ class JointInferenceBuilder:
         for path in yaml_paths:
             target = self._load_target(path)
             obs_data = self.extractor.extract(target)
+
+            # Force fixed sigma if requested
+            if force_fixed_sigma:
+                for obs in obs_data.observations:
+                    obs.sd_uncertain = False
+
             targets_info.append(
                 TargetInfo(
                     target_id=target.target_id,
@@ -743,7 +754,7 @@ class JointInferenceBuilder:
         """
         Collect unique parameters across all targets.
 
-        Parameters with the same name are merged - first encountered prior is used.
+        Parameters with the same name are merged - widest prior (largest sigma) is used.
         """
         parameters: dict[str, ParameterInfo] = {}
 
@@ -759,7 +770,17 @@ class JointInferenceBuilder:
                 else:
                     # Parameter already exists - add this target to list
                     parameters[param.name].targets.append(ti.target_id)
-                    # Use first prior encountered (or could merge/validate)
+                    # Use widest prior (largest sigma for lognormal/normal)
+                    existing_prior = parameters[param.name].prior
+                    new_prior = param.prior
+                    if existing_prior and new_prior:
+                        if (
+                            existing_prior.distribution == new_prior.distribution
+                            and existing_prior.sigma is not None
+                            and new_prior.sigma is not None
+                        ):
+                            if new_prior.sigma > existing_prior.sigma:
+                                parameters[param.name].prior = new_prior
 
         return parameters
 
@@ -826,6 +847,7 @@ using Turing
 using DifferentialEquations
 using Distributions
 using StatsPlots
+using Plots: mm
 using Random
 
 Random.seed!(42)
@@ -858,11 +880,6 @@ Random.seed!(42)
     def _generate_simulate_function(self, ti: TargetInfo) -> Optional[str]:
         """Generate simulate function for a target."""
         model = ti.target.calibration.model
-
-        # No simulate function for direct conversion
-        if isinstance(model, DirectConversionModel):
-            return None
-
         func_name = self.mapper._sanitize_name(ti.target_id)
         prefix = self._const_prefix(ti.target_id)
         param_names = ti.parameter_names
@@ -887,7 +904,7 @@ Random.seed!(42)
                 return_expr = f"[sol(t)[1] for t in {eval_times}]"
 
         # Get ODE function name
-        if isinstance(model, CustomModel):
+        if isinstance(model, CustomODEModel):
             import re
 
             match = re.search(r"function\s+([\w!]+)\s*\(", model.code_julia)
@@ -947,25 +964,20 @@ end
             prefix = self._const_prefix(ti.target_id).lower()
             model = ti.target.calibration.model
 
-            if isinstance(model, DirectConversionModel):
-                # Direct mode - parameter IS the observable
-                param_name = ti.parameter_names[0]
-                lines.append(f"    {prefix}_obs ~ Normal({param_name}, {prefix}_sigma)")
-            else:
-                # ODE mode
-                func_name = self.mapper._sanitize_name(ti.target_id)
-                param_call = ", ".join(ti.parameter_names)
-                lines.append(f"    pred_{prefix} = simulate_{func_name}({param_call})")
+            # ODE or algebraic mode
+            func_name = self.mapper._sanitize_name(ti.target_id)
+            param_call = ", ".join(ti.parameter_names)
+            lines.append(f"    pred_{prefix} = simulate_{func_name}({param_call})")
 
-                n_obs = len(ti.observations.observations)
-                if n_obs == 1:
-                    lines.append(f"    {prefix}_obs ~ Normal(pred_{prefix}, {prefix}_sigma)")
-                else:
-                    lines.append(f"    for i in eachindex({prefix}_obs)")
-                    lines.append(
-                        f"        {prefix}_obs[i] ~ Normal(pred_{prefix}[i], {prefix}_sigmas[i])"
-                    )
-                    lines.append("    end")
+            n_obs = len(ti.observations.observations)
+            if n_obs == 1:
+                lines.append(f"    {prefix}_obs ~ Normal(pred_{prefix}, {prefix}_sigma)")
+            else:
+                lines.append(f"    for i in eachindex({prefix}_obs)")
+                lines.append(
+                    f"        {prefix}_obs[i] ~ Normal(pred_{prefix}[i], {prefix}_sigmas[i])"
+                )
+                lines.append("    end")
 
         # Return statement
         lines.append("")
@@ -1053,15 +1065,23 @@ println("=" ^ 60)"""
         for i, ti in enumerate(targets_info):
             comma = "," if i < len(targets_info) - 1 else ""
             obs = ti.observations
+            model = ti.target.calibration.model
 
             # Build observation arrays (convert numpy to plain Python floats)
             medians = [float(o.median) for o in obs.observations]
             sigmas = [float(o.sigma) for o in obs.observations]
+            sd_uncertain = [o.sd_uncertain for o in obs.observations]
+            likelihood_dists = [o.likelihood_distribution for o in obs.observations]
+            # Convert Python booleans to Julia booleans (true/false)
+            sd_uncertain_julia = "[" + ", ".join(str(b).lower() for b in sd_uncertain) + "]"
+            likelihood_dists_julia = "[" + ", ".join(f'"{d}"' for d in likelihood_dists) + "]"
             eval_times = [float(o.eval_time) for o in obs.observations if o.eval_time is not None]
 
             lines.append(f'    "{ti.target_id}" => (')
             lines.append(f"        obs_median = {medians},")
             lines.append(f"        obs_sigma = {sigmas},")
+            lines.append(f"        sd_uncertain = {sd_uncertain_julia},")
+            lines.append(f"        likelihood = {likelihood_dists_julia},")
 
             if obs.t_span:
                 lines.append(f"        t_span = {obs.t_span},")
@@ -1069,6 +1089,16 @@ println("=" ^ 60)"""
                 lines.append(f"        t_eval = {eval_times},")
             if obs.initial_conditions:
                 lines.append(f"        y0 = {obs.initial_conditions},")
+
+            # For algebraic models, include inputs dict
+            if isinstance(model, AlgebraicModel):
+                inputs_dict_items = []
+                for inp in ti.target.inputs:
+                    val = inp.value
+                    if isinstance(val, float) and val == int(val):
+                        val = int(val)
+                    inputs_dict_items.append(f'"{inp.name}" => {val}')
+                lines.append(f"        inputs = Dict({', '.join(inputs_dict_items)}),")
 
             lines.append(f"    ){comma}")
 
@@ -1078,14 +1108,20 @@ println("=" ^ 60)"""
     def _generate_simulate_function_dict(self, ti: TargetInfo) -> Optional[str]:
         """Generate simulate function that reads from DATA dict."""
         model = ti.target.calibration.model
-
-        # No simulate function for direct conversion
-        if isinstance(model, DirectConversionModel):
-            return None
-
         func_name = self.mapper._sanitize_name(ti.target_id)
         param_names = ti.parameter_names
         param_sig = ", ".join(param_names)
+
+        # Handle algebraic models - use code_julia compute function directly
+        if isinstance(model, AlgebraicModel):
+            if not model.code_julia:
+                return None
+            # Rename the compute function to be unique per target
+            code = model.code_julia
+            # Replace "function compute(" with "function compute_<func_name>("
+            code = code.replace("function compute(", f"function compute_{func_name}(")
+            return code
+
         param_vec = f"[{param_sig}]"
 
         # Build return expression based on model type and observation count
@@ -1106,7 +1142,7 @@ println("=" ^ 60)"""
             saveat_expr = f'DATA["{ti.target_id}"].t_eval'
 
         # Get ODE function name
-        if isinstance(model, CustomModel):
+        if isinstance(model, CustomODEModel):
             import re
 
             match = re.search(r"function\s+([\w!]+)\s*\(", model.code_julia)
@@ -1134,7 +1170,7 @@ end
         lines = []
         lines.append("@model function joint_calibration(data)")
 
-        # Priors
+        # Priors for model parameters
         lines.append("    # =========================================")
         lines.append("    # PRIORS (shared across targets)")
         lines.append("    # =========================================")
@@ -1142,6 +1178,17 @@ end
             prior_code = self._generate_prior(pname, pinfo.prior)
             targets_str = ", ".join(pinfo.targets)
             lines.append(f"    {prior_code}  # Used by: {targets_str}")
+
+        # Priors for uncertain sigmas (hierarchical error model)
+        sigma_params = []
+        for ti in targets_info:
+            for i, obs in enumerate(ti.observations.observations):
+                if obs.sd_uncertain:
+                    func_name = self.mapper._sanitize_name(ti.target_id)
+                    sigma_name = f"sigma_{func_name}" if len(ti.observations.observations) == 1 else f"sigma_{func_name}_{i+1}"
+                    # Half-normal prior centered on the estimated sigma
+                    lines.append(f"    {sigma_name} ~ truncated(Normal(data[\"{ti.target_id}\"].obs_sigma[{i+1}], data[\"{ti.target_id}\"].obs_sigma[{i+1}]), 0, Inf)")
+                    sigma_params.append(sigma_name)
 
         # Likelihoods
         lines.append("")
@@ -1154,32 +1201,45 @@ end
             lines.append(f"\n    # {tid}")
             model = ti.target.calibration.model
             n_obs = len(ti.observations.observations)
+            func_name = self.mapper._sanitize_name(tid)
 
-            if isinstance(model, DirectConversionModel):
-                param_name = ti.parameter_names[0]
-                lines.append(
-                    f'    data["{tid}"].obs_median[1] ~ Normal({param_name}, data["{tid}"].obs_sigma[1])'
-                )
+            if isinstance(model, AlgebraicModel):
+                # Algebraic model - call compute function with params dict and inputs dict
+                param_dict_items = ", ".join(f'"{p}" => {p}' for p in ti.parameter_names)
+                lines.append(f'    params_{func_name} = Dict({param_dict_items})')
+                lines.append(f'    inputs_{func_name} = data["{tid}"].inputs')
+                lines.append(f'    pred_{func_name} = compute_{func_name}(params_{func_name}, inputs_{func_name})')
             else:
-                func_name = self.mapper._sanitize_name(tid)
                 param_call = ", ".join(ti.parameter_names)
                 lines.append(f"    pred_{func_name} = simulate_{func_name}({param_call})")
 
-                if n_obs == 1:
-                    lines.append(
-                        f'    data["{tid}"].obs_median[1] ~ Normal(pred_{func_name}, data["{tid}"].obs_sigma[1])'
-                    )
+            # Generate likelihood with appropriate sigma (fixed or inferred) and distribution
+            for i, obs in enumerate(ti.observations.observations):
+                idx = i + 1
+                if obs.sd_uncertain:
+                    sigma_name = f"sigma_{func_name}" if n_obs == 1 else f"sigma_{func_name}_{idx}"
+                    sigma_expr = sigma_name
                 else:
-                    lines.append(f"    for i in 1:{n_obs}")
-                    lines.append(
-                        f'        data["{tid}"].obs_median[i] ~ Normal(pred_{func_name}[i], data["{tid}"].obs_sigma[i])'
-                    )
-                    lines.append("    end")
+                    sigma_expr = f'data["{tid}"].obs_sigma[{idx}]'
+
+                pred_expr = f"pred_{func_name}" if n_obs == 1 else f"pred_{func_name}[{idx}]"
+
+                # Use LogNormal likelihood when specified (sigma is in log-space)
+                if obs.likelihood_distribution == "lognormal":
+                    # LogNormal(μ, σ) where μ = log(pred), so median = pred
+                    lines.append(f'    data["{tid}"].obs_median[{idx}] ~ LogNormal(log({pred_expr}), {sigma_expr})')
+                else:
+                    # Normal likelihood (default)
+                    lines.append(f'    data["{tid}"].obs_median[{idx}] ~ Normal({pred_expr}, {sigma_expr})')
 
         # Return
         lines.append("")
         param_returns = ", ".join(f"{p}={p}" for p in parameters.keys())
-        lines.append(f"    return ({param_returns})")
+        if sigma_params:
+            sigma_returns = ", ".join(f"{s}={s}" for s in sigma_params)
+            lines.append(f"    return ({param_returns}, {sigma_returns})")
+        else:
+            lines.append(f"    return ({param_returns})")
         lines.append("end")
 
         return "\n".join(lines)
@@ -1191,6 +1251,15 @@ end
     ) -> str:
         """Generate sampling code using DATA dict."""
         lines = []
+
+        # Collect sigma parameters for targets with uncertain sd
+        sigma_params = []
+        for ti in targets_info:
+            for i, obs in enumerate(ti.observations.observations):
+                if obs.sd_uncertain:
+                    func_name = self.mapper._sanitize_name(ti.target_id)
+                    sigma_name = f"sigma_{func_name}" if len(ti.observations.observations) == 1 else f"sigma_{func_name}_{i+1}"
+                    sigma_params.append(sigma_name)
 
         lines.append(
             """
@@ -1210,7 +1279,11 @@ println("\\nTargets:")"""
             targets_str = ", ".join(pinfo.targets)
             lines.append(f'println("  {pname} ({pinfo.units}) - constrained by: {targets_str}")')
 
-        param_symbols = ", ".join(f":{p}" for p in parameters.keys())
+        # Combine model params and sigma params for diagnostics
+        all_param_symbols = ", ".join(f":{p}" for p in parameters.keys())
+        if sigma_params:
+            sigma_symbols = ", ".join(f":{s}" for s in sigma_params)
+            all_param_symbols = f"{all_param_symbols}, {sigma_symbols}"
 
         lines.append(
             f"""
@@ -1224,7 +1297,7 @@ display(chain)
 
 # Convergence diagnostics
 println("\\nConvergence diagnostics:")
-params = [{param_symbols}]
+params = [{all_param_symbols}]
 for p in params
     rhat_val = rhat(chain[p])[1]
     ess_val = ess(chain[p])[1]
@@ -1233,14 +1306,94 @@ for p in params
 end
 
 println("\\n" * "=" ^ 60)
-println("POSTERIOR MEDIANS")
+println("POSTERIOR MEDIANS AND 90% CI")
 println("=" ^ 60)"""
         )
 
         for pname, pinfo in parameters.items():
-            lines.append(
-                f'println("  {pname}: $(round(median(chain[:{pname}][:]), sigdigits=4)) {pinfo.units}")'
-            )
+            lines.append(f"""let samples = chain[:{pname}][:]
+    med = round(median(samples), sigdigits=4)
+    ci_lo = round(quantile(samples, 0.05), sigdigits=4)
+    ci_hi = round(quantile(samples, 0.95), sigdigits=4)
+    println("  {pname}: $med ({pinfo.units})  [90% CI: $ci_lo - $ci_hi]")
+end""")
+
+        # Add plotting code with priors
+        param_names_list = ", ".join(f":{p}" for p in parameters.keys())
+        param_labels_list = ", ".join(f'"{p}"' for p in parameters.keys())
+
+        # Build priors dict entries
+        prior_entries = []
+        for pname, pinfo in parameters.items():
+            prior = pinfo.prior
+            if prior:
+                if prior.distribution == PriorDistribution.LOGNORMAL:
+                    prior_entries.append(f"    :{pname} => LogNormal({prior.mu}, {prior.sigma})")
+                elif prior.distribution == PriorDistribution.NORMAL:
+                    prior_entries.append(f"    :{pname} => Normal({prior.mu}, {prior.sigma})")
+                elif prior.distribution == PriorDistribution.UNIFORM:
+                    prior_entries.append(f"    :{pname} => Uniform({prior.lower}, {prior.upper})")
+                elif prior.distribution == PriorDistribution.HALF_NORMAL:
+                    prior_entries.append(f"    :{pname} => truncated(Normal(0, {prior.sigma}), 0, Inf)")
+                else:
+                    prior_entries.append(f"    :{pname} => LogNormal(0.0, 2.0)")
+            else:
+                prior_entries.append(f"    :{pname} => LogNormal(0.0, 2.0)")
+        priors_dict = ",\n".join(prior_entries)
+
+        n_params = len(parameters)
+        n_cols = 3
+        n_rows = (n_params + n_cols - 1) // n_cols
+
+        lines.append(f"""
+# Plot marginal posteriors with priors
+println("\\nPlotting marginal posteriors...")
+
+param_names = [{param_names_list}]
+param_labels = [{param_labels_list}]
+
+priors = Dict(
+{priors_dict}
+)
+
+plots = []
+for (i, pname) in enumerate(param_names)
+    samples = vec(chain[pname])
+    med = median(samples)
+    ci_lo = quantile(samples, 0.05)
+    ci_hi = quantile(samples, 0.95)
+
+    # X range based on posterior samples
+    xmin, xmax = quantile(samples, 0.001), quantile(samples, 0.999)
+    xrange = range(xmin, xmax, length=200)
+
+    # Prior density
+    prior_dist = priors[pname]
+    prior_pdf = pdf.(prior_dist, xrange)
+
+    # Start with prior (gray, underneath)
+    plt = plot(xrange, prior_pdf;
+        fill=true, fillalpha=0.2, color=:gray, linewidth=1, linecolor=:gray,
+        xlabel=param_labels[i], ylabel="",
+        label="Prior", legend=false, grid=false, framestyle=:box,
+        xrotation=45)
+
+    # Overlay posterior density
+    density!(plt, samples;
+        fill=true, fillalpha=0.4, color=:steelblue, linewidth=2,
+        label="Posterior")
+
+    # Add median and CI lines
+    vline!(plt, [med]; color=:red, linewidth=2, linestyle=:solid, label="")
+    vline!(plt, [ci_lo, ci_hi]; color=:red, linewidth=1, linestyle=:dash, label="")
+
+    push!(plots, plt)
+end
+
+p = plot(plots...; layout=({n_rows}, {n_cols}), size=(1200, 1000), margin=8mm)
+savefig(p, "posterior_marginals.png")
+println("Saved: posterior_marginals.png")
+""")
 
         return "\n".join(lines)
 
@@ -1286,15 +1439,37 @@ def main():
 
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  Single target:  python -m ... <yaml_file> [output.jl]")
-        print("  Joint inference: python -m ... --joint <yaml1> <yaml2> ... [--output output.jl]")
+        print("  Single target:  python -m ... --model-structure <path> <yaml_file> [output.jl]")
+        print("  Joint inference: python -m ... --joint --model-structure <path> <yaml1> <yaml2> ... [--output output.jl] [--fixed-sigma]")
+        print("")
+        print("Options:")
+        print("  --model-structure <path>  Path to model_structure.json (required)")
+        print("  --fixed-sigma             Treat all measurement sigmas as fixed (not sampled).")
+        print("                            Reduces model dimensionality and speeds up sampling.")
         sys.exit(1)
 
     args = sys.argv[1:]
 
+    # Check for model-structure flag (required)
+    model_structure_path = None
+    if "--model-structure" in args:
+        idx = args.index("--model-structure")
+        model_structure_path = args[idx + 1]
+        args = args[:idx] + args[idx + 2 :]
+
+    if not model_structure_path:
+        print("Error: --model-structure <path> is required")
+        sys.exit(1)
+
     # Check for joint mode
     if "--joint" in args:
         args.remove("--joint")
+
+        # Check for fixed-sigma flag
+        force_fixed_sigma = False
+        if "--fixed-sigma" in args:
+            args.remove("--fixed-sigma")
+            force_fixed_sigma = True
 
         # Check for output flag
         output_path = None
@@ -1304,8 +1479,8 @@ def main():
             args = args[:idx] + args[idx + 2 :]
 
         yaml_paths = args
-        builder = JointInferenceBuilder()
-        code = builder.build_from_files(yaml_paths)
+        builder = JointInferenceBuilder.from_model_structure_file(model_structure_path)
+        code = builder.build_from_files(yaml_paths, force_fixed_sigma=force_fixed_sigma)
 
         if output_path:
             with open(output_path, "w") as f:
@@ -1318,7 +1493,7 @@ def main():
         yaml_path = args[0]
         output_path = args[1] if len(args) > 1 else None
 
-        translator = JuliaTranslator()
+        translator = JuliaTranslator.from_model_structure_file(model_structure_path)
 
         if output_path:
             translator.generate_to_file(yaml_path, output_path)
