@@ -32,6 +32,8 @@ class CodeType(str, Enum):
     OBSERVABLE = "observable"
     DISTRIBUTION = "distribution"  # CalibrationTarget.distribution_code
     DERIVATION = "derivation"  # Legacy parameter derivation
+    ALGEBRAIC = "algebraic"  # AlgebraicModel.code (forward model: params -> observable)
+    MEASUREMENT_ERROR = "measurement_error"  # Measurement.measurement_error_code
 
 
 # Expected function signatures for each code type
@@ -41,6 +43,8 @@ EXPECTED_SIGNATURES: Dict[CodeType, Tuple[str, List[str]]] = {
     CodeType.OBSERVABLE: ("compute_observable", ["time", "species_dict", "constants", "ureg"]),
     CodeType.DISTRIBUTION: ("derive_distribution", ["inputs", "ureg"]),
     CodeType.DERIVATION: ("derive_parameter", ["inputs", "ureg"]),
+    CodeType.ALGEBRAIC: ("compute", ["params", "inputs", "ureg"]),
+    CodeType.MEASUREMENT_ERROR: ("derive_error", ["inputs", "ureg"]),
 }
 
 
@@ -403,6 +407,17 @@ class CodeValidator:
 
         elif code_type == CodeType.DERIVATION:
             # derive_parameter(inputs, ureg)
+            inputs = context.get("inputs", {})
+            return (inputs, ureg)
+
+        elif code_type == CodeType.ALGEBRAIC:
+            # compute(params, inputs, ureg)
+            params = context.get("params", {})
+            inputs = context.get("inputs", {})
+            return (params, inputs, ureg)
+
+        elif code_type == CodeType.MEASUREMENT_ERROR:
+            # derive_error(inputs, ureg)
             inputs = context.get("inputs", {})
             return (inputs, ureg)
 

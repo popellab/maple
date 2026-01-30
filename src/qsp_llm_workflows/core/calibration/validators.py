@@ -85,10 +85,178 @@ def fuzzy_match(str1: str, str2: str, threshold: float = 0.75) -> bool:
     return similarity >= threshold
 
 
+def text_to_number(text: str) -> int | None:
+    """
+    Convert text-encoded numbers to integers.
+
+    Args:
+        text: Text like "fifty-two", "twenty-three", or "one hundred"
+
+    Returns:
+        Integer value, or None if not recognized
+    """
+    ones = {
+        "zero": 0,
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+        "eleven": 11,
+        "twelve": 12,
+        "thirteen": 13,
+        "fourteen": 14,
+        "fifteen": 15,
+        "sixteen": 16,
+        "seventeen": 17,
+        "eighteen": 18,
+        "nineteen": 19,
+    }
+    tens = {
+        "twenty": 20,
+        "thirty": 30,
+        "forty": 40,
+        "fifty": 50,
+        "sixty": 60,
+        "seventy": 70,
+        "eighty": 80,
+        "ninety": 90,
+    }
+
+    text = text.lower().strip()
+
+    # Handle "hundred" patterns first
+    if "hundred" in text:
+        parts = text.replace("hundred", "").strip().split()
+
+        result = 0
+        i = 0
+
+        if i < len(parts):
+            multiplier = ones.get(parts[i], 1)
+            result = multiplier * 100
+            i += 1
+        else:
+            result = 100
+
+        remaining = " ".join(parts[i:])
+        if remaining:
+            if "-" in remaining:
+                sub_parts = remaining.split("-")
+                if len(sub_parts) == 2:
+                    ten_val = tens.get(sub_parts[0], 0)
+                    one_val = ones.get(sub_parts[1], 0)
+                    result += ten_val + one_val
+            elif remaining in ones:
+                result += ones[remaining]
+            elif remaining in tens:
+                result += tens[remaining]
+            else:
+                remaining_parts = remaining.split()
+                if len(remaining_parts) == 2:
+                    result += tens.get(remaining_parts[0], 0) + ones.get(remaining_parts[1], 0)
+                elif len(remaining_parts) == 1:
+                    result += ones.get(remaining_parts[0], 0) + tens.get(remaining_parts[0], 0)
+
+        return result if result > 0 else None
+
+    # Handle single words
+    if text in ones:
+        return ones[text]
+    if text in tens:
+        return tens[text]
+
+    # Handle hyphenated numbers like "fifty-two"
+    if "-" in text:
+        parts = text.split("-")
+        if len(parts) == 2:
+            ten_val = tens.get(parts[0], 0)
+            one_val = ones.get(parts[1], 0)
+            if ten_val > 0 or one_val > 0:
+                return ten_val + one_val
+
+    # Handle space-separated like "fifty two"
+    if " " in text:
+        parts = text.split()
+        if len(parts) == 2:
+            ten_val = tens.get(parts[0], 0)
+            one_val = ones.get(parts[1], 0)
+            if ten_val > 0 or one_val > 0:
+                return ten_val + one_val
+
+    return None
+
+
+def number_to_text(num: float) -> str | None:
+    """
+    Convert a number to text representation (limited to 0-999).
+
+    Args:
+        num: Numeric value
+
+    Returns:
+        Text representation, or None if not in supported range
+    """
+    if not isinstance(num, (int, float)) or num != int(num):
+        return None
+
+    num = int(num)
+
+    ones = {
+        0: "zero", 1: "one", 2: "two", 3: "three", 4: "four",
+        5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine",
+        10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen",
+        14: "fourteen", 15: "fifteen", 16: "sixteen", 17: "seventeen",
+        18: "eighteen", 19: "nineteen",
+    }
+    tens = {
+        20: "twenty", 30: "thirty", 40: "forty", 50: "fifty",
+        60: "sixty", 70: "seventy", 80: "eighty", 90: "ninety",
+    }
+
+    if 0 <= num <= 19:
+        return ones[num]
+
+    if 20 <= num <= 99:
+        tens_val = (num // 10) * 10
+        ones_val = num % 10
+        if ones_val == 0:
+            return tens[tens_val]
+        else:
+            return f"{tens[tens_val]}-{ones[ones_val]}"
+
+    if 100 <= num <= 999:
+        hundreds_val = num // 100
+        remainder = num % 100
+
+        result = f"{ones[hundreds_val]} hundred"
+
+        if remainder > 0:
+            if 0 <= remainder <= 19:
+                result += f" {ones[remainder]}"
+            elif 20 <= remainder <= 99:
+                tens_val = (remainder // 10) * 10
+                ones_val = remainder % 10
+                if ones_val == 0:
+                    result += f" {tens[tens_val]}"
+                else:
+                    result += f" {tens[tens_val]}-{ones[ones_val]}"
+
+        return result
+
+    return None
+
+
 def check_value_in_text(text: str, value: float) -> bool:
     """
     Check if numeric value appears in text.
-    Handles different formats: scientific notation, percentages, integers, etc.
+    Handles different formats: scientific notation, percentages, integers,
+    text-encoded numbers (e.g., "forty-five"), etc.
 
     Args:
         text: Text to search
@@ -212,6 +380,32 @@ def check_value_in_text(text: str, value: float) -> bool:
                 return True
         except ValueError:
             pass
+
+    # Check for text-encoded numbers (e.g., "forty-five" for 45)
+    # Only applicable for integer values
+    if value == int(value):
+        int_value = int(value)
+
+        # Generate text patterns for the value
+        text_pattern = number_to_text(value)
+        if text_pattern:
+            # Check lowercase, capitalized, and title case
+            for variant in [text_pattern, text_pattern.capitalize(), text_pattern.title()]:
+                if variant.lower() in text_norm:
+                    return True
+
+        # Also scan the text for word-form numbers and convert them
+        words = re.findall(r"\b[a-z]+(?:-[a-z]+)?\b", text_norm)
+        for i, word in enumerate(words):
+            text_num = text_to_number(word)
+            if text_num == int_value:
+                return True
+            # Try two-word combinations (e.g., "fifty two")
+            if i < len(words) - 1:
+                two_word = f"{word} {words[i+1]}"
+                text_num = text_to_number(two_word)
+                if text_num == int_value:
+                    return True
 
     return False
 
