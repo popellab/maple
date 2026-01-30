@@ -284,12 +284,12 @@ ParameterRole = Union[str, InputRef]
 
 
 # =============================================================================
-# CALIBRATION - MODEL TYPES (each with specific required parameters)
+# CALIBRATION - FORWARD MODEL TYPES (each with specific required parameters)
 # =============================================================================
 
 
-class BaseModelSpec(BaseModel):
-    """Base class for all model specifications."""
+class BaseForwardModelSpec(BaseModel):
+    """Base class for all forward model specifications."""
 
     data_rationale: str = Field(
         description="Why this model type fits the experimental data (assay design, conditions, readout)"
@@ -297,23 +297,32 @@ class BaseModelSpec(BaseModel):
     submodel_rationale: str = Field(
         description="Why this is a valid submodel of the full QSP model (which reactions, what assumptions)"
     )
+    # Fields moved from Calibration into forward_model
+    independent_variable: Optional["IndependentVariable"] = Field(
+        default=None,
+        description="Independent variable (required for ODE models)",
+    )
+    state_variables: Optional[List["StateVariable"]] = Field(
+        default=None,
+        description="State variables for ODE-based models",
+    )
 
 
-class FirstOrderDecayModel(BaseModelSpec):
+class FirstOrderDecayModel(BaseForwardModelSpec):
     """First-order decay: dy/dt = -k * y"""
 
     type: Literal["first_order_decay"] = "first_order_decay"
     rate_constant: ParameterRole = Field(description="Rate constant parameter name or input_ref")
 
 
-class ExponentialGrowthModel(BaseModelSpec):
+class ExponentialGrowthModel(BaseForwardModelSpec):
     """Exponential growth: dy/dt = k * y"""
 
     type: Literal["exponential_growth"] = "exponential_growth"
     rate_constant: ParameterRole = Field(description="Rate constant parameter name or input_ref")
 
 
-class LogisticModel(BaseModelSpec):
+class LogisticModel(BaseForwardModelSpec):
     """Logistic growth: dy/dt = k * y * (1 - y/K)"""
 
     type: Literal["logistic"] = "logistic"
@@ -325,7 +334,7 @@ class LogisticModel(BaseModelSpec):
     )
 
 
-class MichaelisMentenModel(BaseModelSpec):
+class MichaelisMentenModel(BaseForwardModelSpec):
     """Michaelis-Menten kinetics: dy/dt = -Vmax * y / (Km + y)"""
 
     type: Literal["michaelis_menten"] = "michaelis_menten"
@@ -333,7 +342,7 @@ class MichaelisMentenModel(BaseModelSpec):
     km: ParameterRole = Field(description="Michaelis constant parameter name or input_ref")
 
 
-class TwoStateModel(BaseModelSpec):
+class TwoStateModel(BaseForwardModelSpec):
     """Two-state transition: A → B with first-order kinetics.
 
     State variables: [A, B] where dA/dt = -k*A, dB/dt = +k*A
@@ -346,7 +355,7 @@ class TwoStateModel(BaseModelSpec):
     )
 
 
-class SaturationModel(BaseModelSpec):
+class SaturationModel(BaseForwardModelSpec):
     """First-order approach to saturation: dy/dt = k * (1 - y)
 
     State variable y approaches 1 asymptotically from below.
@@ -360,35 +369,65 @@ class SaturationModel(BaseModelSpec):
     )
 
 
-class DirectConversionModel(BaseModelSpec):
-    """Direct analytical conversion (no ODE): e.g., k = ln(2) / t_half"""
+class AlgebraicModel(BaseForwardModelSpec):
+    """Algebraic relationship between parameters and observable (no ODE).
 
-    type: Literal["direct_conversion"] = "direct_conversion"
-    formula: str = Field(description="Analytical formula (e.g., 'k = ln(2) / doubling_time')")
+    The `code` field implements the FORWARD model: given parameter values,
+    predict the observable. This is consistent with ODE models where the
+    model predicts trajectories from parameters.
+
+    Example for k = ln(2) / t_half:
+    - Parameter to infer: k (rate constant)
+    - Observable measured: t_half (half-life)
+    - Forward model: t_half = ln(2) / k
+
+    The inference engine finds parameters where the predicted observable
+    matches the measured data (within measurement error).
+
+    Use for:
+    - Single-parameter conversions: t_half = ln(2) / k
+    - Multi-parameter relationships: steady_state = k_prod / k_deg
+    - Any non-ODE formula connecting parameters to observables
+    """
+
+    type: Literal["algebraic"] = "algebraic"
+    formula: str = Field(
+        description="Descriptive formula showing the relationship "
+        "(e.g., 't_half = ln(2) / k' or 'C_ss = k_prod / k_deg')"
+    )
+    code: str = Field(
+        description="Python FORWARD model: given params, predict observable. "
+        "Signature: def compute(params: dict, inputs: dict, ureg) -> Quantity. "
+        "Example: return np.log(2) / params['k'] for predicting t_half from k."
+    )
+    code_julia: str = Field(
+        description="Julia FORWARD model for inference. "
+        "Signature: function compute(params::Dict, inputs::Dict) -> value"
+    )
 
 
-class DirectFitModel(BaseModelSpec):
+class DirectFitModel(BaseForwardModelSpec):
     """Direct curve fitting (no ODE): e.g., Hill equation for IC50"""
 
     type: Literal["direct_fit"] = "direct_fit"
     curve: CurveType = Field(description="Curve type to fit (hill, linear, exponential)")
 
 
-class CustomModel(BaseModelSpec):
-    """Custom ODE with user-provided code"""
+class CustomODEModel(BaseForwardModelSpec):
+    """Custom ODE with user-provided code."""
 
-    type: Literal["custom"] = "custom"
+    type: Literal["custom_ode"] = "custom_ode"
     code: str = Field(
         description="Python ODE function. Signature: def ode(t, y, params, inputs) -> dict"
     )
     code_julia: str = Field(
         description="Julia ODE function for inference. "
-        "Signature: function ode!(du, u, p, t) where du is modified in-place.",
+        "Signature: function ode!(du, u, p, t) where du is modified in-place."
     )
 
 
-# Discriminated union of all model types
-Model = Annotated[
+# Discriminated union of all forward model types
+ForwardModel = Annotated[
     Union[
         FirstOrderDecayModel,
         ExponentialGrowthModel,
@@ -396,12 +435,15 @@ Model = Annotated[
         MichaelisMentenModel,
         TwoStateModel,
         SaturationModel,
-        DirectConversionModel,
+        AlgebraicModel,
         DirectFitModel,
-        CustomModel,
+        CustomODEModel,
     ],
     Field(discriminator="type"),
 ]
+
+# Backwards compatibility alias
+Model = ForwardModel
 
 
 # =============================================================================
@@ -467,27 +509,34 @@ class Likelihood(BaseModel):
 
 
 # =============================================================================
-# CALIBRATION - MEASUREMENT
+# CALIBRATION - ERROR MODEL
 # =============================================================================
 
 
-class Measurement(BaseModel):
+class ErrorModel(BaseModel):
     """
-    A measurement to be used for calibration.
+    An error model entry specifying how to compare model predictions to data.
 
-    References inputs by name and specifies evaluation points for comparison.
-    evaluation_points units are inherited from independent_variable.units.
+    The error model describes:
+    - Which inputs from the data are used
+    - How to compute measurement error/uncertainty
+    - What likelihood to use for inference
+
+    For ODE models, evaluation_points specifies when to compare.
+    For algebraic models, evaluation_points is not needed.
     """
 
-    name: str = Field(description="Measurement name")
+    name: str = Field(description="Error model entry name")
     observable: Optional[Observable] = Field(
         default=None,
-        description="How to compute the observable from state variables",
+        description="How to compute the observable from state variables (for ODE models)",
     )
     units: str = Field(description="Units of the measurement")
     uses_inputs: List[str] = Field(description="Names of inputs that feed this measurement")
-    evaluation_points: List[float] = Field(
-        description="Points at which to evaluate the model (units from independent_variable)"
+    evaluation_points: Optional[List[float]] = Field(
+        default=None,
+        description="Points at which to evaluate the model (only for ODE models; "
+        "units from forward_model.independent_variable)",
     )
     sample_size: Optional[Union[int, List[int]]] = Field(
         default=None,
@@ -497,11 +546,23 @@ class Measurement(BaseModel):
         default=None,
         description="Rationale for sample size, especially if assumed or uncertain",
     )
-    distribution_code: Optional[str] = Field(
-        default=None,
-        description="Python code for uncertainty propagation. Signature: def derive_distribution(inputs, ureg) -> dict",
+    observation_code: str = Field(
+        description="Python code to derive the observation (point estimate + uncertainty) from inputs. "
+        "Signature: def derive_observation(inputs, sample_size, ureg) -> dict. "
+        "Required return keys: "
+        "'value' (Pint Quantity with units matching error_model.units), "
+        "'sd' (measurement uncertainty - dimensionless for lognormal, units for normal). "
+        "Optional return keys: "
+        "'sd_uncertain' (bool - if True, inference adds prior on SD), "
+        "'n' (int - sample size for reference). "
+        "Use to compile literature data (ranges, CIs, multiple values) into a point estimate "
+        "and characterize how uncertain that observation is."
     )
     likelihood: Likelihood = Field(description="Likelihood specification")
+
+
+# Backwards compatibility alias
+Measurement = ErrorModel
 
 
 # =============================================================================
@@ -513,26 +574,48 @@ class Calibration(BaseModel):
     """
     Everything needed for inference code generation.
 
-    Contains parameters, state variables, model, independent variable, and measurements.
+    Contains:
+    - parameters: What we're inferring
+    - forward_model: Physics/math that maps parameters to predictions
+      (includes state_variables and independent_variable for ODE models)
+    - error_model: Statistics that maps predictions + data to likelihood
+    - identifiability_notes: What can/can't be learned from this data
     """
 
     parameters: List[Parameter] = Field(description="Parameters to estimate during inference")
-    state_variables: Optional[List[StateVariable]] = Field(
-        default=None,
-        description="State variables for ODE-based models",
+    forward_model: ForwardModel = Field(
+        description="Forward model specification (physics/math: params → predictions). "
+        "Includes state_variables and independent_variable for ODE models."
     )
-    model: Model = Field(description="Mathematical model specification")
-    independent_variable: Optional[IndependentVariable] = Field(
-        default=None,
-        description="Independent variable (required for ODE models)",
-    )
-    measurements: List[Measurement] = Field(
-        description="Measurements for calibration",
+    error_model: List[ErrorModel] = Field(
+        description="Error model entries specifying how to compare predictions to data "
+        "(statistics: predicted observable → likelihood)",
     )
     identifiability_notes: str = Field(
         description="Discussion of parameter identifiability: which parameters are constrained, "
         "which are correlated, what additional data would be needed"
     )
+
+    # Backwards compatibility properties
+    @property
+    def model(self) -> ForwardModel:
+        """Backwards compatibility: access forward_model as model."""
+        return self.forward_model
+
+    @property
+    def measurements(self) -> List[ErrorModel]:
+        """Backwards compatibility: access error_model as measurements."""
+        return self.error_model
+
+    @property
+    def state_variables(self) -> Optional[List[StateVariable]]:
+        """Backwards compatibility: access forward_model.state_variables."""
+        return self.forward_model.state_variables
+
+    @property
+    def independent_variable(self) -> Optional[IndependentVariable]:
+        """Backwards compatibility: access forward_model.independent_variable."""
+        return self.forward_model.independent_variable
 
 
 # =============================================================================
@@ -949,6 +1032,294 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_observable_type_code_consistency(self) -> "SubmodelTarget":
+        """
+        Validate that observable type and code presence are consistent.
+
+        - type="custom" REQUIRES code to be present
+        - type="identity" FORBIDS code (uses first state variable directly)
+        """
+        errors = []
+
+        for entry in self.calibration.error_model:
+            if not entry.observable:
+                continue
+
+            obs = entry.observable
+
+            if obs.type == ObservableType.CUSTOM:
+                if not obs.code:
+                    errors.append(
+                        f"Error model '{entry.name}': observable type is 'custom' but "
+                        f"no code is provided. Custom observables require a compute function."
+                    )
+            elif obs.type == ObservableType.IDENTITY:
+                if obs.code:
+                    errors.append(
+                        f"Error model '{entry.name}': observable type is 'identity' but "
+                        f"code is provided. Identity observables use the first state variable "
+                        f"directly - remove the code or change type to 'custom'."
+                    )
+
+        if errors:
+            raise ValueError(
+                "Observable type/code consistency errors:\n  - " + "\n  - ".join(errors)
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_algebraic_model_no_observable(self) -> "SubmodelTarget":
+        """
+        Warn if algebraic models have observable defined in error_model.
+
+        For algebraic models, the forward_model.code directly computes the predicted
+        observable, so having a separate observable.code is redundant and confusing.
+        The observable field is designed for ODE models where state variables need
+        to be transformed into measured quantities.
+        """
+        model = self.calibration.model
+        if model.type != "algebraic":
+            return self
+
+        for entry in self.calibration.error_model:
+            if entry.observable and entry.observable.code:
+                warnings.warn(
+                    f"Error model '{entry.name}' has observable.code but forward_model "
+                    f"is 'algebraic'.\n\n"
+                    f"For algebraic models, forward_model.code directly computes the "
+                    f"predicted observable. The observable.code field is for ODE models "
+                    f"where state variables need transformation.\n\n"
+                    f"Consider:\n"
+                    f"  1. Remove observable.code (use forward_model.code output directly)\n"
+                    f"  2. If transformation is needed, incorporate it into forward_model.code\n"
+                    f"  3. Set observable to None or use type='identity'",
+                    UserWarning,
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_observable_code_signature(self) -> "SubmodelTarget":
+        """
+        Validate that custom observable code has the correct function signature.
+
+        For ODE models with custom observables:
+        - Expected: def compute(t, y, y_start) -> float
+
+        The signature allows computing derived quantities from:
+        - t: time point (for time-dependent observables)
+        - y: current state vector (state values at time t)
+        - y_start: initial state vector (for fold-change calculations)
+        """
+        import ast
+
+        errors = []
+
+        for entry in self.calibration.error_model:
+            if not entry.observable or not entry.observable.code:
+                continue
+
+            obs = entry.observable
+
+            try:
+                tree = ast.parse(obs.code)
+                func_defs = [
+                    node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                ]
+
+                if not func_defs:
+                    # No function found - handled by validate_custom_code_syntax
+                    continue
+
+                func = func_defs[0]
+                if func.name != "compute":
+                    # Wrong name - handled by validate_custom_code_syntax
+                    continue
+
+                # Check argument count
+                n_args = len(func.args.args)
+
+                # For ODE models, expect (t, y, y_start) = 3 args
+                # For algebraic models, we've already warned, but if they have code,
+                # it might use (inputs) = 1 arg pattern
+                model_type = self.calibration.model.type
+
+                if model_type in {
+                    "first_order_decay",
+                    "exponential_growth",
+                    "logistic",
+                    "michaelis_menten",
+                    "two_state",
+                    "saturation",
+                    "custom_ode",
+                }:
+                    if n_args != 3:
+                        errors.append(
+                            f"Error model '{entry.name}': observable.code compute() has "
+                            f"{n_args} argument(s), expected 3 (t, y, y_start) for ODE models.\n"
+                            f"Signature should be: def compute(t, y, y_start) -> float"
+                        )
+                # For algebraic models, we've already issued a warning about having
+                # observable.code at all, so don't add noise about signature
+
+            except SyntaxError:
+                # Syntax errors handled by validate_custom_code_syntax
+                pass
+
+        if errors:
+            raise ValueError(
+                "Observable code signature errors:\n  - " + "\n  - ".join(errors)
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_observation_sd_units_for_likelihood(self) -> "SubmodelTarget":
+        """
+        Validate that observation_code SD units match the likelihood type.
+
+        - For normal/truncated_normal likelihoods: SD must have same units as measurement
+        - For lognormal/beta likelihoods: SD should be dimensionless (log-scale or [0,1])
+
+        This prevents unit mismatches that cause inference failures.
+        """
+        from qsp_llm_workflows.core.unit_registry import ureg
+        import numpy as np
+
+        # Build inputs dict with units
+        inputs_dict = {}
+        for inp in self.inputs:
+            try:
+                inputs_dict[inp.name] = inp.value * ureg(inp.units)
+            except Exception:
+                inputs_dict[inp.name] = inp.value
+
+        errors = []
+
+        for entry in self.calibration.error_model:
+            if not entry.observation_code:
+                continue
+
+            # Determine what SD units should be based on likelihood
+            likelihood_dist = entry.likelihood.distribution.lower()
+
+            # Likelihoods that operate on log-scale or normalized scale
+            dimensionless_likelihoods = {"lognormal", "beta", "dirichlet"}
+
+            # Likelihoods that operate in measurement units
+            measurement_scale_likelihoods = {
+                "normal",
+                "truncated_normal",
+                "student_t",
+                "half_normal",
+                "exponential",
+            }
+
+            try:
+                # Execute observation_code
+                local_scope = {"np": np, "numpy": np, "ureg": ureg}
+                exec(entry.observation_code, local_scope)
+                derive_observation = local_scope.get("derive_observation")
+
+                if derive_observation is None:
+                    continue
+
+                result = derive_observation(inputs_dict, entry.sample_size, ureg)
+                if not isinstance(result, dict) or "sd" not in result:
+                    continue
+
+                sd = result["sd"]
+                sd_has_units = hasattr(sd, "dimensionality")
+                sd_is_dimensionless = (
+                    not sd_has_units
+                    or (sd_has_units and sd.dimensionless)
+                )
+
+                expected_units = ureg(entry.units)
+                measurement_is_dimensionless = expected_units.dimensionless
+
+                if likelihood_dist in dimensionless_likelihoods:
+                    # SD should be dimensionless for log/normalized likelihoods
+                    if sd_has_units and not sd.dimensionless:
+                        errors.append(
+                            f"Error model '{entry.name}': likelihood is '{likelihood_dist}' "
+                            f"(operates on log/normalized scale) but derive_observation() returns "
+                            f"SD with units '{sd.units}'.\n"
+                            f"For {likelihood_dist} likelihoods, SD should be dimensionless.\n"
+                            f"Fix: return SD without units or as ureg.dimensionless"
+                        )
+
+                elif likelihood_dist in measurement_scale_likelihoods:
+                    # SD should match measurement units
+                    if not measurement_is_dimensionless:
+                        if sd_is_dimensionless:
+                            errors.append(
+                                f"Error model '{entry.name}': likelihood is '{likelihood_dist}' "
+                                f"but derive_observation() returns dimensionless SD.\n"
+                                f"Measurement has units '{entry.units}', so SD must also have "
+                                f"units.\n"
+                                f"Fix: return SD with units, e.g., "
+                                f"`'sd': value * ureg('{entry.units}')`"
+                            )
+                        elif sd_has_units:
+                            if sd.dimensionality != expected_units.dimensionality:
+                                errors.append(
+                                    f"Error model '{entry.name}': SD units ({sd.units}) don't "
+                                    f"match measurement units ({entry.units}).\n"
+                                    f"For {likelihood_dist} likelihood, SD must be in the same "
+                                    f"units as the measurement."
+                                )
+
+            except Exception:
+                # Execution errors handled by other validators
+                pass
+
+        if errors:
+            raise ValueError(
+                "Measurement error SD units / likelihood type mismatch:\n  - "
+                + "\n  - ".join(errors)
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_evaluation_points_within_span(self) -> "SubmodelTarget":
+        """
+        Validate that evaluation_points fall within independent_variable.span.
+
+        For ODE models, evaluation_points specify when to compare model to data.
+        These should be within the integration span, otherwise the ODE solver
+        won't have values at those points.
+        """
+        iv = self.calibration.independent_variable
+        if iv is None or iv.span is None:
+            return self  # Non-ODE models don't have span
+
+        t_start, t_end = iv.span
+        errors = []
+
+        for entry in self.calibration.error_model:
+            if entry.evaluation_points is None:
+                continue
+
+            for i, t in enumerate(entry.evaluation_points):
+                if t < t_start or t > t_end:
+                    errors.append(
+                        f"Error model '{entry.name}': evaluation_point[{i}] = {t} is outside "
+                        f"independent_variable.span [{t_start}, {t_end}]"
+                    )
+
+        if errors:
+            raise ValueError(
+                "Evaluation points outside integration span:\n  - " + "\n  - ".join(errors)
+                + f"\n\nAdjust evaluation_points to be within [{t_start}, {t_end}] "
+                f"or extend independent_variable.span."
+            )
+
+        return self
+
+    @model_validator(mode="after")
     def validate_ode_model_requirements(self) -> "SubmodelTarget":
         """
         Validate that ODE-based models have required state_variables and span.
@@ -982,6 +1353,13 @@ class SubmodelTarget(BaseModel):
         elif not self.calibration.independent_variable.span:
             errors.append(f"Model type '{model_type}' requires independent_variable.span")
 
+        # Check that ODE models have evaluation_points in error_model
+        for entry in self.calibration.error_model:
+            if entry.evaluation_points is None:
+                errors.append(
+                    f"Error model '{entry.name}' requires evaluation_points for ODE model type '{model_type}'"
+                )
+
         if errors:
             raise ValueError("Missing required fields for ODE model:\n  - " + "\n  - ".join(errors))
 
@@ -993,30 +1371,45 @@ class SubmodelTarget(BaseModel):
         Validate syntax and function signature for custom code blocks.
 
         Checks:
-        - CustomModel.code has 'def ode(t, y, params)'
+        - CustomODEModel.code has 'def ode(t, y, params, inputs)'
+        - AlgebraicModel.code has 'def compute(params, inputs, ureg)'
         - Custom observable.code has 'def compute(t, y, y_start)'
-        - distribution_code has 'def derive_distribution(inputs, ureg)'
+        - observation_code has 'def derive_observation(inputs, sample_size, ureg)'
         """
         import ast
 
         errors = []
 
-        # Check CustomModel.code
+        # Check model.code based on model type
         model = self.calibration.model
         if hasattr(model, "code") and model.code:
             try:
                 tree = ast.parse(model.code)
                 # Find function definition
                 func_defs = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
-                if not func_defs:
-                    errors.append("CustomModel.code must define a function 'ode'")
-                elif func_defs[0].name != "ode":
-                    errors.append(
-                        f"CustomModel.code function must be named 'ode', "
-                        f"got '{func_defs[0].name}'"
-                    )
+
+                # Determine expected function name based on model type
+                if model.type == "custom_ode":
+                    expected_func = "ode"
+                    model_name = "CustomODEModel"
+                elif model.type == "algebraic":
+                    expected_func = "compute"
+                    model_name = "AlgebraicModel"
+                else:
+                    # Other model types with code - skip validation
+                    expected_func = None
+                    model_name = None
+
+                if expected_func is not None:
+                    if not func_defs:
+                        errors.append(f"{model_name}.code must define a function '{expected_func}'")
+                    elif func_defs[0].name != expected_func:
+                        errors.append(
+                            f"{model_name}.code function must be named '{expected_func}', "
+                            f"got '{func_defs[0].name}'"
+                        )
             except SyntaxError as e:
-                errors.append(f"CustomModel.code syntax error: {e}")
+                errors.append(f"Model code syntax error: {e}")
 
         # Check custom observable code
         for measurement in self.calibration.measurements:
@@ -1041,30 +1434,311 @@ class SubmodelTarget(BaseModel):
                         f"Measurement '{measurement.name}' observable.code syntax error: {e}"
                     )
 
-            # Check distribution_code
-            if measurement.distribution_code:
+            # Check observation_code
+            if measurement.observation_code:
                 try:
-                    tree = ast.parse(measurement.distribution_code)
+                    tree = ast.parse(measurement.observation_code)
                     func_defs = [
                         node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
                     ]
                     if not func_defs:
                         errors.append(
-                            f"Measurement '{measurement.name}' distribution_code "
-                            f"must define a function 'derive_distribution'"
+                            f"Error model '{measurement.name}' observation_code "
+                            f"must define a function 'derive_observation'"
                         )
-                    elif func_defs[0].name != "derive_distribution":
+                    elif func_defs[0].name != "derive_observation":
                         errors.append(
-                            f"Measurement '{measurement.name}' distribution_code function "
-                            f"must be named 'derive_distribution', got '{func_defs[0].name}'"
+                            f"Error model '{measurement.name}' observation_code function "
+                            f"must be named 'derive_observation', got '{func_defs[0].name}'"
                         )
+                    else:
+                        # Check argument count: should be (inputs, sample_size, ureg)
+                        n_args = len(func_defs[0].args.args)
+                        if n_args != 3:
+                            errors.append(
+                                f"Error model '{measurement.name}' observation_code function "
+                                f"'derive_observation' must have 3 arguments (inputs, sample_size, ureg), "
+                                f"got {n_args}"
+                            )
                 except SyntaxError as e:
                     errors.append(
-                        f"Measurement '{measurement.name}' distribution_code syntax error: {e}"
+                        f"Error model '{measurement.name}' observation_code syntax error: {e}"
                     )
 
         if errors:
             raise ValueError("Code validation errors:\n  - " + "\n  - ".join(errors))
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_observation_code_execution(self) -> "SubmodelTarget":
+        """
+        Execute observation_code and validate return value structure.
+
+        The observation_code compiles literature data into:
+        - A point estimate ('value') for comparison with forward model prediction
+        - Measurement uncertainty ('sd') for the likelihood
+
+        Expected return structure:
+        - 'value': Pint Quantity (required) - the observed point estimate
+        - 'sd': float or Quantity (required) - measurement uncertainty
+        - 'sd_uncertain': bool (optional) - if True, inference adds prior on SD
+        - 'n': int (optional) - sample size for reference
+
+        See: https://mc-stan.org/docs/stan-users-guide/measurement-error.html
+        """
+        from qsp_llm_workflows.core.unit_registry import ureg
+        import numpy as np
+
+        errors = []
+
+        # Build inputs dict from self.inputs
+        inputs_dict = {}
+        for inp in self.inputs:
+            inputs_dict[inp.name] = inp.value * ureg(inp.units)
+
+        for entry in self.calibration.error_model:
+            if not entry.observation_code:
+                continue
+
+            try:
+                # Compile and execute
+                local_scope = {"np": np, "numpy": np, "ureg": ureg}
+                exec(entry.observation_code, local_scope)
+                derive_observation = local_scope.get("derive_observation")
+
+                if derive_observation is None:
+                    errors.append(
+                        f"Error model '{entry.name}': observation_code "
+                        f"did not define 'derive_observation' function"
+                    )
+                    continue
+
+                # Execute with inputs and sample_size
+                result = derive_observation(inputs_dict, entry.sample_size, ureg)
+
+                # Validate return structure is dict
+                if not isinstance(result, dict):
+                    errors.append(
+                        f"Error model '{entry.name}': derive_observation must return dict, "
+                        f"got {type(result).__name__}"
+                    )
+                    continue
+
+                # Check required 'value' key
+                if "value" not in result:
+                    errors.append(
+                        f"Error model '{entry.name}': derive_observation must return dict "
+                        f"with 'value' key, got keys: {list(result.keys())}"
+                    )
+                else:
+                    # Validate 'value' is a Pint Quantity
+                    value = result["value"]
+                    if not hasattr(value, "magnitude") or not hasattr(value, "units"):
+                        errors.append(
+                            f"Error model '{entry.name}': 'value' must be a Pint Quantity, "
+                            f"got {type(value).__name__}. Example: return {{'value': x * ureg('pg/mL'), ...}}"
+                        )
+                    else:
+                        # Validate units match error_model.units
+                        expected_units = ureg(entry.units)
+                        if value.dimensionality != expected_units.dimensionality:
+                            errors.append(
+                                f"Error model '{entry.name}': 'value' has units '{value.units}' "
+                                f"but error_model.units is '{entry.units}'. Dimensionality mismatch."
+                            )
+
+                # Check required 'sd' key
+                if "sd" not in result:
+                    errors.append(
+                        f"Error model '{entry.name}': derive_observation must return dict "
+                        f"with 'sd' key, got keys: {list(result.keys())}"
+                    )
+                else:
+                    # Validate sd is positive
+                    sd = result["sd"]
+                    sd_value = sd.magnitude if hasattr(sd, "magnitude") else sd
+                    if not isinstance(sd_value, (int, float)):
+                        errors.append(
+                            f"Error model '{entry.name}': 'sd' must be numeric, "
+                            f"got {type(sd_value).__name__}"
+                        )
+                    elif sd_value <= 0:
+                        errors.append(
+                            f"Error model '{entry.name}': 'sd' must be positive, got {sd_value}"
+                        )
+
+                # Validate optional 'sd_uncertain' is bool if present
+                if "sd_uncertain" in result:
+                    if not isinstance(result["sd_uncertain"], bool):
+                        errors.append(
+                            f"Error model '{entry.name}': 'sd_uncertain' must be bool, "
+                            f"got {type(result['sd_uncertain']).__name__}"
+                        )
+
+                # Validate optional 'n' is positive int if present
+                if "n" in result:
+                    n = result["n"]
+                    if not isinstance(n, int) or n <= 0:
+                        errors.append(
+                            f"Error model '{entry.name}': 'n' must be positive int, "
+                            f"got {n}"
+                        )
+
+            except Exception as e:
+                errors.append(
+                    f"Error model '{entry.name}': observation_code execution error: {e}"
+                )
+
+        if errors:
+            raise ValueError(
+                "observation_code validation errors:\n  - " + "\n  - ".join(errors)
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def warn_multi_param_algebraic_identifiability(self) -> "SubmodelTarget":
+        """
+        Warn when AlgebraicModel has more parameters than measurement points.
+
+        For algebraic models, N parameters generally require N independent
+        constraints to be identifiable. This validator warns when the number
+        of parameters exceeds the number of measurement points, suggesting
+        potential identifiability issues.
+        """
+        model = self.calibration.model
+        if model.type != "algebraic":
+            return self
+
+        n_params = len(self.calibration.parameters)
+        # For algebraic models, count 1 per error_model entry (no evaluation_points needed)
+        n_measurements = sum(
+            len(m.evaluation_points) if m.evaluation_points else 1
+            for m in self.calibration.error_model
+        )
+
+        if n_params > n_measurements:
+            warnings.warn(
+                f"AlgebraicModel has {n_params} parameters but only {n_measurements} "
+                f"measurement point(s). This may indicate identifiability issues.\n"
+                f"Consider:\n"
+                f"  - Using an ODE model with time-course data to separate parameters\n"
+                f"  - Adding additional measurement points/conditions\n"
+                f"  - Documenting which parameter combinations are identifiable in "
+                f"identifiability_notes",
+                UserWarning,
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def warn_unused_parameters_in_algebraic_code(self) -> "SubmodelTarget":
+        """
+        Warn when AlgebraicModel.code doesn't reference all defined parameters.
+
+        If a parameter is defined in calibration.parameters but not used in the
+        forward model code, it's likely a bug (copy-paste error, forgotten parameter).
+        Uses simple string matching - not perfect but catches most cases.
+        """
+        model = self.calibration.model
+        if model.type != "algebraic":
+            return self
+
+        if not hasattr(model, "code") or not model.code:
+            return self
+
+        param_names = [p.name for p in self.calibration.parameters]
+        unused_params = []
+
+        for param_name in param_names:
+            # Check if parameter name appears in code (as string key access)
+            # Common patterns: params['k_test'], params["k_test"], params.get('k_test')
+            if param_name not in model.code:
+                unused_params.append(param_name)
+
+        if unused_params:
+            warnings.warn(
+                f"AlgebraicModel.code does not reference parameter(s): {unused_params}\n"
+                f"Defined parameters: {param_names}\n"
+                f"If these parameters are intentionally unused, consider removing them "
+                f"from calibration.parameters.",
+                UserWarning,
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def warn_observation_sd_unreasonable(self) -> "SubmodelTarget":
+        """
+        Warn when observation SD is unreasonably large or small.
+
+        Compares the SD from observation_code to the magnitude of the
+        observed value. Warns if SD is >100x or <0.001x the observed value,
+        which often indicates a units mismatch or typo.
+        """
+        from qsp_llm_workflows.core.unit_registry import ureg
+        import numpy as np
+
+        # Build inputs dict
+        inputs_dict = {}
+        for inp in self.inputs:
+            try:
+                inputs_dict[inp.name] = inp.value * ureg(inp.units)
+            except Exception:
+                inputs_dict[inp.name] = inp.value
+
+        for entry in self.calibration.error_model:
+            if not entry.observation_code:
+                continue
+
+            # Skip this check for lognormal/beta likelihoods where SD is dimensionless
+            # and comparing to dimensional observed values doesn't make sense
+            likelihood_dist = entry.likelihood.distribution.lower()
+            if likelihood_dist in {"lognormal", "beta", "dirichlet"}:
+                continue
+
+            try:
+                # Execute observation_code
+                local_scope = {"np": np, "numpy": np, "ureg": ureg}
+                exec(entry.observation_code, local_scope)
+                derive_observation = local_scope.get("derive_observation")
+                if derive_observation is None:
+                    continue
+
+                result = derive_observation(inputs_dict, entry.sample_size, ureg)
+                if not isinstance(result, dict) or "sd" not in result or "value" not in result:
+                    continue
+
+                sd = result["sd"]
+                sd_value = sd.magnitude if hasattr(sd, "magnitude") else sd
+
+                observed = result["value"]
+                observed_value = observed.magnitude if hasattr(observed, "magnitude") else observed
+
+                if observed_value == 0:
+                    continue
+
+                ratio = sd_value / abs(observed_value)
+
+                if ratio > 100:
+                    warnings.warn(
+                        f"Error model '{entry.name}': SD ({sd_value:.2e}) is {ratio:.0f}x "
+                        f"larger than observed value ({observed_value:.2e}).\n"
+                        f"This may indicate a units mismatch. Check observation_code.",
+                        UserWarning,
+                    )
+                elif ratio < 0.001:
+                    warnings.warn(
+                        f"Error model '{entry.name}': SD ({sd_value:.2e}) is {1/ratio:.0f}x "
+                        f"smaller than observed value ({observed_value:.2e}).\n"
+                        f"This may indicate a units mismatch or overly confident error estimate.",
+                        UserWarning,
+                    )
+
+            except Exception:
+                # Don't warn on execution errors - other validators handle that
+                pass
 
         return self
 
@@ -1317,38 +1991,157 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_distribution_code_required_with_formula(self) -> "SubmodelTarget":
+    def validate_algebraic_model_output_units(self) -> "SubmodelTarget":
         """
-        Validate that distribution_code is provided when model has a formula.
+        Validate that AlgebraicModel.code output has correct units.
 
-        For direct_conversion models with a formula, the measurement must have
-        distribution_code to implement the unit conversion. Without it, the
-        julia_translator will use the raw input value, which may be in wrong units.
-
-        This catches cases like k_CCL2_sec where formula specifies a unit conversion
-        but no distribution_code implements it, leading to ~10 order of magnitude errors.
+        Executes the forward model with sample parameter values and checks
+        that the returned Quantity has units compatible with measurement.units.
+        This catches bugs where the forward model returns wrong dimensionality.
         """
         model = self.calibration.model
-
-        # Only applies to direct_conversion models with formula
-        if not isinstance(model, DirectConversionModel):
+        if model.type != "algebraic":
             return self
 
-        # Check if any measurement has distribution_code
-        has_distribution_code = any(
-            m.distribution_code is not None for m in self.calibration.measurements
-        )
+        if not hasattr(model, "code") or not model.code:
+            return self
 
-        if not has_distribution_code:
-            raise ValueError(
-                f"Model type is 'direct_conversion' with formula:\n"
-                f"  {model.formula}\n\n"
-                f"But no measurement has distribution_code to implement this conversion.\n"
-                f"Without distribution_code, the raw input value will be used as the observation,\n"
-                f"which may be in different units than the target parameter.\n\n"
-                f"Fix: Add distribution_code to the measurement that implements the formula,\n"
-                f"converting input units to parameter units."
+        from qsp_llm_workflows.core.unit_registry import ureg
+        from qsp_llm_workflows.core.calibration.submodel_utils import get_prior_median
+        import numpy as np
+
+        # Build params dict with prior medians
+        params = {}
+        for param in self.calibration.parameters:
+            median = get_prior_median(param.prior)
+            if median is not None:
+                params[param.name] = median
+
+        if not params:
+            return self  # Can't test without parameter values
+
+        # Build inputs dict with units
+        inputs_dict = {}
+        for inp in self.inputs:
+            try:
+                inputs_dict[inp.name] = inp.value * ureg(inp.units)
+            except Exception:
+                inputs_dict[inp.name] = inp.value
+
+        # Execute forward model
+        try:
+            local_scope = {"np": np, "numpy": np, "ureg": ureg}
+            exec(model.code, local_scope)
+            compute_fn = local_scope.get("compute")
+
+            if compute_fn is None:
+                return self  # Syntax validator handles this
+
+            result = compute_fn(params, inputs_dict, ureg)
+
+            # Check if result has units
+            if not hasattr(result, "dimensionality"):
+                # Result is dimensionless or raw number - check against measurement
+                for measurement in self.calibration.measurements:
+                    expected_units = ureg(measurement.units)
+                    if expected_units.dimensionless:
+                        continue  # OK - both dimensionless
+                    warnings.warn(
+                        f"AlgebraicModel.code returns dimensionless value, but "
+                        f"measurement '{measurement.name}' expects units '{measurement.units}'.\n"
+                        f"The forward model should return a Pint Quantity with correct units.",
+                        UserWarning,
+                    )
+                return self
+
+            # Check dimensionality matches measurement
+            for measurement in self.calibration.measurements:
+                try:
+                    expected_units = ureg(measurement.units)
+                    if result.dimensionality != expected_units.dimensionality:
+                        raise ValueError(
+                            f"AlgebraicModel.code output units mismatch:\n"
+                            f"  Forward model returns: {result.units} "
+                            f"(dimensionality: {result.dimensionality})\n"
+                            f"  Measurement '{measurement.name}' expects: {measurement.units} "
+                            f"(dimensionality: {expected_units.dimensionality})\n"
+                            f"Check that the forward model formula produces the correct units."
+                        )
+                except ValueError:
+                    raise
+                except Exception:
+                    pass  # Unit parsing issues handled elsewhere
+
+        except ValueError:
+            raise
+        except Exception as e:
+            # Execution errors - don't fail validation, other validators handle this
+            warnings.warn(
+                f"Could not validate AlgebraicModel.code output units: {e}",
+                UserWarning,
             )
+
+        return self
+
+    # NOTE: validate_measurement_error_sd_units was removed and replaced by
+    # validate_measurement_error_sd_units_for_likelihood which properly considers
+    # the likelihood type (lognormal SD should be dimensionless, normal SD should
+    # have measurement units).
+
+    @model_validator(mode="after")
+    def warn_input_measurement_unit_mismatch(self) -> "SubmodelTarget":
+        """
+        Warn when input units don't match measurement units.
+
+        For simple cases (no conversion in code), the inputs used by a measurement
+        should have the same units as the measurement. Warns if there's a mismatch,
+        though some mismatches are intentional (code does the conversion).
+        """
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        # Build input lookup
+        input_map = {inp.name: inp for inp in self.inputs}
+
+        for measurement in self.calibration.measurements:
+            try:
+                expected_units = ureg(measurement.units)
+            except Exception:
+                continue  # Invalid units handled elsewhere
+
+            for input_name in measurement.uses_inputs:
+                inp = input_map.get(input_name)
+                if not inp:
+                    continue  # Missing input handled elsewhere
+
+                try:
+                    input_units = ureg(inp.units)
+
+                    if input_units.dimensionality != expected_units.dimensionality:
+                        # Check if this is an AlgebraicModel (conversion expected)
+                        model = self.calibration.model
+                        if model.type == "algebraic":
+                            # For algebraic models, mismatch might be intentional
+                            # (the code does the conversion)
+                            warnings.warn(
+                                f"Input '{inp.name}' has units '{inp.units}' but "
+                                f"measurement '{measurement.name}' expects '{measurement.units}'.\n"
+                                f"If AlgebraicModel.code converts between these units, this is OK.\n"
+                                f"Otherwise, check for unit errors.",
+                                UserWarning,
+                            )
+                        else:
+                            # For ODE/other models, this is more likely an error
+                            warnings.warn(
+                                f"Input '{inp.name}' has units '{inp.units}' "
+                                f"(dimensionality: {input_units.dimensionality}) but "
+                                f"measurement '{measurement.name}' expects '{measurement.units}' "
+                                f"(dimensionality: {expected_units.dimensionality}).\n"
+                                f"Check for unit conversion errors.",
+                                UserWarning,
+                            )
+
+                except Exception:
+                    pass  # Unit parsing issues handled elsewhere
 
         return self
 
@@ -1388,60 +2181,34 @@ class SubmodelTarget(BaseModel):
         if prior_median is None:
             return self
 
-        # Build inputs dict
+        # Build inputs dict with units
+        inputs_dict = {}
+        for inp in self.inputs:
+            inputs_dict[inp.name] = inp.value * ureg(inp.units)
         input_values = {inp.name: inp.value for inp in self.inputs}
 
-        # Get observation from first measurement
+        # Get observation from observation_code
+        entry = self.calibration.error_model[0] if self.calibration.error_model else None
         obs_median = None
-        measurement = self.calibration.measurements[0] if self.calibration.measurements else None
 
-        if measurement:
-            if measurement.distribution_code:
-                # Execute distribution_code to get observation
-                try:
-                    inputs_pint = {}
-                    for inp in self.inputs:
-                        try:
-                            inputs_pint[inp.name] = inp.value * ureg(inp.units)
-                        except Exception:
-                            inputs_pint[inp.name] = inp.value
-
-                    local_scope = {"ureg": ureg, "np": np}
-                    exec(measurement.distribution_code, local_scope)
-                    derive_fn = local_scope.get("derive_distribution")
-
-                    if derive_fn:
-                        result = derive_fn(inputs_pint, ureg)
-                        if isinstance(result, dict) and "median" in result:
-                            obs_median = result["median"]
-                            if hasattr(obs_median, "__iter__"):
-                                obs_median = list(obs_median)[0]
-                            if hasattr(obs_median, "magnitude"):
-                                obs_median = obs_median.magnitude
-                except Exception as e:
-                    raise ValueError(
-                        f"Prior predictive check failed: distribution_code execution error.\n"
-                        f"  Error: {e}\n\n"
-                        f"Fix the distribution_code or check that all inputs are defined."
-                    ) from e
-            else:
-                # No distribution_code - use first input value directly
-                if measurement.uses_inputs:
-                    first_input = next(
-                        (inp for inp in self.inputs if inp.name == measurement.uses_inputs[0]),
-                        None,
-                    )
-                    if first_input:
-                        obs_median = first_input.value
+        if entry and entry.observation_code:
+            try:
+                local_scope = {"np": np, "numpy": np, "ureg": ureg}
+                exec(entry.observation_code, local_scope)
+                derive_observation = local_scope.get("derive_observation")
+                if derive_observation:
+                    result = derive_observation(inputs_dict, entry.sample_size, ureg)
+                    if isinstance(result, dict) and "value" in result:
+                        value = result["value"]
+                        obs_median = value.magnitude if hasattr(value, "magnitude") else value
+            except Exception:
+                pass  # Fall through to error below
 
         if obs_median is None:
             raise ValueError(
                 f"Prior predictive check failed: could not extract observation value.\n"
-                f"  Measurement: {measurement.name if measurement else 'None'}\n\n"
-                f"Check that:\n"
-                f"  - Measurement has uses_inputs defined\n"
-                f"  - Input names in uses_inputs match actual input names\n"
-                f"  - distribution_code returns dict with 'median' key"
+                f"  Error model: {entry.name if entry else 'None'}\n\n"
+                f"Check that observation_code returns {{'value': <Quantity>, 'sd': ...}}"
             )
 
         if obs_median == 0:
@@ -1455,7 +2222,7 @@ class SubmodelTarget(BaseModel):
                 param_name=param.name,
                 state_variables=self.calibration.state_variables,
                 independent_variable=self.calibration.independent_variable,
-                measurement=measurement,
+                measurement=entry,
                 input_values=input_values,
             )
         except PriorPredictiveError as e:
@@ -1483,7 +2250,7 @@ class SubmodelTarget(BaseModel):
                 f"  Difference: ~{10**log_diff:.0e}x ({log_diff:.1f} orders of magnitude)\n\n"
                 f"This indicates a unit conversion error. Check:\n"
                 f"  1. Prior parameters (mu, sigma) match the parameter units\n"
-                f"  2. distribution_code correctly converts input units to parameter units\n"
+                f"  2. observation_code correctly converts input units to parameter units\n"
                 f"  3. Input values and units are correct"
             )
 
@@ -1492,7 +2259,7 @@ class SubmodelTarget(BaseModel):
     @model_validator(mode="after")
     def validate_clipping_suggests_lognormal(self) -> "SubmodelTarget":
         """
-        Warn if distribution_code uses clipping to avoid negative values.
+        Warn if observation_code uses clipping to avoid negative values.
 
         Clipping (np.clip, np.maximum, max(0, ...)) suggests the data is
         positive-only, which is better modeled with a lognormal distribution
@@ -1500,16 +2267,16 @@ class SubmodelTarget(BaseModel):
 
         Normal distributions for positive-only data introduce bias when clipped.
         """
-        for measurement in self.calibration.measurements:
-            if measurement.distribution_code is None:
+        for entry in self.calibration.error_model:
+            if entry.observation_code is None:
                 continue
 
-            code = measurement.distribution_code
+            code = entry.observation_code
             clipping_patterns = ["np.clip", "np.maximum", "np.minimum", "max(0", "min("]
 
             if any(pattern in code for pattern in clipping_patterns):
                 warnings.warn(
-                    f"Measurement '{measurement.name}' distribution_code uses clipping "
+                    f"Error model '{entry.name}' observation_code uses clipping "
                     f"(np.clip/np.maximum/etc) to avoid negative values.\n"
                     f"This suggests size/volume/mass data that may be better modeled with "
                     f"a lognormal distribution.\n"
@@ -1519,6 +2286,71 @@ class SubmodelTarget(BaseModel):
                     f"  sigma_log = sqrt(ln(1 + sd^2/mean^2))",
                     UserWarning,
                 )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_no_hardcoded_values_in_observation_code(self) -> "SubmodelTarget":
+        """
+        Error if observation_code contains hardcoded numeric values that should be inputs.
+
+        All numerical values (except minimal constants) must enter through the inputs
+        dict to ensure traceability and facilitate sensitivity analysis.
+
+        Allowed constants:
+        - 0, 1, 2 (indexing, basic arithmetic)
+        - 1.96 (95% CI convention)
+
+        NOT allowed (should be inputs):
+        - Time conversions like 24.0, 60.0 (use ureg instead)
+        - Percentage conversions like 100.0 (use ureg instead)
+        - Assumed fractions like 0.5, 0.25 (add as assumed_value input)
+        - Fold uncertainties like 3.0, 5.0, 10.0 (add as assumed_value input)
+        """
+        import ast
+
+        # Minimal set of truly necessary constants
+        ALLOWED_CONSTANTS = {0, 0.0, 1, 1.0, 2, 2.0, 1.96}
+
+        errors = []
+
+        for entry in self.calibration.error_model:
+            if entry.observation_code is None:
+                continue
+
+            try:
+                tree = ast.parse(entry.observation_code)
+            except SyntaxError:
+                # Syntax errors caught by other validators
+                continue
+
+            # Find all numeric literals in the code
+            suspicious_values = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                    value = node.value
+                    # Skip allowed constants
+                    if value in ALLOWED_CONSTANTS:
+                        continue
+                    # Skip values close to allowed (floating point tolerance)
+                    if any(abs(value - allowed) < 1e-10 for allowed in ALLOWED_CONSTANTS):
+                        continue
+                    suspicious_values.append(value)
+
+            if suspicious_values:
+                unique_values = sorted(set(suspicious_values))
+                errors.append(
+                    f"Error model '{entry.name}' observation_code contains hardcoded "
+                    f"numeric values: {unique_values}\n"
+                    f"  All numerical parameters must be defined as inputs, not hardcoded.\n"
+                    f"  Add these as inputs with input_type='assumed_value' and document in value_snippet.\n"
+                    f"  For unit conversions, use ureg (e.g., inp.to('day').magnitude) instead of magic numbers."
+                )
+
+        if errors:
+            raise ValueError(
+                "Hardcoded values in observation_code:\n\n" + "\n\n".join(errors)
+            )
 
         return self
 
@@ -1581,25 +2413,23 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_distribution_code_return_signature(self) -> "SubmodelTarget":
+    def validate_observation_code_return_signature(self) -> "SubmodelTarget":
         """
-        Validate that distribution_code returns the required keys.
+        Validate that observation_code returns the required 'value' and 'sd' keys.
 
-        The derive_distribution function MUST return a dict with:
-        - 'median': median value (float)
-        - 'ci95_lower': 2.5th percentile (float)
-        - 'ci95_upper': 97.5th percentile (float)
+        The derive_observation function MUST return a dict with:
+        - 'value': the observed point estimate (Pint Quantity)
+        - 'sd': standard deviation of the measurement error (float or Quantity)
 
-        This catches malformed distribution_code that would fail at runtime.
+        This catches malformed observation_code that would fail at runtime.
         """
         import ast
-        import re
 
-        for measurement in self.calibration.measurements:
-            if not measurement.distribution_code:
+        for entry in self.calibration.error_model:
+            if not entry.observation_code:
                 continue
 
-            code = measurement.distribution_code
+            code = entry.observation_code
 
             # Parse the code
             try:
@@ -1608,9 +2438,9 @@ class SubmodelTarget(BaseModel):
                 # Syntax errors are caught by validate_custom_code_syntax
                 continue
 
-            # Find all return statements in derive_distribution function
+            # Find all return statements in derive_observation function
             for node in ast.walk(tree):
-                if isinstance(node, ast.FunctionDef) and node.name == "derive_distribution":
+                if isinstance(node, ast.FunctionDef) and node.name == "derive_observation":
                     # Find return statements within this function
                     for child in ast.walk(node):
                         if isinstance(child, ast.Return) and child.value:
@@ -1625,47 +2455,34 @@ class SubmodelTarget(BaseModel):
                                         keys.add(key.s)
 
                                 # Check for required keys
-                                required_keys = {"median", "ci95_lower", "ci95_upper"}
-                                missing_keys = required_keys - keys
-
+                                missing_keys = {"value", "sd"} - keys
                                 if missing_keys:
                                     raise ValueError(
-                                        f"Measurement '{measurement.name}' distribution_code "
-                                        f"return dict is missing required keys: {sorted(missing_keys)}\n\n"
+                                        f"Error model '{entry.name}' observation_code "
+                                        f"return dict is missing required key(s): {missing_keys}\n\n"
                                         f"Required return signature:\n"
-                                        f"  return {{\n"
-                                        f"      'median': float(np.median(samples)),\n"
-                                        f"      'ci95_lower': float(np.percentile(samples, 2.5)),\n"
-                                        f"      'ci95_upper': float(np.percentile(samples, 97.5)),\n"
-                                        f"  }}"
+                                        f"  return {{'value': <observed_quantity>, 'sd': <uncertainty>}}"
                                     )
 
             # Also check via regex for return statements that build dict inline
             # This catches cases where AST parsing might miss dynamic dict construction
-            if "return" in code and "derive_distribution" in code:
-                # Check if the code has the required keys somewhere in a return context
-                has_median = bool(re.search(r"['\"]median['\"]", code))
-                has_ci95_lower = bool(re.search(r"['\"]ci95_lower['\"]", code))
-                has_ci95_upper = bool(re.search(r"['\"]ci95_upper['\"]", code))
+            if "return" in code and "derive_observation" in code:
+                import re
 
-                if not (has_median and has_ci95_lower and has_ci95_upper):
+                has_value = bool(re.search(r"['\"]value['\"]", code))
+                has_sd = bool(re.search(r"['\"]sd['\"]", code))
+
+                if not has_value or not has_sd:
                     missing = []
-                    if not has_median:
-                        missing.append("'median'")
-                    if not has_ci95_lower:
-                        missing.append("'ci95_lower'")
-                    if not has_ci95_upper:
-                        missing.append("'ci95_upper'")
-
+                    if not has_value:
+                        missing.append("'value'")
+                    if not has_sd:
+                        missing.append("'sd'")
                     raise ValueError(
-                        f"Measurement '{measurement.name}' distribution_code "
-                        f"appears to be missing required return keys: {', '.join(missing)}\n\n"
+                        f"Error model '{entry.name}' observation_code "
+                        f"appears to be missing required return key(s): {', '.join(missing)}\n\n"
                         f"Required return signature:\n"
-                        f"  return {{\n"
-                        f"      'median': float(np.median(samples)),\n"
-                        f"      'ci95_lower': float(np.percentile(samples, 2.5)),\n"
-                        f"      'ci95_upper': float(np.percentile(samples, 97.5)),\n"
-                        f"  }}"
+                        f"  return {{'value': <observed_quantity>, 'sd': <uncertainty>}}"
                     )
 
         return self
@@ -1951,6 +2768,221 @@ class SubmodelTarget(BaseModel):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_algebraic_prior_predictive(self) -> "SubmodelTarget":
+        """
+        For algebraic models, validate that the forward model prediction
+        is consistent with measured data.
+
+        Uses the prior median for parameters, runs the forward model,
+        and compares predicted observable to measured data. If they differ
+        by more than 10x, there's likely a unit error in the model code.
+
+        This is a prior predictive check: does the model (with reasonable
+        parameter values) predict observables on the same scale as the data?
+        """
+        import math
+
+        # Only applies to algebraic models
+        if self.calibration.model.type != "algebraic":
+            return self
+
+        model = self.calibration.model
+        if not hasattr(model, 'code') or not model.code:
+            return self
+
+        # Build inputs dict with pint quantities
+        from qsp_llm_workflows.core.unit_registry import create_unit_registry
+
+        ureg = create_unit_registry()
+        inputs = {}
+        for inp in self.inputs:
+            if inp.units and inp.units != "dimensionless":
+                try:
+                    inputs[inp.name] = inp.value * ureg(inp.units)
+                except Exception:
+                    inputs[inp.name] = inp.value * ureg.dimensionless
+            else:
+                inputs[inp.name] = inp.value * ureg.dimensionless
+
+        # Build params dict from prior medians
+        params = {}
+        for param in self.calibration.parameters:
+            if param.prior is None:
+                continue
+            if param.prior.distribution == "lognormal":
+                params[param.name] = math.exp(param.prior.mu)
+            elif param.prior.distribution == "normal":
+                params[param.name] = param.prior.mu
+            elif param.prior.distribution == "uniform":
+                params[param.name] = (param.prior.lower + param.prior.upper) / 2
+
+        if not params:
+            return self
+
+        # Execute the forward model
+        local_ns: dict = {}
+        try:
+            exec(model.code, {"__builtins__": __builtins__}, local_ns)
+        except Exception:
+            # Syntax errors caught by other validators
+            return self
+
+        if "compute" not in local_ns:
+            return self
+
+        import numpy as np
+        try:
+            predicted = local_ns["compute"](params, inputs, ureg)
+        except Exception:
+            # Execution errors caught by other validators
+            return self
+
+        # Get magnitude for comparison
+        if hasattr(predicted, 'magnitude'):
+            predicted_value = float(predicted.magnitude)
+        else:
+            predicted_value = float(predicted)
+
+        if predicted_value <= 0:
+            return self
+
+        # Compare to measured data (inputs with role=target)
+        threshold_fold = 10.0
+        for inp in self.inputs:
+            if inp.role != InputRole.TARGET:
+                continue
+
+            measured_value = inp.value
+            if measured_value <= 0:
+                continue
+
+            ratio = predicted_value / measured_value
+
+            if ratio > threshold_fold or ratio < 1.0 / threshold_fold:
+                raise ValueError(
+                    f"Prior predictive check failed for algebraic model:\n"
+                    f"  Predicted observable (from model.code): {predicted_value:.2e}\n"
+                    f"  Measured data ('{inp.name}'): {measured_value:.2e}\n"
+                    f"  Ratio: {ratio:.1f}x\n\n"
+                    f"The forward model prediction differs from measured data by {abs(ratio):.0f}x.\n"
+                    f"This likely indicates a unit error in AlgebraicModel.code.\n\n"
+                    f"Check that model.code correctly computes the observable from parameters."
+                )
+
+        return self
+
+    # -------------------------------------------------------------------------
+    # ADDITIONAL VALIDATORS (from validator_ideas.md)
+    # -------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_sample_size_list_length(self) -> "SubmodelTarget":
+        """
+        Validate sample_size list length matches evaluation_points.
+
+        If sample_size is a list, it must have the same length as evaluation_points.
+        This catches common mistakes like providing sample sizes for only some time points.
+
+        Example of bug this catches:
+            evaluation_points: [7, 14, 21]  # 3 time points
+            sample_size: [10, 12]           # Only 2 sample sizes - mismatch!
+        """
+        errors = []
+
+        for entry in self.calibration.error_model:
+            if entry.evaluation_points and isinstance(entry.sample_size, list):
+                if len(entry.sample_size) != len(entry.evaluation_points):
+                    errors.append(
+                        f"Error model '{entry.name}': sample_size has {len(entry.sample_size)} "
+                        f"elements but evaluation_points has {len(entry.evaluation_points)}. "
+                        f"They must match when sample_size is a list."
+                    )
+
+        if errors:
+            raise ValueError(
+                "Sample size / evaluation points length mismatch:\n  - " + "\n  - ".join(errors)
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_ode_requires_observable(self) -> "SubmodelTarget":
+        """
+        Validate that ODE models have observable defined in error_model.
+
+        For ODE models, the observable transforms state variables into the measured
+        quantity. Without it, inference doesn't know what to compare model output to.
+
+        ODE model types: first_order_decay, exponential_growth, logistic,
+        michaelis_menten, two_state, saturation, custom_ode
+        """
+        ode_model_types = {
+            "first_order_decay",
+            "exponential_growth",
+            "logistic",
+            "michaelis_menten",
+            "two_state",
+            "saturation",
+            "custom_ode",
+        }
+
+        model_type = self.calibration.model.type
+        if model_type not in ode_model_types:
+            return self  # Not an ODE model
+
+        errors = []
+        for entry in self.calibration.error_model:
+            if entry.observable is None:
+                errors.append(
+                    f"Error model '{entry.name}': ODE model type '{model_type}' "
+                    f"requires observable to be defined. The observable specifies how to "
+                    f"transform state variables into the measured quantity."
+                )
+
+        if errors:
+            raise ValueError(
+                "Missing observable for ODE model:\n  - " + "\n  - ".join(errors)
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def warn_likelihood_distribution_unknown(self) -> "SubmodelTarget":
+        """
+        Warn if likelihood distribution is not a known type.
+
+        Catches typos like 'lognomal' instead of 'lognormal'.
+
+        Known distributions: normal, lognormal, truncated_normal, half_normal,
+        beta, dirichlet, student_t, exponential, gamma, poisson
+        """
+        KNOWN_LIKELIHOODS = {
+            "normal",
+            "lognormal",
+            "truncated_normal",
+            "half_normal",
+            "beta",
+            "dirichlet",
+            "student_t",
+            "exponential",
+            "gamma",
+            "poisson",
+        }
+
+        for entry in self.calibration.error_model:
+            dist = entry.likelihood.distribution.lower()
+            if dist not in KNOWN_LIKELIHOODS:
+                warnings.warn(
+                    f"Error model '{entry.name}': likelihood distribution '{dist}' "
+                    f"is not a recognized type.\n"
+                    f"Known types: {sorted(KNOWN_LIKELIHOODS)}.\n"
+                    f"If this is intentional (custom distribution), ignore this warning.",
+                    UserWarning,
+                )
+
+        return self
+
     def _compute_confidence_score(self) -> float:
         """
         Compute overall confidence score based on source relevance factors.
@@ -2045,9 +3077,9 @@ __all__ = [
     "MichaelisMentenModel",
     "TwoStateModel",
     "SaturationModel",
-    "DirectConversionModel",
+    "AlgebraicModel",
     "DirectFitModel",
-    "CustomModel",
+    "CustomODEModel",
     "Model",
     # Other calibration models
     "IndependentVariable",
@@ -2083,7 +3115,7 @@ __all__ = [
 #      or one of secondary_data_sources[].source_tag
 #
 # 3. validate_evaluation_points_match_inputs
-#    - For direct measurements (no distribution_code), len(evaluation_points)
+#    - For direct measurements, len(evaluation_points)
 #      should equal len(uses_inputs)
 #
 # 4. validate_state_variables_for_ode_models
@@ -2092,7 +3124,7 @@ __all__ = [
 #    - ODE model types require independent_variable with span
 #
 # 5. validate_model_fields
-#    - direct_conversion requires formula
+#    - algebraic requires formula
 #    - direct_fit requires curve
 #    - custom requires code
 #    - ODE types require parameter_roles

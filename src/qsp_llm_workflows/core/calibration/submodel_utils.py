@@ -365,10 +365,55 @@ def run_prior_predictive(
             f"lower/upper for uniform, sigma for half_normal)."
         )
 
-    # For direct_conversion, parameter IS the prediction
+    # For direct_conversion, parameter IS the prediction (legacy)
     model_type = model.type if hasattr(model, "type") else None
     if model_type == "direct_conversion":
         return prior_median
+
+    # For algebraic models, execute the forward model code
+    if model_type == "algebraic":
+        if not hasattr(model, "code") or not model.code:
+            raise PriorPredictiveError(
+                f"AlgebraicModel requires 'code' field but none is defined."
+            )
+
+        try:
+            import numpy as np
+            from qsp_llm_workflows.core.unit_registry import ureg
+
+            # Build params dict with prior medians
+            # Note: For multi-param models, we'd need all prior medians
+            params = {param_name: prior_median}
+
+            # Build inputs dict with units
+            inputs_pint = {}
+            for name, value in input_values.items():
+                # Try to preserve units if they exist, otherwise use raw value
+                inputs_pint[name] = value
+
+            # Execute forward model
+            local_scope = {"np": np, "numpy": np, "ureg": ureg}
+            exec(model.code, local_scope)
+            compute_fn = local_scope.get("compute")
+
+            if compute_fn is None:
+                raise PriorPredictiveError(
+                    f"AlgebraicModel.code must define 'compute' function."
+                )
+
+            result = compute_fn(params, inputs_pint, ureg)
+
+            # Extract magnitude if it's a Pint Quantity
+            if hasattr(result, "magnitude"):
+                return result.magnitude
+            return result
+
+        except PriorPredictiveError:
+            raise
+        except Exception as e:
+            raise PriorPredictiveError(
+                f"AlgebraicModel forward model execution failed: {e}"
+            ) from e
 
     # For ODE models, solve forward
     if state_variables is None:
