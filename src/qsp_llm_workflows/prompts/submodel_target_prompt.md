@@ -98,7 +98,49 @@ SubmodelTarget
 | `initial_condition` | Starting value for ODE | Seeding density |
 | `target` | Calibration target | Cell count at day 3 |
 | `fixed_parameter` | Fixed in model | Known rate from literature |
-| `auxiliary` | Supporting data | SD values, sample sizes |
+| `auxiliary` | Supporting data | SD/SEM values, sample sizes |
+
+---
+
+## SEM vs SD (CRITICAL)
+
+Many papers report mean +/- SEM (standard error of the mean) rather than SD (standard deviation). **Using SEM as SD dramatically underestimates population variability** because SEM = SD / sqrt(n).
+
+**How to identify:**
+- Look for explicit labels: "SD", "SEM", "SE", "s.d.", "s.e.m."
+- If error seems very small relative to mean (CV < 5% for biological data), suspect SEM
+- Papers with small n often report SEM to make error bars appear smaller
+
+**When SEM is reported:**
+1. Extract `n` (sample size) as a separate input with `role: auxiliary`
+2. Name the uncertainty input `*_sem` not `*_sd` to be explicit
+3. In `distribution_code`, convert: `sd = sem * np.sqrt(n)`
+4. Add a `notes` field explaining the conversion
+
+**Example:**
+```yaml
+inputs:
+  - name: treg_fraction_mean
+    value: 0.178
+    role: target
+  - name: treg_fraction_sem
+    value: 0.007075
+    role: auxiliary
+    notes: |
+      Reported as mean+/-SEM. SD = SEM * sqrt(n) = 0.007 * sqrt(45) = 0.047
+  - name: n_patients
+    value: 45
+    role: auxiliary
+```
+
+```python
+# In distribution_code:
+sem = inputs['treg_fraction_sem'].magnitude
+n = int(inputs['n_patients'].magnitude)
+sd = sem * np.sqrt(n)  # Convert SEM to SD before sampling
+```
+
+**Red flag:** If reported uncertainty seems implausibly small (e.g., 17.8 +/- 0.7% for a biological fraction), it's almost certainly SEM.
 
 ---
 

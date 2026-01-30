@@ -131,12 +131,16 @@ def minimal_parameter(minimal_prior):
 
 @pytest.fixture
 def minimal_measurement():
-    """Minimal valid measurement without distribution_code."""
+    """Minimal valid measurement with measurement_error_code."""
     return Measurement(
         name="test_measurement",
         units="1/day",
         uses_inputs=["test_value"],
         evaluation_points=[0.0],
+        measurement_error_code="""
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+""",
         likelihood=Likelihood(distribution="lognormal"),
     )
 
@@ -151,13 +155,13 @@ def minimal_primary_source():
     )
 
 
-def make_direct_conversion_target(
+def make_algebraic_target(
     input_value: float,
     prior_mu: float,
     formula: str = "k = value",
-    distribution_code: str = None,
+    measurement_error_code: str = None,
 ):
-    """Helper to create a direct_conversion SubmodelTarget for testing."""
+    """Helper to create an algebraic SubmodelTarget for testing."""
     data = {
         "target_id": "test_target_001",
         "inputs": [
@@ -186,8 +190,17 @@ def make_direct_conversion_target(
                 }
             ],
             "model": {
-                "type": "direct_conversion",
+                "type": "algebraic",
                 "formula": formula,
+                "code": """
+def compute(params, inputs, ureg):
+    return params['k_test']
+""",
+                "code_julia": """
+function compute(params, inputs)
+    return params["k_test"]
+end
+""",
                 "data_rationale": "Test",
                 "submodel_rationale": "Test",
             },
@@ -197,7 +210,7 @@ def make_direct_conversion_target(
                     "units": "1/day",
                     "uses_inputs": ["test_value"],
                     "evaluation_points": [0.0],
-                    "distribution_code": distribution_code,
+                    "measurement_error_code": measurement_error_code,
                     "likelihood": {"distribution": "lognormal"},
                 }
             ],
@@ -233,50 +246,44 @@ def make_direct_conversion_target(
 # ============================================================================
 
 
-class TestDistributionCodeRequiredWithFormula:
-    """Tests for validate_distribution_code_required_with_formula."""
+class TestMeasurementErrorCodeRequired:
+    """Tests for measurement_error_code requirement validation."""
 
-    def test_direct_conversion_without_distribution_code_fails(self):
-        """Direct conversion with formula but no distribution_code should fail."""
-        data = make_direct_conversion_target(
+    def test_algebraic_without_measurement_error_code_fails(self):
+        """Algebraic model without measurement_error_code should fail."""
+        data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             formula="k = value / 2",
-            distribution_code=None,
+            measurement_error_code=None,
         )
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "distribution_code" in str(exc_info.value)
+        assert "measurement_error_code" in str(exc_info.value).lower()
 
-    def test_direct_conversion_with_distribution_code_passes(self):
-        """Direct conversion with distribution_code should pass."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
-    import numpy as np
+    def test_algebraic_with_measurement_error_code_passes(self):
+        """Algebraic model with measurement_error_code should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
     value = inputs['test_value'].magnitude
-    return {
-        'median': float(value),
-        'ci95_lower': float(value * 0.5),
-        'ci95_upper': float(value * 2.0),
-    }
+    return {'sd': value * 0.1}  # 10% CV
 """
-        data = make_direct_conversion_target(
+        data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             formula="k = value",
-            distribution_code=distribution_code,
+            measurement_error_code=measurement_error_code,
         )
 
-        # Should not raise - but may fail other validators
-        # We're testing this specific validator
+        # Should not raise measurement_error_code error
         try:
             SubmodelTarget(**data)
         except ValidationError as e:
-            # Check it's not failing on distribution_code_required
+            # Check it's not failing on measurement_error_code
             errors = str(e)
-            assert "But no measurement has distribution_code" not in errors
+            assert "measurement_error_code" not in errors.lower()
 
 
 # ============================================================================
@@ -292,20 +299,16 @@ class TestPriorPredictiveScale:
         # Prior median = exp(-20) ≈ 2e-9
         # Observation = 10
         # Difference = ~10 orders of magnitude
-        distribution_code = """
-def derive_distribution(inputs, ureg):
+        measurement_error_code = """
+def derive_error(inputs, ureg):
     value = inputs['test_value'].magnitude
-    return {
-        'median': float(value),
-        'ci95_lower': float(value * 0.5),
-        'ci95_upper': float(value * 2.0),
-    }
+    return {'sd': value * 0.1}
 """
-        data = make_direct_conversion_target(
+        data = make_algebraic_target(
             input_value=10.0,
             prior_mu=-20.0,  # exp(-20) ≈ 2e-9
             formula="k = value",
-            distribution_code=distribution_code,
+            measurement_error_code=measurement_error_code,
         )
 
         with pytest.raises(ValidationError) as exc_info:
@@ -316,20 +319,16 @@ def derive_distribution(inputs, ureg):
 
     def test_matching_scale_passes(self):
         """Prior and observation on same scale should pass."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
+        measurement_error_code = """
+def derive_error(inputs, ureg):
     value = inputs['test_value'].magnitude
-    return {
-        'median': float(value),
-        'ci95_lower': float(value * 0.5),
-        'ci95_upper': float(value * 2.0),
-    }
+    return {'sd': value * 0.1}
 """
-        data = make_direct_conversion_target(
+        data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),  # median = 10
             formula="k = value",
-            distribution_code=distribution_code,
+            measurement_error_code=measurement_error_code,
         )
 
         # Should pass - prior median ≈ observation
@@ -340,25 +339,25 @@ def derive_distribution(inputs, ureg):
             # If it fails, should not be due to scale mismatch
             assert "orders of magnitude" not in str(e)
 
-    def test_distribution_code_error_raises(self):
-        """Error in distribution_code execution should raise."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
+    def test_measurement_error_code_error_raises(self):
+        """Error in measurement_error_code execution should raise."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
     # This will raise KeyError
     value = inputs['nonexistent_input']
-    return {'median': [value]}
+    return {'sd': value}
 """
-        data = make_direct_conversion_target(
+        data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             formula="k = value",
-            distribution_code=distribution_code,
+            measurement_error_code=measurement_error_code,
         )
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "distribution_code execution error" in str(exc_info.value)
+        assert "measurement_error_code" in str(exc_info.value).lower()
 
 
 # ============================================================================
@@ -369,25 +368,21 @@ def derive_distribution(inputs, ureg):
 class TestClippingSuggestsLognormal:
     """Tests for validate_clipping_suggests_lognormal."""
 
-    def test_clipping_in_distribution_code_warns(self):
-        """Using np.clip in distribution_code should warn."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
+    def test_clipping_in_measurement_error_code_warns(self):
+        """Using np.clip in measurement_error_code should warn."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
     import numpy as np
     value = inputs['test_value'].magnitude
     # Clipping to avoid negatives
-    samples = np.clip(np.random.normal(value, 1, 1000), 0, None)
-    return {
-        'median': float(np.median(samples)),
-        'ci95_lower': float(np.percentile(samples, 2.5)),
-        'ci95_upper': float(np.percentile(samples, 97.5)),
-    }
+    sd = np.clip(value * 0.1, 0, None)
+    return {'sd': float(sd)}
 """
-        data = make_direct_conversion_target(
+        data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             formula="k = value",
-            distribution_code=distribution_code,
+            measurement_error_code=measurement_error_code,
         )
 
         with warnings.catch_warnings(record=True) as w:
@@ -402,23 +397,19 @@ def derive_distribution(inputs, ureg):
             assert len(clipping_warnings) > 0
 
     def test_np_maximum_warns(self):
-        """Using np.maximum in distribution_code should warn."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
+        """Using np.maximum in measurement_error_code should warn."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
     import numpy as np
     value = inputs['test_value'].magnitude
-    samples = np.maximum(np.random.normal(value, 1, 1000), 0)
-    return {
-        'median': float(np.median(samples)),
-        'ci95_lower': float(np.percentile(samples, 2.5)),
-        'ci95_upper': float(np.percentile(samples, 97.5)),
-    }
+    sd = np.maximum(value * 0.1, 0)
+    return {'sd': float(sd)}
 """
-        data = make_direct_conversion_target(
+        data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             formula="k = value",
-            distribution_code=distribution_code,
+            measurement_error_code=measurement_error_code,
         )
 
         with warnings.catch_warnings(record=True) as w:
@@ -442,14 +433,10 @@ class TestLargeVarianceDocumented:
 
     def test_high_cv_without_documentation_warns(self):
         """CV > 50% without mention in identifiability_notes should warn."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
-    value = inputs['mean_value'].magnitude
-    return {
-        'median': float(value),
-        'ci95_lower': float(value * 0.5),
-        'ci95_upper': float(value * 2.0),
-    }
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    # SD = 8, mean = 10, CV = 80%
+    return {'sd': inputs['sd_value'].magnitude}
 """
         data = {
             "target_id": "test_high_cv_001",
@@ -488,8 +475,17 @@ def derive_distribution(inputs, ureg):
                     }
                 ],
                 "model": {
-                    "type": "direct_conversion",
+                    "type": "algebraic",
                     "formula": "k = mean_value",
+                    "code": """
+def compute(params, inputs, ureg):
+    return params['k_test']
+""",
+                    "code_julia": """
+function compute(params, inputs)
+    return params["k_test"]
+end
+""",
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
                 },
@@ -497,9 +493,9 @@ def derive_distribution(inputs, ureg):
                     {
                         "name": "test",
                         "units": "1/day",
-                        "uses_inputs": ["mean_value"],
+                        "uses_inputs": ["mean_value", "sd_value"],
                         "evaluation_points": [0.0],
-                        "distribution_code": distribution_code,
+                        "measurement_error_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -542,14 +538,9 @@ def derive_distribution(inputs, ureg):
 
     def test_high_cv_with_documentation_no_warning(self):
         """CV > 50% with variance mentioned should not warn."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
-    value = inputs['mean_value'].magnitude
-    return {
-        'median': float(value),
-        'ci95_lower': float(value * 0.5),
-        'ci95_upper': float(value * 2.0),
-    }
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': inputs['sd_value'].magnitude}
 """
         data = {
             "target_id": "test_high_cv_documented_001",
@@ -588,8 +579,17 @@ def derive_distribution(inputs, ureg):
                     }
                 ],
                 "model": {
-                    "type": "direct_conversion",
+                    "type": "algebraic",
                     "formula": "k = mean_value",
+                    "code": """
+def compute(params, inputs, ureg):
+    return params['k_test']
+""",
+                    "code_julia": """
+function compute(params, inputs)
+    return params["k_test"]
+end
+""",
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
                 },
@@ -597,9 +597,9 @@ def derive_distribution(inputs, ureg):
                     {
                         "name": "test",
                         "units": "1/day",
-                        "uses_inputs": ["mean_value"],
+                        "uses_inputs": ["mean_value", "sd_value"],
                         "evaluation_points": [0.0],
-                        "distribution_code": distribution_code,
+                        "measurement_error_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -652,20 +652,16 @@ class TestParameterUnitsMatchModel:
 
     def test_unit_dimensionality_mismatch_fails(self, mock_model_structure):
         """Parameter with wrong dimensionality should fail when context provided."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
+        measurement_error_code = """
+def derive_error(inputs, ureg):
     value = inputs['test_value'].magnitude
-    return {
-        'median': float(value),
-        'ci95_lower': float(value * 0.5),
-        'ci95_upper': float(value * 2.0),
-    }
+    return {'sd': value * 0.1}
 """
-        data = make_direct_conversion_target(
+        data = make_algebraic_target(
             input_value=1e-9,
             prior_mu=-20.0,
             formula="k = value",
-            distribution_code=distribution_code,
+            measurement_error_code=measurement_error_code,
         )
         # Change parameter units to concentration (wrong dimensionality)
         # k_CCL2_sec expects nanomole/cell/day but we'll use nanomolar/cell/day
@@ -680,20 +676,16 @@ def derive_distribution(inputs, ureg):
 
     def test_correct_units_passes(self, mock_model_structure):
         """Parameter with correct dimensionality should pass."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
+        measurement_error_code = """
+def derive_error(inputs, ureg):
     value = inputs['test_value'].magnitude
-    return {
-        'median': float(value),
-        'ci95_lower': float(value * 0.5),
-        'ci95_upper': float(value * 2.0),
-    }
+    return {'sd': value * 0.1}
 """
-        data = make_direct_conversion_target(
+        data = make_algebraic_target(
             input_value=1e-9,
             prior_mu=-20.0,
             formula="k = value",
-            distribution_code=distribution_code,
+            measurement_error_code=measurement_error_code,
         )
         # Use correct units for k_CCL2_sec
         data["calibration"]["parameters"][0]["name"] = "k_CCL2_sec"
@@ -710,20 +702,16 @@ def derive_distribution(inputs, ureg):
 
     def test_missing_context_warns(self):
         """Missing model_structure context should warn, not error."""
-        distribution_code = """
-def derive_distribution(inputs, ureg):
+        measurement_error_code = """
+def derive_error(inputs, ureg):
     value = inputs['test_value'].magnitude
-    return {
-        'median': float(value),
-        'ci95_lower': float(value * 0.5),
-        'ci95_upper': float(value * 2.0),
-    }
+    return {'sd': value * 0.1}
 """
-        data = make_direct_conversion_target(
+        data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             formula="k = value",
-            distribution_code=distribution_code,
+            measurement_error_code=measurement_error_code,
         )
 
         with warnings.catch_warnings(record=True) as w:
@@ -736,3 +724,1345 @@ def derive_distribution(inputs, ureg):
 
             context_warnings = [x for x in w if "model_structure not provided" in str(x.message)]
             assert len(context_warnings) >= 1
+
+
+# ============================================================================
+# Tests for validate_input_refs
+# ============================================================================
+
+
+class TestValidateInputRefs:
+    """Tests for validate_input_refs validator."""
+
+    def test_measurement_references_unknown_input_fails(self):
+        """Measurement uses_inputs referencing unknown input should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Change uses_inputs to reference a non-existent input
+        data["calibration"]["measurements"][0]["uses_inputs"] = ["nonexistent_input"]
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "unknown input" in str(exc_info.value).lower()
+        assert "nonexistent_input" in str(exc_info.value)
+
+    def test_valid_input_refs_passes(self):
+        """Valid input references should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # uses_inputs already references "test_value" which exists
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            # Should not fail on input refs
+            assert "unknown input" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_source_refs
+# ============================================================================
+
+
+class TestValidateSourceRefs:
+    """Tests for validate_source_refs validator."""
+
+    def test_input_references_unknown_source_fails(self):
+        """Input with source_ref not matching any source_tag should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Change source_ref to a non-existent source tag
+        data["inputs"][0]["source_ref"] = "NonexistentSource2099"
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "invalid source references" in str(exc_info.value).lower()
+
+    def test_valid_source_refs_passes(self):
+        """Valid source references should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # source_ref already matches primary_data_source.source_tag ("Test2023")
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            # Should not fail on source refs
+            assert "invalid source references" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_parameter_roles
+# ============================================================================
+
+
+class TestValidateParameterRoles:
+    """Tests for validate_parameter_roles validator."""
+
+    def test_model_references_undefined_parameter_fails(self):
+        """Model parameter_role referencing undefined parameter should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = {
+            "target_id": "test_param_role_001",
+            "inputs": [
+                {
+                    "name": "test_value",
+                    "value": 10.0,
+                    "units": "1/day",
+                    "input_type": "direct_measurement",
+                    "role": "target",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "extraction_method": "manual",
+                }
+            ],
+            "calibration": {
+                "parameters": [
+                    {
+                        "name": "k_test",
+                        "units": "1/day",
+                        "prior": {
+                            "distribution": "lognormal",
+                            "mu": math.log(10.0),
+                            "sigma": 0.5,
+                        },
+                    }
+                ],
+                "model": {
+                    "type": "first_order_decay",
+                    # rate_constant references a parameter that doesn't exist
+                    "rate_constant": "k_nonexistent",
+                    "data_rationale": "Test",
+                    "submodel_rationale": "Test",
+                },
+                "state_variables": [
+                    {
+                        "name": "A",
+                        "units": "dimensionless",
+                        "initial_condition": {
+                            "value": 1.0,
+                            "rationale": "Initial condition for testing purposes",
+                        },
+                    }
+                ],
+                "independent_variable": {
+                    "name": "time",
+                    "units": "day",
+                    "span": [0.0, 10.0],
+                },
+                "measurements": [
+                    {
+                        "name": "test_measurement",
+                        "units": "1/day",
+                        "uses_inputs": ["test_value"],
+                        "evaluation_points": [10.0],
+                        "measurement_error_code": measurement_error_code,
+                        "likelihood": {"distribution": "lognormal"},
+                    }
+                ],
+                "identifiability_notes": "Test notes",
+            },
+            "experimental_context": {
+                "species": "human",
+                "system": "in_vitro",
+            },
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "estimated_translation_uncertainty_fold": 1.0,
+            },
+            "study_interpretation": "Test interpretation",
+            "key_assumptions": ["Test assumption"],
+            "primary_data_source": {
+                "doi": "10.1234/test",
+                "title": "Test Paper",
+                "source_tag": "Test2023",
+            },
+            "secondary_data_sources": [],
+        }
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "invalid parameter references" in str(exc_info.value).lower()
+        assert "k_nonexistent" in str(exc_info.value)
+
+    def test_valid_parameter_roles_passes(self):
+        """Valid parameter role references should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = {
+            "target_id": "test_param_role_002",
+            "inputs": [
+                {
+                    "name": "test_value",
+                    "value": 10.0,
+                    "units": "1/day",
+                    "input_type": "direct_measurement",
+                    "role": "target",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "extraction_method": "manual",
+                }
+            ],
+            "calibration": {
+                "parameters": [
+                    {
+                        "name": "k_decay",
+                        "units": "1/day",
+                        "prior": {
+                            "distribution": "lognormal",
+                            "mu": math.log(0.1),
+                            "sigma": 0.5,
+                        },
+                    }
+                ],
+                "model": {
+                    "type": "first_order_decay",
+                    "rate_constant": "k_decay",  # Matches parameter name
+                    "data_rationale": "Test",
+                    "submodel_rationale": "Test",
+                },
+                "state_variables": [
+                    {
+                        "name": "A",
+                        "units": "dimensionless",
+                        "initial_condition": {
+                            "value": 1.0,
+                            "rationale": "Initial condition for testing purposes",
+                        },
+                    }
+                ],
+                "independent_variable": {
+                    "name": "time",
+                    "units": "day",
+                    "span": [0.0, 10.0],
+                },
+                "measurements": [
+                    {
+                        "name": "test_measurement",
+                        "units": "1/day",
+                        "uses_inputs": ["test_value"],
+                        "evaluation_points": [10.0],
+                        "measurement_error_code": measurement_error_code,
+                        "likelihood": {"distribution": "lognormal"},
+                    }
+                ],
+                "identifiability_notes": "Test notes",
+            },
+            "experimental_context": {
+                "species": "human",
+                "system": "in_vitro",
+            },
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "estimated_translation_uncertainty_fold": 1.0,
+            },
+            "study_interpretation": "Test interpretation",
+            "key_assumptions": ["Test assumption"],
+            "primary_data_source": {
+                "doi": "10.1234/test",
+                "title": "Test Paper",
+                "source_tag": "Test2023",
+            },
+            "secondary_data_sources": [],
+        }
+
+        # Should not fail on parameter role validation
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "invalid parameter references" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_custom_code_syntax
+# ============================================================================
+
+
+class TestValidateCustomCodeSyntax:
+    """Tests for validate_custom_code_syntax validator."""
+
+    def test_algebraic_code_syntax_error_fails(self):
+        """Syntax error in AlgebraicModel.code should fail."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+""",
+        )
+        # Introduce syntax error in model code
+        data["calibration"]["model"]["code"] = """
+def compute(params, inputs, ureg):
+    return params['k_test'  # Missing closing bracket - syntax error
+"""
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "syntax error" in str(exc_info.value).lower()
+
+    def test_algebraic_wrong_function_name_fails(self):
+        """AlgebraicModel.code with wrong function name should fail."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+""",
+        )
+        # Wrong function name (should be 'compute')
+        data["calibration"]["model"]["code"] = """
+def wrong_name(params, inputs, ureg):
+    return params['k_test']
+"""
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "compute" in str(exc_info.value).lower()
+
+    def test_measurement_error_code_syntax_error_fails(self):
+        """Syntax error in measurement_error_code should fail."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def derive_error(inputs, ureg):
+    return {'sd': 1.0  # Missing closing brace - syntax error
+""",
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "syntax error" in str(exc_info.value).lower()
+
+    def test_measurement_error_code_wrong_function_name_fails(self):
+        """measurement_error_code with wrong function name should fail."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def wrong_name(inputs, ureg):
+    return {'sd': 1.0}
+""",
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "derive_error" in str(exc_info.value).lower()
+
+    def test_valid_code_passes(self):
+        """Valid code should pass syntax validation."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+""",
+        )
+
+        # Should pass syntax validation
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "syntax error" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_measurement_error_code_execution
+# ============================================================================
+
+
+class TestValidateMeasurementErrorCodeExecution:
+    """Tests for validate_measurement_error_code_execution validator."""
+
+    def test_missing_derive_error_function_fails(self):
+        """measurement_error_code without derive_error function should fail."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def some_other_function(inputs, ureg):
+    return {'sd': 1.0}
+""",
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        # Should fail on function name check
+        error_str = str(exc_info.value).lower()
+        assert "derive_error" in error_str
+
+    def test_return_not_dict_fails(self):
+        """derive_error returning non-dict should fail."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def derive_error(inputs, ureg):
+    return 1.0  # Should return dict
+""",
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "dict" in str(exc_info.value).lower()
+
+    def test_missing_sd_key_fails(self):
+        """derive_error returning dict without 'sd' key should fail."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def derive_error(inputs, ureg):
+    return {'wrong_key': 1.0}
+""",
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "sd" in str(exc_info.value).lower()
+
+    def test_negative_sd_fails(self):
+        """derive_error returning negative sd should fail."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def derive_error(inputs, ureg):
+    return {'sd': -1.0}  # Negative SD invalid
+""",
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "negative" in str(exc_info.value).lower() or "sd" in str(exc_info.value).lower()
+
+    def test_execution_error_fails(self):
+        """Runtime error in derive_error should fail."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def derive_error(inputs, ureg):
+    # This will raise KeyError at runtime
+    return {'sd': inputs['nonexistent_input'].magnitude}
+""",
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "error" in str(exc_info.value).lower()
+
+    def test_valid_measurement_error_code_passes(self):
+        """Valid measurement_error_code should pass execution validation."""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code="""
+def derive_error(inputs, ureg):
+    value = inputs['test_value'].magnitude
+    return {'sd': value * 0.1}
+""",
+        )
+
+        # Should pass execution validation
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "measurement_error_code execution error" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_input_values_in_snippets
+# ============================================================================
+
+
+class TestValidateInputValuesInSnippets:
+    """Tests for validate_input_values_in_snippets validator."""
+
+    def test_value_not_in_snippet_fails(self):
+        """Input value not appearing in value_snippet should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Add a snippet that doesn't contain the value
+        data["inputs"][0]["value_snippet"] = "The rate was measured at 999 per day"
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "not found in snippet" in str(exc_info.value).lower()
+
+    def test_value_in_snippet_passes(self):
+        """Input value appearing in value_snippet should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Add a snippet that contains the value
+        data["inputs"][0]["value_snippet"] = "The rate constant was 10.0 per day"
+
+        # Should pass - value appears in snippet
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "not found in snippet" not in str(e).lower()
+
+    def test_scientific_notation_in_snippet_passes(self):
+        """Value in scientific notation should match snippet."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1e-8}
+"""
+        data = make_algebraic_target(
+            input_value=1e-9,
+            prior_mu=math.log(1e-9),
+            measurement_error_code=measurement_error_code,
+        )
+        # Value in different scientific notation format
+        data["inputs"][0]["value_snippet"] = "The concentration was 1.0 × 10⁻⁹ M"
+
+        # Should pass - scientific notation match
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "not found in snippet" not in str(e).lower()
+
+    def test_skips_experimental_condition(self):
+        """Experimental condition inputs should skip snippet validation."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Change input type to experimental_condition with non-matching snippet
+        data["inputs"][0]["input_type"] = "experimental_condition"
+        data["inputs"][0]["value_snippet"] = "Cells were treated with drug"
+
+        # Should pass - experimental conditions skip snippet validation
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "not found in snippet" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_span_ordering
+# ============================================================================
+
+
+class TestValidateSpanOrdering:
+    """Tests for validate_span_ordering validator."""
+
+    def test_span_start_greater_than_end_fails(self):
+        """span[0] >= span[1] should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = {
+            "target_id": "test_span_001",
+            "inputs": [
+                {
+                    "name": "test_value",
+                    "value": 10.0,
+                    "units": "1/day",
+                    "input_type": "direct_measurement",
+                    "role": "target",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "extraction_method": "manual",
+                }
+            ],
+            "calibration": {
+                "parameters": [
+                    {
+                        "name": "k_decay",
+                        "units": "1/day",
+                        "prior": {
+                            "distribution": "lognormal",
+                            "mu": math.log(0.1),
+                            "sigma": 0.5,
+                        },
+                    }
+                ],
+                "model": {
+                    "type": "first_order_decay",
+                    "rate_constant": "k_decay",
+                    "data_rationale": "Test",
+                    "submodel_rationale": "Test",
+                },
+                "state_variables": [
+                    {
+                        "name": "A",
+                        "units": "dimensionless",
+                        "initial_condition": {
+                            "value": 1.0,
+                            "rationale": "Initial condition for testing",
+                        },
+                    }
+                ],
+                "independent_variable": {
+                    "name": "time",
+                    "units": "day",
+                    "span": [10.0, 5.0],  # Invalid: start > end
+                },
+                "measurements": [
+                    {
+                        "name": "test_measurement",
+                        "units": "1/day",
+                        "uses_inputs": ["test_value"],
+                        "evaluation_points": [10.0],
+                        "measurement_error_code": measurement_error_code,
+                        "likelihood": {"distribution": "lognormal"},
+                    }
+                ],
+                "identifiability_notes": "Test notes",
+            },
+            "experimental_context": {
+                "species": "human",
+                "system": "in_vitro",
+            },
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "estimated_translation_uncertainty_fold": 1.0,
+            },
+            "study_interpretation": "Test interpretation",
+            "key_assumptions": ["Test assumption"],
+            "primary_data_source": {
+                "doi": "10.1234/test",
+                "title": "Test Paper",
+                "source_tag": "Test2023",
+            },
+            "secondary_data_sources": [],
+        }
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "span" in str(exc_info.value).lower()
+
+    def test_negative_span_fails(self):
+        """Negative span start should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = {
+            "target_id": "test_span_002",
+            "inputs": [
+                {
+                    "name": "test_value",
+                    "value": 10.0,
+                    "units": "1/day",
+                    "input_type": "direct_measurement",
+                    "role": "target",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "extraction_method": "manual",
+                }
+            ],
+            "calibration": {
+                "parameters": [
+                    {
+                        "name": "k_decay",
+                        "units": "1/day",
+                        "prior": {
+                            "distribution": "lognormal",
+                            "mu": math.log(0.1),
+                            "sigma": 0.5,
+                        },
+                    }
+                ],
+                "model": {
+                    "type": "first_order_decay",
+                    "rate_constant": "k_decay",
+                    "data_rationale": "Test",
+                    "submodel_rationale": "Test",
+                },
+                "state_variables": [
+                    {
+                        "name": "A",
+                        "units": "dimensionless",
+                        "initial_condition": {
+                            "value": 1.0,
+                            "rationale": "Initial condition for testing",
+                        },
+                    }
+                ],
+                "independent_variable": {
+                    "name": "time",
+                    "units": "day",
+                    "span": [-5.0, 10.0],  # Invalid: negative start
+                },
+                "measurements": [
+                    {
+                        "name": "test_measurement",
+                        "units": "1/day",
+                        "uses_inputs": ["test_value"],
+                        "evaluation_points": [10.0],
+                        "measurement_error_code": measurement_error_code,
+                        "likelihood": {"distribution": "lognormal"},
+                    }
+                ],
+                "identifiability_notes": "Test notes",
+            },
+            "experimental_context": {
+                "species": "human",
+                "system": "in_vitro",
+            },
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "estimated_translation_uncertainty_fold": 1.0,
+            },
+            "study_interpretation": "Test interpretation",
+            "key_assumptions": ["Test assumption"],
+            "primary_data_source": {
+                "doi": "10.1234/test",
+                "title": "Test Paper",
+                "source_tag": "Test2023",
+            },
+            "secondary_data_sources": [],
+        }
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "non-negative" in str(exc_info.value).lower()
+
+
+# ============================================================================
+# Tests for validate_no_invisible_characters
+# ============================================================================
+
+
+class TestValidateNoInvisibleCharacters:
+    """Tests for validate_no_invisible_characters validator."""
+
+    def test_invisible_unicode_in_text_fails(self):
+        """Invisible unicode characters in string fields should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Add zero-width space in a text field
+        data["study_interpretation"] = "Test interpretation\u200Bwith invisible character"
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "invisible" in str(exc_info.value).lower() or "character" in str(exc_info.value).lower()
+
+    def test_normal_text_passes(self):
+        """Normal text without invisible characters should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+
+        # Should pass - no invisible characters
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "invisible" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_units_are_valid_pint
+# ============================================================================
+
+
+class TestValidateUnitsAreValidPint:
+    """Tests for validate_units_are_valid_pint validator."""
+
+    def test_invalid_unit_string_fails(self):
+        """Invalid Pint unit string should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Use an invalid unit string
+        data["inputs"][0]["units"] = "invalid_unit_xyz"
+
+        # Should fail - either in unit validation or when trying to use the unit
+        with pytest.raises((ValidationError, Exception)) as exc_info:
+            SubmodelTarget(**data)
+
+        error_str = str(exc_info.value).lower()
+        assert "invalid_unit_xyz" in error_str or "not defined" in error_str or "not a valid" in error_str
+
+    def test_valid_pint_units_passes(self):
+        """Valid Pint unit strings should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Default units are "1/day" which is valid
+
+        # Should pass unit validation
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "not a valid pint unit" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_ode_model_requirements
+# ============================================================================
+
+
+class TestValidateODEModelRequirements:
+    """Tests for validate_ode_model_requirements validator."""
+
+    def test_first_order_decay_without_state_variables_fails(self):
+        """first_order_decay model without state_variables should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = {
+            "target_id": "test_ode_001",
+            "inputs": [
+                {
+                    "name": "test_value",
+                    "value": 10.0,
+                    "units": "1/day",
+                    "input_type": "direct_measurement",
+                    "role": "target",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "extraction_method": "manual",
+                }
+            ],
+            "calibration": {
+                "parameters": [
+                    {
+                        "name": "k_decay",
+                        "units": "1/day",
+                        "prior": {
+                            "distribution": "lognormal",
+                            "mu": math.log(0.1),
+                            "sigma": 0.5,
+                        },
+                    }
+                ],
+                "model": {
+                    "type": "first_order_decay",
+                    "rate_constant": "k_decay",
+                    "data_rationale": "Test",
+                    "submodel_rationale": "Test",
+                },
+                # No state_variables - should fail
+                "independent_variable": {
+                    "name": "time",
+                    "units": "day",
+                    "span": [0.0, 10.0],
+                },
+                "measurements": [
+                    {
+                        "name": "test_measurement",
+                        "units": "1/day",
+                        "uses_inputs": ["test_value"],
+                        "evaluation_points": [10.0],
+                        "measurement_error_code": measurement_error_code,
+                        "likelihood": {"distribution": "lognormal"},
+                    }
+                ],
+                "identifiability_notes": "Test notes",
+            },
+            "experimental_context": {
+                "species": "human",
+                "system": "in_vitro",
+            },
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "estimated_translation_uncertainty_fold": 1.0,
+            },
+            "study_interpretation": "Test interpretation",
+            "key_assumptions": ["Test assumption"],
+            "primary_data_source": {
+                "doi": "10.1234/test",
+                "title": "Test Paper",
+                "source_tag": "Test2023",
+            },
+            "secondary_data_sources": [],
+        }
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "state_variables" in str(exc_info.value).lower()
+
+    def test_first_order_decay_without_span_fails(self):
+        """first_order_decay model without independent_variable span should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = {
+            "target_id": "test_ode_002",
+            "inputs": [
+                {
+                    "name": "test_value",
+                    "value": 10.0,
+                    "units": "1/day",
+                    "input_type": "direct_measurement",
+                    "role": "target",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "extraction_method": "manual",
+                }
+            ],
+            "calibration": {
+                "parameters": [
+                    {
+                        "name": "k_decay",
+                        "units": "1/day",
+                        "prior": {
+                            "distribution": "lognormal",
+                            "mu": math.log(0.1),
+                            "sigma": 0.5,
+                        },
+                    }
+                ],
+                "model": {
+                    "type": "first_order_decay",
+                    "rate_constant": "k_decay",
+                    "data_rationale": "Test",
+                    "submodel_rationale": "Test",
+                },
+                "state_variables": [
+                    {
+                        "name": "A",
+                        "units": "dimensionless",
+                        "initial_condition": {
+                            "value": 1.0,
+                            "rationale": "Initial condition for testing",
+                        },
+                    }
+                ],
+                # No span in independent_variable - should fail
+                "independent_variable": {
+                    "name": "time",
+                    "units": "day",
+                },
+                "measurements": [
+                    {
+                        "name": "test_measurement",
+                        "units": "1/day",
+                        "uses_inputs": ["test_value"],
+                        "evaluation_points": [10.0],
+                        "measurement_error_code": measurement_error_code,
+                        "likelihood": {"distribution": "lognormal"},
+                    }
+                ],
+                "identifiability_notes": "Test notes",
+            },
+            "experimental_context": {
+                "species": "human",
+                "system": "in_vitro",
+            },
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "estimated_translation_uncertainty_fold": 1.0,
+            },
+            "study_interpretation": "Test interpretation",
+            "key_assumptions": ["Test assumption"],
+            "primary_data_source": {
+                "doi": "10.1234/test",
+                "title": "Test Paper",
+                "source_tag": "Test2023",
+            },
+            "secondary_data_sources": [],
+        }
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        assert "span" in str(exc_info.value).lower()
+
+    def test_algebraic_without_state_variables_passes(self):
+        """algebraic model without state_variables should pass (non-ODE)."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Algebraic models don't require state_variables
+
+        # Should pass
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "state_variables" not in str(e).lower()
+
+    def test_valid_ode_model_passes(self):
+        """Valid ODE model with state_variables and span should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = {
+            "target_id": "test_ode_003",
+            "inputs": [
+                {
+                    "name": "test_value",
+                    "value": 10.0,
+                    "units": "1/day",
+                    "input_type": "direct_measurement",
+                    "role": "target",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "extraction_method": "manual",
+                }
+            ],
+            "calibration": {
+                "parameters": [
+                    {
+                        "name": "k_decay",
+                        "units": "1/day",
+                        "prior": {
+                            "distribution": "lognormal",
+                            "mu": math.log(0.1),
+                            "sigma": 0.5,
+                        },
+                    }
+                ],
+                "model": {
+                    "type": "first_order_decay",
+                    "rate_constant": "k_decay",
+                    "data_rationale": "Test",
+                    "submodel_rationale": "Test",
+                },
+                "state_variables": [
+                    {
+                        "name": "A",
+                        "units": "dimensionless",
+                        "initial_condition": {
+                            "value": 1.0,
+                            "rationale": "Initial condition for testing",
+                        },
+                    }
+                ],
+                "independent_variable": {
+                    "name": "time",
+                    "units": "day",
+                    "span": [0.0, 10.0],
+                },
+                "measurements": [
+                    {
+                        "name": "test_measurement",
+                        "units": "1/day",
+                        "uses_inputs": ["test_value"],
+                        "evaluation_points": [10.0],
+                        "measurement_error_code": measurement_error_code,
+                        "likelihood": {"distribution": "lognormal"},
+                    }
+                ],
+                "identifiability_notes": "Test notes",
+            },
+            "experimental_context": {
+                "species": "human",
+                "system": "in_vitro",
+            },
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "estimated_translation_uncertainty_fold": 1.0,
+            },
+            "study_interpretation": "Test interpretation",
+            "key_assumptions": ["Test assumption"],
+            "primary_data_source": {
+                "doi": "10.1234/test",
+                "title": "Test Paper",
+                "source_tag": "Test2023",
+            },
+            "secondary_data_sources": [],
+        }
+
+        # Should pass all ODE requirements
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            # Check it's not failing on ODE requirements
+            error_str = str(e).lower()
+            assert "state_variables" not in error_str or "require" not in error_str
+
+
+# ============================================================================
+# Tests for validate_cross_species_uncertainty
+# ============================================================================
+
+
+class TestValidateCrossSpeciesUncertainty:
+    """Tests for validate_cross_species_uncertainty validator."""
+
+    def test_cross_species_without_sufficient_uncertainty_fails(self):
+        """Cross-species extrapolation with low uncertainty should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Set cross-species with low uncertainty
+        data["source_relevance"]["species_source"] = "mouse"
+        data["source_relevance"]["species_target"] = "human"
+        data["source_relevance"]["estimated_translation_uncertainty_fold"] = 1.5  # Too low
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        error_str = str(exc_info.value).lower()
+        assert "cross-species" in error_str or "uncertainty" in error_str
+
+    def test_cross_species_with_sufficient_uncertainty_passes(self):
+        """Cross-species extrapolation with adequate uncertainty should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Set cross-species with adequate uncertainty
+        data["source_relevance"]["species_source"] = "mouse"
+        data["source_relevance"]["species_target"] = "human"
+        data["source_relevance"]["estimated_translation_uncertainty_fold"] = 3.0  # Adequate
+
+        # Should pass
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "cross-species" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_cross_indication_uncertainty
+# ============================================================================
+
+
+class TestValidateCrossIndicationUncertainty:
+    """Tests for validate_cross_indication_uncertainty validator."""
+
+    def test_cross_indication_proxy_without_sufficient_uncertainty_fails(self):
+        """Cross-indication proxy with low uncertainty should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Set proxy indication with low uncertainty
+        data["source_relevance"]["indication_match"] = "proxy"
+        data["source_relevance"]["estimated_translation_uncertainty_fold"] = 2.0  # Too low for proxy
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        error_str = str(exc_info.value).lower()
+        assert "cross-indication" in error_str or "proxy" in error_str
+
+    def test_cross_indication_with_sufficient_uncertainty_passes(self):
+        """Cross-indication extrapolation with adequate uncertainty should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Set proxy indication with adequate uncertainty
+        data["source_relevance"]["indication_match"] = "proxy"
+        data["source_relevance"]["indication_match_justification"] = (
+            "This is a proxy indication that requires adequate justification text for testing purposes."
+        )
+        data["source_relevance"]["estimated_translation_uncertainty_fold"] = 5.0  # Adequate for proxy
+
+        # Should pass
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "cross-indication" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_pharmacological_perturbation_justification
+# ============================================================================
+
+
+class TestValidatePerturbationJustification:
+    """Tests for validate_pharmacological_perturbation_justification validator."""
+
+    def test_pharmacological_perturbation_without_justification_fails(self):
+        """Pharmacological perturbation without perturbation_relevance should fail."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Set pharmacological perturbation without justification
+        data["source_relevance"]["perturbation_type"] = "pharmacological"
+        # perturbation_relevance not provided
+
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+
+        error_str = str(exc_info.value).lower()
+        assert "pharmacological" in error_str or "perturbation_relevance" in error_str
+
+    def test_pharmacological_perturbation_with_justification_passes(self):
+        """Pharmacological perturbation with perturbation_relevance should pass."""
+        measurement_error_code = """
+def derive_error(inputs, ureg):
+    return {'sd': 1.0}
+"""
+        data = make_algebraic_target(
+            input_value=10.0,
+            prior_mu=math.log(10.0),
+            measurement_error_code=measurement_error_code,
+        )
+        # Set pharmacological perturbation with justification
+        data["source_relevance"]["perturbation_type"] = "pharmacological"
+        data["source_relevance"]["perturbation_relevance"] = (
+            "The drug-induced response reflects the same biological pathway being modeled, "
+            "as the mechanism of action directly targets the parameter being estimated."
+        )
+
+        # Should pass
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "perturbation_relevance" not in str(e).lower()
