@@ -117,14 +117,20 @@ def collect_existing_studies_for_submodel_target(
     target_id: str,
     cancer_type: str,
     previous_extractions_dir: Path,
+    parameter_names: list[str] | None = None,
 ) -> str:
     """
     Collect information about existing studies for a given submodel target.
+
+    For multi-parameter targets, also collects studies from single-parameter extractions
+    for each individual parameter to prevent reuse.
 
     Args:
         target_id: Target ID (e.g., "psc_activation")
         cancer_type: Cancer type for the target (e.g., "PDAC")
         previous_extractions_dir: Path to directory containing previous extraction YAML files
+        parameter_names: Optional list of parameter names for multi-parameter targets.
+                        If provided, also searches for {param}_{cancer_type}_deriv*.yaml files.
 
     Returns:
         Formatted string describing existing studies, or empty string if none exist
@@ -137,11 +143,23 @@ def collect_existing_studies_for_submodel_target(
     # Find all YAML files matching {target_id}_{cancer_type}_deriv*.yaml pattern
     yaml_files = list(previous_extractions_dir.glob(f"{target_id}_{cancer_type}_deriv*.yaml"))
 
+    # Also search for individual parameter files if parameter_names provided
+    if parameter_names:
+        for param_name in parameter_names:
+            param_files = list(
+                previous_extractions_dir.glob(f"{param_name}_{cancer_type}_deriv*.yaml")
+            )
+            yaml_files.extend(param_files)
+
+    # Deduplicate file list (in case of overlapping patterns)
+    yaml_files = list(set(yaml_files))
+
     if not yaml_files:
         return ""
 
     # Collect primary sources from all matching files
-    all_sources = []
+    # Use dict keyed by DOI/URL to deduplicate sources used in multiple files
+    sources_by_id: dict[str, tuple[str, dict]] = {}
 
     for yaml_file in sorted(yaml_files):
         try:
@@ -154,23 +172,29 @@ def collect_existing_studies_for_submodel_target(
             # Extract primary_data_source only (not secondary sources)
             if "primary_data_source" in study_data and study_data["primary_data_source"]:
                 source = study_data["primary_data_source"]
-                all_sources.append((yaml_file.name, source))
+                doi = source.get("doi", "")
+                url = source.get("url", "")
+                source_id = doi or url or yaml_file.name
+                # Only add if not already seen (dedup by DOI/URL)
+                if source_id not in sources_by_id:
+                    sources_by_id[source_id] = (yaml_file.name, source)
 
         except Exception as e:
             print(f"Warning: Could not process {yaml_file}: {e}")
             continue
 
-    if not all_sources:
+    if not sources_by_id:
         return ""
 
     # Format the complete section
     header = "\n## Sources Already Used for This Target\n\n"
-    header += "**IMPORTANT:** The following primary sources have already been used in previous extractions for this target. "
+    header += "**IMPORTANT:** The following primary sources have already been used in previous extractions "
+    header += "for this target or its constituent parameters. "
     header += "DO NOT re-use these sources. Instead, find NEW sources not listed below.\n\n"
 
     # List only doi/url and title
     output = []
-    for filename, source_data in all_sources:
+    for source_id, (filename, source_data) in sorted(sources_by_id.items()):
         doi = source_data.get("doi", "")
         url = source_data.get("url", "")
         title = source_data.get("title", "").strip()

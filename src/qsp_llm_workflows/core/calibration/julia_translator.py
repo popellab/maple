@@ -489,6 +489,16 @@ end
         model = target.calibration.model
         func_name = self.mapper._sanitize_name(target.target_id)
 
+        # Check if this is a multi-output model (forward model returns dict)
+        # Only AlgebraicModels can return dictionaries; ODE models return scalars
+        multi_output_keys = []
+        for em in target.calibration.error_model:
+            if em.observable and em.observable.state_variables:
+                multi_output_keys.append(em.observable.state_variables[0])
+            else:
+                multi_output_keys.append(None)
+        is_multi_output = isinstance(model, AlgebraicModel) and any(k is not None for k in multi_output_keys)
+
         lines = ["@model function calibrate_{}(obs, sigma)".format(func_name)]
 
         # Generate priors
@@ -498,28 +508,46 @@ end
             lines.append(f"    {prior_code}")
 
         lines.append("")
-        lines.append("    # Likelihood")
+        lines.append("    # Forward model")
 
-        # ODE or algebraic mode
         param_names = [p.name for p in target.calibration.parameters]
         param_call = ", ".join(param_names)
-        lines.append(f"    pred = simulate_{func_name}({param_call})")
+        lines.append(f"    result = simulate_{func_name}({param_call})")
 
-        if len(obs_data.observations) == 1:
+        lines.append("")
+        lines.append("    # Likelihood")
+
+        if is_multi_output:
+            # Multi-output model: extract each observable from the dict
+            for i, (em, key) in enumerate(zip(target.calibration.error_model, multi_output_keys)):
+                if key:
+                    lines.append(f'    pred_{i+1} = result["{key}"]')
+                else:
+                    lines.append(f"    pred_{i+1} = result")
+
+            # Generate likelihood statements for each observation
+            for i, em in enumerate(target.calibration.error_model):
+                dist = em.likelihood.distribution if em.likelihood else "normal"
+                if dist == "lognormal":
+                    lines.append(f"    obs[{i+1}] ~ LogNormal(log(pred_{i+1}), sigma[{i+1}])")
+                else:
+                    lines.append(f"    obs[{i+1}] ~ Normal(pred_{i+1}, sigma[{i+1}])")
+        elif len(obs_data.observations) == 1:
             obs = obs_data.observations[0]
             if obs.likelihood_distribution == "lognormal":
-                # LogNormal(log(pred), sigma) has median = pred, sigma is log-scale
-                lines.append("    obs ~ LogNormal(log(pred), sigma)")
+                lines.append("    obs ~ LogNormal(log(result), sigma)")
             else:
-                lines.append("    obs ~ Normal(pred, sigma)")
+                lines.append("    obs ~ Normal(result, sigma)")
         else:
-            # Multiple observations - check if any use lognormal
+            # Multiple observations without multi-output keys
+            is_algebraic = isinstance(model, AlgebraicModel)
             lines.append("    for i in eachindex(obs)")
-            # For simplicity, assume all observations use same likelihood type
             if obs_data.observations[0].likelihood_distribution == "lognormal":
-                lines.append("        obs[i] ~ LogNormal(log(pred[i]), sigma[i])")
+                pred_expr = "result" if is_algebraic else "result[i]"
+                lines.append(f"        obs[i] ~ LogNormal(log({pred_expr}), sigma[i])")
             else:
-                lines.append("        obs[i] ~ Normal(pred[i], sigma[i])")
+                pred_expr = "result" if is_algebraic else "result[i]"
+                lines.append(f"        obs[i] ~ Normal({pred_expr}, sigma[i])")
             lines.append("    end")
 
         lines.append("")
@@ -558,6 +586,19 @@ end
             obs_arg = f"[{', '.join(f'{prefix}_OBS_MEDIAN_{i+1}' for i in range(len(obs_data.observations)))}]"
             sigma_arg = f"[{', '.join(f'{prefix}_OBS_SIGMA_{i+1}' for i in range(len(obs_data.observations)))}]"
 
+        # Build posterior median output for each parameter
+        param_lines = []
+        for param in target.calibration.parameters:
+            param_lines.append(
+                f'let samples = chain[:{param.name}][:]\n'
+                f'    med = round(median(samples), sigdigits=4)\n'
+                f'    ci_lo = round(quantile(samples, 0.05), sigdigits=4)\n'
+                f'    ci_hi = round(quantile(samples, 0.95), sigdigits=4)\n'
+                f'    println("  {param.name}: $med ({param.units})  [90% CI: $ci_lo - $ci_hi]")\n'
+                f'end'
+            )
+        posterior_output = "\n".join(param_lines)
+
         return f"""
 model = calibrate_{func_name}({obs_arg}, {sigma_arg})
 
@@ -566,6 +607,11 @@ chain = sample(model, NUTS(0.65), MCMCThreads(), 1000, 4; progress=true)
 
 println("\\nPosterior Summary:")
 display(chain)
+
+println("\\n" * "=" ^ 60)
+println("POSTERIOR MEDIAN AND 90% CI")
+println("=" ^ 60)
+{posterior_output}
 """
 
     def _const_prefix(self, target_id: str) -> str:
@@ -1222,7 +1268,11 @@ end
                 else:
                     sigma_expr = f'data["{tid}"].obs_sigma[{idx}]'
 
-                pred_expr = f"pred_{func_name}" if n_obs == 1 else f"pred_{func_name}[{idx}]"
+                # Algebraic models return a scalar; ODE models may return arrays for multiple eval points
+                if isinstance(model, AlgebraicModel) or n_obs == 1:
+                    pred_expr = f"pred_{func_name}"
+                else:
+                    pred_expr = f"pred_{func_name}[{idx}]"
 
                 # Use LogNormal likelihood when specified (sigma is in log-space)
                 if obs.likelihood_distribution == "lognormal":
@@ -1441,11 +1491,13 @@ def main():
         print("Usage:")
         print("  Single target:  python -m ... --model-structure <path> <yaml_file> [output.jl]")
         print("  Joint inference: python -m ... --joint --model-structure <path> <yaml1> <yaml2> ... [--output output.jl] [--fixed-sigma]")
+        print("  All singles:    python -m ... --single-all --model-structure <path> <yaml1> <yaml2> ... [--output output.jl]")
         print("")
         print("Options:")
         print("  --model-structure <path>  Path to model_structure.json (required)")
         print("  --fixed-sigma             Treat all measurement sigmas as fixed (not sampled).")
         print("                            Reduces model dimensionality and speeds up sampling.")
+        print("  --single-all              Run each target as independent single-target inference in one script.")
         sys.exit(1)
 
     args = sys.argv[1:]
@@ -1460,6 +1512,114 @@ def main():
     if not model_structure_path:
         print("Error: --model-structure <path> is required")
         sys.exit(1)
+
+    # Check for single-all mode (run each target independently in one script)
+    if "--single-all" in args:
+        args.remove("--single-all")
+
+        # Check for output flag
+        output_path = None
+        if "--output" in args:
+            idx = args.index("--output")
+            output_path = args[idx + 1]
+            args = args[:idx] + args[idx + 2 :]
+
+        yaml_paths = args
+        translator = JuliaTranslator.from_model_structure_file(model_structure_path)
+
+        # Build combined script
+        lines = []
+        lines.append("# Combined Single-Target Inference Script")
+        lines.append("# Each target is run independently to detect conflicts between targets")
+        lines.append("")
+        lines.append("using Turing")
+        lines.append("using DifferentialEquations")
+        lines.append("using Distributions")
+        lines.append("using Statistics")
+        lines.append("using Random")
+        lines.append("")
+        lines.append("Random.seed!(42)")
+        lines.append("")
+        lines.append("# Results storage")
+        lines.append("results = Dict{String, NamedTuple}()")
+        lines.append("")
+
+        for yaml_path in yaml_paths:
+            target = translator.load_target(yaml_path)
+            tid = target.target_id
+            func_name = translator.generator.mapper._sanitize_name(tid)
+
+            lines.append(f"# " + "=" * 70)
+            lines.append(f"# {tid}")
+            lines.append(f"# " + "=" * 70)
+            lines.append("")
+
+            # Generate the model code (without package imports and sampling)
+            full_script = translator.generate_script(yaml_path)
+
+            # Extract just the model parts (skip imports and sampling code)
+            in_model = False
+            model_lines = []
+            for line in full_script.split("\n"):
+                if line.startswith("using ") or line.startswith("import "):
+                    continue
+                if line.startswith("Random.seed!"):
+                    continue
+                if line.startswith("model = "):
+                    break
+                model_lines.append(line)
+
+            lines.extend(model_lines)
+            lines.append("")
+
+            # Add sampling code for this target
+            obs_data = translator.generator.extractor.extract(target)
+            prefix = translator.generator._const_prefix(tid)
+
+            if len(obs_data.observations) == 1:
+                obs_arg = f"{prefix}_OBS_MEDIAN"
+                sigma_arg = f"{prefix}_OBS_SIGMA"
+            else:
+                obs_arg = f"[{', '.join(f'{prefix}_OBS_MEDIAN_{i+1}' for i in range(len(obs_data.observations)))}]"
+                sigma_arg = f"[{', '.join(f'{prefix}_OBS_SIGMA_{i+1}' for i in range(len(obs_data.observations)))}]"
+
+            lines.append(f'println("\\n" * "=" ^ 70)')
+            lines.append(f'println("RUNNING: {tid}")')
+            lines.append(f'println("=" ^ 70)')
+            lines.append(f"model_{func_name} = calibrate_{func_name}({obs_arg}, {sigma_arg})")
+            lines.append(f"chain_{func_name} = sample(model_{func_name}, NUTS(0.65), 1000; progress=false)")
+            lines.append("")
+
+            # Store results
+            for param in target.calibration.parameters:
+                lines.append(f'let samples = chain_{func_name}[:{param.name}][:]')
+                lines.append(f'    med = median(samples)')
+                lines.append(f'    ci_lo = quantile(samples, 0.05)')
+                lines.append(f'    ci_hi = quantile(samples, 0.95)')
+                lines.append(f'    results["{tid}"] = (param="{param.name}", median=med, ci_lo=ci_lo, ci_hi=ci_hi, units="{param.units}")')
+                lines.append(f'    println("  {param.name}: $(round(med, sigdigits=4)) ({param.units})  [90% CI: $(round(ci_lo, sigdigits=4)) - $(round(ci_hi, sigdigits=4))]")')
+                lines.append("end")
+            lines.append("")
+
+        # Add summary output
+        lines.append("")
+        lines.append('println("\\n" * "=" ^ 70)')
+        lines.append('println("SUMMARY: ALL SINGLE-TARGET POSTERIORS")')
+        lines.append('println("=" ^ 70)')
+        lines.append("for (tid, r) in sort(collect(results))")
+        lines.append('    println("$(tid): $(r.param) = $(round(r.median, sigdigits=4)) [$(round(r.ci_lo, sigdigits=4)) - $(round(r.ci_hi, sigdigits=4))] $(r.units)")')
+        lines.append("end")
+
+        code = "\n".join(lines)
+
+        if output_path:
+            with open(output_path, "w") as f:
+                f.write(code)
+            print(f"Generated combined single-target script: {output_path}")
+        else:
+            print(code)
+
+        sys.exit(0)
 
     # Check for joint mode
     if "--joint" in args:

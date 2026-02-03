@@ -140,6 +140,7 @@ class ImmediateRequestProcessor:
         workflow_type: str = "parameter",
         progress_callback: Optional[callable] = None,
         model: str = "gpt-5.1",
+        max_retries: int = 10,
     ) -> Dict[str, Any]:
         """
         Process a single extraction request using Pydantic AI.
@@ -151,6 +152,7 @@ class ImmediateRequestProcessor:
             workflow_type: Type of workflow for tool selection
             progress_callback: Optional callback for progress updates
             model: OpenAI model to use
+            max_retries: Maximum retries for output validation
 
         Returns:
             Result dictionary in workflow-compatible format
@@ -192,7 +194,7 @@ class ImmediateRequestProcessor:
                 model_settings=settings,
                 builtin_tools=builtin_tools,
                 validation_context=validation_context,
-                retries=10,  # Increased for validation requirements
+                retries=max_retries,
             )
 
             # Run agent with prompt, capturing logfire trace_id if available
@@ -252,6 +254,7 @@ class ImmediateRequestProcessor:
         result_callback: Optional[callable] = None,
         reasoning_effort: str = "medium",
         model: str = "gpt-5.1",
+        max_retries: int = 10,
     ) -> List[Dict[str, Any]]:
         """
         Process all requests from CSV file using Pydantic AI.
@@ -263,6 +266,7 @@ class ImmediateRequestProcessor:
             result_callback: Optional callback called immediately as each result completes
             reasoning_effort: Reasoning effort level
             model: OpenAI model to use
+            max_retries: Maximum retries for output validation
 
         Returns:
             List of results in standard format
@@ -281,7 +285,7 @@ class ImmediateRequestProcessor:
         # Create tasks for all requests
         tasks = [
             self.process_single_request(
-                prompt, i, reasoning_effort, workflow_type, progress_callback, model
+                prompt, i, reasoning_effort, workflow_type, progress_callback, model, max_retries
             )
             for i, prompt in enumerate(prompts)
         ]
@@ -310,6 +314,7 @@ class ImmediateRequestProcessor:
         result_callback: Optional[callable] = None,
         reasoning_effort: str = "medium",
         model: str = "gpt-5.1",
+        max_retries: int = 10,
     ) -> List[Dict[str, Any]]:
         """
         Synchronous wrapper for async processing via Pydantic AI.
@@ -321,6 +326,7 @@ class ImmediateRequestProcessor:
             result_callback: Optional callback called immediately as each result completes
             reasoning_effort: Reasoning effort level
             model: OpenAI model to use
+            max_retries: Maximum retries for output validation
 
         Returns:
             List of results in standard format
@@ -333,5 +339,6 @@ class ImmediateRequestProcessor:
                 result_callback,
                 reasoning_effort,
                 model,
+                max_retries,
             )
         )

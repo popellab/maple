@@ -1066,12 +1066,16 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
                 parameter_context = self.format_parameter_context(parameters, model_structure)
 
                 # Collect existing studies from previous extractions
+                # For multi-parameter targets, also check individual parameter files
                 used_primary_studies = ""
                 if previous_extractions_dir and cancer_type:
+                    # Parse parameter names from comma-separated string
+                    param_names = [p.strip() for p in parameters.split(",") if p.strip()]
                     used_primary_studies = collect_existing_studies_for_submodel_target(
                         target_id=target_id,
                         cancer_type=cancer_type,
                         previous_extractions_dir=previous_extractions_dir,
+                        parameter_names=param_names,
                     )
 
                 # Build the prompt

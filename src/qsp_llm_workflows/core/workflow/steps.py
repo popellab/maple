@@ -223,6 +223,7 @@ class ProcessPromptsStep(WorkflowStep):
                 result_callback=unpack_result,  # Unpack as each completes
                 reasoning_effort=context.config.reasoning_effort,
                 model=context.config.openai_model,
+                max_retries=context.config.max_retries,
             )
 
             # Write results to file (for audit trail and debugging)

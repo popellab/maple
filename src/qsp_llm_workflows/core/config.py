@@ -63,6 +63,18 @@ class WorkflowConfig(BaseModel):
         description="Path to directory with previous extractions (avoids re-using sources)",
     )
 
+    # Retry settings
+    max_retries: int = Field(
+        default=10,
+        description="Maximum retries for output validation during extraction",
+    )
+
+    # Source exclusion settings
+    strict_source_exclusion: bool = Field(
+        default=False,
+        description="For multi-parameter targets, also exclude sources used in single-parameter extractions",
+    )
+
     @field_validator("base_dir", "storage_dir", mode="before")
     @classmethod
     def convert_to_path(cls, v) -> Path:

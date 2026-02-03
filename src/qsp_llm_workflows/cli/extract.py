@@ -89,6 +89,20 @@ Examples:
         "Sources from matching targets will be excluded from new extractions.",
     )
 
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=10,
+        help="Maximum retries for output validation (default: 10)",
+    )
+
+    parser.add_argument(
+        "--strict-source-exclusion",
+        action="store_true",
+        help="For multi-parameter targets, also exclude sources used in single-parameter extractions "
+        "for constituent parameters (default: only exclude sources from same target_id)",
+    )
+
     args = parser.parse_args()
 
     # Validate input file
@@ -159,6 +173,8 @@ Examples:
             model_structure_file=model_structure_file,
             model_context_file=model_context_file,
             previous_extractions_dir=previous_extractions_dir,
+            max_retries=args.max_retries,
+            strict_source_exclusion=args.strict_source_exclusion,
         )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
