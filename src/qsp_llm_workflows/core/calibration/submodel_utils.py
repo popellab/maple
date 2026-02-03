@@ -329,6 +329,131 @@ class PriorPredictiveError(Exception):
     pass
 
 
+def _extract_observable_from_dict(
+    result: Dict,
+    measurement,
+    model_type_name: str,
+) -> float:
+    """
+    Extract observable value from a multi-output forward model result.
+
+    For forward models that return a dict of state variable trajectories,
+    this function extracts the appropriate scalar value based on the
+    error model's observable specification.
+
+    Supports three modes:
+    1. Custom observable code: observable.code defines how to combine state variables
+    2. Single state variable: observable.state_variables[0] specifies which key to extract
+    3. Auto-detect: if dict has only one key, use that
+
+    Args:
+        result: Dict mapping state variable names to values/trajectories
+        measurement: ErrorModel/Measurement object with observable and evaluation_points
+        model_type_name: Name of model type for error messages
+
+    Returns:
+        Extracted scalar value
+
+    Raises:
+        PriorPredictiveError: If extraction fails
+    """
+    import numpy as np
+
+    observable = measurement.observable if measurement else None
+
+    # Mode 1: Custom observable code that can combine multiple state variables
+    if observable and observable.code:
+        try:
+            local_scope = {"np": np, "numpy": np, "result": result}
+            exec(observable.code, local_scope)
+            compute_fn = local_scope.get("compute")
+
+            if compute_fn is None:
+                raise PriorPredictiveError(
+                    f"observable.code must define 'compute' function. "
+                    f"Signature for multi-output models: def compute(result) -> float, "
+                    f"where result is dict with keys {list(result.keys())}."
+                )
+
+            # Try new signature first: compute(result)
+            # where result is the dict of state variables
+            try:
+                value = compute_fn(result)
+            except TypeError:
+                # Fall back to old ODE signature if needed
+                raise PriorPredictiveError(
+                    f"observable.code compute function failed. "
+                    f"For multi-output algebraic models, use signature: def compute(result) -> float, "
+                    f"where result is dict with keys {list(result.keys())}."
+                )
+
+            if hasattr(value, "magnitude"):
+                return value.magnitude
+            return float(value)
+
+        except PriorPredictiveError:
+            raise
+        except Exception as e:
+            raise PriorPredictiveError(
+                f"observable.code execution failed: {e}"
+            ) from e
+
+    # Mode 2 & 3: Extract single state variable
+    state_var_key = None
+    if observable and observable.state_variables:
+        state_var_key = observable.state_variables[0]
+
+    if state_var_key is None:
+        # Try to use the first key if only one state variable
+        if len(result) == 1:
+            state_var_key = list(result.keys())[0]
+        else:
+            raise PriorPredictiveError(
+                f"{model_type_name} forward model returned a dict with keys {list(result.keys())}, "
+                f"but no observable.state_variables is specified to indicate which output to use. "
+                f"Options:\n"
+                f"  1. Add observable.code with: def compute(result) -> float\n"
+                f"  2. Add observable.state_variables: ['<key>'] to extract a single key\n"
+                f"  3. Modify forward model to return a scalar"
+            )
+
+    if state_var_key not in result:
+        raise PriorPredictiveError(
+            f"{model_type_name} forward model returned keys {list(result.keys())}, "
+            f"but observable.state_variables[0] = '{state_var_key}' was not found. "
+            f"Check that the state variable name matches the forward model output."
+        )
+
+    value = result[state_var_key]
+
+    # Check if value is a Pint Quantity and extract magnitude first
+    if hasattr(value, "magnitude"):
+        value = value.magnitude
+
+    # If value is an array/list and evaluation_points exist, extract at appropriate index
+    # Use isinstance with explicit types to avoid issues with numpy scalars
+    is_sequence = isinstance(value, (list, tuple)) or (
+        hasattr(value, "ndim") and value.ndim > 0  # numpy array with dimension
+    )
+
+    if is_sequence:
+        try:
+            if measurement and measurement.evaluation_points:
+                # For time-course data, use the last evaluation point by default
+                idx = len(measurement.evaluation_points) - 1
+                if idx < len(value):
+                    value = value[idx]
+                else:
+                    value = value[-1] if len(value) > 0 else value
+            elif len(value) > 0:
+                # No evaluation points specified, use the last value
+                value = value[-1]
+        except (TypeError, IndexError):
+            pass  # Value is not indexable, use as-is
+
+    return float(value)
+
+
 def run_prior_predictive(
     model,
     prior,
@@ -337,6 +462,7 @@ def run_prior_predictive(
     independent_variable,
     measurement,
     input_values: Dict[str, float],
+    all_param_medians: Optional[Dict[str, float]] = None,
 ) -> float:
     """
     Run a prior predictive check: sample from prior, solve model, compute observable.
@@ -349,6 +475,8 @@ def run_prior_predictive(
         independent_variable: IndependentVariable object
         measurement: Measurement object with observable and evaluation_points
         input_values: Dict mapping input names to values
+        all_param_medians: Optional dict of all parameter medians for multi-param models.
+            If provided, this is used instead of computing from prior.
 
     Returns:
         Predicted observable value using prior median
@@ -356,9 +484,9 @@ def run_prior_predictive(
     Raises:
         PriorPredictiveError: If any step of the computation fails
     """
-    # Get prior median
+    # Get prior median (single param case or for error messages)
     prior_median = get_prior_median(prior)
-    if prior_median is None:
+    if prior_median is None and all_param_medians is None:
         raise PriorPredictiveError(
             f"Could not extract prior median for parameter '{param_name}'. "
             f"Check that prior distribution has required parameters (mu for lognormal/normal, "
@@ -382,8 +510,11 @@ def run_prior_predictive(
             from qsp_llm_workflows.core.unit_registry import ureg
 
             # Build params dict with prior medians
-            # Note: For multi-param models, we'd need all prior medians
-            params = {param_name: prior_median}
+            # Use all_param_medians for multi-param models, fall back to single param
+            if all_param_medians is not None:
+                params = all_param_medians.copy()
+            else:
+                params = {param_name: prior_median}
 
             # Build inputs dict with units
             inputs_pint = {}
@@ -402,6 +533,12 @@ def run_prior_predictive(
                 )
 
             result = compute_fn(params, inputs_pint, ureg)
+
+            # Handle multi-output forward models (dict return type)
+            if isinstance(result, dict):
+                result = _extract_observable_from_dict(
+                    result, measurement, "AlgebraicModel"
+                )
 
             # Extract magnitude if it's a Pint Quantity
             if hasattr(result, "magnitude"):
@@ -453,8 +590,11 @@ def run_prior_predictive(
         )
     t_span = tuple(independent_variable.span)
 
-    # Build params dict
-    param_values = {param_name: prior_median}
+    # Build params dict (use all_param_medians for multi-param models)
+    if all_param_medians is not None:
+        param_values = all_param_medians.copy()
+    else:
+        param_values = {param_name: prior_median}
 
     # Get evaluation points
     t_eval = None

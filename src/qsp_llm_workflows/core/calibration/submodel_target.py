@@ -20,6 +20,7 @@ from qsp_llm_workflows.core.calibration.enums import (
     SourceQuality,
     TMECompatibility,
 )
+from qsp_llm_workflows.core.calibration.code_validator import find_accessed_params
 
 
 # =============================================================================
@@ -53,6 +54,13 @@ class ExtractionMethod(str, Enum):
     WEBPLOTDIGITIZER = "webplotdigitizer"
     DIGITIZER = "digitizer"
     OTHER = "other"
+
+
+class SourceAccess(str, Enum):
+    """Accessibility of the source for automated snippet validation."""
+
+    OPEN_ACCESS = "open_access"  # Full text available, can auto-validate
+    RESTRICTED = "restricted"  # Can't access full text, requires manual verification
 
 
 class ObservableType(str, Enum):
@@ -143,6 +151,11 @@ class Input(BaseModel):
     value_snippet: Optional[str] = Field(
         default=None,
         description="Exact text from paper containing the value (for validation)",
+    )
+    source_access: Optional[SourceAccess] = Field(
+        default=None,
+        description="Accessibility of source for auto-validation. "
+        "Set to 'restricted' to skip automated snippet validation.",
     )
 
 
@@ -946,11 +959,10 @@ class SubmodelTarget(BaseModel):
                     )
 
         if errors:
-            raise ValueError(
-                "Invalid input references:\n  - "
-                + "\n  - ".join(errors)
-                + f"\nAvailable inputs: {sorted(input_names)}"
-            )
+            from qsp_llm_workflows.core.calibration.exceptions import InputReferenceError
+
+            errors.append(f"Available inputs: {sorted(input_names)}")
+            raise InputReferenceError.from_errors(errors)
 
         return self
 
@@ -967,11 +979,10 @@ class SubmodelTarget(BaseModel):
                 errors.append(f"Input '{inp.name}' has source_ref '{inp.source_ref}'")
 
         if errors:
-            raise ValueError(
-                "Invalid source references:\n  - "
-                + "\n  - ".join(errors)
-                + f"\nAvailable source tags: {sorted(source_tags)}"
-            )
+            from qsp_llm_workflows.core.calibration.exceptions import SourceRefError
+
+            errors.append(f"Available source tags: {sorted(source_tags)}")
+            raise SourceRefError.from_errors(errors)
 
         return self
 
@@ -1633,37 +1644,53 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def warn_unused_parameters_in_algebraic_code(self) -> "SubmodelTarget":
+    def validate_all_parameters_used_in_forward_model(self) -> "SubmodelTarget":
         """
-        Warn when AlgebraicModel.code doesn't reference all defined parameters.
+        Validate that all parameters in calibration.parameters are used in the forward model.
 
-        If a parameter is defined in calibration.parameters but not used in the
-        forward model code, it's likely a bug (copy-paste error, forgotten parameter).
-        Uses simple string matching - not perfect but catches most cases.
+        If a parameter is defined in calibration.parameters but not referenced in the
+        forward model code, it cannot be identified from the data. This is an error
+        because it indicates either:
+        1. A copy-paste error where parameters were added but not used
+        2. A misunderstanding of the forward model structure
+        3. Multi-parameter targets where some parameters are just "along for the ride"
+
+        For multi-parameter calibration, ALL parameters must influence the model output
+        to be identifiable. Parameters that don't appear in the forward model will have
+        posteriors equal to their priors, which defeats the purpose of calibration.
+
+        Applies to model types with custom code: algebraic, custom_ode.
+        Uses AST parsing to find actual params['name'] or params.get('name') accesses.
         """
         model = self.calibration.model
-        if model.type != "algebraic":
+
+        # Only check model types that have custom code
+        if model.type not in ("algebraic", "custom_ode"):
             return self
 
         if not hasattr(model, "code") or not model.code:
             return self
 
-        param_names = [p.name for p in self.calibration.parameters]
-        unused_params = []
+        param_names = set(p.name for p in self.calibration.parameters)
 
-        for param_name in param_names:
-            # Check if parameter name appears in code (as string key access)
-            # Common patterns: params['k_test'], params["k_test"], params.get('k_test')
-            if param_name not in model.code:
-                unused_params.append(param_name)
+        # Use AST parsing to find actual parameter accesses in the code
+        # This catches params['k_test'], params["k_test"], params.get('k_test')
+        accessed_params = find_accessed_params(model.code, dict_name="params")
+
+        unused_params = param_names - accessed_params
 
         if unused_params:
-            warnings.warn(
-                f"AlgebraicModel.code does not reference parameter(s): {unused_params}\n"
-                f"Defined parameters: {param_names}\n"
-                f"If these parameters are intentionally unused, consider removing them "
-                f"from calibration.parameters.",
-                UserWarning,
+            raise ValueError(
+                f"Parameter(s) not accessed in forward model code: {sorted(unused_params)}\n"
+                f"Defined parameters: {sorted(param_names)}\n"
+                f"Accessed parameters: {sorted(accessed_params)}\n\n"
+                f"All parameters in calibration.parameters MUST be accessed via "
+                f"params['name'] or params.get('name') in the forward model code "
+                f"to be identifiable from data. Parameters that don't influence "
+                f"the model output cannot be calibrated.\n\n"
+                f"Fix by either:\n"
+                f"1. Updating the forward model to use these parameters\n"
+                f"2. Removing unused parameters from calibration.parameters"
             )
 
         return self
@@ -1790,11 +1817,9 @@ class SubmodelTarget(BaseModel):
                 )
 
         if errors:
-            raise ValueError(
-                "Value-snippet mismatches (possible hallucination):\n  - "
-                + "\n  - ".join(errors)
-                + "\n\nCheck that extracted values match the source text."
-            )
+            from qsp_llm_workflows.core.calibration.exceptions import SnippetValueMismatchError
+
+            raise SnippetValueMismatchError.from_errors(errors)
 
         return self
 
@@ -1822,9 +1847,9 @@ class SubmodelTarget(BaseModel):
             """Validate a DOI and check metadata matches."""
             metadata = resolve_doi(doi)
             if metadata is None:
-                errors.append(
-                    f"{prefix} DOI '{doi}' failed to resolve. " f"Verify at https://doi.org/{doi}"
-                )
+                from qsp_llm_workflows.core.calibration.exceptions import DOIResolutionError
+
+                raise DOIResolutionError(doi, source_type=prefix)
                 return
 
             # Check title match (fuzzy)
@@ -1877,7 +1902,9 @@ class SubmodelTarget(BaseModel):
                 # URL-only sources don't get DOI validation
 
         if errors:
-            raise ValueError("DOI/metadata validation errors:\n  - " + "\n  - ".join(errors))
+            from qsp_llm_workflows.core.calibration.exceptions import DOIMetadataMismatchError
+
+            raise DOIMetadataMismatchError.from_errors(errors)
 
         return self
 
@@ -2172,14 +2199,23 @@ class SubmodelTarget(BaseModel):
             PriorPredictiveError,
         )
 
-        # Get the parameter and its prior
+        # Get all parameters and their prior medians
         if not self.calibration.parameters:
             return self
 
+        # Build dict of all parameter medians (for multi-param models)
+        all_param_medians = {}
+        for param in self.calibration.parameters:
+            median = get_prior_median(param.prior)
+            if median is not None:
+                all_param_medians[param.name] = median
+
+        if not all_param_medians:
+            return self  # No valid priors to check
+
+        # Use first parameter for error messages (backwards compatible)
         param = self.calibration.parameters[0]
-        prior_median = get_prior_median(param.prior)
-        if prior_median is None:
-            return self
+        prior_median = all_param_medians.get(param.name)
 
         # Build inputs dict with units
         inputs_dict = {}
@@ -2187,72 +2223,74 @@ class SubmodelTarget(BaseModel):
             inputs_dict[inp.name] = inp.value * ureg(inp.units)
         input_values = {inp.name: inp.value for inp in self.inputs}
 
-        # Get observation from observation_code
-        entry = self.calibration.error_model[0] if self.calibration.error_model else None
-        obs_median = None
+        # Validate each error model entry (check at least the first one)
+        for entry in self.calibration.error_model[:1]:  # Just first entry for now
+            obs_median = None
 
-        if entry and entry.observation_code:
+            if entry and entry.observation_code:
+                try:
+                    local_scope = {"np": np, "numpy": np, "ureg": ureg}
+                    exec(entry.observation_code, local_scope)
+                    derive_observation = local_scope.get("derive_observation")
+                    if derive_observation:
+                        result = derive_observation(inputs_dict, entry.sample_size, ureg)
+                        if isinstance(result, dict) and "value" in result:
+                            value = result["value"]
+                            obs_median = value.magnitude if hasattr(value, "magnitude") else value
+                except Exception:
+                    pass  # Fall through to error below
+
+            if obs_median is None:
+                raise ValueError(
+                    f"Prior predictive check failed: could not extract observation value.\n"
+                    f"  Error model: {entry.name if entry else 'None'}\n\n"
+                    f"Check that observation_code returns {{'value': <Quantity>, 'sd': ...}}"
+                )
+
+            if obs_median == 0:
+                continue  # Zero observation is valid, just can't do log comparison
+
+            # Run prior predictive to get model prediction
             try:
-                local_scope = {"np": np, "numpy": np, "ureg": ureg}
-                exec(entry.observation_code, local_scope)
-                derive_observation = local_scope.get("derive_observation")
-                if derive_observation:
-                    result = derive_observation(inputs_dict, entry.sample_size, ureg)
-                    if isinstance(result, dict) and "value" in result:
-                        value = result["value"]
-                        obs_median = value.magnitude if hasattr(value, "magnitude") else value
-            except Exception:
-                pass  # Fall through to error below
+                predicted = run_prior_predictive(
+                    model=self.calibration.model,
+                    prior=param.prior,
+                    param_name=param.name,
+                    state_variables=self.calibration.state_variables,
+                    independent_variable=self.calibration.independent_variable,
+                    measurement=entry,
+                    input_values=input_values,
+                    all_param_medians=all_param_medians,
+                )
+            except PriorPredictiveError as e:
+                raise ValueError(
+                    f"Prior predictive check failed:\n  {e}\n\n"
+                    f"  Model type: {self.calibration.model.type}\n"
+                    f"  Parameters: {list(all_param_medians.keys())}"
+                ) from e
 
-        if obs_median is None:
-            raise ValueError(
-                f"Prior predictive check failed: could not extract observation value.\n"
-                f"  Error model: {entry.name if entry else 'None'}\n\n"
-                f"Check that observation_code returns {{'value': <Quantity>, 'sd': ...}}"
-            )
+            if predicted == 0:
+                continue  # Zero prediction is valid, just can't do log comparison
 
-        if obs_median == 0:
-            return self  # Zero observation is valid, just can't do log comparison
+            # Compare prediction to observation
+            try:
+                log_diff = abs(math.log10(abs(predicted)) - math.log10(abs(obs_median)))
+            except (ValueError, ZeroDivisionError):
+                continue
 
-        # Run prior predictive to get model prediction
-        try:
-            predicted = run_prior_predictive(
-                model=self.calibration.model,
-                prior=param.prior,
-                param_name=param.name,
-                state_variables=self.calibration.state_variables,
-                independent_variable=self.calibration.independent_variable,
-                measurement=entry,
-                input_values=input_values,
-            )
-        except PriorPredictiveError as e:
-            raise ValueError(
-                f"Prior predictive check failed:\n  {e}\n\n"
-                f"  Model type: {self.calibration.model.type}\n"
-                f"  Parameter: {param.name} = {prior_median:.2e}"
-            ) from e
-
-        if predicted == 0:
-            return self  # Zero prediction is valid, just can't do log comparison
-
-        # Compare prediction to observation
-        try:
-            log_diff = abs(math.log10(abs(predicted)) - math.log10(abs(obs_median)))
-        except (ValueError, ZeroDivisionError):
-            return self
-
-        if log_diff > 3:
-            raise ValueError(
-                f"Prior predictive check failed for parameter '{param.name}':\n"
-                f"  Prior median: {prior_median:.2e}\n"
-                f"  Model prediction: {predicted:.2e}\n"
-                f"  Observation: {obs_median:.2e}\n"
-                f"  Difference: ~{10**log_diff:.0e}x ({log_diff:.1f} orders of magnitude)\n\n"
-                f"This indicates a unit conversion error. Check:\n"
-                f"  1. Prior parameters (mu, sigma) match the parameter units\n"
-                f"  2. observation_code correctly converts input units to parameter units\n"
-                f"  3. Input values and units are correct"
-            )
+            if log_diff > 3:
+                raise ValueError(
+                    f"Prior predictive check failed for error model '{entry.name}':\n"
+                    f"  Parameters: {all_param_medians}\n"
+                    f"  Model prediction: {predicted:.2e}\n"
+                    f"  Observation: {obs_median:.2e}\n"
+                    f"  Difference: ~{10**log_diff:.0e}x ({log_diff:.1f} orders of magnitude)\n\n"
+                    f"This indicates a unit conversion error. Check:\n"
+                    f"  1. Prior parameters (mu, sigma) match the parameter units\n"
+                    f"  2. observation_code correctly converts input units to parameter units\n"
+                    f"  3. Input values and units are correct\n"
+                    f"  4. observable.state_variables or observable.code correctly extracts the prediction"
+                )
 
         return self
 
@@ -2836,6 +2874,13 @@ class SubmodelTarget(BaseModel):
             predicted = local_ns["compute"](params, inputs, ureg)
         except Exception:
             # Execution errors caught by other validators
+            return self
+
+        # Handle multi-output forward models (dict return type)
+        if isinstance(predicted, dict):
+            # For multi-output models, we skip this simple check and rely on
+            # validate_prior_predictive_scale which handles dict outputs properly
+            # via the error_model's observable specification
             return self
 
         # Get magnitude for comparison

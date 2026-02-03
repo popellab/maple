@@ -115,6 +115,70 @@ class CodeValidationResult:
         return [i for i in self.issues if i.severity == "warning"]
 
 
+class ParamAccessVisitor(ast.NodeVisitor):
+    """
+    AST visitor that finds parameter names accessed from a params dict.
+
+    Detects patterns like:
+    - params['k_growth']
+    - params["k_growth"]
+    - params.get('k_growth')
+    - params.get("k_growth", default)
+
+    Used to verify that all defined parameters are actually used in forward model code.
+    """
+
+    def __init__(self, dict_name: str = "params"):
+        self.dict_name = dict_name
+        self.accessed_params: set[str] = set()
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        """Check subscript access: params['name'] or params["name"]."""
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id == self.dict_name
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            self.accessed_params.add(node.slice.value)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        """Check method calls: params.get('name') or params.get("name", default)."""
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == self.dict_name
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            self.accessed_params.add(node.args[0].value)
+        self.generic_visit(node)
+
+
+def find_accessed_params(code: str, dict_name: str = "params") -> set[str]:
+    """
+    Find all parameter names accessed from a dict in the given code.
+
+    Args:
+        code: Python code string
+        dict_name: Name of the dict variable (default: "params")
+
+    Returns:
+        Set of parameter names accessed via subscript or .get()
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()
+
+    visitor = ParamAccessVisitor(dict_name)
+    visitor.visit(tree)
+    return visitor.accessed_params
+
+
 class HardcodedConstantVisitor(ast.NodeVisitor):
     """
     AST visitor that finds numeric constants attached to units.
@@ -481,5 +545,6 @@ __all__ = [
     "ValidationIssue",
     "validate_code_block",
     "find_hardcoded_constants",
+    "find_accessed_params",
     "EXPECTED_SIGNATURES",
 ]
