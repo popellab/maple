@@ -137,6 +137,8 @@ python scripts/validate_submodel_target.py *.yaml
 | `validate_span_ordering` | `span[0] < span[1]` and both non-negative |
 | `validate_evaluation_points_within_span` | Evaluation points within independent_variable.span |
 | `validate_input_values_in_snippets` | Extracted values appear in `value_snippet` (anti-hallucination) |
+| `validate_snippets_in_source` | Verifies snippets appear in actual paper text (Europe PMC, Unpaywall) |
+| `validate_all_parameters_used_in_forward_model` | All parameters in calibration.parameters are accessed in forward model code |
 | `validate_doi_resolution_and_metadata` | DOIs resolve via CrossRef, metadata matches |
 | `validate_units_are_valid_pint` | All unit strings are valid Pint units |
 | `validate_algebraic_model_output_units` | AlgebraicModel.code returns correct units |
@@ -148,7 +150,6 @@ python scripts/validate_submodel_target.py *.yaml
 | `validate_secondary_sources_quality` | Warns if secondary sources have `non_peer_reviewed` quality |
 | `validate_prior_reflects_translation_uncertainty` | Warns if prior σ is too narrow for `estimated_translation_uncertainty_fold` |
 | `warn_multi_param_algebraic_identifiability` | Warns when AlgebraicModel has more params than measurements |
-| `warn_unused_parameters_in_algebraic_code` | Warns if parameters not referenced in code |
 | `warn_observation_sd_unreasonable` | Warns if SD is >100x or <0.001x observed value |
 
 **observation_code return signature** (required format):
@@ -167,6 +168,19 @@ def derive_observation(inputs, sample_size, ureg):
 - Zero-width spaces, soft hyphens, byte order marks
 - Control characters (except tab, newline, carriage return)
 - Unicode letters (Greek, accents) and math symbols (±, ≥) are allowed
+
+**Snippet-in-source verification** - catches hallucinated quotes:
+- Fetches paper text from Europe PMC (abstracts + PMC full text)
+- Falls back to Unpaywall for open access PDFs/HTML
+- Uses fuzzy matching to find snippets in source text
+- Set `source_access: restricted` on inputs to skip verification for paywalled papers
+
+```yaml
+inputs:
+  - name: some_value
+    value: 10.0
+    source_access: restricted  # Skip auto-verification for this input
+```
 
 ### Source Relevance Assessment
 

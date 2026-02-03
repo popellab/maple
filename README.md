@@ -72,6 +72,13 @@ calibration:
 python scripts/validate_submodel_target.py path/to/target.yaml
 ```
 
+The schema validates:
+- All references (`input_ref`, `uses_inputs`, `source_ref`) point to existing items
+- Extracted values appear in `value_snippet` (anti-hallucination check)
+- Snippets appear in actual paper text (via Europe PMC/Unpaywall)
+- DOIs resolve and metadata matches
+- Prior predictions are on the same scale as observations
+
 ### LLM Extraction
 
 Extract SubmodelTarget YAMLs from scientific literature:
