@@ -199,10 +199,7 @@ class HardcodedConstantError(DataConsistencyError):
 
     @classmethod
     def from_errors(cls, errors: List[str]) -> "HardcodedConstantError":
-        message = (
-            "Hardcoded values in code (should use inputs):\n  - "
-            + "\n  - ".join(errors)
-        )
+        message = "Hardcoded values in code (should use inputs):\n  - " + "\n  - ".join(errors)
         return cls(message, details=errors)
 
 

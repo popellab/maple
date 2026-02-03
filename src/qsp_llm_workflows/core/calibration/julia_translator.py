@@ -34,7 +34,6 @@ from qsp_llm_workflows.core.calibration.submodel_target import (
     CustomODEModel,
     ExponentialGrowthModel,
     FirstOrderDecayModel,
-    InputRole,
     LogisticModel,
     MichaelisMentenModel,
     PriorDistribution,
@@ -115,9 +114,7 @@ class ObservationExtractor:
             # Extract sd (measurement uncertainty)
             sd_val = obs_result.get("sd")
             if sd_val is None:
-                raise ValueError(
-                    f"observation_code for '{measurement.name}' did not return 'sd'"
-                )
+                raise ValueError(f"observation_code for '{measurement.name}' did not return 'sd'")
             sigma = float(getattr(sd_val, "magnitude", sd_val))
 
             sd_uncertain = obs_result.get("sd_uncertain", False)
@@ -189,9 +186,7 @@ class ObservationExtractor:
                 inputs_dict[inp.name] = inp.value * ureg(inp.units)
         return inputs_dict
 
-    def _exec_observation_code(
-        self, code: str, inputs: dict, sample_size: Optional[int]
-    ) -> dict:
+    def _exec_observation_code(self, code: str, inputs: dict, sample_size: Optional[int]) -> dict:
         """
         Execute observation_code and return result dict.
 
@@ -458,6 +453,7 @@ end
         # Get ODE function name - for custom models, extract from code_julia
         if isinstance(model, CustomODEModel):
             import re
+
             match = re.search(r"function\s+([\w!]+)\s*\(", model.code_julia)
             if match:
                 ode_func_name = match.group(1)
@@ -497,7 +493,9 @@ end
                 multi_output_keys.append(em.observable.state_variables[0])
             else:
                 multi_output_keys.append(None)
-        is_multi_output = isinstance(model, AlgebraicModel) and any(k is not None for k in multi_output_keys)
+        is_multi_output = isinstance(model, AlgebraicModel) and any(
+            k is not None for k in multi_output_keys
+        )
 
         lines = ["@model function calibrate_{}(obs, sigma)".format(func_name)]
 
@@ -590,12 +588,12 @@ end
         param_lines = []
         for param in target.calibration.parameters:
             param_lines.append(
-                f'let samples = chain[:{param.name}][:]\n'
-                f'    med = round(median(samples), sigdigits=4)\n'
-                f'    ci_lo = round(quantile(samples, 0.05), sigdigits=4)\n'
-                f'    ci_hi = round(quantile(samples, 0.95), sigdigits=4)\n'
+                f"let samples = chain[:{param.name}][:]\n"
+                f"    med = round(median(samples), sigdigits=4)\n"
+                f"    ci_lo = round(quantile(samples, 0.05), sigdigits=4)\n"
+                f"    ci_hi = round(quantile(samples, 0.95), sigdigits=4)\n"
                 f'    println("  {param.name}: $med ({param.units})  [90% CI: $ci_lo - $ci_hi]")\n'
-                f'end'
+                f"end"
             )
         posterior_output = "\n".join(param_lines)
 
@@ -1008,7 +1006,6 @@ end
         for ti in targets_info:
             lines.append(f"\n    # {ti.target_id}")
             prefix = self._const_prefix(ti.target_id).lower()
-            model = ti.target.calibration.model
 
             # ODE or algebraic mode
             func_name = self.mapper._sanitize_name(ti.target_id)
@@ -1231,9 +1228,15 @@ end
             for i, obs in enumerate(ti.observations.observations):
                 if obs.sd_uncertain:
                     func_name = self.mapper._sanitize_name(ti.target_id)
-                    sigma_name = f"sigma_{func_name}" if len(ti.observations.observations) == 1 else f"sigma_{func_name}_{i+1}"
+                    sigma_name = (
+                        f"sigma_{func_name}"
+                        if len(ti.observations.observations) == 1
+                        else f"sigma_{func_name}_{i+1}"
+                    )
                     # Half-normal prior centered on the estimated sigma
-                    lines.append(f"    {sigma_name} ~ truncated(Normal(data[\"{ti.target_id}\"].obs_sigma[{i+1}], data[\"{ti.target_id}\"].obs_sigma[{i+1}]), 0, Inf)")
+                    lines.append(
+                        f'    {sigma_name} ~ truncated(Normal(data["{ti.target_id}"].obs_sigma[{i+1}], data["{ti.target_id}"].obs_sigma[{i+1}]), 0, Inf)'
+                    )
                     sigma_params.append(sigma_name)
 
         # Likelihoods
@@ -1252,9 +1255,11 @@ end
             if isinstance(model, AlgebraicModel):
                 # Algebraic model - call compute function with params dict and inputs dict
                 param_dict_items = ", ".join(f'"{p}" => {p}' for p in ti.parameter_names)
-                lines.append(f'    params_{func_name} = Dict({param_dict_items})')
+                lines.append(f"    params_{func_name} = Dict({param_dict_items})")
                 lines.append(f'    inputs_{func_name} = data["{tid}"].inputs')
-                lines.append(f'    pred_{func_name} = compute_{func_name}(params_{func_name}, inputs_{func_name})')
+                lines.append(
+                    f"    pred_{func_name} = compute_{func_name}(params_{func_name}, inputs_{func_name})"
+                )
             else:
                 param_call = ", ".join(ti.parameter_names)
                 lines.append(f"    pred_{func_name} = simulate_{func_name}({param_call})")
@@ -1277,10 +1282,14 @@ end
                 # Use LogNormal likelihood when specified (sigma is in log-space)
                 if obs.likelihood_distribution == "lognormal":
                     # LogNormal(μ, σ) where μ = log(pred), so median = pred
-                    lines.append(f'    data["{tid}"].obs_median[{idx}] ~ LogNormal(log({pred_expr}), {sigma_expr})')
+                    lines.append(
+                        f'    data["{tid}"].obs_median[{idx}] ~ LogNormal(log({pred_expr}), {sigma_expr})'
+                    )
                 else:
                     # Normal likelihood (default)
-                    lines.append(f'    data["{tid}"].obs_median[{idx}] ~ Normal({pred_expr}, {sigma_expr})')
+                    lines.append(
+                        f'    data["{tid}"].obs_median[{idx}] ~ Normal({pred_expr}, {sigma_expr})'
+                    )
 
         # Return
         lines.append("")
@@ -1308,7 +1317,11 @@ end
             for i, obs in enumerate(ti.observations.observations):
                 if obs.sd_uncertain:
                     func_name = self.mapper._sanitize_name(ti.target_id)
-                    sigma_name = f"sigma_{func_name}" if len(ti.observations.observations) == 1 else f"sigma_{func_name}_{i+1}"
+                    sigma_name = (
+                        f"sigma_{func_name}"
+                        if len(ti.observations.observations) == 1
+                        else f"sigma_{func_name}_{i+1}"
+                    )
                     sigma_params.append(sigma_name)
 
         lines.append(
@@ -1361,12 +1374,14 @@ println("=" ^ 60)"""
         )
 
         for pname, pinfo in parameters.items():
-            lines.append(f"""let samples = chain[:{pname}][:]
+            lines.append(
+                f"""let samples = chain[:{pname}][:]
     med = round(median(samples), sigdigits=4)
     ci_lo = round(quantile(samples, 0.05), sigdigits=4)
     ci_hi = round(quantile(samples, 0.95), sigdigits=4)
     println("  {pname}: $med ({pinfo.units})  [90% CI: $ci_lo - $ci_hi]")
-end""")
+end"""
+            )
 
         # Add plotting code with priors
         param_names_list = ", ".join(f":{p}" for p in parameters.keys())
@@ -1384,7 +1399,9 @@ end""")
                 elif prior.distribution == PriorDistribution.UNIFORM:
                     prior_entries.append(f"    :{pname} => Uniform({prior.lower}, {prior.upper})")
                 elif prior.distribution == PriorDistribution.HALF_NORMAL:
-                    prior_entries.append(f"    :{pname} => truncated(Normal(0, {prior.sigma}), 0, Inf)")
+                    prior_entries.append(
+                        f"    :{pname} => truncated(Normal(0, {prior.sigma}), 0, Inf)"
+                    )
                 else:
                     prior_entries.append(f"    :{pname} => LogNormal(0.0, 2.0)")
             else:
@@ -1395,7 +1412,8 @@ end""")
         n_cols = 3
         n_rows = (n_params + n_cols - 1) // n_cols
 
-        lines.append(f"""
+        lines.append(
+            f"""
 # Plot marginal posteriors with priors
 println("\\nPlotting marginal posteriors...")
 
@@ -1443,7 +1461,8 @@ end
 p = plot(plots...; layout=({n_rows}, {n_cols}), size=(1200, 1000), margin=8mm)
 savefig(p, "posterior_marginals.png")
 println("Saved: posterior_marginals.png")
-""")
+"""
+        )
 
         return "\n".join(lines)
 
@@ -1490,14 +1509,20 @@ def main():
     if len(sys.argv) < 2:
         print("Usage:")
         print("  Single target:  python -m ... --model-structure <path> <yaml_file> [output.jl]")
-        print("  Joint inference: python -m ... --joint --model-structure <path> <yaml1> <yaml2> ... [--output output.jl] [--fixed-sigma]")
-        print("  All singles:    python -m ... --single-all --model-structure <path> <yaml1> <yaml2> ... [--output output.jl]")
+        print(
+            "  Joint inference: python -m ... --joint --model-structure <path> <yaml1> <yaml2> ... [--output output.jl] [--fixed-sigma]"
+        )
+        print(
+            "  All singles:    python -m ... --single-all --model-structure <path> <yaml1> <yaml2> ... [--output output.jl]"
+        )
         print("")
         print("Options:")
         print("  --model-structure <path>  Path to model_structure.json (required)")
         print("  --fixed-sigma             Treat all measurement sigmas as fixed (not sampled).")
         print("                            Reduces model dimensionality and speeds up sampling.")
-        print("  --single-all              Run each target as independent single-target inference in one script.")
+        print(
+            "  --single-all              Run each target as independent single-target inference in one script."
+        )
         sys.exit(1)
 
     args = sys.argv[1:]
@@ -1549,16 +1574,15 @@ def main():
             tid = target.target_id
             func_name = translator.generator.mapper._sanitize_name(tid)
 
-            lines.append(f"# " + "=" * 70)
+            lines.append("# " + "=" * 70)
             lines.append(f"# {tid}")
-            lines.append(f"# " + "=" * 70)
+            lines.append("# " + "=" * 70)
             lines.append("")
 
             # Generate the model code (without package imports and sampling)
             full_script = translator.generate_script(yaml_path)
 
             # Extract just the model parts (skip imports and sampling code)
-            in_model = False
             model_lines = []
             for line in full_script.split("\n"):
                 if line.startswith("using ") or line.startswith("import "):
@@ -1583,21 +1607,27 @@ def main():
                 obs_arg = f"[{', '.join(f'{prefix}_OBS_MEDIAN_{i+1}' for i in range(len(obs_data.observations)))}]"
                 sigma_arg = f"[{', '.join(f'{prefix}_OBS_SIGMA_{i+1}' for i in range(len(obs_data.observations)))}]"
 
-            lines.append(f'println("\\n" * "=" ^ 70)')
+            lines.append('println("\\n" * "=" ^ 70)')
             lines.append(f'println("RUNNING: {tid}")')
-            lines.append(f'println("=" ^ 70)')
+            lines.append('println("=" ^ 70)')
             lines.append(f"model_{func_name} = calibrate_{func_name}({obs_arg}, {sigma_arg})")
-            lines.append(f"chain_{func_name} = sample(model_{func_name}, NUTS(0.65), 1000; progress=false)")
+            lines.append(
+                f"chain_{func_name} = sample(model_{func_name}, NUTS(0.65), 1000; progress=false)"
+            )
             lines.append("")
 
             # Store results
             for param in target.calibration.parameters:
-                lines.append(f'let samples = chain_{func_name}[:{param.name}][:]')
-                lines.append(f'    med = median(samples)')
-                lines.append(f'    ci_lo = quantile(samples, 0.05)')
-                lines.append(f'    ci_hi = quantile(samples, 0.95)')
-                lines.append(f'    results["{tid}"] = (param="{param.name}", median=med, ci_lo=ci_lo, ci_hi=ci_hi, units="{param.units}")')
-                lines.append(f'    println("  {param.name}: $(round(med, sigdigits=4)) ({param.units})  [90% CI: $(round(ci_lo, sigdigits=4)) - $(round(ci_hi, sigdigits=4))]")')
+                lines.append(f"let samples = chain_{func_name}[:{param.name}][:]")
+                lines.append("    med = median(samples)")
+                lines.append("    ci_lo = quantile(samples, 0.05)")
+                lines.append("    ci_hi = quantile(samples, 0.95)")
+                lines.append(
+                    f'    results["{tid}"] = (param="{param.name}", median=med, ci_lo=ci_lo, ci_hi=ci_hi, units="{param.units}")'
+                )
+                lines.append(
+                    f'    println("  {param.name}: $(round(med, sigdigits=4)) ({param.units})  [90% CI: $(round(ci_lo, sigdigits=4)) - $(round(ci_hi, sigdigits=4))]")'
+                )
                 lines.append("end")
             lines.append("")
 
@@ -1607,7 +1637,9 @@ def main():
         lines.append('println("SUMMARY: ALL SINGLE-TARGET POSTERIORS")')
         lines.append('println("=" ^ 70)')
         lines.append("for (tid, r) in sort(collect(results))")
-        lines.append('    println("$(tid): $(r.param) = $(round(r.median, sigdigits=4)) [$(round(r.ci_lo, sigdigits=4)) - $(round(r.ci_hi, sigdigits=4))] $(r.units)")')
+        lines.append(
+            '    println("$(tid): $(r.param) = $(round(r.median, sigdigits=4)) [$(round(r.ci_lo, sigdigits=4)) - $(round(r.ci_hi, sigdigits=4))] $(r.units)")'
+        )
         lines.append("end")
 
         code = "\n".join(lines)

@@ -1135,9 +1135,7 @@ class SubmodelTarget(BaseModel):
 
             try:
                 tree = ast.parse(obs.code)
-                func_defs = [
-                    node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
-                ]
+                func_defs = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
 
                 if not func_defs:
                     # No function found - handled by validate_custom_code_syntax
@@ -1179,9 +1177,7 @@ class SubmodelTarget(BaseModel):
                 pass
 
         if errors:
-            raise ValueError(
-                "Observable code signature errors:\n  - " + "\n  - ".join(errors)
-            )
+            raise ValueError("Observable code signature errors:\n  - " + "\n  - ".join(errors))
 
         return self
 
@@ -1242,10 +1238,7 @@ class SubmodelTarget(BaseModel):
 
                 sd = result["sd"]
                 sd_has_units = hasattr(sd, "dimensionality")
-                sd_is_dimensionless = (
-                    not sd_has_units
-                    or (sd_has_units and sd.dimensionless)
-                )
+                sd_is_dimensionless = not sd_has_units or (sd_has_units and sd.dimensionless)
 
                 expected_units = ureg(entry.units)
                 measurement_is_dimensionless = expected_units.dimensionless
@@ -1323,7 +1316,8 @@ class SubmodelTarget(BaseModel):
 
         if errors:
             raise ValueError(
-                "Evaluation points outside integration span:\n  - " + "\n  - ".join(errors)
+                "Evaluation points outside integration span:\n  - "
+                + "\n  - ".join(errors)
                 + f"\n\nAdjust evaluation_points to be within [{t_start}, {t_end}] "
                 f"or extend independent_variable.span."
             )
@@ -1592,19 +1586,14 @@ class SubmodelTarget(BaseModel):
                     n = result["n"]
                     if not isinstance(n, int) or n <= 0:
                         errors.append(
-                            f"Error model '{entry.name}': 'n' must be positive int, "
-                            f"got {n}"
+                            f"Error model '{entry.name}': 'n' must be positive int, " f"got {n}"
                         )
 
             except Exception as e:
-                errors.append(
-                    f"Error model '{entry.name}': observation_code execution error: {e}"
-                )
+                errors.append(f"Error model '{entry.name}': observation_code execution error: {e}")
 
         if errors:
-            raise ValueError(
-                "observation_code validation errors:\n  - " + "\n  - ".join(errors)
-            )
+            raise ValueError("observation_code validation errors:\n  - " + "\n  - ".join(errors))
 
         return self
 
@@ -2215,7 +2204,6 @@ class SubmodelTarget(BaseModel):
 
         # Use first parameter for error messages (backwards compatible)
         param = self.calibration.parameters[0]
-        prior_median = all_param_medians.get(param.name)
 
         # Build inputs dict with units
         inputs_dict = {}
@@ -2386,9 +2374,7 @@ class SubmodelTarget(BaseModel):
                 )
 
         if errors:
-            raise ValueError(
-                "Hardcoded values in observation_code:\n\n" + "\n\n".join(errors)
-            )
+            raise ValueError("Hardcoded values in observation_code:\n\n" + "\n\n".join(errors))
 
         return self
 
@@ -2826,7 +2812,7 @@ class SubmodelTarget(BaseModel):
             return self
 
         model = self.calibration.model
-        if not hasattr(model, 'code') or not model.code:
+        if not hasattr(model, "code") or not model.code:
             return self
 
         # Build inputs dict with pint quantities
@@ -2869,7 +2855,6 @@ class SubmodelTarget(BaseModel):
         if "compute" not in local_ns:
             return self
 
-        import numpy as np
         try:
             predicted = local_ns["compute"](params, inputs, ureg)
         except Exception:
@@ -2884,7 +2869,7 @@ class SubmodelTarget(BaseModel):
             return self
 
         # Get magnitude for comparison
-        if hasattr(predicted, 'magnitude'):
+        if hasattr(predicted, "magnitude"):
             predicted_value = float(predicted.magnitude)
         else:
             predicted_value = float(predicted)
@@ -2986,9 +2971,7 @@ class SubmodelTarget(BaseModel):
                 )
 
         if errors:
-            raise ValueError(
-                "Missing observable for ODE model:\n  - " + "\n  - ".join(errors)
-            )
+            raise ValueError("Missing observable for ODE model:\n  - " + "\n  - ".join(errors))
 
         return self
 
@@ -3115,7 +3098,7 @@ __all__ = [
     "InputRef",
     "ParameterRole",
     # Model types
-    "BaseModelSpec",
+    "BaseForwardModelSpec",
     "FirstOrderDecayModel",
     "ExponentialGrowthModel",
     "LogisticModel",

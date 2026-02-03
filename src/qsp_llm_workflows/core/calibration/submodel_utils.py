@@ -394,9 +394,7 @@ def _extract_observable_from_dict(
         except PriorPredictiveError:
             raise
         except Exception as e:
-            raise PriorPredictiveError(
-                f"observable.code execution failed: {e}"
-            ) from e
+            raise PriorPredictiveError(f"observable.code execution failed: {e}") from e
 
     # Mode 2 & 3: Extract single state variable
     state_var_key = None
@@ -501,9 +499,7 @@ def run_prior_predictive(
     # For algebraic models, execute the forward model code
     if model_type == "algebraic":
         if not hasattr(model, "code") or not model.code:
-            raise PriorPredictiveError(
-                f"AlgebraicModel requires 'code' field but none is defined."
-            )
+            raise PriorPredictiveError("AlgebraicModel requires 'code' field but none is defined.")
 
         try:
             import numpy as np
@@ -528,17 +524,13 @@ def run_prior_predictive(
             compute_fn = local_scope.get("compute")
 
             if compute_fn is None:
-                raise PriorPredictiveError(
-                    f"AlgebraicModel.code must define 'compute' function."
-                )
+                raise PriorPredictiveError("AlgebraicModel.code must define 'compute' function.")
 
             result = compute_fn(params, inputs_pint, ureg)
 
             # Handle multi-output forward models (dict return type)
             if isinstance(result, dict):
-                result = _extract_observable_from_dict(
-                    result, measurement, "AlgebraicModel"
-                )
+                result = _extract_observable_from_dict(result, measurement, "AlgebraicModel")
 
             # Extract magnitude if it's a Pint Quantity
             if hasattr(result, "magnitude"):
@@ -548,9 +540,7 @@ def run_prior_predictive(
         except PriorPredictiveError:
             raise
         except Exception as e:
-            raise PriorPredictiveError(
-                f"AlgebraicModel forward model execution failed: {e}"
-            ) from e
+            raise PriorPredictiveError(f"AlgebraicModel forward model execution failed: {e}") from e
 
     # For ODE models, solve forward
     if state_variables is None:
@@ -578,15 +568,15 @@ def run_prior_predictive(
 
     if not y0:
         raise PriorPredictiveError(
-            f"No initial conditions found for state variables. "
-            f"Each state variable needs an initial_condition with either a value or input_ref."
+            "No initial conditions found for state variables. "
+            "Each state variable needs an initial_condition with either a value or input_ref."
         )
 
     # Get time span
     if independent_variable.span is None:
         raise PriorPredictiveError(
-            f"independent_variable.span is not defined. "
-            f"Add span: [t_start, t_end] to the independent_variable section."
+            "independent_variable.span is not defined. "
+            "Add span: [t_start, t_end] to the independent_variable section."
         )
     t_span = tuple(independent_variable.span)
 
@@ -626,9 +616,9 @@ def run_prior_predictive(
         obs_type = observable.type if observable else "default"
         if observable and obs_type == "custom" and observable.code is None:
             raise PriorPredictiveError(
-                f"Observable type is 'custom' but no code is provided. "
-                f"Either add code to compute the observable, or use a built-in type "
-                f"like 'final_value', 'fraction_remaining', 'fold_change', 'auc', etc."
+                "Observable type is 'custom' but no code is provided. "
+                "Either add code to compute the observable, or use a built-in type "
+                "like 'final_value', 'fraction_remaining', 'fold_change', 'auc', etc."
             )
         raise PriorPredictiveError(
             f"Observable computation returned None. "
