@@ -253,7 +253,11 @@ end
     }
 
     def generate_ode_function(self, target: SubmodelTarget) -> Optional[str]:
-        """Generate Julia ODE function for a target's model."""
+        """Generate Julia ODE function for a target's model.
+
+        Returns None for models with analytical solutions (first_order_decay,
+        exponential_growth) since these don't need numerical ODE solvers.
+        """
         model = target.calibration.model
         func_name = self._sanitize_name(target.target_id)
 
@@ -263,6 +267,10 @@ end
 
         # Handle algebraic models - no ODE needed, uses code_julia compute function
         if isinstance(model, AlgebraicModel):
+            return None
+
+        # Skip ODE generation for models with analytical solutions
+        if isinstance(model, (FirstOrderDecayModel, ExponentialGrowthModel)):
             return None
 
         # Get template for model type
@@ -1149,7 +1157,11 @@ println("=" ^ 60)"""
         return "\n".join(lines)
 
     def _generate_simulate_function_dict(self, ti: TargetInfo) -> Optional[str]:
-        """Generate simulate function that reads from DATA dict."""
+        """Generate simulate function that reads from DATA dict.
+
+        Uses analytical solutions for simple ODE types (first_order_decay,
+        exponential_growth) to avoid numerical solver overhead in the sampler.
+        """
         model = ti.target.calibration.model
         func_name = self.mapper._sanitize_name(ti.target_id)
         param_names = ti.parameter_names
@@ -1165,10 +1177,67 @@ println("=" ^ 60)"""
             code = code.replace("function compute(", f"function compute_{func_name}(")
             return code
 
+        # Check for analytical solutions (simple ODE types)
+        n_obs = len(ti.observations.observations)
+
+        if isinstance(model, FirstOrderDecayModel):
+            # du/dt = -k*u => u(t) = u₀ * exp(-k*t)
+            rate_param = (
+                model.rate_constant
+                if isinstance(model.rate_constant, str)
+                else model.rate_constant.input_ref
+            )
+            if n_obs == 1:
+                return f"""
+# Analytical solution for first-order decay: du/dt = -k*u => u(t) = u₀ * exp(-k*t)
+function simulate_{func_name}({param_sig})
+    d = DATA["{ti.target_id}"]
+    t_final = d.t_span[2]
+    y0 = d.y0[1]
+    return y0 * exp(-{rate_param} * t_final)
+end
+"""
+            else:
+                return f"""
+# Analytical solution for first-order decay: du/dt = -k*u => u(t) = u₀ * exp(-k*t)
+function simulate_{func_name}({param_sig})
+    d = DATA["{ti.target_id}"]
+    y0 = d.y0[1]
+    return [y0 * exp(-{rate_param} * t) for t in d.t_eval]
+end
+"""
+
+        if isinstance(model, ExponentialGrowthModel):
+            # du/dt = k*u => u(t) = u₀ * exp(k*t)
+            rate_param = (
+                model.rate_constant
+                if isinstance(model.rate_constant, str)
+                else model.rate_constant.input_ref
+            )
+            if n_obs == 1:
+                return f"""
+# Analytical solution for exponential growth: du/dt = k*u => u(t) = u₀ * exp(k*t)
+function simulate_{func_name}({param_sig})
+    d = DATA["{ti.target_id}"]
+    t_final = d.t_span[2]
+    y0 = d.y0[1]
+    return y0 * exp({rate_param} * t_final)
+end
+"""
+            else:
+                return f"""
+# Analytical solution for exponential growth: du/dt = k*u => u(t) = u₀ * exp(k*t)
+function simulate_{func_name}({param_sig})
+    d = DATA["{ti.target_id}"]
+    y0 = d.y0[1]
+    return [y0 * exp({rate_param} * t) for t in d.t_eval]
+end
+"""
+
+        # Fall back to numerical ODE solver for complex models
         param_vec = f"[{param_sig}]"
 
         # Build return expression based on model type and observation count
-        n_obs = len(ti.observations.observations)
         if n_obs == 1:
             if isinstance(model, TwoStateModel):
                 return_expr = "sol[2, end] / (sol[1, end] + sol[2, end])"
@@ -1461,6 +1530,54 @@ end
 p = plot(plots...; layout=({n_rows}, {n_cols}), size=(1200, 1000), margin=8mm)
 savefig(p, "posterior_marginals.png")
 println("Saved: posterior_marginals.png")
+
+# ======================================================================
+# SAVE RESULTS TO JSON FOR AUTOMATED PROCESSING
+# ======================================================================
+using JSON
+
+results = Dict(
+    "n_chains" => 4,
+    "n_samples" => 1000,
+    "parameters" => Dict()
+)
+
+# Store raw samples for plotting
+posterior_samples = Dict{{String, Vector{{Float64}}}}()
+
+for pname in param_names
+    samples = vec(chain[pname])
+    rhat_val = rhat(chain[pname])[1]
+    ess_bulk = ess(chain[pname])[1]
+    ess_tail = ess(chain[pname]; kind=:tail)[1]
+
+    # Store raw samples
+    posterior_samples[string(pname)] = samples
+
+    results["parameters"][string(pname)] = Dict(
+        "median" => median(samples),
+        "mean" => mean(samples),
+        "std" => std(samples),
+        "ci_05" => quantile(samples, 0.05),
+        "ci_95" => quantile(samples, 0.95),
+        "ci_025" => quantile(samples, 0.025),
+        "ci_975" => quantile(samples, 0.975),
+        "rhat" => rhat_val,
+        "ess_bulk" => ess_bulk,
+        "ess_tail" => ess_tail
+    )
+end
+
+open("inference_results.json", "w") do f
+    JSON.print(f, results, 2)
+end
+println("\\nSaved: inference_results.json")
+
+# Save raw posterior samples for plotting
+open("posterior_samples.json", "w") do f
+    JSON.print(f, posterior_samples, 2)
+end
+println("Saved: posterior_samples.json")
 """
         )
 
