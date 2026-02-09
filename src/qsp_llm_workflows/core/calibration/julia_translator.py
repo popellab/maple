@@ -31,18 +31,193 @@ import yaml
 
 from qsp_llm_workflows.core.calibration.submodel_target import (
     AlgebraicModel,
+    BatchAccumulationModel,
     CustomODEModel,
     ExponentialGrowthModel,
     FirstOrderDecayModel,
+    InputRef,
+    ReferenceRef,
     LogisticModel,
     MichaelisMentenModel,
     PriorDistribution,
     SaturationModel,
+    SteadyStateConcentrationModel,
+    SteadyStateDensityModel,
+    SteadyStateFractionModel,
+    SteadyStateProliferationIndexModel,
+    SteadyStateRatioModel,
     SubmodelTarget,
     TwoStateModel,
 )
 from qsp_llm_workflows.core.model_structure import ModelStructure
 from qsp_llm_workflows.core.unit_registry import ureg
+
+
+# =============================================================================
+# STEADY-STATE MODEL HELPERS
+# =============================================================================
+
+
+def _resolve_role(role, param_names: list[str]) -> str:
+    """Resolve a ParameterRole to a Julia expression.
+
+    - ReferenceRef -> look up in reference_values dict
+    - InputRef -> look up in inputs dict
+    - str matching a param name -> use directly as variable
+    - str numeric literal (e.g., "1.0") -> use as constant
+    - str other -> assume input name
+    """
+    if isinstance(role, ReferenceRef):
+        return f'reference_values["{role.reference_ref}"]'
+    if isinstance(role, InputRef):
+        return f'inputs["{role.input_ref}"]'
+    if isinstance(role, str):
+        if role in param_names:
+            return f'params["{role}"]'
+        try:
+            float(role)
+            return role
+        except ValueError:
+            return f'inputs["{role}"]'
+    return str(role)
+
+
+def _generate_inputs_dict_from_target(target: "SubmodelTarget") -> str:
+    """Generate Julia Dict literal for inputs from target inputs."""
+    items = [f'"{inp.name}" => {inp.value}' for inp in target.inputs]
+    return "Dict(" + ", ".join(items) + ")"
+
+
+def _collect_reference_refs(model) -> set[str]:
+    """Collect all ReferenceRef names used in a forward model's fields."""
+    refs = set()
+    for field_name in model.model_fields:
+        value = getattr(model, field_name)
+        if isinstance(value, ReferenceRef):
+            refs.add(value.reference_ref)
+    return refs
+
+
+def _load_reference_values(yaml_path: str) -> dict[str, float]:
+    """Load reference values from YAML and return name -> value mapping."""
+    with open(yaml_path) as f:
+        data = yaml.safe_load(f)
+    return {v["name"]: float(v["value"]) for v in data["values"]}
+
+
+def _generate_reference_values_dict(model, ref_db: dict[str, float]) -> Optional[str]:
+    """Generate Julia Dict literal for reference values used by the model.
+
+    Returns None if no reference values are needed.
+    """
+    refs = _collect_reference_refs(model)
+    if not refs:
+        return None
+    items = []
+    for name in sorted(refs):
+        if name not in ref_db:
+            raise ValueError(
+                f"Reference value '{name}' not found in reference database. "
+                f"Available: {sorted(ref_db.keys())}"
+            )
+        items.append(f'"{name}" => {ref_db[name]}')
+    return "Dict(" + ", ".join(items) + ")"
+
+
+def _generate_steady_state_compute(
+    model,
+    func_name: str,
+    param_names: list[str],
+    inputs_code: str,
+    params_dict: str,
+    ref_values_code: Optional[str] = None,
+) -> Optional[str]:
+    """Generate Julia compute + simulate functions for steady-state model types."""
+    r = lambda role: _resolve_role(role, param_names)  # noqa: E731
+
+    # Determine if compute function needs reference_values argument
+    has_refs = ref_values_code is not None
+    compute_sig = "params, inputs, reference_values" if has_refs else "params, inputs"
+
+    ucf = r(model.unit_conversion_factor)
+
+    if isinstance(model, SteadyStateDensityModel):
+        body = (
+            f"    target_rate = {r(model.target_rate)}\n"
+            f"    ucf = {ucf}\n"
+            f"    source_pool = {r(model.source_pool)}\n"
+            f"    loss_rate = {r(model.loss_rate)}\n"
+            f"    section_vol = {r(model.section_volume_factor)}\n"
+            f"    eff = {r(model.recruitment_efficiency)}\n"
+            f"    excl = {r(model.exclusion_fraction)}\n"
+            f"    return target_rate * ucf * source_pool * eff * (1 - excl) / loss_rate * section_vol"
+        )
+    elif isinstance(model, SteadyStateFractionModel):
+        body = (
+            f"    target_rate = {r(model.target_rate)}\n"
+            f"    ucf = {ucf}\n"
+            f"    loss_rate = {r(model.loss_rate)}\n"
+            f"    parent_density = {r(model.parent_density)}\n"
+            f"    drive = {r(model.drive_factor)}\n"
+            f"    return target_rate * ucf * drive / (loss_rate * parent_density)"
+        )
+    elif isinstance(model, SteadyStateConcentrationModel):
+        body = (
+            f"    sec_rate = {r(model.secretion_rate)}\n"
+            f"    ucf = {ucf}\n"
+            f"    source = {r(model.source_count)}\n"
+            f"    clearance = {r(model.clearance_rate)}\n"
+            f"    vol = {r(model.distribution_volume)}\n"
+            f"    return sec_rate * ucf * source / (clearance * vol)"
+        )
+    elif isinstance(model, SteadyStateRatioModel):
+        body = (
+            f"    r_num = {r(model.rate_numerator)}\n"
+            f"    ucf = {ucf}\n"
+            f"    r_den = {r(model.rate_denominator)}\n"
+            f"    d_num = {r(model.drive_numerator)}\n"
+            f"    d_den = {r(model.drive_denominator)}\n"
+            f"    return r_num * ucf * d_num / (r_den * d_den)"
+        )
+    elif isinstance(model, SteadyStateProliferationIndexModel):
+        body = (
+            f"    k_prolif = {r(model.proliferation_rate)} * {ucf}\n"
+            f"    t_vis = {r(model.visible_duration)}\n"
+            f"    k_loss = {r(model.loss_rate)}\n"
+            f"    return k_prolif * t_vis / (k_prolif * t_vis + k_loss)"
+        )
+    elif isinstance(model, BatchAccumulationModel):
+        body = (
+            f"    sec_rate = {r(model.secretion_rate)}\n"
+            f"    cells = {r(model.cell_count)}\n"
+            f"    t_inc = {r(model.incubation_time)}\n"
+            f"    mw = {r(model.molecular_weight)}\n"
+            f"    ucf = {ucf}\n"
+            f"    vol = {r(model.medium_volume)}\n"
+            f"    return sec_rate * cells * t_inc * mw * ucf / vol"
+        )
+    else:
+        return None
+
+    param_sig = ", ".join(param_names)
+    ref_line = f"\n    reference_values = {ref_values_code}" if has_refs else ""
+    compute_call = (
+        f"compute_{func_name}(params, inputs, reference_values)"
+        if has_refs
+        else f"compute_{func_name}(params, inputs)"
+    )
+    return f"""
+# Forward model ({model.type})
+function compute_{func_name}({compute_sig})
+{body}
+end
+
+function simulate_{func_name}({param_sig})
+    params = {params_dict}
+    inputs = {inputs_code}{ref_line}
+    return {compute_call}
+end
+"""
 
 
 # =============================================================================
@@ -269,6 +444,20 @@ end
         if isinstance(model, AlgebraicModel):
             return None
 
+        # Steady-state types have auto-generated compute functions, no ODE needed
+        if isinstance(
+            model,
+            (
+                SteadyStateDensityModel,
+                SteadyStateFractionModel,
+                SteadyStateConcentrationModel,
+                SteadyStateRatioModel,
+                SteadyStateProliferationIndexModel,
+                BatchAccumulationModel,
+            ),
+        ):
+            return None
+
         # Skip ODE generation for models with analytical solutions
         if isinstance(model, (FirstOrderDecayModel, ExponentialGrowthModel)):
             return None
@@ -341,9 +530,10 @@ Random.seed!(42)
 
 """
 
-    def __init__(self):
+    def __init__(self, reference_db: Optional[dict[str, float]] = None):
         self.extractor = ObservationExtractor()
         self.mapper = JuliaODEMapper()
+        self.reference_db = reference_db or {}
 
     def generate_single_target(self, target: SubmodelTarget, source_file: str = "unknown") -> str:
         """Generate Julia code for a single target."""
@@ -431,19 +621,100 @@ Random.seed!(42)
             # Build params dict
             params_dict = "Dict(" + ", ".join(f'"{p}" => {p}' for p in param_names) + ")"
 
+            # Rename compute -> compute_<func_name> to avoid collisions in combined scripts
+            code_julia = model.code_julia.replace(
+                "function compute(", f"function compute_{func_name}("
+            )
+
             code = f"""
 # Forward model (algebraic)
-{model.code_julia}
+{code_julia}
 
 function simulate_{func_name}({param_sig})
     params = {params_dict}
     inputs = {inputs_code}
-    return compute(params, inputs)
+    return compute_{func_name}(params, inputs)
 end
 """
             return code
 
-        # ODE models
+        # Handle steady-state typed models - auto-generate compute functions
+        if isinstance(
+            model,
+            (
+                SteadyStateDensityModel,
+                SteadyStateFractionModel,
+                SteadyStateConcentrationModel,
+                SteadyStateRatioModel,
+                SteadyStateProliferationIndexModel,
+                BatchAccumulationModel,
+            ),
+        ):
+            inputs_code = _generate_inputs_dict_from_target(target)
+            params_dict = "Dict(" + ", ".join(f'"{p}" => {p}' for p in param_names) + ")"
+            ref_values_code = (
+                _generate_reference_values_dict(model, self.reference_db)
+                if self.reference_db
+                else None
+            )
+            return _generate_steady_state_compute(
+                model, func_name, param_names, inputs_code, params_dict, ref_values_code
+            )
+
+        # Analytical solutions for simple ODE types (avoid numerical solver overhead)
+        n_obs = len(obs_data.observations)
+
+        if isinstance(model, FirstOrderDecayModel):
+            rate_param = (
+                model.rate_constant
+                if isinstance(model.rate_constant, str)
+                else model.rate_constant.input_ref
+            )
+            if n_obs == 1:
+                return f"""
+# Analytical solution for first-order decay: du/dt = -k*u => u(t) = u0 * exp(-k*t)
+function simulate_{func_name}({param_sig})
+    t_final = {prefix}_T_SPAN[2]
+    y0 = {prefix}_Y0
+    return y0 * exp(-{rate_param} * t_final)
+end
+"""
+            else:
+                eval_times = f"[{', '.join(f'{prefix}_T_EVAL_{i+1}' for i in range(n_obs))}]"
+                return f"""
+# Analytical solution for first-order decay: du/dt = -k*u => u(t) = u0 * exp(-k*t)
+function simulate_{func_name}({param_sig})
+    y0 = {prefix}_Y0
+    return [y0 * exp(-{rate_param} * t) for t in {eval_times}]
+end
+"""
+
+        if isinstance(model, ExponentialGrowthModel):
+            rate_param = (
+                model.rate_constant
+                if isinstance(model.rate_constant, str)
+                else model.rate_constant.input_ref
+            )
+            if n_obs == 1:
+                return f"""
+# Analytical solution for exponential growth: du/dt = k*u => u(t) = u0 * exp(k*t)
+function simulate_{func_name}({param_sig})
+    t_final = {prefix}_T_SPAN[2]
+    y0 = {prefix}_Y0
+    return y0 * exp({rate_param} * t_final)
+end
+"""
+            else:
+                eval_times = f"[{', '.join(f'{prefix}_T_EVAL_{i+1}' for i in range(n_obs))}]"
+                return f"""
+# Analytical solution for exponential growth: du/dt = k*u => u(t) = u0 * exp(k*t)
+function simulate_{func_name}({param_sig})
+    y0 = {prefix}_Y0
+    return [y0 * exp({rate_param} * t) for t in {eval_times}]
+end
+"""
+
+        # ODE models (numerical solver)
         param_vec = f"[{param_sig}]"
 
         # Build evaluation times
@@ -483,10 +754,7 @@ end
 
     def _generate_inputs_dict(self, target: SubmodelTarget) -> str:
         """Generate Julia Dict for inputs from target inputs."""
-        items = []
-        for inp in target.inputs:
-            items.append(f'"{inp.name}" => {inp.value}')
-        return "Dict(" + ", ".join(items) + ")"
+        return _generate_inputs_dict_from_target(target)
 
     def _generate_turing_model(self, target: SubmodelTarget, obs_data: TargetObservations) -> str:
         """Generate Turing @model block."""
@@ -646,30 +914,48 @@ println("=" ^ 60)
 class JuliaTranslator:
     """Main translator class for YAML to Julia conversion."""
 
-    def __init__(self, model_structure: ModelStructure):
+    def __init__(
+        self,
+        model_structure: ModelStructure,
+        reference_db: Optional[dict[str, float]] = None,
+    ):
         """
         Initialize translator with model structure for validation.
 
         Args:
             model_structure: ModelStructure instance containing parameter definitions
                             with expected units. Required for unit validation.
+            reference_db: Optional dict of reference value name -> numeric value,
+                         loaded from reference_values.yaml.
         """
         self.model_structure = model_structure
         self.generator = JuliaCodeGenerator()
+        self.reference_db = reference_db or {}
 
     @classmethod
-    def from_model_structure_file(cls, model_structure_path: str) -> "JuliaTranslator":
+    def from_model_structure_file(
+        cls,
+        model_structure_path: str,
+        reference_values_path: Optional[str] = None,
+    ) -> "JuliaTranslator":
         """
         Create translator from a model_structure.json file.
 
         Args:
             model_structure_path: Path to model_structure.json file
+            reference_values_path: Optional path to reference_values.yaml.
+                Auto-discovers reference_values.yaml next to model_structure.json if not specified.
 
         Returns:
             JuliaTranslator instance
         """
         model_structure = ModelStructure.from_json(model_structure_path)
-        return cls(model_structure)
+        if reference_values_path is None:
+            auto_path = Path(model_structure_path).parent / "reference_values.yaml"
+            if auto_path.exists():
+                reference_values_path = str(auto_path)
+        ref_db = _load_reference_values(reference_values_path) if reference_values_path else None
+        return cls(model_structure, reference_db=ref_db)
 
     def load_target(self, yaml_path: str) -> SubmodelTarget:
         """Load and validate a target from YAML."""
@@ -678,7 +964,7 @@ class JuliaTranslator:
             data = yaml.safe_load(f)
         return SubmodelTarget.model_validate(
             data,
-            context={"model_structure": self.model_structure},
+            context={"model_structure": self.model_structure, "reference_db": self.reference_db},
         )
 
     def generate_script(self, yaml_path: str) -> str:
@@ -727,31 +1013,50 @@ class JointInferenceBuilder:
     across different targets are treated as shared in the joint model.
     """
 
-    def __init__(self, model_structure: ModelStructure):
+    def __init__(
+        self,
+        model_structure: ModelStructure,
+        reference_db: Optional[dict[str, float]] = None,
+    ):
         """
         Initialize builder with model structure for validation.
 
         Args:
             model_structure: ModelStructure instance containing parameter definitions
                             with expected units. Required for unit validation.
+            reference_db: Optional dict of reference value name -> numeric value,
+                         loaded from reference_values.yaml. Required when targets
+                         use ReferenceRef in forward model fields.
         """
         self.model_structure = model_structure
         self.extractor = ObservationExtractor()
         self.mapper = JuliaODEMapper()
+        self.reference_db = reference_db or {}
 
     @classmethod
-    def from_model_structure_file(cls, model_structure_path: str) -> "JointInferenceBuilder":
+    def from_model_structure_file(
+        cls,
+        model_structure_path: str,
+        reference_values_path: Optional[str] = None,
+    ) -> "JointInferenceBuilder":
         """
         Create builder from a model_structure.json file.
 
         Args:
             model_structure_path: Path to model_structure.json file
+            reference_values_path: Optional path to reference_values.yaml
 
         Returns:
             JointInferenceBuilder instance
         """
         model_structure = ModelStructure.from_json(model_structure_path)
-        return cls(model_structure)
+        # Auto-discover reference_values.yaml next to model_structure.json if not specified
+        if reference_values_path is None:
+            auto_path = Path(model_structure_path).parent / "reference_values.yaml"
+            if auto_path.exists():
+                reference_values_path = str(auto_path)
+        ref_db = _load_reference_values(reference_values_path) if reference_values_path else None
+        return cls(model_structure, reference_db=ref_db)
 
     def build_from_files(self, yaml_paths: list[str], force_fixed_sigma: bool = False) -> str:
         """
@@ -792,6 +1097,250 @@ class JointInferenceBuilder:
         # Generate script
         return self._generate_joint_script(targets_info, parameters)
 
+    def build_single_all(self, yaml_paths: list[str]) -> str:
+        """
+        Build combined single-target inference script from multiple YAML files.
+
+        Each target is run independently (no parameter sharing) to detect conflicts.
+        Reuses the same DATA dict and simulate functions as joint inference to avoid
+        const name collisions and duplicate function definitions.
+        """
+        # Load all targets (same as joint)
+        targets_info = []
+        for path in yaml_paths:
+            target = self._load_target(path)
+            obs_data = self.extractor.extract(target)
+            for obs in obs_data.observations:
+                obs.sd_uncertain = False
+            targets_info.append(
+                TargetInfo(
+                    target_id=target.target_id,
+                    target=target,
+                    observations=obs_data,
+                    parameter_names=[p.name for p in target.calibration.parameters],
+                )
+            )
+
+        return self._generate_single_all_script(targets_info)
+
+    def _generate_single_all_script(self, targets_info: list[TargetInfo]) -> str:
+        """Generate combined single-target inference script."""
+        sections = []
+
+        # Header
+        target_list = "\n".join(f"#   - {ti.target_id}" for ti in targets_info)
+        sections.append(
+            f"""# Combined Single-Target Inference Script
+# Each target is run independently to detect conflicts between targets
+# Generated by: qsp_llm_workflows.julia_translator
+#
+# Targets:
+{target_list}
+
+using Turing
+using DifferentialEquations
+using Distributions
+using Statistics
+using Random
+
+Random.seed!(42)
+
+# Results storage
+results = Dict{{String, NamedTuple}}()
+all_chains = Dict{{String, Any}}()
+"""
+        )
+
+        # Reuse DATA dict from joint builder
+        sections.append("# " + "=" * 70)
+        sections.append("# OBSERVED DATA")
+        sections.append("# " + "=" * 70)
+        sections.append(self._generate_data_dict(targets_info))
+
+        # Reuse ODE functions from joint builder
+        sections.append("\n# " + "=" * 70)
+        sections.append("# ODE SUBMODELS")
+        sections.append("# " + "=" * 70)
+        for ti in targets_info:
+            ode_code = self.mapper.generate_ode_function(ti.target)
+            if ode_code:
+                sections.append(f"\n# {ti.target_id}")
+                sections.append(ode_code)
+
+        # Reuse simulate functions from joint builder
+        sections.append("\n# " + "=" * 70)
+        sections.append("# SIMULATION FUNCTIONS")
+        sections.append("# " + "=" * 70)
+        for ti in targets_info:
+            sim_code = self._generate_simulate_function_dict(ti)
+            if sim_code:
+                sections.append(sim_code)
+
+        # Per-target Turing models (independent, not joint)
+        sections.append("\n# " + "=" * 70)
+        sections.append("# SINGLE-TARGET TURING MODELS")
+        sections.append("# " + "=" * 70)
+        for ti in targets_info:
+            sections.append(self._generate_single_turing_model(ti))
+
+        # Per-target sampling
+        sections.append("\n# " + "=" * 70)
+        sections.append("# RUN INDEPENDENT INFERENCE")
+        sections.append("# " + "=" * 70)
+        for ti in targets_info:
+            sections.append(self._generate_single_sampling(ti))
+
+        # Summary
+        sections.append(
+            """
+println("\\n" * "=" ^ 70)
+println("SUMMARY: ALL SINGLE-TARGET POSTERIORS")
+println("=" ^ 70)
+for (tid, r) in sort(collect(results))
+    println("$(tid): $(r.param) = $(round(r.median, sigdigits=4)) [$(round(r.ci_lo, sigdigits=4)) - $(round(r.ci_hi, sigdigits=4))] $(r.units)")
+end
+"""
+        )
+
+        # JSON saving -- samples keyed by target_id then parameter name
+        # Build list of (target_id, [param_names]) for the Julia code
+        target_params = []
+        for ti in targets_info:
+            pnames = [p.name for p in ti.target.calibration.parameters]
+            target_params.append((ti.target_id, pnames))
+
+        json_lines = [
+            """
+# ======================================================================
+# SAVE RESULTS TO JSON FOR COMPARISON
+# ======================================================================
+using JSON
+
+single_results = Dict{String, Any}()
+single_samples = Dict{String, Any}()
+"""
+        ]
+
+        for tid, pnames in target_params:
+            json_lines.append(f'single_results["{tid}"] = Dict()')
+            json_lines.append(f'single_samples["{tid}"] = Dict()')
+            for pname in pnames:
+                json_lines.append(
+                    f"""let samples = vec(all_chains["{tid}"][:{pname}])
+    single_results["{tid}"]["{pname}"] = Dict(
+        "median" => median(samples),
+        "mean" => mean(samples),
+        "std" => std(samples),
+        "ci_05" => quantile(samples, 0.05),
+        "ci_95" => quantile(samples, 0.95),
+        "ci_025" => quantile(samples, 0.025),
+        "ci_975" => quantile(samples, 0.975),
+        "units" => "{next(p.units for p in next(t for t in targets_info if t.target_id == tid).target.calibration.parameters if p.name == pname)}"
+    )
+    single_samples["{tid}"]["{pname}"] = samples
+end"""
+                )
+
+        json_lines.append(
+            """
+open("single_inference_results.json", "w") do f
+    JSON.print(f, single_results, 2)
+end
+println("\\nSaved: single_inference_results.json")
+
+open("single_posterior_samples.json", "w") do f
+    JSON.print(f, single_samples, 2)
+end
+println("Saved: single_posterior_samples.json")
+"""
+        )
+
+        sections.append("\n".join(json_lines))
+
+        return "\n".join(sections)
+
+    def _generate_single_turing_model(self, ti: TargetInfo) -> str:
+        """Generate independent Turing model for a single target."""
+        model = ti.target.calibration.model
+        func_name = self.mapper._sanitize_name(ti.target_id)
+        n_obs = len(ti.observations.observations)
+
+        lines = [f"\n# {ti.target_id}"]
+        lines.append(f"@model function calibrate_{func_name}(data)")
+
+        # Priors
+        lines.append("    # Priors")
+        for param in ti.target.calibration.parameters:
+            prior_code = self._generate_prior(param.name, param.prior)
+            lines.append(f"    {prior_code}")
+
+        # Forward model
+        lines.append("")
+        lines.append("    # Forward model")
+        if isinstance(model, AlgebraicModel):
+            param_dict_items = ", ".join(f'"{p}" => {p}' for p in ti.parameter_names)
+            lines.append(f"    params = Dict({param_dict_items})")
+            lines.append(f'    inputs = data["{ti.target_id}"].inputs')
+            lines.append(f"    pred = compute_{func_name}(params, inputs)")
+        else:
+            param_call = ", ".join(ti.parameter_names)
+            lines.append(f"    pred = simulate_{func_name}({param_call})")
+
+        # Likelihood
+        lines.append("")
+        lines.append("    # Likelihood")
+        for i, obs in enumerate(ti.observations.observations):
+            idx = i + 1
+            sigma_expr = f'data["{ti.target_id}"].obs_sigma[{idx}]'
+            if isinstance(model, AlgebraicModel) or n_obs == 1:
+                pred_expr = "pred"
+            else:
+                pred_expr = f"pred[{idx}]"
+
+            if obs.likelihood_distribution == "lognormal":
+                lines.append(
+                    f'    data["{ti.target_id}"].obs_median[{idx}] ~ LogNormal(log({pred_expr}), {sigma_expr})'
+                )
+            else:
+                lines.append(
+                    f'    data["{ti.target_id}"].obs_median[{idx}] ~ Normal({pred_expr}, {sigma_expr})'
+                )
+
+        # Return
+        param_returns = ", ".join(f"{p.name}={p.name}" for p in ti.target.calibration.parameters)
+        lines.append(f"\n    return ({param_returns})")
+        lines.append("end")
+
+        return "\n".join(lines)
+
+    def _generate_single_sampling(self, ti: TargetInfo) -> str:
+        """Generate sampling code for a single target."""
+        func_name = self.mapper._sanitize_name(ti.target_id)
+        tid = ti.target_id
+
+        lines = ['\nprintln("\\n" * "=" ^ 70)']
+        lines.append(f'println("RUNNING: {tid}")')
+        lines.append('println("=" ^ 70)')
+        lines.append(f"model_{func_name} = calibrate_{func_name}(DATA)")
+        lines.append(
+            f"chain_{func_name} = sample(model_{func_name}, NUTS(0.65), 1000; progress=false)"
+        )
+        lines.append(f'all_chains["{tid}"] = chain_{func_name}')
+
+        for param in ti.target.calibration.parameters:
+            lines.append(
+                f"""
+let samples = chain_{func_name}[:{param.name}][:]
+    med = median(samples)
+    ci_lo = quantile(samples, 0.05)
+    ci_hi = quantile(samples, 0.95)
+    results["{tid}"] = (param="{param.name}", median=med, ci_lo=ci_lo, ci_hi=ci_hi, units="{param.units}")
+    println("  {param.name}: $(round(med, sigdigits=4)) ({param.units})  [90% CI: $(round(ci_lo, sigdigits=4)) - $(round(ci_hi, sigdigits=4))]")
+end"""
+            )
+
+        return "\n".join(lines)
+
     def _load_target(self, yaml_path: str) -> SubmodelTarget:
         """Load and validate a target from YAML."""
         path = Path(yaml_path)
@@ -799,7 +1348,7 @@ class JointInferenceBuilder:
             data = yaml.safe_load(f)
         return SubmodelTarget.model_validate(
             data,
-            context={"model_structure": self.model_structure},
+            context={"model_structure": self.model_structure, "reference_db": self.reference_db},
         )
 
     def _collect_parameters(self, targets_info: list[TargetInfo]) -> dict[str, ParameterInfo]:
@@ -1176,6 +1725,29 @@ println("=" ^ 60)"""
             # Replace "function compute(" with "function compute_<func_name>("
             code = code.replace("function compute(", f"function compute_{func_name}(")
             return code
+
+        # Handle steady-state typed models - auto-generate compute functions
+        if isinstance(
+            model,
+            (
+                SteadyStateDensityModel,
+                SteadyStateFractionModel,
+                SteadyStateConcentrationModel,
+                SteadyStateRatioModel,
+                SteadyStateProliferationIndexModel,
+                BatchAccumulationModel,
+            ),
+        ):
+            inputs_code = _generate_inputs_dict_from_target(ti.target)
+            params_dict = "Dict(" + ", ".join(f'"{p}" => {p}' for p in param_names) + ")"
+            ref_values_code = (
+                _generate_reference_values_dict(model, self.reference_db)
+                if self.reference_db
+                else None
+            )
+            return _generate_steady_state_compute(
+                model, func_name, param_names, inputs_code, params_dict, ref_values_code
+            )
 
         # Check for analytical solutions (simple ODE types)
         n_obs = len(ti.observations.observations)
@@ -1640,6 +2212,9 @@ def main():
         print(
             "  --single-all              Run each target as independent single-target inference in one script."
         )
+        print(
+            "  --reference-values <path> Path to reference_values.yaml (for targets using ReferenceRef)"
+        )
         sys.exit(1)
 
     args = sys.argv[1:]
@@ -1655,6 +2230,13 @@ def main():
         print("Error: --model-structure <path> is required")
         sys.exit(1)
 
+    # Check for reference-values flag (optional)
+    reference_values_path = None
+    if "--reference-values" in args:
+        idx = args.index("--reference-values")
+        reference_values_path = args[idx + 1]
+        args = args[:idx] + args[idx + 2 :]
+
     # Check for single-all mode (run each target independently in one script)
     if "--single-all" in args:
         args.remove("--single-all")
@@ -1667,99 +2249,10 @@ def main():
             args = args[:idx] + args[idx + 2 :]
 
         yaml_paths = args
-        translator = JuliaTranslator.from_model_structure_file(model_structure_path)
-
-        # Build combined script
-        lines = []
-        lines.append("# Combined Single-Target Inference Script")
-        lines.append("# Each target is run independently to detect conflicts between targets")
-        lines.append("")
-        lines.append("using Turing")
-        lines.append("using DifferentialEquations")
-        lines.append("using Distributions")
-        lines.append("using Statistics")
-        lines.append("using Random")
-        lines.append("")
-        lines.append("Random.seed!(42)")
-        lines.append("")
-        lines.append("# Results storage")
-        lines.append("results = Dict{String, NamedTuple}()")
-        lines.append("")
-
-        for yaml_path in yaml_paths:
-            target = translator.load_target(yaml_path)
-            tid = target.target_id
-            func_name = translator.generator.mapper._sanitize_name(tid)
-
-            lines.append("# " + "=" * 70)
-            lines.append(f"# {tid}")
-            lines.append("# " + "=" * 70)
-            lines.append("")
-
-            # Generate the model code (without package imports and sampling)
-            full_script = translator.generate_script(yaml_path)
-
-            # Extract just the model parts (skip imports and sampling code)
-            model_lines = []
-            for line in full_script.split("\n"):
-                if line.startswith("using ") or line.startswith("import "):
-                    continue
-                if line.startswith("Random.seed!"):
-                    continue
-                if line.startswith("model = "):
-                    break
-                model_lines.append(line)
-
-            lines.extend(model_lines)
-            lines.append("")
-
-            # Add sampling code for this target
-            obs_data = translator.generator.extractor.extract(target)
-            prefix = translator.generator._const_prefix(tid)
-
-            if len(obs_data.observations) == 1:
-                obs_arg = f"{prefix}_OBS_MEDIAN"
-                sigma_arg = f"{prefix}_OBS_SIGMA"
-            else:
-                obs_arg = f"[{', '.join(f'{prefix}_OBS_MEDIAN_{i+1}' for i in range(len(obs_data.observations)))}]"
-                sigma_arg = f"[{', '.join(f'{prefix}_OBS_SIGMA_{i+1}' for i in range(len(obs_data.observations)))}]"
-
-            lines.append('println("\\n" * "=" ^ 70)')
-            lines.append(f'println("RUNNING: {tid}")')
-            lines.append('println("=" ^ 70)')
-            lines.append(f"model_{func_name} = calibrate_{func_name}({obs_arg}, {sigma_arg})")
-            lines.append(
-                f"chain_{func_name} = sample(model_{func_name}, NUTS(0.65), 1000; progress=false)"
-            )
-            lines.append("")
-
-            # Store results
-            for param in target.calibration.parameters:
-                lines.append(f"let samples = chain_{func_name}[:{param.name}][:]")
-                lines.append("    med = median(samples)")
-                lines.append("    ci_lo = quantile(samples, 0.05)")
-                lines.append("    ci_hi = quantile(samples, 0.95)")
-                lines.append(
-                    f'    results["{tid}"] = (param="{param.name}", median=med, ci_lo=ci_lo, ci_hi=ci_hi, units="{param.units}")'
-                )
-                lines.append(
-                    f'    println("  {param.name}: $(round(med, sigdigits=4)) ({param.units})  [90% CI: $(round(ci_lo, sigdigits=4)) - $(round(ci_hi, sigdigits=4))]")'
-                )
-                lines.append("end")
-            lines.append("")
-
-        # Add summary output
-        lines.append("")
-        lines.append('println("\\n" * "=" ^ 70)')
-        lines.append('println("SUMMARY: ALL SINGLE-TARGET POSTERIORS")')
-        lines.append('println("=" ^ 70)')
-        lines.append("for (tid, r) in sort(collect(results))")
-        lines.append(
-            '    println("$(tid): $(r.param) = $(round(r.median, sigdigits=4)) [$(round(r.ci_lo, sigdigits=4)) - $(round(r.ci_hi, sigdigits=4))] $(r.units)")'
+        builder = JointInferenceBuilder.from_model_structure_file(
+            model_structure_path, reference_values_path=reference_values_path
         )
-        lines.append("end")
-
-        code = "\n".join(lines)
+        code = builder.build_single_all(yaml_paths)
 
         if output_path:
             with open(output_path, "w") as f:
@@ -1788,7 +2281,9 @@ def main():
             args = args[:idx] + args[idx + 2 :]
 
         yaml_paths = args
-        builder = JointInferenceBuilder.from_model_structure_file(model_structure_path)
+        builder = JointInferenceBuilder.from_model_structure_file(
+            model_structure_path, reference_values_path=reference_values_path
+        )
         code = builder.build_from_files(yaml_paths, force_fixed_sigma=force_fixed_sigma)
 
         if output_path:
@@ -1802,7 +2297,9 @@ def main():
         yaml_path = args[0]
         output_path = args[1] if len(args) > 1 else None
 
-        translator = JuliaTranslator.from_model_structure_file(model_structure_path)
+        translator = JuliaTranslator.from_model_structure_file(
+            model_structure_path, reference_values_path=reference_values_path
+        )
 
         if output_path:
             translator.generate_to_file(yaml_path, output_path)

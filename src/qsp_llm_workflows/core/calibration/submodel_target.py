@@ -100,9 +100,13 @@ class Uncertainty(BaseModel):
         """Validate that ci95[0] < ci95[1]."""
         if self.ci95 is not None:
             if len(self.ci95) != 2:
-                raise ValueError(f"ci95 must have exactly 2 values, got {len(self.ci95)}")
+                from qsp_llm_workflows.core.calibration.exceptions import DataConsistencyError
+
+                raise DataConsistencyError(f"ci95 must have exactly 2 values, got {len(self.ci95)}")
             if self.ci95[0] >= self.ci95[1]:
-                raise ValueError(f"ci95[0] must be < ci95[1], got {self.ci95}")
+                from qsp_llm_workflows.core.calibration.exceptions import DataConsistencyError
+
+                raise DataConsistencyError(f"ci95[0] must be < ci95[1], got {self.ci95}")
         return self
 
 
@@ -234,7 +238,12 @@ class Prior(BaseModel):
                 errors.append("half_normal prior requires sigma")
 
         if errors:
-            raise ValueError(f"Prior validation errors: {'; '.join(errors)}")
+            from qsp_llm_workflows.core.calibration.exceptions import PriorParameterError
+
+            raise PriorParameterError(
+                distribution=self.distribution.value,
+                error_msg="; ".join(errors),
+            )
 
         return self
 
@@ -292,8 +301,15 @@ class InputRef(BaseModel):
     input_ref: str = Field(description="Name of input to use as fixed value")
 
 
-# ParameterRole can be either a string (parameter name to estimate) or InputRef (fixed from data)
-ParameterRole = Union[str, InputRef]
+class ReferenceRef(BaseModel):
+    """Reference to a curated value in the reference database (reference_values.yaml)."""
+
+    reference_ref: str = Field(description="Name of value in reference_values.yaml")
+
+
+# ParameterRole can be a string (parameter name to estimate), InputRef (fixed from extraction data),
+# or ReferenceRef (fixed from the curated reference database)
+ParameterRole = Union[str, InputRef, ReferenceRef]
 
 
 # =============================================================================
@@ -382,6 +398,225 @@ class SaturationModel(BaseForwardModelSpec):
     )
 
 
+# =============================================================================
+# STEADY-STATE ALGEBRAIC MODEL TYPES (structured, auto-generated code)
+# =============================================================================
+
+
+class BaseSteadyStateModel(BaseForwardModelSpec):
+    """Base class for all steady-state algebraic model types.
+
+    Provides the unit_conversion_factor field shared by all steady-state models.
+    """
+
+    unit_conversion_factor: ParameterRole = Field(
+        default="1.0",
+        description="Scalar factor to correct for mismatched time units between rate "
+        "parameters. E.g., if target_rate is per-minute and loss_rate is per-day, "
+        "set to 1440.0 (minutes/day). Default 1.0 (rates share the same time unit).",
+    )
+
+
+class SteadyStateDensityModel(BaseSteadyStateModel):
+    """Steady-state tissue cell density model.
+
+    Maps a trafficking/recruitment rate to observed cell density (cells/mm^2)
+    via decomposed model quantities. Use when paper reports IHC or mIF data.
+
+    Formula: density = target_rate * source_pool * recruitment_efficiency
+                       * (1 - exclusion_fraction) / loss_rate * section_volume_factor
+
+    For absolute counts (cells/mL), set section_volume_factor = 1.0.
+    """
+
+    type: Literal["steady_state_density"] = "steady_state_density"
+    target_rate: ParameterRole = Field(
+        description="Trafficking/recruitment rate parameter (e.g., q_CD8_T_in, k_Mac_rec)"
+    )
+    source_pool: ParameterRole = Field(
+        description="Circulating/source cell count (e.g., V_C.CD8 ~ 2e9 cells)"
+    )
+    loss_rate: ParameterRole = Field(description="Intratumoral cell loss/death rate (1/day)")
+    section_volume_factor: ParameterRole = Field(
+        description="Section volume per mm^2 (cm^3/mm^2). "
+        "Standard 4-um section: 4e-6. Set to 1.0 for volumetric counts."
+    )
+    recruitment_efficiency: ParameterRole = Field(
+        default="1.0",
+        description="Chemokine-dependent recruitment efficiency, ~1 for large tumors. "
+        "Default 1.0 (saturated).",
+    )
+    exclusion_fraction: ParameterRole = Field(
+        default="0.0",
+        description="Immune exclusion fraction (e.g., H_CXCL12 for T cells). "
+        "0 for myeloid cells. Default 0.0.",
+    )
+
+
+class SteadyStateFractionModel(BaseSteadyStateModel):
+    """Steady-state cell fraction model.
+
+    Maps a recruitment/trafficking rate to observed cell fraction (% of parent
+    population) from flow cytometry or quantitative IHC.
+
+    Formula: fraction = target_rate * drive_factor / (loss_rate * parent_density)
+
+    CRITICAL: parent_density provides the dimensional anchor. Without it,
+    the model constrains only the ratio target_rate/loss_rate, which is
+    incommensurable with absolute-rate targets.
+    """
+
+    type: Literal["steady_state_fraction"] = "steady_state_fraction"
+    target_rate: ParameterRole = Field(
+        description="Recruitment/trafficking rate parameter (e.g., k_MDSC_rec)"
+    )
+    loss_rate: ParameterRole = Field(description="Cell death/loss rate in tumor (1/day)")
+    parent_density: ParameterRole = Field(
+        description="Total parent population density (e.g., CD45+ cells/mL). "
+        "Provides dimensional anchor for absolute rate inference."
+    )
+    drive_factor: ParameterRole = Field(
+        default="1.0",
+        description="Effective chemokine/cytokine drive factor. Default 1.0 (saturated).",
+    )
+
+
+class SteadyStateConcentrationModel(BaseSteadyStateModel):
+    """Steady-state soluble factor concentration model.
+
+    Maps a per-cell secretion rate to observed concentration (pg/mL, nM)
+    from serum ELISA, tissue lysate, or similar assays.
+
+    Formula: concentration = secretion_rate * source_count / (clearance_rate * distribution_volume)
+    """
+
+    type: Literal["steady_state_concentration"] = "steady_state_concentration"
+    secretion_rate: ParameterRole = Field(
+        description="Per-cell secretion rate parameter (e.g., k_CCL2_sec)"
+    )
+    source_count: ParameterRole = Field(
+        description="Number of source cells (e.g., tumor cell count)"
+    )
+    clearance_rate: ParameterRole = Field(description="Degradation/clearance rate (1/day)")
+    distribution_volume: ParameterRole = Field(
+        description="Volume of distribution (e.g., V_blood ~ 5L, V_tumor)"
+    )
+
+
+class SteadyStateRatioModel(BaseSteadyStateModel):
+    """Steady-state population ratio model.
+
+    Maps relative rates to an observed ratio of two cell populations
+    (e.g., M2:M1, CD4:CD8, Treg:Teff) from IHC or flow cytometry.
+
+    Formula: ratio = rate_numerator * drive_numerator / (rate_denominator * drive_denominator)
+
+    Confounding factors (total density, section geometry, staining efficiency)
+    cancel in the ratio, making this the most robust observable type.
+    """
+
+    type: Literal["steady_state_ratio"] = "steady_state_ratio"
+    rate_numerator: ParameterRole = Field(
+        description="Rate governing the numerator population (e.g., k_M2_pol)"
+    )
+    rate_denominator: ParameterRole = Field(
+        description="Rate governing the denominator population (e.g., k_M1_pol)"
+    )
+    drive_numerator: ParameterRole = Field(
+        default="1.0",
+        description="Drive factor for numerator population. Default 1.0.",
+    )
+    drive_denominator: ParameterRole = Field(
+        default="1.0",
+        description="Drive factor for denominator population. Default 1.0.",
+    )
+
+
+class SteadyStateProliferationIndexModel(BaseSteadyStateModel):
+    """Steady-state proliferation index model.
+
+    Maps a proliferation/growth rate to observed fraction of marker-positive
+    cells (Ki-67+, BrdU+, EdU+) from IHC or flow cytometry.
+
+    Formula: f_marker = prolif_rate * visible_duration / (prolif_rate * visible_duration + loss_rate)
+
+    This is nonlinear (saturating) and cannot be expressed as a simple
+    product/quotient, which is why it needs its own type.
+    """
+
+    type: Literal["steady_state_proliferation_index"] = "steady_state_proliferation_index"
+    proliferation_rate: ParameterRole = Field(
+        description="Growth/proliferation rate parameter (e.g., k_C1_growth)"
+    )
+    visible_duration: ParameterRole = Field(
+        description="Duration of marker-visible cell cycle phase (days). "
+        "Ki-67: ~1-2 days. BrdU S-phase: ~8 hours."
+    )
+    loss_rate: ParameterRole = Field(
+        default="0.0",
+        description="Effective cell loss rate (1/day). "
+        "0 for net-growing populations, nonzero for steady-state tumors.",
+    )
+
+
+# =============================================================================
+# IN VITRO ACCUMULATION MODEL
+# =============================================================================
+
+
+class BatchAccumulationModel(BaseForwardModelSpec):
+    """Batch (in vitro) accumulation model for secretion assays.
+
+    Maps a per-cell secretion rate to measured mass or concentration of
+    analyte accumulated in culture medium over a fixed incubation period.
+
+    Formula: predicted = secretion_rate * cell_count * incubation_time
+                         * molecular_weight * unit_conversion_factor / medium_volume
+
+    Use this for ELISA-based secretion assays where cells secrete a protein
+    (e.g., CCL2, IL-6) into a known volume of medium over a known time, and
+    the readout is mass (ng) or concentration (pg/mL).
+
+    Unit conversion examples:
+    - k in nmol/cell/day, output ng:
+        ucf = 1.0 (since nmol * g/mol * 1e-9 * 1e9 = 1.0)
+    - k in nmol/cell/day, output pg/mL:
+        ucf = 1000.0 (since 1e-9 * 1e12 = 1e3), divide by V_mL
+    - If incubation_time is in hours but secretion_rate is per-day:
+        fold time conversion into ucf (e.g., 1000.0/24.0 = 41.6667)
+    """
+
+    type: Literal["batch_accumulation"] = "batch_accumulation"
+    secretion_rate: ParameterRole = Field(
+        description="Per-cell secretion rate parameter (e.g., k_CCL2_sec in nmol/cell/day)"
+    )
+    cell_count: ParameterRole = Field(description="Number of producing cells in the assay")
+    incubation_time: ParameterRole = Field(
+        description="Accumulation duration (should match time units of secretion_rate, "
+        "or use unit_conversion_factor to bridge)"
+    )
+    molecular_weight: ParameterRole = Field(
+        description="Molecular weight for mass-mole conversion (g/mol). "
+        "Can be a reference_ref to the reference database."
+    )
+    medium_volume: ParameterRole = Field(
+        default="1.0",
+        description="Volume of medium (mL) for concentration outputs. "
+        "Set to 1.0 for mass outputs (ng, pg).",
+    )
+    unit_conversion_factor: ParameterRole = Field(
+        default="1.0",
+        description="Mass/time unit conversion factor. "
+        "E.g., 1.0 for ng output, 1000.0 for pg output, "
+        "41.6667 for pg output with hours-to-days time conversion.",
+    )
+
+
+# =============================================================================
+# GENERIC ALGEBRAIC MODEL (fallback for novel forward models)
+# =============================================================================
+
+
 class AlgebraicModel(BaseForwardModelSpec):
     """Algebraic relationship between parameters and observable (no ODE).
 
@@ -397,10 +632,10 @@ class AlgebraicModel(BaseForwardModelSpec):
     The inference engine finds parameters where the predicted observable
     matches the measured data (within measurement error).
 
-    Use for:
-    - Single-parameter conversions: t_half = ln(2) / k
-    - Multi-parameter relationships: steady_state = k_prod / k_deg
-    - Any non-ODE formula connecting parameters to observables
+    Prefer using a typed model (steady_state_density, steady_state_fraction,
+    steady_state_concentration, steady_state_ratio,
+    steady_state_proliferation_index, batch_accumulation) when applicable.
+    Use AlgebraicModel only for relationships that don't fit any typed model.
     """
 
     type: Literal["algebraic"] = "algebraic"
@@ -448,6 +683,12 @@ ForwardModel = Annotated[
         MichaelisMentenModel,
         TwoStateModel,
         SaturationModel,
+        SteadyStateDensityModel,
+        SteadyStateFractionModel,
+        SteadyStateConcentrationModel,
+        SteadyStateRatioModel,
+        SteadyStateProliferationIndexModel,
+        BatchAccumulationModel,
         AlgebraicModel,
         DirectFitModel,
         CustomODEModel,
@@ -672,7 +913,11 @@ class SecondaryDataSource(BaseModel):
     def validate_doi_or_url(self) -> "SecondaryDataSource":
         """Ensure at least one of doi or url is provided."""
         if not self.doi and not self.url:
-            raise ValueError(f"Secondary source '{self.source_tag}' must have either doi or url")
+            from qsp_llm_workflows.core.calibration.exceptions import MissingFieldError
+
+            raise MissingFieldError(
+                f"Secondary source '{self.source_tag}' must have either doi or url"
+            )
         return self
 
     @model_validator(mode="after")
@@ -1005,11 +1250,10 @@ class SubmodelTarget(BaseModel):
                     errors.append(f"Model {field_name}='{value}' is not in calibration.parameters")
 
         if errors:
-            raise ValueError(
-                "Invalid parameter references:\n  - "
-                + "\n  - ".join(errors)
-                + f"\nAvailable parameters: {sorted(param_names)}"
-            )
+            from qsp_llm_workflows.core.calibration.exceptions import ParameterReferenceError
+
+            errors.append(f"Available parameters: {sorted(param_names)}")
+            raise ParameterReferenceError.from_errors(errors)
 
         return self
 
@@ -1034,11 +1278,10 @@ class SubmodelTarget(BaseModel):
                         )
 
         if errors:
-            raise ValueError(
-                "Invalid state variable references:\n  - "
-                + "\n  - ".join(errors)
-                + f"\nAvailable state variables: {sorted(sv_names)}"
-            )
+            from qsp_llm_workflows.core.calibration.exceptions import StateVariableReferenceError
+
+            errors.append(f"Available state variables: {sorted(sv_names)}")
+            raise StateVariableReferenceError.from_errors(errors)
 
         return self
 
@@ -1073,9 +1316,9 @@ class SubmodelTarget(BaseModel):
                     )
 
         if errors:
-            raise ValueError(
-                "Observable type/code consistency errors:\n  - " + "\n  - ".join(errors)
-            )
+            from qsp_llm_workflows.core.calibration.exceptions import ObservableConfigError
+
+            raise ObservableConfigError.from_errors(errors)
 
         return self
 
@@ -1177,7 +1420,9 @@ class SubmodelTarget(BaseModel):
                 pass
 
         if errors:
-            raise ValueError("Observable code signature errors:\n  - " + "\n  - ".join(errors))
+            from qsp_llm_workflows.core.calibration.exceptions import CodeSignatureError
+
+            raise CodeSignatureError.from_errors(errors)
 
         return self
 
@@ -1280,9 +1525,10 @@ class SubmodelTarget(BaseModel):
                 pass
 
         if errors:
-            raise ValueError(
-                "Measurement error SD units / likelihood type mismatch:\n  - "
-                + "\n  - ".join(errors)
+            from qsp_llm_workflows.core.calibration.exceptions import UnitValidationError
+
+            raise UnitValidationError.from_errors(
+                errors, prefix="Measurement error SD units / likelihood type mismatch"
             )
 
         return self
@@ -1315,11 +1561,14 @@ class SubmodelTarget(BaseModel):
                     )
 
         if errors:
-            raise ValueError(
-                "Evaluation points outside integration span:\n  - "
-                + "\n  - ".join(errors)
-                + f"\n\nAdjust evaluation_points to be within [{t_start}, {t_end}] "
+            from qsp_llm_workflows.core.calibration.exceptions import EvaluationPointsError
+
+            errors.append(
+                f"Adjust evaluation_points to be within [{t_start}, {t_end}] "
                 f"or extend independent_variable.span."
+            )
+            raise EvaluationPointsError.from_errors(
+                errors, prefix="Evaluation points outside integration span"
             )
 
         return self
@@ -1366,7 +1615,11 @@ class SubmodelTarget(BaseModel):
                 )
 
         if errors:
-            raise ValueError("Missing required fields for ODE model:\n  - " + "\n  - ".join(errors))
+            from qsp_llm_workflows.core.calibration.exceptions import MissingFieldError
+
+            raise MissingFieldError.from_errors(
+                errors, prefix="Missing required fields for ODE model"
+            )
 
         return self
 
@@ -1471,7 +1724,9 @@ class SubmodelTarget(BaseModel):
                     )
 
         if errors:
-            raise ValueError("Code validation errors:\n  - " + "\n  - ".join(errors))
+            from qsp_llm_workflows.core.calibration.exceptions import CodeSyntaxError
+
+            raise CodeSyntaxError("code validation", "\n  - ".join(errors))
 
         return self
 
@@ -1593,7 +1848,9 @@ class SubmodelTarget(BaseModel):
                 errors.append(f"Error model '{entry.name}': observation_code execution error: {e}")
 
         if errors:
-            raise ValueError("observation_code validation errors:\n  - " + "\n  - ".join(errors))
+            from qsp_llm_workflows.core.calibration.exceptions import CodeExecutionError
+
+            raise CodeExecutionError("observation_code", "\n  - ".join(errors))
 
         return self
 
@@ -1669,7 +1926,9 @@ class SubmodelTarget(BaseModel):
         unused_params = param_names - accessed_params
 
         if unused_params:
-            raise ValueError(
+            from qsp_llm_workflows.core.calibration.exceptions import ParameterReferenceError
+
+            raise ParameterReferenceError(
                 f"Parameter(s) not accessed in forward model code: {sorted(unused_params)}\n"
                 f"Defined parameters: {sorted(param_names)}\n"
                 f"Accessed parameters: {sorted(accessed_params)}\n\n"
@@ -1766,10 +2025,10 @@ class SubmodelTarget(BaseModel):
             return self
 
         t_start, t_end = iv.span
-        if t_start < 0:
-            raise ValueError(f"independent_variable.span[0] must be non-negative, got {t_start}")
-        if t_end <= t_start:
-            raise ValueError(f"independent_variable.span[1] must be > span[0], got {iv.span}")
+        if t_start < 0 or t_end <= t_start:
+            from qsp_llm_workflows.core.calibration.exceptions import SpanOrderingError
+
+            raise SpanOrderingError(iv.span)
 
         return self
 
@@ -1858,16 +2117,6 @@ class SubmodelTarget(BaseModel):
                         f"recorded {year}, CrossRef says {metadata['year']}"
                     )
 
-            # Check first author appears in source_tag
-            if metadata.get("first_author") and source_tag:
-                first_author = metadata["first_author"].lower()
-                tag_lower = source_tag.lower()
-                if first_author not in tag_lower:
-                    errors.append(
-                        f"{prefix} source_tag '{source_tag}' doesn't contain "
-                        f"first author '{metadata['first_author']}' from CrossRef"
-                    )
-
         # Check primary source (DOI required)
         check_doi_source(
             self.primary_data_source.doi,
@@ -1944,7 +2193,9 @@ class SubmodelTarget(BaseModel):
             check_unit(m.units, f"Measurement '{m.name}'")
 
         if errors:
-            raise ValueError("Invalid Pint units:\n  - " + "\n  - ".join(errors))
+            from qsp_llm_workflows.core.calibration.exceptions import UnitParsingError
+
+            raise UnitParsingError.from_errors(errors)
 
         return self
 
@@ -1989,7 +2240,11 @@ class SubmodelTarget(BaseModel):
                 expected = ureg(model_param.units)
                 actual = ureg(param.units)
                 if actual.dimensionality != expected.dimensionality:
-                    raise ValueError(
+                    from qsp_llm_workflows.core.calibration.exceptions import (
+                        DimensionalityMismatchError,
+                    )
+
+                    raise DimensionalityMismatchError(
                         f"Parameter '{param.name}' unit dimensionality mismatch:\n"
                         f"  SubmodelTarget units: '{param.units}' "
                         f"(dimensionality: {actual.dimensionality})\n"
@@ -1998,7 +2253,7 @@ class SubmodelTarget(BaseModel):
                         f"Common issue: using concentration (e.g., nanomolar) instead of "
                         f"amount (e.g., nanomole) for rate parameters."
                     )
-            except ValueError:
+            except DimensionalityMismatchError:
                 raise
             except Exception:
                 # Unit parsing issue - handled by validate_units_are_valid_pint
@@ -2075,7 +2330,11 @@ class SubmodelTarget(BaseModel):
                 try:
                     expected_units = ureg(measurement.units)
                     if result.dimensionality != expected_units.dimensionality:
-                        raise ValueError(
+                        from qsp_llm_workflows.core.calibration.exceptions import (
+                            DimensionalityMismatchError,
+                        )
+
+                        raise DimensionalityMismatchError(
                             f"AlgebraicModel.code output units mismatch:\n"
                             f"  Forward model returns: {result.units} "
                             f"(dimensionality: {result.dimensionality})\n"
@@ -2083,7 +2342,7 @@ class SubmodelTarget(BaseModel):
                             f"(dimensionality: {expected_units.dimensionality})\n"
                             f"Check that the forward model formula produces the correct units."
                         )
-                except ValueError:
+                except DimensionalityMismatchError:
                     raise
                 except Exception:
                     pass  # Unit parsing issues handled elsewhere
@@ -2162,7 +2421,7 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_prior_predictive_scale(self) -> "SubmodelTarget":
+    def validate_prior_predictive_scale(self, info: ValidationInfo) -> "SubmodelTarget":
         """
         Validate that prior predictive is on same scale as observation.
 
@@ -2187,6 +2446,11 @@ class SubmodelTarget(BaseModel):
             run_prior_predictive,
             PriorPredictiveError,
         )
+
+        # Extract reference database from validation context (if provided)
+        reference_db = None
+        if info.context and "reference_db" in info.context:
+            reference_db = info.context["reference_db"]
 
         # Get all parameters and their prior medians
         if not self.calibration.parameters:
@@ -2229,10 +2493,13 @@ class SubmodelTarget(BaseModel):
                     pass  # Fall through to error below
 
             if obs_median is None:
-                raise ValueError(
-                    f"Prior predictive check failed: could not extract observation value.\n"
+                from qsp_llm_workflows.core.calibration.exceptions import CodeExecutionError
+
+                raise CodeExecutionError(
+                    code_type="observation_code",
+                    error_msg=f"Prior predictive check failed: could not extract observation value.\n"
                     f"  Error model: {entry.name if entry else 'None'}\n\n"
-                    f"Check that observation_code returns {{'value': <Quantity>, 'sd': ...}}"
+                    f"Check that observation_code returns {{'value': <Quantity>, 'sd': ...}}",
                 )
 
             if obs_median == 0:
@@ -2249,9 +2516,12 @@ class SubmodelTarget(BaseModel):
                     measurement=entry,
                     input_values=input_values,
                     all_param_medians=all_param_medians,
+                    reference_db=reference_db,
                 )
             except PriorPredictiveError as e:
-                raise ValueError(
+                from qsp_llm_workflows.core.calibration.exceptions import PriorScaleError
+
+                raise PriorScaleError(
                     f"Prior predictive check failed:\n  {e}\n\n"
                     f"  Model type: {self.calibration.model.type}\n"
                     f"  Parameters: {list(all_param_medians.keys())}"
@@ -2267,7 +2537,9 @@ class SubmodelTarget(BaseModel):
                 continue
 
             if log_diff > 3:
-                raise ValueError(
+                from qsp_llm_workflows.core.calibration.exceptions import ScaleMismatchError
+
+                raise ScaleMismatchError(
                     f"Prior predictive check failed for error model '{entry.name}':\n"
                     f"  Parameters: {all_param_medians}\n"
                     f"  Model prediction: {predicted:.2e}\n"
@@ -2374,7 +2646,9 @@ class SubmodelTarget(BaseModel):
                 )
 
         if errors:
-            raise ValueError("Hardcoded values in observation_code:\n\n" + "\n\n".join(errors))
+            from qsp_llm_workflows.core.calibration.exceptions import HardcodedConstantError
+
+            raise HardcodedConstantError.from_errors(errors)
 
         return self
 
@@ -2481,7 +2755,11 @@ class SubmodelTarget(BaseModel):
                                 # Check for required keys
                                 missing_keys = {"value", "sd"} - keys
                                 if missing_keys:
-                                    raise ValueError(
+                                    from qsp_llm_workflows.core.calibration.exceptions import (
+                                        ReturnStructureError,
+                                    )
+
+                                    raise ReturnStructureError(
                                         f"Error model '{entry.name}' observation_code "
                                         f"return dict is missing required key(s): {missing_keys}\n\n"
                                         f"Required return signature:\n"
@@ -2502,7 +2780,9 @@ class SubmodelTarget(BaseModel):
                         missing.append("'value'")
                     if not has_sd:
                         missing.append("'sd'")
-                    raise ValueError(
+                    from qsp_llm_workflows.core.calibration.exceptions import ReturnStructureError
+
+                    raise ReturnStructureError(
                         f"Error model '{entry.name}' observation_code "
                         f"appears to be missing required return key(s): {', '.join(missing)}\n\n"
                         f"Required return signature:\n"
@@ -2588,13 +2868,9 @@ class SubmodelTarget(BaseModel):
         check_all_strings(data, "")
 
         if errors:
-            raise ValueError(
-                "Invisible/control characters detected (likely from PDF copy-paste):\n  - "
-                + "\n  - ".join(errors[:10])  # Limit to first 10 errors
-                + ("\n  ... and more" if len(errors) > 10 else "")
-                + "\n\nThese characters are invisible but can cause parsing issues. "
-                + "Re-type the affected text manually."
-            )
+            from qsp_llm_workflows.core.calibration.exceptions import ControlCharacterError
+
+            raise ControlCharacterError.from_errors(errors[:10])
 
         return self
 
@@ -2652,7 +2928,11 @@ class SubmodelTarget(BaseModel):
         sr = self.source_relevance
         if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
             if sr.estimated_translation_uncertainty_fold < 3.0:
-                raise ValueError(
+                from qsp_llm_workflows.core.calibration.exceptions import (
+                    TranslationUncertaintyError,
+                )
+
+                raise TranslationUncertaintyError(
                     f"Cross-indication extrapolation ({sr.indication_match.value}) "
                     f"with translation uncertainty of only {sr.estimated_translation_uncertainty_fold}x.\n\n"
                     f"Recommended minimum uncertainty:\n"
@@ -2669,7 +2949,9 @@ class SubmodelTarget(BaseModel):
         sr = self.source_relevance
         if sr.perturbation_type == PerturbationType.PHARMACOLOGICAL:
             if not sr.perturbation_relevance:
-                raise ValueError(
+                from qsp_llm_workflows.core.calibration.exceptions import MissingFieldError
+
+                raise MissingFieldError(
                     "Perturbation type is 'pharmacological' but perturbation_relevance "
                     "is not provided.\n\n"
                     "When using drug-induced measurements to estimate physiological parameters, "
@@ -2686,7 +2968,9 @@ class SubmodelTarget(BaseModel):
         sr = self.source_relevance
         if sr.perturbation_type == PerturbationType.GENETIC:
             if not sr.perturbation_relevance:
-                raise ValueError(
+                from qsp_llm_workflows.core.calibration.exceptions import MissingFieldError
+
+                raise MissingFieldError(
                     "Perturbation type is 'genetic_perturbation' but perturbation_relevance "
                     "is not provided.\n\n"
                     "When using KO/knockdown/overexpression data to estimate physiological "
@@ -2703,7 +2987,11 @@ class SubmodelTarget(BaseModel):
         sr = self.source_relevance
         if sr.tme_compatibility == TMECompatibility.LOW:
             if sr.estimated_translation_uncertainty_fold < 10.0:
-                raise ValueError(
+                from qsp_llm_workflows.core.calibration.exceptions import (
+                    TranslationUncertaintyError,
+                )
+
+                raise TranslationUncertaintyError(
                     f"TME compatibility is 'low' but translation uncertainty is only "
                     f"{sr.estimated_translation_uncertainty_fold}x.\n\n"
                     f"Low TME compatibility (e.g., T cell-permissive model for T cell-excluded "
@@ -2712,7 +3000,9 @@ class SubmodelTarget(BaseModel):
                     f"microenvironment differences."
                 )
             if not sr.tme_compatibility_notes:
-                raise ValueError(
+                from qsp_llm_workflows.core.calibration.exceptions import MissingFieldError
+
+                raise MissingFieldError(
                     "TME compatibility is 'low' but tme_compatibility_notes is not provided.\n\n"
                     "Document the specific TME differences and their expected impact:\n"
                     "  - Stromal density differences\n"
@@ -2728,7 +3018,11 @@ class SubmodelTarget(BaseModel):
         sr = self.source_relevance
         if sr.species_source != sr.species_target:
             if sr.estimated_translation_uncertainty_fold < 2.0:
-                raise ValueError(
+                from qsp_llm_workflows.core.calibration.exceptions import (
+                    TranslationUncertaintyError,
+                )
+
+                raise TranslationUncertaintyError(
                     f"Cross-species extrapolation ({sr.species_source} -> {sr.species_target}) "
                     f"with translation uncertainty of only {sr.estimated_translation_uncertainty_fold}x.\n\n"
                     f"Cross-species extrapolation typically requires at least 2-3x uncertainty "
@@ -2890,7 +3184,9 @@ class SubmodelTarget(BaseModel):
             ratio = predicted_value / measured_value
 
             if ratio > threshold_fold or ratio < 1.0 / threshold_fold:
-                raise ValueError(
+                from qsp_llm_workflows.core.calibration.exceptions import ScaleMismatchError
+
+                raise ScaleMismatchError(
                     f"Prior predictive check failed for algebraic model:\n"
                     f"  Predicted observable (from model.code): {predicted_value:.2e}\n"
                     f"  Measured data ('{inp.name}'): {measured_value:.2e}\n"
@@ -2930,7 +3226,9 @@ class SubmodelTarget(BaseModel):
                     )
 
         if errors:
-            raise ValueError(
+            from qsp_llm_workflows.core.calibration.exceptions import SampleSizeError
+
+            raise SampleSizeError(
                 "Sample size / evaluation points length mismatch:\n  - " + "\n  - ".join(errors)
             )
 
@@ -2971,7 +3269,9 @@ class SubmodelTarget(BaseModel):
                 )
 
         if errors:
-            raise ValueError("Missing observable for ODE model:\n  - " + "\n  - ".join(errors))
+            from qsp_llm_workflows.core.calibration.exceptions import ObservableConfigError
+
+            raise ObservableConfigError.from_errors(errors)
 
         return self
 
@@ -3096,6 +3396,7 @@ __all__ = [
     "InputRefInitialCondition",
     "StateVariable",
     "InputRef",
+    "ReferenceRef",
     "ParameterRole",
     # Model types
     "BaseForwardModelSpec",
