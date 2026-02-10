@@ -50,7 +50,6 @@ from qsp_llm_workflows.core.calibration.submodel_target import (
     TwoStateModel,
 )
 from qsp_llm_workflows.core.model_structure import ModelStructure
-from qsp_llm_workflows.core.unit_registry import ureg
 
 
 # =============================================================================
@@ -284,13 +283,13 @@ class ObservationExtractor:
                 raise ValueError(
                     f"observation_code for '{measurement.name}' did not return 'value'"
                 )
-            median = float(getattr(value, "magnitude", value))
+            median = float(value)
 
             # Extract sd (measurement uncertainty)
             sd_val = obs_result.get("sd")
             if sd_val is None:
                 raise ValueError(f"observation_code for '{measurement.name}' did not return 'sd'")
-            sigma = float(getattr(sd_val, "magnitude", sd_val))
+            sigma = float(sd_val)
 
             sd_uncertain = obs_result.get("sd_uncertain", False)
 
@@ -354,28 +353,28 @@ class ObservationExtractor:
         )
 
     def _build_inputs_dict(self, target: SubmodelTarget, input_names: list[str]) -> dict:
-        """Build inputs dict with Pint quantities for observation_code."""
+        """Build inputs dict with plain float values for observation_code."""
         inputs_dict = {}
         for inp in target.inputs:
             if inp.name in input_names or not input_names:
-                inputs_dict[inp.name] = inp.value * ureg(inp.units)
+                inputs_dict[inp.name] = inp.value
         return inputs_dict
 
     def _exec_observation_code(self, code: str, inputs: dict, sample_size: Optional[int]) -> dict:
         """
         Execute observation_code and return result dict.
 
-        The code should define: def derive_observation(inputs, sample_size, ureg) -> dict
+        The code should define: def derive_observation(inputs, sample_size) -> dict
         Required return keys: 'value', 'sd'
         Optional return keys: 'sd_uncertain', 'n'
         """
-        namespace = {"inputs": inputs, "ureg": ureg, "np": np}
+        namespace = {"inputs": inputs, "np": np}
         exec(code, namespace)
 
         if "derive_observation" not in namespace:
             raise ValueError("observation_code must define 'derive_observation'")
 
-        return namespace["derive_observation"](inputs, sample_size, ureg)
+        return namespace["derive_observation"](inputs, sample_size)
 
 
 # =============================================================================

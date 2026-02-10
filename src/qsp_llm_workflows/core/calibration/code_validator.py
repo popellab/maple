@@ -43,8 +43,8 @@ EXPECTED_SIGNATURES: Dict[CodeType, Tuple[str, List[str]]] = {
     CodeType.OBSERVABLE: ("compute_observable", ["time", "species_dict", "constants", "ureg"]),
     CodeType.DISTRIBUTION: ("derive_distribution", ["inputs", "ureg"]),
     CodeType.DERIVATION: ("derive_parameter", ["inputs", "ureg"]),
-    CodeType.ALGEBRAIC: ("compute", ["params", "inputs", "ureg"]),
-    CodeType.MEASUREMENT_ERROR: ("derive_error", ["inputs", "ureg"]),
+    CodeType.ALGEBRAIC: ("compute", ["params", "inputs"]),
+    CodeType.MEASUREMENT_ERROR: ("derive_observation", ["inputs", "sample_size"]),
 }
 
 
@@ -405,9 +405,15 @@ class CodeValidator:
 
         expected_name, _ = EXPECTED_SIGNATURES[code_type]
 
+        # SubmodelTarget code types (ALGEBRAIC, MEASUREMENT_ERROR) use plain floats
+        # Other code types (OBSERVABLE, DISTRIBUTION, etc.) still use ureg
+        uses_ureg = code_type not in (CodeType.ALGEBRAIC, CodeType.MEASUREMENT_ERROR)
+
         # Compile and extract function
         try:
-            local_scope: Dict[str, Any] = {"np": np, "numpy": np, "ureg": ureg}
+            local_scope: Dict[str, Any] = {"np": np, "numpy": np}
+            if uses_ureg:
+                local_scope["ureg"] = ureg
             exec(code, local_scope)
             func = local_scope.get(expected_name)
             if func is None:
@@ -475,15 +481,16 @@ class CodeValidator:
             return (inputs, ureg)
 
         elif code_type == CodeType.ALGEBRAIC:
-            # compute(params, inputs, ureg)
+            # compute(params, inputs)
             params = context.get("params", {})
             inputs = context.get("inputs", {})
-            return (params, inputs, ureg)
+            return (params, inputs)
 
         elif code_type == CodeType.MEASUREMENT_ERROR:
-            # derive_error(inputs, ureg)
+            # derive_observation(inputs, sample_size)
             inputs = context.get("inputs", {})
-            return (inputs, ureg)
+            sample_size = context.get("sample_size", None)
+            return (inputs, sample_size)
 
         else:
             raise ValueError(f"Unknown code type: {code_type}")

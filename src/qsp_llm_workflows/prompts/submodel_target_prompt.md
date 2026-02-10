@@ -56,10 +56,10 @@ SubmodelTarget
 ├── calibration
 │   ├── parameters: [{name, units, prior: {distribution, mu, sigma, ...}}]
 │   ├── forward_model: ForwardModel        # Physics/math: params → predictions
-│   │   ├── type: exponential_growth | first_order_decay | algebraic | custom_ode | ...
+│   │   ├── type: exponential_growth | first_order_decay | steady_state_density | ... | algebraic | custom_ode
 │   │   ├── state_variables: [{name, units, initial_condition}]  # For ODE models
 │   │   ├── independent_variable: {name, units, span}            # For ODE models
-│   │   └── (type-specific fields: rate_constant, formula, code, code_julia, ...)
+│   │   └── (type-specific fields: ParameterRole fields for structured types, or code/code_julia for algebraic)
 │   ├── error_model: List[ErrorModel]      # Statistics: predictions + data → likelihood
 │   │   ├── name, units, uses_inputs
 │   │   ├── evaluation_points: [float]     # For ODE models only
@@ -93,8 +93,32 @@ SubmodelTarget
 
 | Type | Use When |
 |------|----------|
-| `algebraic` | Forward model maps params → observable (e.g., t_half = ln(2) / k). **Requires code and code_julia** |
+| `algebraic` | Custom forward model that does not fit any structured type below (e.g., t_half = ln(2) / k). **Requires code and code_julia.** Only use this as a last resort when no structured algebraic type applies. |
 | `direct_fit` | Curve fitting (Hill equation for IC50, etc.) |
+
+### Structured Algebraic (preferred over `algebraic` -- no code needed)
+
+| Type | Formula | Use When |
+|------|---------|----------|
+| `steady_state_density` | density = rate * source * eff * (1-excl) / loss * svf | IHC/mIF cell density (cells/mm^2) |
+| `steady_state_fraction` | fraction = rate * drive / (loss * parent_density) | Flow cytometry % of parent population |
+| `steady_state_concentration` | conc = sec_rate * source / (clearance * volume) | Serum/tissue ELISA concentration |
+| `steady_state_ratio` | ratio = rate_num * drive_num / (rate_den * drive_den) | Cell population ratios (M2:M1, CD4:CD8) |
+| `steady_state_proliferation_index` | f = prolif * dur / (prolif * dur + loss) | Ki-67+/BrdU+ fraction |
+| `batch_accumulation` | mass = sec_rate * cells * time * MW * ucf / vol | In vitro secretion assay (ELISA) |
+
+These models auto-generate code from their fields. Each field is a **ParameterRole**: either a parameter name (string to estimate), an `input_ref` (fixed from extracted input), a `reference_ref` (fixed from curated reference database), or a numeric literal string.
+
+- Use `input_ref` for values extracted from the paper: `{input_ref: "my_input_name"}`
+- Use `reference_ref` for curated physiological constants: `{reference_ref: "circulating_cd8_count"}`
+- Use a numeric literal string for known constants: `"1.0"`, `"4e-6"`
+- Use a bare parameter name string for the parameter(s) to estimate: `"k_rec"`
+
+**Available reference values** (use these exact names with `reference_ref`):
+
+{{REFERENCE_DATABASE}}
+
+**unit_conversion_factor**: Set this when rate parameters have mismatched time units (e.g., target_rate is per-minute but loss_rate is per-day: ucf = 1440.0). Default "1.0".
 
 ---
 
@@ -142,10 +166,10 @@ inputs:
 
 ```python
 # In observation_code:
-def derive_observation(inputs, sample_size, ureg):
+def derive_observation(inputs, sample_size):
     mean = inputs['treg_fraction_mean']
-    sem = inputs['treg_fraction_sem'].magnitude
-    n = int(inputs['n_patients'].magnitude)
+    sem = inputs['treg_fraction_sem']
+    n = int(inputs['n_patients'])
     sd = sem * np.sqrt(n)  # Convert SEM to SD
     return {
         'value': mean,
@@ -173,44 +197,46 @@ Always include `rationale` explaining the prior choice.
 
 ## Algebraic Models
 
-Use `algebraic` forward models when there's an analytical relationship between parameters and observables (no ODE needed).
+When the data involves a non-ODE analytical relationship (parameter → observable), **first check whether a structured algebraic type fits** (see "Structured Algebraic" table above). Structured types auto-generate code and are strongly preferred. Only use `algebraic` if the relationship does not match any structured type.
 
 **Key concept:** The forward model maps **parameters → predicted observable**. For example, if you're inferring rate constant `k` but the paper reports half-life `t_half`, the forward model predicts `t_half = ln(2) / k`.
 
-### Required Fields
+### Required Fields (for `algebraic` type only -- structured types do not need these)
 
 - `formula`: Human-readable description of the relationship
-- `code`: Python forward model: `def compute(params, inputs, ureg) -> Quantity`
+- `code`: Python forward model: `def compute(params, inputs) -> float`
 - `code_julia`: Julia forward model: `function compute(params, inputs) -> value`
 
 ### observation_code Return Signature
 
 The `derive_observation` function in `error_model` MUST return:
-- `value`: Observed point estimate (Pint Quantity with units matching error_model.units) **[required]**
-- `sd`: Measurement uncertainty (dimensionless for lognormal likelihood, units for normal) **[required]**
+- `value`: Observed point estimate (plain float) **[required]**
+- `sd`: Measurement uncertainty (plain float: dimensionless CV for lognormal, absolute for normal) **[required]**
 - `sd_uncertain`: If True, inference adds a prior on sigma (optional, default False)
 - `n`: Sample size for reference (optional)
 
+All inputs are plain floats. Unit metadata is in the YAML schema for documentation. Your code works with plain numbers.
+
 ```python
-def derive_observation(inputs, sample_size, ureg):
+def derive_observation(inputs, sample_size):
     return {
-        'value': inputs['half_life_mean'],  # Pint Quantity
-        'sd': inputs['half_life_sd'].magnitude / inputs['half_life_mean'].magnitude,  # CV for lognormal
+        'value': inputs['half_life_mean'],
+        'sd': inputs['half_life_sd'] / inputs['half_life_mean'],  # CV for lognormal
         'sd_uncertain': False,
     }
 ```
 
-### Example: Inferring rate from half-life
+### Example: Inferring rate from half-life (`algebraic` fallback)
 
 ```yaml
 forward_model:
   type: algebraic
   formula: "t_half = ln(2) / k"
   code: |
-    def compute(params, inputs, ureg):
+    def compute(params, inputs):
         import numpy as np
         k = params['k_clearance']
-        return np.log(2) / k * ureg('day')
+        return np.log(2) / k
   code_julia: |
     function compute(params, inputs)
         return log(2) / params["k_clearance"]
@@ -223,11 +249,11 @@ error_model:
     units: day
     uses_inputs: [half_life_mean, half_life_sd]
     observation_code: |
-      def derive_observation(inputs, sample_size, ureg):
+      def derive_observation(inputs, sample_size):
           t_half = inputs['half_life_mean']
           t_half_sd = inputs['half_life_sd']
           # For lognormal likelihood, SD is in log-space (CV)
-          cv = t_half_sd.magnitude / t_half.magnitude
+          cv = t_half_sd / t_half
           return {
               'value': t_half,
               'sd': cv,
@@ -248,8 +274,8 @@ Allowed constants: `0`, `1`, `2`, `1.96` (for CI calculations)
 
 ❌ **Wrong:**
 ```python
-def derive_observation(inputs, sample_size, ureg):
-    sd = inputs['mean'].magnitude * 0.3  # Hardcoded 30% CV!
+def derive_observation(inputs, sample_size):
+    sd = inputs['mean'] * 0.3  # Hardcoded 30% CV!
     return {'value': inputs['mean'], 'sd': sd}
 ```
 
@@ -262,8 +288,8 @@ inputs:
     notes: "Assumed 30% CV based on typical biological variability"
 ```
 ```python
-def derive_observation(inputs, sample_size, ureg):
-    cv = inputs['assumed_cv'].magnitude
+def derive_observation(inputs, sample_size):
+    cv = inputs['assumed_cv']
     return {'value': inputs['mean'], 'sd': cv}
 ```
 
@@ -385,11 +411,11 @@ calibration:
       evaluation_points: [72]
       sample_size: 3
       observation_code: |
-        def derive_observation(inputs, sample_size, ureg):
+        def derive_observation(inputs, sample_size):
             mean = inputs['final_cells_mean']
             sd = inputs['final_cells_sd']
             # CV for lognormal likelihood
-            cv = sd.magnitude / mean.magnitude
+            cv = sd / mean
             return {
                 'value': mean,
                 'sd': cv,
@@ -521,14 +547,16 @@ The schema automatically validates:
 - All references (`input_ref`, `uses_inputs`, `source_ref`) point to existing items
 - ODE models have `state_variables`, `independent_variable.span`, and `evaluation_points`
 - ODE models have `observable` defined in error_model
-- `algebraic` models have `code` and `code_julia`
-- `observation_code` returns `{value, sd}` with correct units
+- `algebraic` models have `code` and `code_julia` (structured algebraic types auto-generate code)
+- `observation_code` returns `{value, sd}` as plain floats
 - `observation_code` has no hardcoded numeric values (all through inputs)
 - Prior predictive matches observation scale (catches unit errors)
 - AlgebraicModel forward prediction matches data scale
 - Values appear in their `value_snippet` (catches hallucinations)
-- Units are valid Pint units
+- Units strings are valid (validated with Pint)
 - DOIs resolve via CrossRef
+- `reference_ref` values exist in the reference database
+- Structured model ParameterRole fields resolve to a parameter, input, reference, or numeric literal
 
 **Source relevance validators (will FAIL if violated):**
 - `non_peer_reviewed` source quality is rejected
@@ -542,6 +570,7 @@ The schema automatically validates:
 - Parameters not referenced in AlgebraicModel.code
 - SD is >100x or <0.001x observed value (units mismatch)
 - Input units don't match measurement units
+- `unit_conversion_factor` is flagged if not a common conversion (60, 1440, 3600, 86400, powers of 10)
 
 ---
 

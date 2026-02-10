@@ -621,7 +621,6 @@ def run_prior_predictive(
 
         try:
             import numpy as np
-            from qsp_llm_workflows.core.unit_registry import ureg
 
             # Build params dict with prior medians
             # Use all_param_medians for multi-param models, fall back to single param
@@ -630,29 +629,25 @@ def run_prior_predictive(
             else:
                 params = {param_name: prior_median}
 
-            # Build inputs dict with units
-            inputs_pint = {}
+            # Build inputs dict (plain floats)
+            inputs_plain = {}
             for name, value in input_values.items():
-                # Try to preserve units if they exist, otherwise use raw value
-                inputs_pint[name] = value
+                inputs_plain[name] = value
 
             # Execute forward model
-            local_scope = {"np": np, "numpy": np, "ureg": ureg}
+            local_scope = {"np": np, "numpy": np}
             exec(model.code, local_scope)
             compute_fn = local_scope.get("compute")
 
             if compute_fn is None:
                 raise PriorPredictiveError("AlgebraicModel.code must define 'compute' function.")
 
-            result = compute_fn(params, inputs_pint, ureg)
+            result = compute_fn(params, inputs_plain)
 
             # Handle multi-output forward models (dict return type)
             if isinstance(result, dict):
                 result = _extract_observable_from_dict(result, measurement, "AlgebraicModel")
 
-            # Extract magnitude if it's a Pint Quantity
-            if hasattr(result, "magnitude"):
-                return result.magnitude
             return result
 
         except PriorPredictiveError:

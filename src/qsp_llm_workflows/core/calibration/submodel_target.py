@@ -802,10 +802,10 @@ class ErrorModel(BaseModel):
     )
     observation_code: str = Field(
         description="Python code to derive the observation (point estimate + uncertainty) from inputs. "
-        "Signature: def derive_observation(inputs, sample_size, ureg) -> dict. "
+        "Signature: def derive_observation(inputs, sample_size) -> dict. "
         "Required return keys: "
-        "'value' (Pint Quantity with units matching error_model.units), "
-        "'sd' (measurement uncertainty - dimensionless for lognormal, units for normal). "
+        "'value' (plain float), "
+        "'sd' (plain float - dimensionless CV for lognormal, absolute for normal). "
         "Optional return keys: "
         "'sd_uncertain' (bool - if True, inference adds prior on SD), "
         "'n' (int - sample size for reference). "
@@ -1103,6 +1103,43 @@ class SourceRelevanceAssessment(BaseModel):
 
 
 # =============================================================================
+# PARAMETER ROLE INTROSPECTION HELPER
+# =============================================================================
+
+# Fields on forward models that are NOT ParameterRole values
+_NON_ROLE_FIELDS = frozenset(
+    {
+        "type",
+        "code",
+        "code_julia",
+        "formula",
+        "data_rationale",
+        "submodel_rationale",
+        "independent_variable",
+        "state_variables",
+        "curve",
+    }
+)
+
+
+def _get_parameter_role_fields(model) -> dict:
+    """Get all ParameterRole-typed fields and their values from a forward model.
+
+    Iterates model_fields and returns {field_name: value} for fields whose
+    values are str, InputRef, or ReferenceRef. Skips non-ParameterRole fields
+    like 'type', 'code', 'data_rationale', etc.
+    """
+    result = {}
+    for field_name in model.model_fields:
+        if field_name in _NON_ROLE_FIELDS:
+            continue
+        value = getattr(model, field_name)
+        if isinstance(value, (str, InputRef, ReferenceRef)):
+            result[field_name] = value
+    return result
+
+
+# =============================================================================
 # SUBMODEL TARGET (TOP-LEVEL)
 # =============================================================================
 
@@ -1193,15 +1230,11 @@ class SubmodelTarget(BaseModel):
                             f"unknown input '{sv.initial_condition.input_ref}'"
                         )
 
-        # Check InputRef in model parameter_roles
+        # Check InputRef in model parameter_roles (all model types)
         model = self.calibration.model
-        for field_name in ["rate_constant", "carrying_capacity", "vmax", "km", "forward_rate"]:
-            if hasattr(model, field_name):
-                value = getattr(model, field_name)
-                if isinstance(value, InputRef) and value.input_ref not in input_names:
-                    errors.append(
-                        f"Model {field_name} references unknown input '{value.input_ref}'"
-                    )
+        for field_name, value in _get_parameter_role_fields(model).items():
+            if isinstance(value, InputRef) and value.input_ref not in input_names:
+                errors.append(f"Model {field_name} references unknown input '{value.input_ref}'")
 
         if errors:
             from qsp_llm_workflows.core.calibration.exceptions import InputReferenceError
@@ -1236,17 +1269,22 @@ class SubmodelTarget(BaseModel):
         """
         Validate that parameter role strings reference existing parameters.
 
-        When a parameter_role is a string (not InputRef), it should match
-        a parameter name in calibration.parameters.
+        When a parameter_role is a string (not InputRef/ReferenceRef) and not a
+        numeric literal, it should match a parameter name in calibration.parameters.
         """
         param_names = {p.name for p in self.calibration.parameters}
         errors = []
 
         model = self.calibration.model
-        for field_name in ["rate_constant", "carrying_capacity", "vmax", "km", "forward_rate"]:
-            if hasattr(model, field_name):
-                value = getattr(model, field_name)
-                if isinstance(value, str) and value not in param_names:
+        for field_name, value in _get_parameter_role_fields(model).items():
+            if isinstance(value, str):
+                # Skip numeric literal strings (e.g., "1.0", "1440.0", "2.5e+8")
+                try:
+                    float(value)
+                    continue
+                except ValueError:
+                    pass
+                if value not in param_names:
                     errors.append(f"Model {field_name}='{value}' is not in calibration.parameters")
 
         if errors:
@@ -1254,6 +1292,169 @@ class SubmodelTarget(BaseModel):
 
             errors.append(f"Available parameters: {sorted(param_names)}")
             raise ParameterReferenceError.from_errors(errors)
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_reference_refs(self, info: ValidationInfo) -> "SubmodelTarget":
+        """
+        Validate that ReferenceRef values exist in the reference database.
+
+        The reference database is passed via Pydantic validation context.
+        If no context is provided (e.g., bare instantiation), skip silently.
+        """
+        reference_db = None
+        if info.context and "reference_db" in info.context:
+            reference_db = info.context["reference_db"]
+
+        if reference_db is None:
+            return self  # No reference database available, skip check
+
+        model = self.calibration.model
+        errors = []
+        for field_name, value in _get_parameter_role_fields(model).items():
+            if isinstance(value, ReferenceRef):
+                if value.reference_ref not in reference_db:
+                    errors.append(
+                        f"Model {field_name} references unknown reference_ref "
+                        f"'{value.reference_ref}'"
+                    )
+
+        if errors:
+            from qsp_llm_workflows.core.calibration.exceptions import ReferenceRefError
+
+            available = sorted(reference_db.keys()) if reference_db else []
+            errors.append(f"Available reference values: {available}")
+            raise ReferenceRefError.from_errors(errors)
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_structured_model_roles_resolvable(self, info: ValidationInfo) -> "SubmodelTarget":
+        """
+        Validate that all ParameterRole fields in structured algebraic models
+        resolve to something concrete: a defined parameter, a valid InputRef,
+        a ReferenceRef, or a numeric literal.
+
+        Catches typos like source_pool: "circulating_cd8" when the input is
+        named "circulating_cd8_count".
+        """
+        from qsp_llm_workflows.core.calibration.submodel_utils import STRUCTURED_ALGEBRAIC_TYPES
+
+        model = self.calibration.model
+        if model.type not in STRUCTURED_ALGEBRAIC_TYPES:
+            return self
+
+        param_names = {p.name for p in self.calibration.parameters}
+        input_names = {inp.name for inp in self.inputs}
+
+        errors = []
+        for field_name, value in _get_parameter_role_fields(model).items():
+            if isinstance(value, InputRef):
+                # Already validated by validate_input_refs
+                continue
+            elif isinstance(value, ReferenceRef):
+                # Already validated by validate_reference_refs
+                continue
+            elif isinstance(value, str):
+                # Check if it's a numeric literal
+                try:
+                    float(value)
+                    continue
+                except ValueError:
+                    pass
+                # Must be a parameter name
+                if value not in param_names:
+                    errors.append(
+                        f"Model {field_name}='{value}' is not a parameter, "
+                        f"numeric literal, InputRef, or ReferenceRef"
+                    )
+
+        if errors:
+            from qsp_llm_workflows.core.calibration.exceptions import ParameterReferenceError
+
+            errors.append(f"Available parameters: {sorted(param_names)}")
+            errors.append(f"Available inputs: {sorted(input_names)}")
+            raise ParameterReferenceError.from_errors(errors)
+
+        return self
+
+    @model_validator(mode="after")
+    def warn_unit_conversion_factor_sanity(self) -> "SubmodelTarget":
+        """
+        Warn if unit_conversion_factor has a suspicious value.
+
+        Only checks numeric literal UCFs — skips parameter names, InputRef,
+        and ReferenceRef since those are resolved at runtime.
+        """
+        model = self.calibration.model
+        if not hasattr(model, "unit_conversion_factor"):
+            return self
+
+        ucf_value = model.unit_conversion_factor
+
+        # Skip non-literal UCFs (parameter references, InputRef, ReferenceRef)
+        if isinstance(ucf_value, (InputRef, ReferenceRef)):
+            return self
+        if not isinstance(ucf_value, str):
+            return self
+
+        try:
+            ucf_float = float(ucf_value)
+        except ValueError:
+            return self  # Non-numeric string — handled by validate_parameter_roles
+
+        if ucf_float == 1.0:
+            return self  # Default, no warning needed
+
+        # Check for extreme values
+        if ucf_float > 1e6 or (ucf_float > 0 and ucf_float < 1e-6):
+            warnings.warn(
+                f"unit_conversion_factor={ucf_value} is extreme (>1e6 or <1e-6). "
+                f"Verify this is the correct time/unit conversion.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        # Check for "round" conversion factors — common time conversions
+        # and simple powers of 10
+        _COMMON_UCF = {
+            24.0,
+            60.0,
+            1440.0,
+            3600.0,
+            86400.0,
+            365.0,
+            365.25,
+            8760.0,
+            525600.0,  # hours/year, minutes/year
+            1000.0,
+            1e6,
+            1e9,
+            1e-3,
+            1e-6,
+            1e-9,
+            # Common products
+            24.0 * 365.25,  # hours/year
+            1440.0 / 24.0,  # = 60 (minutes/hour, already included)
+        }
+
+        is_common = ucf_float in _COMMON_UCF
+        # Also accept powers of 10
+        if not is_common and ucf_float > 0:
+            import math
+
+            log10 = math.log10(ucf_float)
+            is_common = abs(log10 - round(log10)) < 1e-9
+
+        if not is_common:
+            warnings.warn(
+                f"unit_conversion_factor={ucf_value} is not a common time/unit "
+                f"conversion factor. Common values: 60 (min/hr), 1440 (min/day), "
+                f"3600 (sec/hr), 86400 (sec/day), or powers of 10.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         return self
 
@@ -1429,23 +1630,16 @@ class SubmodelTarget(BaseModel):
     @model_validator(mode="after")
     def validate_observation_sd_units_for_likelihood(self) -> "SubmodelTarget":
         """
-        Validate that observation_code SD units match the likelihood type.
+        Validate that observation_code SD is a valid positive number.
 
-        - For normal/truncated_normal likelihoods: SD must have same units as measurement
-        - For lognormal/beta likelihoods: SD should be dimensionless (log-scale or [0,1])
-
-        This prevents unit mismatches that cause inference failures.
+        Checks that derive_observation() returns a numeric SD value.
         """
-        from qsp_llm_workflows.core.unit_registry import ureg
         import numpy as np
 
-        # Build inputs dict with units
+        # Build inputs dict (plain floats)
         inputs_dict = {}
         for inp in self.inputs:
-            try:
-                inputs_dict[inp.name] = inp.value * ureg(inp.units)
-            except Exception:
-                inputs_dict[inp.name] = inp.value
+            inputs_dict[inp.name] = inp.value
 
         errors = []
 
@@ -1453,72 +1647,27 @@ class SubmodelTarget(BaseModel):
             if not entry.observation_code:
                 continue
 
-            # Determine what SD units should be based on likelihood
-            likelihood_dist = entry.likelihood.distribution.lower()
-
-            # Likelihoods that operate on log-scale or normalized scale
-            dimensionless_likelihoods = {"lognormal", "beta", "dirichlet"}
-
-            # Likelihoods that operate in measurement units
-            measurement_scale_likelihoods = {
-                "normal",
-                "truncated_normal",
-                "student_t",
-                "half_normal",
-                "exponential",
-            }
-
             try:
                 # Execute observation_code
-                local_scope = {"np": np, "numpy": np, "ureg": ureg}
+                local_scope = {"np": np, "numpy": np}
                 exec(entry.observation_code, local_scope)
                 derive_observation = local_scope.get("derive_observation")
 
                 if derive_observation is None:
                     continue
 
-                result = derive_observation(inputs_dict, entry.sample_size, ureg)
+                result = derive_observation(inputs_dict, entry.sample_size)
                 if not isinstance(result, dict) or "sd" not in result:
                     continue
 
                 sd = result["sd"]
-                sd_has_units = hasattr(sd, "dimensionality")
-                sd_is_dimensionless = not sd_has_units or (sd_has_units and sd.dimensionless)
-
-                expected_units = ureg(entry.units)
-                measurement_is_dimensionless = expected_units.dimensionless
-
-                if likelihood_dist in dimensionless_likelihoods:
-                    # SD should be dimensionless for log/normalized likelihoods
-                    if sd_has_units and not sd.dimensionless:
-                        errors.append(
-                            f"Error model '{entry.name}': likelihood is '{likelihood_dist}' "
-                            f"(operates on log/normalized scale) but derive_observation() returns "
-                            f"SD with units '{sd.units}'.\n"
-                            f"For {likelihood_dist} likelihoods, SD should be dimensionless.\n"
-                            f"Fix: return SD without units or as ureg.dimensionless"
-                        )
-
-                elif likelihood_dist in measurement_scale_likelihoods:
-                    # SD should match measurement units
-                    if not measurement_is_dimensionless:
-                        if sd_is_dimensionless:
-                            errors.append(
-                                f"Error model '{entry.name}': likelihood is '{likelihood_dist}' "
-                                f"but derive_observation() returns dimensionless SD.\n"
-                                f"Measurement has units '{entry.units}', so SD must also have "
-                                f"units.\n"
-                                f"Fix: return SD with units, e.g., "
-                                f"`'sd': value * ureg('{entry.units}')`"
-                            )
-                        elif sd_has_units:
-                            if sd.dimensionality != expected_units.dimensionality:
-                                errors.append(
-                                    f"Error model '{entry.name}': SD units ({sd.units}) don't "
-                                    f"match measurement units ({entry.units}).\n"
-                                    f"For {likelihood_dist} likelihood, SD must be in the same "
-                                    f"units as the measurement."
-                                )
+                if not isinstance(sd, (int, float)):
+                    errors.append(
+                        f"Error model '{entry.name}': derive_observation() returned "
+                        f"SD of type {type(sd).__name__}, expected a plain number."
+                    )
+                elif sd <= 0:
+                    errors.append(f"Error model '{entry.name}': SD must be positive, got {sd}")
 
             except Exception:
                 # Execution errors handled by other validators
@@ -1527,9 +1676,7 @@ class SubmodelTarget(BaseModel):
         if errors:
             from qsp_llm_workflows.core.calibration.exceptions import UnitValidationError
 
-            raise UnitValidationError.from_errors(
-                errors, prefix="Measurement error SD units / likelihood type mismatch"
-            )
+            raise UnitValidationError.from_errors(errors, prefix="Measurement error SD validation")
 
         return self
 
@@ -1630,9 +1777,9 @@ class SubmodelTarget(BaseModel):
 
         Checks:
         - CustomODEModel.code has 'def ode(t, y, params, inputs)'
-        - AlgebraicModel.code has 'def compute(params, inputs, ureg)'
+        - AlgebraicModel.code has 'def compute(params, inputs)'
         - Custom observable.code has 'def compute(t, y, y_start)'
-        - observation_code has 'def derive_observation(inputs, sample_size, ureg)'
+        - observation_code has 'def derive_observation(inputs, sample_size)'
         """
         import ast
 
@@ -1710,12 +1857,12 @@ class SubmodelTarget(BaseModel):
                             f"must be named 'derive_observation', got '{func_defs[0].name}'"
                         )
                     else:
-                        # Check argument count: should be (inputs, sample_size, ureg)
+                        # Check argument count: should be (inputs, sample_size)
                         n_args = len(func_defs[0].args.args)
-                        if n_args != 3:
+                        if n_args != 2:
                             errors.append(
                                 f"Error model '{measurement.name}' observation_code function "
-                                f"'derive_observation' must have 3 arguments (inputs, sample_size, ureg), "
+                                f"'derive_observation' must have 2 arguments (inputs, sample_size), "
                                 f"got {n_args}"
                             )
                 except SyntaxError as e:
@@ -1740,22 +1887,21 @@ class SubmodelTarget(BaseModel):
         - Measurement uncertainty ('sd') for the likelihood
 
         Expected return structure:
-        - 'value': Pint Quantity (required) - the observed point estimate
-        - 'sd': float or Quantity (required) - measurement uncertainty
+        - 'value': float (required) - the observed point estimate
+        - 'sd': float (required) - measurement uncertainty
         - 'sd_uncertain': bool (optional) - if True, inference adds prior on SD
         - 'n': int (optional) - sample size for reference
 
         See: https://mc-stan.org/docs/stan-users-guide/measurement-error.html
         """
-        from qsp_llm_workflows.core.unit_registry import ureg
         import numpy as np
 
         errors = []
 
-        # Build inputs dict from self.inputs
+        # Build inputs dict (plain floats)
         inputs_dict = {}
         for inp in self.inputs:
-            inputs_dict[inp.name] = inp.value * ureg(inp.units)
+            inputs_dict[inp.name] = inp.value
 
         for entry in self.calibration.error_model:
             if not entry.observation_code:
@@ -1763,7 +1909,7 @@ class SubmodelTarget(BaseModel):
 
             try:
                 # Compile and execute
-                local_scope = {"np": np, "numpy": np, "ureg": ureg}
+                local_scope = {"np": np, "numpy": np}
                 exec(entry.observation_code, local_scope)
                 derive_observation = local_scope.get("derive_observation")
 
@@ -1775,7 +1921,7 @@ class SubmodelTarget(BaseModel):
                     continue
 
                 # Execute with inputs and sample_size
-                result = derive_observation(inputs_dict, entry.sample_size, ureg)
+                result = derive_observation(inputs_dict, entry.sample_size)
 
                 # Validate return structure is dict
                 if not isinstance(result, dict):
@@ -1792,21 +1938,13 @@ class SubmodelTarget(BaseModel):
                         f"with 'value' key, got keys: {list(result.keys())}"
                     )
                 else:
-                    # Validate 'value' is a Pint Quantity
+                    # Validate 'value' is numeric
                     value = result["value"]
-                    if not hasattr(value, "magnitude") or not hasattr(value, "units"):
+                    if not isinstance(value, (int, float)):
                         errors.append(
-                            f"Error model '{entry.name}': 'value' must be a Pint Quantity, "
-                            f"got {type(value).__name__}. Example: return {{'value': x * ureg('pg/mL'), ...}}"
+                            f"Error model '{entry.name}': 'value' must be a number, "
+                            f"got {type(value).__name__}."
                         )
-                    else:
-                        # Validate units match error_model.units
-                        expected_units = ureg(entry.units)
-                        if value.dimensionality != expected_units.dimensionality:
-                            errors.append(
-                                f"Error model '{entry.name}': 'value' has units '{value.units}' "
-                                f"but error_model.units is '{entry.units}'. Dimensionality mismatch."
-                            )
 
                 # Check required 'sd' key
                 if "sd" not in result:
@@ -1817,15 +1955,14 @@ class SubmodelTarget(BaseModel):
                 else:
                     # Validate sd is positive
                     sd = result["sd"]
-                    sd_value = sd.magnitude if hasattr(sd, "magnitude") else sd
-                    if not isinstance(sd_value, (int, float)):
+                    if not isinstance(sd, (int, float)):
                         errors.append(
                             f"Error model '{entry.name}': 'sd' must be numeric, "
-                            f"got {type(sd_value).__name__}"
+                            f"got {type(sd).__name__}"
                         )
-                    elif sd_value <= 0:
+                    elif sd <= 0:
                         errors.append(
-                            f"Error model '{entry.name}': 'sd' must be positive, got {sd_value}"
+                            f"Error model '{entry.name}': 'sd' must be positive, got {sd}"
                         )
 
                 # Validate optional 'sd_uncertain' is bool if present
@@ -1952,16 +2089,12 @@ class SubmodelTarget(BaseModel):
         observed value. Warns if SD is >100x or <0.001x the observed value,
         which often indicates a units mismatch or typo.
         """
-        from qsp_llm_workflows.core.unit_registry import ureg
         import numpy as np
 
-        # Build inputs dict
+        # Build inputs dict (plain floats)
         inputs_dict = {}
         for inp in self.inputs:
-            try:
-                inputs_dict[inp.name] = inp.value * ureg(inp.units)
-            except Exception:
-                inputs_dict[inp.name] = inp.value
+            inputs_dict[inp.name] = inp.value
 
         for entry in self.calibration.error_model:
             if not entry.observation_code:
@@ -1975,21 +2108,18 @@ class SubmodelTarget(BaseModel):
 
             try:
                 # Execute observation_code
-                local_scope = {"np": np, "numpy": np, "ureg": ureg}
+                local_scope = {"np": np, "numpy": np}
                 exec(entry.observation_code, local_scope)
                 derive_observation = local_scope.get("derive_observation")
                 if derive_observation is None:
                     continue
 
-                result = derive_observation(inputs_dict, entry.sample_size, ureg)
+                result = derive_observation(inputs_dict, entry.sample_size)
                 if not isinstance(result, dict) or "sd" not in result or "value" not in result:
                     continue
 
-                sd = result["sd"]
-                sd_value = sd.magnitude if hasattr(sd, "magnitude") else sd
-
-                observed = result["value"]
-                observed_value = observed.magnitude if hasattr(observed, "magnitude") else observed
+                sd_value = result["sd"]
+                observed_value = result["value"]
 
                 if observed_value == 0:
                     continue
@@ -2264,11 +2394,10 @@ class SubmodelTarget(BaseModel):
     @model_validator(mode="after")
     def validate_algebraic_model_output_units(self) -> "SubmodelTarget":
         """
-        Validate that AlgebraicModel.code output has correct units.
+        Validate that AlgebraicModel.code executes successfully and returns a number.
 
         Executes the forward model with sample parameter values and checks
-        that the returned Quantity has units compatible with measurement.units.
-        This catches bugs where the forward model returns wrong dimensionality.
+        that the returned value is numeric.
         """
         model = self.calibration.model
         if model.type != "algebraic":
@@ -2277,7 +2406,6 @@ class SubmodelTarget(BaseModel):
         if not hasattr(model, "code") or not model.code:
             return self
 
-        from qsp_llm_workflows.core.unit_registry import ureg
         from qsp_llm_workflows.core.calibration.submodel_utils import get_prior_median
         import numpy as np
 
@@ -2291,68 +2419,35 @@ class SubmodelTarget(BaseModel):
         if not params:
             return self  # Can't test without parameter values
 
-        # Build inputs dict with units
+        # Build inputs dict (plain floats)
         inputs_dict = {}
         for inp in self.inputs:
-            try:
-                inputs_dict[inp.name] = inp.value * ureg(inp.units)
-            except Exception:
-                inputs_dict[inp.name] = inp.value
+            inputs_dict[inp.name] = inp.value
 
         # Execute forward model
         try:
-            local_scope = {"np": np, "numpy": np, "ureg": ureg}
+            local_scope = {"np": np, "numpy": np}
             exec(model.code, local_scope)
             compute_fn = local_scope.get("compute")
 
             if compute_fn is None:
                 return self  # Syntax validator handles this
 
-            result = compute_fn(params, inputs_dict, ureg)
+            result = compute_fn(params, inputs_dict)
 
-            # Check if result has units
-            if not hasattr(result, "dimensionality"):
-                # Result is dimensionless or raw number - check against measurement
-                for measurement in self.calibration.measurements:
-                    expected_units = ureg(measurement.units)
-                    if expected_units.dimensionless:
-                        continue  # OK - both dimensionless
-                    warnings.warn(
-                        f"AlgebraicModel.code returns dimensionless value, but "
-                        f"measurement '{measurement.name}' expects units '{measurement.units}'.\n"
-                        f"The forward model should return a Pint Quantity with correct units.",
-                        UserWarning,
-                    )
-                return self
-
-            # Check dimensionality matches measurement
-            for measurement in self.calibration.measurements:
-                try:
-                    expected_units = ureg(measurement.units)
-                    if result.dimensionality != expected_units.dimensionality:
-                        from qsp_llm_workflows.core.calibration.exceptions import (
-                            DimensionalityMismatchError,
-                        )
-
-                        raise DimensionalityMismatchError(
-                            f"AlgebraicModel.code output units mismatch:\n"
-                            f"  Forward model returns: {result.units} "
-                            f"(dimensionality: {result.dimensionality})\n"
-                            f"  Measurement '{measurement.name}' expects: {measurement.units} "
-                            f"(dimensionality: {expected_units.dimensionality})\n"
-                            f"Check that the forward model formula produces the correct units."
-                        )
-                except DimensionalityMismatchError:
-                    raise
-                except Exception:
-                    pass  # Unit parsing issues handled elsewhere
+            # Check if result is numeric
+            if not isinstance(result, (int, float)):
+                warnings.warn(
+                    f"AlgebraicModel.code returned {type(result).__name__}, expected a number.",
+                    UserWarning,
+                )
 
         except ValueError:
             raise
         except Exception as e:
             # Execution errors - don't fail validation, other validators handle this
             warnings.warn(
-                f"Could not validate AlgebraicModel.code output units: {e}",
+                f"Could not validate AlgebraicModel.code output: {e}",
                 UserWarning,
             )
 
@@ -2440,7 +2535,6 @@ class SubmodelTarget(BaseModel):
         """
         import math
         import numpy as np
-        from qsp_llm_workflows.core.unit_registry import ureg
         from qsp_llm_workflows.core.calibration.submodel_utils import (
             get_prior_median,
             run_prior_predictive,
@@ -2469,10 +2563,7 @@ class SubmodelTarget(BaseModel):
         # Use first parameter for error messages (backwards compatible)
         param = self.calibration.parameters[0]
 
-        # Build inputs dict with units
-        inputs_dict = {}
-        for inp in self.inputs:
-            inputs_dict[inp.name] = inp.value * ureg(inp.units)
+        # Build inputs dict (plain floats)
         input_values = {inp.name: inp.value for inp in self.inputs}
 
         # Validate each error model entry (check at least the first one)
@@ -2481,14 +2572,13 @@ class SubmodelTarget(BaseModel):
 
             if entry and entry.observation_code:
                 try:
-                    local_scope = {"np": np, "numpy": np, "ureg": ureg}
+                    local_scope = {"np": np, "numpy": np}
                     exec(entry.observation_code, local_scope)
                     derive_observation = local_scope.get("derive_observation")
                     if derive_observation:
-                        result = derive_observation(inputs_dict, entry.sample_size, ureg)
+                        result = derive_observation(input_values, entry.sample_size)
                         if isinstance(result, dict) and "value" in result:
-                            value = result["value"]
-                            obs_median = value.magnitude if hasattr(value, "magnitude") else value
+                            obs_median = result["value"]
                 except Exception:
                     pass  # Fall through to error below
 
@@ -2499,7 +2589,7 @@ class SubmodelTarget(BaseModel):
                     code_type="observation_code",
                     error_msg=f"Prior predictive check failed: could not extract observation value.\n"
                     f"  Error model: {entry.name if entry else 'None'}\n\n"
-                    f"Check that observation_code returns {{'value': <Quantity>, 'sd': ...}}",
+                    f"Check that observation_code returns {{'value': <float>, 'sd': ...}}",
                 )
 
             if obs_median == 0:
@@ -2600,8 +2690,8 @@ class SubmodelTarget(BaseModel):
         - 1.96 (95% CI convention)
 
         NOT allowed (should be inputs):
-        - Time conversions like 24.0, 60.0 (use ureg instead)
-        - Percentage conversions like 100.0 (use ureg instead)
+        - Time conversions like 24.0, 60.0 (add as assumed_value input)
+        - Percentage conversions like 100.0 (add as assumed_value input)
         - Assumed fractions like 0.5, 0.25 (add as assumed_value input)
         - Fold uncertainties like 3.0, 5.0, 10.0 (add as assumed_value input)
         """
@@ -2642,7 +2732,7 @@ class SubmodelTarget(BaseModel):
                     f"numeric values: {unique_values}\n"
                     f"  All numerical parameters must be defined as inputs, not hardcoded.\n"
                     f"  Add these as inputs with input_type='assumed_value' and document in value_snippet.\n"
-                    f"  For unit conversions, use ureg (e.g., inp.to('day').magnitude) instead of magic numbers."
+                    f"  For unit conversions, add conversion factors as assumed_value inputs."
                 )
 
         if errors:
@@ -3110,17 +3200,16 @@ class SubmodelTarget(BaseModel):
             return self
 
         # Build inputs dict with pint quantities
-        from qsp_llm_workflows.core.unit_registry import create_unit_registry
+        from qsp_llm_workflows.core.unit_registry import create_unit_registry, make_quantity as _mq
 
         ureg = create_unit_registry()
         inputs = {}
         for inp in self.inputs:
-            if inp.units and inp.units != "dimensionless":
-                try:
-                    inputs[inp.name] = inp.value * ureg(inp.units)
-                except Exception:
-                    inputs[inp.name] = inp.value * ureg.dimensionless
-            else:
+            try:
+                inputs[inp.name] = (
+                    _mq(inp.value, inp.units) if inp.units else inp.value * ureg.dimensionless
+                )
+            except Exception:
                 inputs[inp.name] = inp.value * ureg.dimensionless
 
         # Build params dict from prior medians
