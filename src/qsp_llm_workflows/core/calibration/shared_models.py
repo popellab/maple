@@ -46,6 +46,16 @@ class InputType(str, Enum):
     """
 
 
+class UncertaintyType(str, Enum):
+    """Type of uncertainty measure reported in literature."""
+
+    SD = "sd"  # Standard deviation
+    SE = "se"  # Standard error
+    CI95 = "ci95"  # 95% confidence interval
+    RANGE = "range"  # Min-max range
+    IQR = "iqr"  # Interquartile range
+
+
 class EstimateInput(BaseModel):
     """
     A literature-extracted input value for distribution derivation.
@@ -160,6 +170,40 @@ class EstimateInput(BaseModel):
         ),
     )
 
+    # Dispersion identification fields
+    dispersion_type: Optional[UncertaintyType] = Field(
+        None,
+        description=(
+            "Type of dispersion measure this input represents. REQUIRED when this input is a "
+            "measure of spread/uncertainty (SD, SEM, CI bound, IQR bound, range).\n\n"
+            "CRITICAL: Papers often report 'mean ± X' without specifying whether X is SD or SEM. "
+            "Misidentifying SEM as SD underestimates uncertainty by a factor of sqrt(n), producing "
+            "calibration targets that are far too constraining.\n\n"
+            "How to distinguish SD vs SEM:\n"
+            "1. Check methods section for explicit statement ('values are mean ± SD/SEM')\n"
+            "2. Check table/figure legends for the error type\n"
+            "3. Use sqrt(n) test: if '±X' scales as 1/sqrt(n) across subgroups with similar "
+            "biology, it's SEM (SD = SEM × sqrt(n))\n"
+            "4. Biological plausibility: SD should give CV typical for the measurement type "
+            "(immune cell densities: CV 50-200%; tumor volumes: CV 50-100%). "
+            "If treating ± as SD gives CV < 20%, it's almost certainly SEM.\n\n"
+            "Set to None for inputs that are NOT dispersion measures (e.g., sample sizes, "
+            "medians, means, quartile values)."
+        ),
+    )
+    dispersion_type_rationale: Optional[str] = Field(
+        None,
+        description=(
+            "REQUIRED when dispersion_type is set. Explain how you determined the dispersion type.\n\n"
+            "Examples:\n"
+            "- 'Methods section states: all values presented as mean ± standard deviation'\n"
+            "- 'Table legend specifies SEM. SD = SEM × sqrt(n) = 15.0 × sqrt(368) = 287.7'\n"
+            "- 'Paper does not specify. ±15.0 with n=368 gives CV=6.6% if SD (implausibly low) "
+            "vs CV=126% if SEM (typical for immune cell densities). Treating as SEM.'\n"
+            "- 'IQR explicitly stated in table header as median (Q1-Q3)'"
+        ),
+    )
+
     @field_validator("value")
     @classmethod
     def ensure_list_not_empty(cls, v: Union[float, List[float]]) -> Union[float, List[float]]:
@@ -198,6 +242,48 @@ class EstimateInput(BaseModel):
                 raise ValueError(
                     f"When source_type='figure', the following fields are required: {', '.join(missing)}"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_dispersion_type_fields(self) -> "EstimateInput":
+        """Require dispersion_type on dispersion-like inputs; require rationale when type is set."""
+        # If dispersion_type is set, rationale is required
+        if self.dispersion_type is not None and not self.dispersion_type_rationale:
+            raise ValueError(
+                f"Input '{self.name}': dispersion_type_rationale is required when "
+                f"dispersion_type is set ('{self.dispersion_type.value}'). "
+                f"Explain how you determined this is {self.dispersion_type.value.upper()} "
+                f"(e.g., paper states explicitly, inferred from sqrt(n) scaling, "
+                f"biological plausibility of implied CV)."
+            )
+
+        # If input name looks like a dispersion measure, dispersion_type is required
+        if self.dispersion_type is None:
+            _DISPERSION_KEYWORDS = [
+                "sd",
+                "std",
+                "stdev",
+                "se",
+                "sem",
+                "stderr",
+                "sigma",
+                "dispersion",
+                "error_bar",
+            ]
+            name_lower = self.name.lower()
+            # Check for keyword matches (as whole tokens separated by _ or at boundaries)
+            name_tokens = set(name_lower.replace("-", "_").split("_"))
+            if name_tokens & set(_DISPERSION_KEYWORDS):
+                raise ValueError(
+                    f"Input '{self.name}' appears to be a dispersion measure but "
+                    f"dispersion_type is not set. Set dispersion_type to 'sd', 'se', "
+                    f"'ci95', 'iqr', or 'range' and provide dispersion_type_rationale "
+                    f"explaining how you determined the type.\n\n"
+                    f"CRITICAL: Misidentifying SEM as SD underestimates uncertainty by "
+                    f"sqrt(n). Use the sqrt(n) test or check biological plausibility of "
+                    f"the implied CV to distinguish them."
+                )
+
         return self
 
 
@@ -448,16 +534,6 @@ class CultureConditions(BaseModel):
 # ============================================================================
 # Multi-Point Data Models (for trajectories and dose-response)
 # ============================================================================
-
-
-class UncertaintyType(str, Enum):
-    """Type of uncertainty measure reported in literature."""
-
-    SD = "sd"  # Standard deviation
-    SE = "se"  # Standard error
-    CI95 = "ci95"  # 95% confidence interval
-    RANGE = "range"  # Min-max range
-    IQR = "iqr"  # Interquartile range
 
 
 class TrajectoryData(BaseModel):

@@ -214,6 +214,54 @@ Find observables that match this context as closely as possible. Document the ac
 
 **Why this matters:** An X-tile cutoff of 11.8 cells/mm² and a mean of 15.2 ± 3.3 cells/mm² from the same paper represent fundamentally different quantities. The cutoff maximizes survival discrimination; the mean estimates population central tendency. Only the mean (with its SEM/SD) is appropriate for calibration.
 
+### Standard Deviation vs Standard Error of the Mean
+
+**CRITICAL:** When a paper reports mean ± value, you MUST determine whether the ± value is a **standard deviation (SD)** or a **standard error of the mean (SEM)**. Misidentifying SEM as SD underestimates population variability by a factor of √n, producing unrealistically narrow confidence intervals.
+
+**How to determine SD vs SEM:**
+
+1. **Check the paper text.** Look for explicit labels ("mean ± SD", "mean ± SEM", "mean ± SE") in tables, figure legends, methods section, or statistical methods.
+
+2. **Apply the √n test.** If the paper reports ± values for multiple subgroups with similar biology:
+   - Compute SD = ± value × √n for each group
+   - If the derived SDs are approximately equal across groups, the ± values are SEMs
+   - If the ± values themselves are approximately equal across groups, they may be SDs
+
+3. **Apply the biological plausibility (CV) test.** For immune cell densities, cell counts, and biomarker concentrations:
+   - CV = SD / mean. Typical biological CV is 50–200% for immune cell densities
+   - If treating ± as SD gives CV < 20%, it is almost certainly SEM
+   - If treating ± as SEM gives biologically plausible CV (50–200%), this confirms SEM
+
+4. **Default assumption.** If NONE of the above resolves the ambiguity:
+   - Clinical papers and large-cohort studies (n > 30) more commonly report SEM
+   - Basic science papers more commonly report SD
+   - When uncertain, state the ambiguity explicitly in `key_assumptions`
+
+**When you identify the ± value as SEM:**
+- Name the input with `sem_` prefix (e.g., `sem_cd8_density`), NOT `sd_`
+- Set `dispersion_type: se` and provide `dispersion_type_rationale` explaining your evidence
+- Convert to SD in `distribution_code`: `sd = sem * np.sqrt(n)`
+- Document the determination in `key_assumptions`
+
+**When you identify the ± value as SD:**
+- Name the input with `sd_` prefix (e.g., `sd_cd8_density`)
+- Set `dispersion_type: sd` and provide `dispersion_type_rationale`
+- Use SD directly in `distribution_code` (no conversion needed)
+
+**Example (SEM identified via √n test):**
+```yaml
+inputs:
+  - name: sem_cd8_density
+    value: 15.0
+    units: cell / millimeter**2
+    description: "SEM for CD8 density, identified via √n test"
+    dispersion_type: se
+    dispersion_type_rationale: |
+      Paper reports 227.7 ± 15.0 (n=368). SD = 15.0 × √368 = 287.7.
+      Second group: 220.1 ± 33.0 (n=76). SD = 33.0 × √76 = 287.7.
+      Identical SDs confirm these are SEMs. CV if SD would be 6.6% (implausible).
+```
+
 ### Ratio and Composite Targets
 
 **CRITICAL:** When the calibration target is a RATIO of two quantities (e.g., M1/M2 macrophage ratio, CD8/Treg ratio):
