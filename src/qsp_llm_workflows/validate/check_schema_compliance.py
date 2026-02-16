@@ -28,9 +28,10 @@ class SchemaValidator(Validator):
     Uses Pydantic models as single source of truth for schema validation.
     """
 
-    def __init__(self, data_dir: str, model_class: Type[BaseModel] = None, **kwargs):
+    def __init__(self, data_dir: str, model_class: Type[BaseModel] = None, validation_context: dict = None, **kwargs):
         super().__init__(data_dir, **kwargs)
         self.model_class = model_class or kwargs.get("model_class")
+        self.validation_context = validation_context
 
     @property
     def name(self) -> str:
@@ -71,7 +72,7 @@ class SchemaValidator(Validator):
                 ]
             }
 
-            self.model_class.model_validate(model_data)
+            self.model_class.model_validate(model_data, context=self.validation_context)
         except PydanticValidationError as e:
             # Convert Pydantic errors to human-readable messages
             for error in e.errors():

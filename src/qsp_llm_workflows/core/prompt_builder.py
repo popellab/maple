@@ -477,6 +477,7 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
         input_csv: Path,
         species_units_file: Optional[Path] = None,
         reasoning_effort: str = "high",
+        reference_values_file: Optional[Path] = None,
     ) -> List[Dict[str, Any]]:
         """
         Process calibration target inputs and generate prompts.
@@ -489,6 +490,7 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
                       primary_source_title (optional)
             species_units_file: Optional JSON file mapping species -> units
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
+            reference_values_file: Optional YAML file with curated reference values
 
         Returns:
             List of prompt request dictionaries
@@ -500,6 +502,29 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
         if species_units_file and species_units_file.exists():
             with open(species_units_file, "r") as f:
                 all_species_units = json.load(f)
+
+        # Load reference values database (auto-discover next to species_units_file)
+        reference_db_entries = None
+        reference_db = None
+        if reference_values_file and reference_values_file.exists():
+            import yaml as _yaml
+
+            with open(reference_values_file) as _f:
+                _ref_data = _yaml.safe_load(_f)
+            reference_db_entries = _ref_data.get("values", [])
+            reference_db = {v["name"]: float(v["value"]) for v in reference_db_entries}
+        elif species_units_file:
+            # Auto-discover reference_values.yaml next to species_units_file
+            auto_ref_path = species_units_file.parent / "reference_values.yaml"
+            if auto_ref_path.exists():
+                import yaml as _yaml
+
+                with open(auto_ref_path) as _f:
+                    _ref_data = _yaml.safe_load(_f)
+                reference_db_entries = _ref_data.get("values", [])
+                reference_db = {
+                    v["name"]: float(v["value"]) for v in reference_db_entries
+                }
 
         requests = []
         with open(input_csv, "r", encoding="utf-8") as f:
@@ -557,17 +582,21 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
                     used_primary_studies=used_primary_studies
                     or "None - this is the first extraction",
                     primary_source_title=primary_source_title,
+                    reference_db_entries=reference_db_entries,
                 )
 
                 # Create prompt dict
                 custom_id = f"cal_target_{calibration_target_id}_{i}"
-                # Create simple prompt dict
+
+                validation_context = {"species_units": all_species_units}
+                if reference_db:
+                    validation_context["reference_db"] = reference_db
 
                 request = {
                     "custom_id": custom_id,
                     "prompt": prompt,
                     "pydantic_model": CalibrationTarget,
-                    "validation_context": {"species_units": all_species_units},
+                    "validation_context": validation_context,
                 }
 
                 requests.append(request)
@@ -1048,6 +1077,18 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
             with open(species_units_file, "r") as f:
                 all_species_units = json.load(f)
 
+        # Load reference values (auto-discover next to model_structure)
+        reference_db = None
+        reference_db_entries = None
+        auto_ref_path = model_structure_file.parent / "reference_values.yaml"
+        if auto_ref_path.exists():
+            import yaml as _yaml
+
+            with open(auto_ref_path) as _f:
+                _ref_data = _yaml.safe_load(_f)
+            reference_db_entries = _ref_data["values"]
+            reference_db = {v["name"]: float(v["value"]) for v in reference_db_entries}
+
         requests = []
         with open(input_csv, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
@@ -1085,6 +1126,7 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
                     parameter_context=parameter_context,
                     notes=notes,
                     used_primary_studies=used_primary_studies,
+                    reference_db_entries=reference_db_entries,
                 )
 
                 # Create prompt dict
@@ -1097,6 +1139,7 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
                     "validation_context": {
                         "species_units": all_species_units,
                         "model_structure": model_structure,
+                        "reference_db": reference_db,
                     },
                 }
 

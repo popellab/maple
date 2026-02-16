@@ -93,6 +93,7 @@ def build_calibration_target_prompt(
     model_species_with_units: str,
     used_primary_studies: str = "",
     primary_source_title: str = "",
+    reference_db_entries: list[dict] | None = None,
 ) -> str:
     """
     Build calibration target extraction prompt with substitutions.
@@ -109,6 +110,7 @@ def build_calibration_target_prompt(
         model_species_with_units: Formatted list of available model species with units
         used_primary_studies: Formatted list of already-used primary studies (optional)
         primary_source_title: Title of specific paper to extract from (optional, skips web search)
+        reference_db_entries: List of reference value dicts with name, display_name, value, units, notes
 
     Returns:
         Complete prompt with all placeholders replaced
@@ -139,6 +141,22 @@ def build_calibration_target_prompt(
     prompt = prompt.replace("{{MODEL_SPECIES_WITH_UNITS}}", model_species_with_units)
     prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
     prompt = prompt.replace("{{PRIMARY_SOURCE_TITLE}}", source_instruction)
+
+    # Inject reference database listing
+    if reference_db_entries:
+        lines = []
+        for entry in reference_db_entries:
+            name = entry["name"]
+            display = entry.get("display_name", name)
+            value = float(entry.get("value", 0))
+            units = entry.get("units", "")
+            value_str = f"{value:.4g}"
+            lines.append(f"- `{name}`: {display} ({value_str} {units})")
+        prompt = prompt.replace("{{REFERENCE_DATABASE}}", "\n".join(lines))
+    else:
+        prompt = prompt.replace(
+            "{{REFERENCE_DATABASE}}", "No reference database available."
+        )
 
     return prompt
 
@@ -189,6 +207,7 @@ def build_submodel_target_prompt(
     parameter_context: str = "",
     notes: str = "",
     used_primary_studies: str = "",
+    reference_db_entries: list[dict] | None = None,
 ) -> str:
     """
     Build submodel target extraction prompt.
@@ -199,6 +218,7 @@ def build_submodel_target_prompt(
         parameter_context: Rich context for each parameter (reactions, species, etc.)
         notes: Optional notes/guidance for the extraction
         used_primary_studies: Formatted list of already-used primary studies (optional)
+        reference_db_entries: List of reference value dicts with name, display_name, value, units, notes
 
     Returns:
         Complete prompt with placeholders replaced
@@ -211,6 +231,22 @@ def build_submodel_target_prompt(
         "{{PARAMETER_CONTEXT}}", parameter_context or "No parameter context available."
     )
     prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
+
+    # Inject reference database listing
+    if reference_db_entries:
+        lines = []
+        for entry in reference_db_entries:
+            name = entry["name"]
+            display = entry.get("display_name", name)
+            value = float(entry.get("value", 0))
+            units = entry.get("units", "")
+            value_str = f"{value:.4g}"
+            lines.append(f"- `{name}`: {display} ({value_str} {units})")
+        prompt = prompt.replace("{{REFERENCE_DATABASE}}", "\n".join(lines))
+    else:
+        prompt = prompt.replace(
+            "{{REFERENCE_DATABASE}}", "No reference database available."
+        )
 
     # Handle optional notes with mustache-style conditional
     if notes and notes.strip():

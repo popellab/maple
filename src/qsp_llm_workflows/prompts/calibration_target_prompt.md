@@ -33,7 +33,7 @@ A biological observable measured in a **specific experimental scenario**, used t
 
 4. **Source** - Use ONLY in vivo patient data (biopsies, resections, blood draws). NEVER use cell culture, organoids, or in vitro measurements.
 
-5. **Measurement Type** - Use ONLY direct measurements with absolute units. NEVER use statistical effect sizes (hazard ratios, odds ratios) or fold-changes as calibration values.
+5. **Measurement Type** - Use ONLY direct measurements with absolute units. NEVER use statistical effect sizes (hazard ratios, odds ratios) as calibration values. Fold-changes are acceptable ONLY when explicitly requested AND computed from paired pre/post data within the same patients (see "Fold-Change Targets" section below).
 
 **Acceptable flexibility (document mismatches):**
 - System (clinical.resection vs clinical.biopsy) - document timing differences
@@ -78,11 +78,15 @@ A biological observable measured in a **specific experimental scenario**, used t
 - Each `value_snippet` must contain the actual numeric value being reported
 - Include enough context so the number is clearly visible in snippet text
 - **Validation:** Automated string matching checks snippet content
+- **Exception for figures:** When values come from figures (plots, charts, bar graphs), use `source_type: 'figure'` with `figure_id` (e.g., `'Figure 2A'`) and `extraction_method: 'manual'`. Snippet validation is relaxed for figure sources — the `value_snippet` should contain the figure caption or relevant axis labels instead of the exact numeric value.
 
-### 7. All Source References Must Be Defined
-- Every `source_ref` must point to either `primary_data_source.source_tag` or a `secondary_data_sources` entry
-- Exception: `modeling_assumption` is valid for conversion factors and thresholds
-- **Validation:** Cross-reference checking against defined sources
+### 7. All Observable Constant Sources Must Be Traceable
+- Every observable constant must have a verifiable source via `source_type`:
+  - `reference_db`: Value from curated reference_values.yaml → requires `reference_db_name`
+  - `derived_from_reference_db`: Computed from reference DB entries → requires `reference_db_names` list
+  - `literature`: From a specific paper → requires `source_tag` matching a defined source
+- **No ungrounded constants allowed.** Do NOT use "modeling_assumption" — every numeric must trace to a specific reference DB entry or literature source.
+- **Validation:** Cross-reference checking against defined sources and reference DB entries
 
 ### 8. Measurement Code Output Scale Must Match Calibration Target Scale
 - Ensure measurement_code output range is on the same scale as empirical_data
@@ -93,6 +97,83 @@ A biological observable measured in a **specific experimental scenario**, used t
 - Do not include control characters in any text fields (causes YAML parsing errors)
 - Common source: copying from PDFs or word processors with invisible formatting
 - **Validation:** All text fields scanned for control characters
+
+### 10. Population Aggregation (Optional)
+
+Some clinical endpoints (ORR, median OS, 1-year OS, MPR rate) are population summary statistics that cannot be expressed as single-patient observables. Use `observable.aggregation` when the calibration target requires aggregating across a virtual patient cohort.
+
+**When to use:**
+- Overall response rate (ORR) — fraction of patients meeting RECIST criteria
+- Median overall survival (OS) / progression-free survival (PFS)
+- Landmark survival rates (e.g., 1-year OS)
+- Major pathological response (MPR) rate
+
+**Aggregation types:**
+- `response_rate`: Requires `threshold_code` defining per-patient binary classification
+- `median_time_to_event`: Observable code computes per-patient event times
+- `survival_rate`: Requires `time_point` and `time_unit`
+- `none`: Default, no aggregation (per-patient observable)
+
+**Example (ORR via RECIST):**
+```yaml
+observable:
+  code: |
+    def compute_observable(time, species_dict, constants, ureg):
+        tumor = species_dict['V_T.C1']
+        baseline = tumor[0]
+        return ((baseline - tumor) / baseline).to('dimensionless')
+  units: dimensionless
+  species: ['V_T.C1']
+  support: unit_interval
+  aggregation:
+    type: response_rate
+    threshold_code: |
+      def classify_patient(time, species_dict, constants, ureg):
+          tumor = species_dict['V_T.C1']
+          baseline = tumor[0]
+          nadir = min(tumor)
+          return (baseline - nadir) / baseline >= 0.3
+    rationale: "ORR requires classifying each virtual patient as responder/non-responder per RECIST 1.1 (>=30% decrease in longest diameter)"
+```
+
+**Validation:** `response_rate` and `survival_rate` aggregations warn if `support` is not `unit_interval`.
+
+### 11. Source Relevance Assessment (Optional)
+
+When the source data does not perfectly match the model context (different species, proxy indication, perturbed conditions), use `source_relevance` to formally document the translation quality.
+
+**When to use:**
+- Source indication is proxy or unrelated (e.g., melanoma data for PDAC model)
+- Cross-species data (e.g., mouse measurements for human model)
+- Pharmacological or genetic perturbation (drug-induced or knockout measurements)
+- Low TME compatibility (e.g., immunogenic tumor model for immunosuppressive PDAC)
+
+**When NOT needed:** Exact-match human clinical data for the target indication (the typical CalibrationTarget case).
+
+**Key fields:**
+| Field | Options |
+|---|---|
+| `indication_match` | `exact`, `related`, `proxy`, `unrelated` |
+| `source_quality` | `primary_human_clinical`, `primary_human_in_vitro`, `primary_animal_in_vivo`, `primary_animal_in_vitro`, `review_article`, `textbook`, `non_peer_reviewed` |
+| `perturbation_type` | `physiological_baseline`, `pathological_state`, `pharmacological`, `genetic_perturbation` |
+| `tme_compatibility` | `high`, `moderate`, `low` (optional, for immune/stromal parameters) |
+| `estimated_translation_uncertainty_fold` | 1.0-1000.0 (fold-uncertainty from source-to-target translation) |
+
+**Example:**
+```yaml
+source_relevance:
+  indication_match: proxy
+  indication_match_justification: "Melanoma TIL data used as proxy for PDAC. Both solid tumors with CD8 infiltration, but PDAC has denser stroma and more T cell exclusion."
+  species_source: human
+  species_target: human
+  source_quality: primary_human_clinical
+  perturbation_type: physiological_baseline
+  tme_compatibility: low
+  tme_compatibility_notes: "Melanoma is T cell-permissive; PDAC is T cell-excluded. Expect 10-100x overestimation of infiltration rates."
+  estimated_translation_uncertainty_fold: 10.0
+```
+
+**Validation:** Warnings (not errors) flag insufficient uncertainty for proxy/cross-species data, missing perturbation relevance documentation, and non-peer-reviewed sources.
 
 ---
 
@@ -116,6 +197,59 @@ Find observables that match this context as closely as possible. Document the ac
 2. Specify the experimental scenario (interventions + measurement timing/location)
 3. Document experimental context (species, compartment, system, treatment history, stage)
 4. Provide verbatim text snippets for all extracted values
+
+---
+
+## Statistic Selection Rules
+
+### Prefer Descriptive Statistics Over Analytical Thresholds
+
+**CRITICAL:** When a paper reports BOTH descriptive statistics (mean, median, SD, SEM, IQR) AND analytical cutoffs (X-tile optimal cutpoints, ROC thresholds, survival stratification values), ALWAYS use the descriptive statistics. Analytical cutoffs are optimized for binary classification (e.g., high vs low survival groups) and do NOT represent population central tendency.
+
+**Priority order when the SAME paper offers multiple statistics:**
+1. Tabulated descriptive statistics (Table with mean/median ± SD/SEM/IQR) — **always prefer this**
+2. Text-reported summary statistics (e.g., "mean CD8 density was 15.2 ± 3.3 cells/mm²")
+3. Figure-extracted values (read from bar/scatter plot with error bars)
+4. **NEVER use as central values:** survival cutoffs, X-tile values, ROC thresholds, hazard ratio denominators, Youden index cutpoints
+
+**Why this matters:** An X-tile cutoff of 11.8 cells/mm² and a mean of 15.2 ± 3.3 cells/mm² from the same paper represent fundamentally different quantities. The cutoff maximizes survival discrimination; the mean estimates population central tendency. Only the mean (with its SEM/SD) is appropriate for calibration.
+
+### Ratio and Composite Targets
+
+**CRITICAL:** When the calibration target is a RATIO of two quantities (e.g., M1/M2 macrophage ratio, CD8/Treg ratio):
+
+1. **Extract numerator and denominator from the SAME patients and analysis level.** Same table, same stratification, same statistical summary. NEVER divide a summary statistic from one patient subgroup by a statistic from a different subgroup — this destroys within-patient correlation and produces biologically meaningless ratios.
+
+2. **Prefer directly reported ratios.** If the paper reports the ratio itself (e.g., "M1/M2 ratio was 0.45 ± 0.12"), use that value directly rather than reconstructing it from separate M1 and M2 densities.
+
+3. **Biological plausibility check.** Before finalizing a ratio target, verify against known literature consensus. For example:
+   - M2 macrophages typically outnumber M1 in untreated solid tumors (M1/M2 ≈ 0.3–0.7 in PDAC)
+   - Tregs are a minority of CD4+ T cells (Treg/CD4 ≈ 0.1–0.3)
+   - If your computed ratio contradicts established biology, re-examine your extraction method.
+
+### Fold-Change Targets
+
+When the calibration target requests a fold-change (pre-to-post treatment change):
+
+1. **Use ONLY paired pre-to-post data from the SAME patients.** The fold change must be (post-treatment value) / (pre-treatment baseline value) within a single treatment arm.
+
+2. **NEVER compute fold change as a cross-arm ratio** (Arm A value / Arm B value). Cross-arm comparisons confound the treatment effect with baseline differences and inter-patient variability. They are a completely different quantity from within-patient fold changes.
+
+3. **If no paired pre/post data exists** for the requested comparison, clearly state this limitation rather than substituting a cross-arm ratio.
+
+### Scaling Factor Red Flag
+
+**CRITICAL:** If you find yourself needing a dimensionless scaling factor > 10× in `observable.constants` to reconcile model output with literature data, this almost certainly indicates an extraction error.
+
+**Common root causes of needing large scaling factors:**
+- Wrong statistic type (analytical threshold instead of descriptive statistic)
+- Wrong quantity (cross-arm ratio instead of pre/post fold change)
+- Unit mismatch or conversion error
+- Measurement from a non-comparable subset (e.g., TLA-restricted density vs whole-tumor density)
+
+**What to do:** STOP and re-examine your data source. Find a study that reports a quantity directly comparable to the model species, or explicitly document in `key_study_limitations` why no direct comparison is possible.
+
+Legitimate conversion factors have clear physical meaning (e.g., cell cross-sectional area = 2.27e-4 mm²/cell from geometry) and should never be dimensionless fudge factors.
 
 ---
 
@@ -152,8 +286,13 @@ Each measurement requires:
 
 3. **measurement_constants** (list) - All conversion factors and reference values with units:
    - **REQUIRED** for any numeric constant with units used in measurement_code
-   - Each constant requires: `name`, `value`, `units`, `biological_basis`, `source_ref`
+   - Each constant requires: `name`, `value`, `units`, `biological_basis`, `source_type`, and source-specific fields
+   - **source_type** must be one of:
+     - `reference_db` → also provide `reference_db_name` (must match reference_values.yaml entry)
+     - `derived_from_reference_db` → also provide `reference_db_names` list (each must match)
+     - `literature` → also provide `source_tag` (must match a defined source in this target)
    - **Never hardcode numbers with units** like `23.0 * ureg('mg/mL')` in measurement_code
+   - **No "modeling_assumption" allowed** — every constant must trace to a verifiable source
    - Access in code via: `constants['constant_name']`
 
 4. **measurement_code** (executable Python) - Computes observable from species time series:
@@ -188,8 +327,9 @@ measurements:
       - name: area_per_cancer_cell
         value: 2.27e-4
         units: mm**2/cell
-        biological_basis: "Cancer cell ~17 μm diameter → π×(8.5 μm)² = 2.27e-4 mm²"
-        source_ref: modeling_assumption
+        biological_basis: "From reference DB pdac_cancer_cell_diameter (17 μm) → π×(8.5 μm)² = 2.27e-4 mm²"
+        source_type: derived_from_reference_db
+        reference_db_names: [pdac_cancer_cell_diameter]
     measurement_code: |
       def compute_measurement(time, species_dict, ureg, constants):
           cd8 = species_dict['V_T.CD8']
@@ -305,8 +445,9 @@ When `measurement_code` includes conversion factors (cells → volume, IHC score
    - **Example:** Sample cellularity from uniform(0.15, 0.35) rather than fixing at 0.25
 
 3. **Cite sources for conversion factors**
-   - Use `secondary_data_sources` for literature-based conversion values (cell sizes, densities)
-   - Use `modeling_assumption` only for well-established physical constants
+   - Use `source_type: reference_db` or `source_type: derived_from_reference_db` for values from the curated reference database
+   - Use `source_type: literature` with a `source_tag` for values from papers (add paper to `secondary_data_sources`)
+   - **Never use ungrounded constants** — every numeric must trace to a specific reference DB entry or literature source
 
 4. **Assess impact of conversion uncertainty**
    - Note in `key_study_limitations` if conversion assumptions dominate uncertainty
@@ -366,6 +507,27 @@ empirical_data:
 
 **Available model species:**
 {{MODEL_SPECIES_WITH_UNITS}}
+
+**Available reference values (curated constants for conversion factors):**
+{{REFERENCE_DATABASE}}
+
+Use these reference values in `observable.constants` when applicable (e.g., cell diameters, molecular weights, tissue densities). This avoids re-deriving standard physical/biological constants and ensures consistency across targets.
+
+---
+
+## Viewing Figures from Papers
+
+You have a `view_figure` tool that can fetch and display figure images from scientific papers. When a paper reports key data only in figures (bar charts, scatter plots, survival curves) and not in tabulated form, use this tool to view the figure and read numeric values directly from the plot axes.
+
+**Usage:**
+- Call `view_figure(paper_url="https://...", figure_label="Figure 2A")` with the paper URL (PMC URLs work best) and the figure label
+- The tool returns the figure image so you can read values from axes, error bars, and data points
+- After reading values from a figure, set `source_type: 'figure'`, `figure_id`, and `extraction_method: 'manual'` on the corresponding input
+
+**When to use:**
+- The paper's abstract/text mentions data shown in a figure but doesn't tabulate values
+- You need to verify values visible in plots but not stated in text
+- Clinical endpoints are shown as Kaplan-Meier curves or waterfall plots
 
 ---
 

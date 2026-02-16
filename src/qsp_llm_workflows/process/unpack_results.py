@@ -94,21 +94,26 @@ def load_metadata(input_csv: Path, workflow_type: str) -> Dict:
 def find_next_derivation_number(
     base_pattern: str,
     previous_extractions_dir: Optional[Path] = None,
+    output_dir: Optional[Path] = None,
 ) -> int:
     """
     Find next available derivation number for base pattern.
 
+    Checks both the previous extractions directory and the current output
+    directory to avoid overwriting files written earlier in the same batch.
+
     Args:
         base_pattern: Base pattern for files (e.g., "target_id_cancer_type")
         previous_extractions_dir: Directory with previous extractions to check
+        output_dir: Current output directory (to avoid intra-batch collisions)
 
     Returns:
         Next derivation number (1-indexed)
     """
-    if not previous_extractions_dir or not previous_extractions_dir.exists():
-        return 1
-
-    existing = list(previous_extractions_dir.glob(f"{base_pattern}_deriv*.yaml"))
+    existing = []
+    for d in (previous_extractions_dir, output_dir):
+        if d and d.exists():
+            existing.extend(d.glob(f"{base_pattern}_deriv*.yaml"))
 
     if not existing:
         return 1
@@ -498,31 +503,31 @@ def unpack_single_result(
     if workflow_type == "test_statistic":
         # test_stat_id_cancer_deriv001.yaml
         base = f"{identifier}_{cancer_type}"
-        deriv_num = find_next_derivation_number(base)
+        deriv_num = find_next_derivation_number(base, output_dir=output_dir)
         filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
     elif workflow_type == "calibration_target":
         # cal_target_id_cancer_deriv001.yaml
         base = f"{identifier}_{cancer_type}"
-        deriv_num = find_next_derivation_number(base)
+        deriv_num = find_next_derivation_number(base, output_dir=output_dir)
         filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
     elif workflow_type == "isolated_system_target":
         # target_id_cancer_deriv001.yaml
         base = f"{identifier}_{cancer_type}"
-        deriv_num = find_next_derivation_number(base)
+        deriv_num = find_next_derivation_number(base, output_dir=output_dir)
         filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
     elif workflow_type == "submodel_target":
         # target_id_cancer_deriv001.yaml
         base = f"{identifier}_{cancer_type}"
-        deriv_num = find_next_derivation_number(base, previous_extractions_dir)
+        deriv_num = find_next_derivation_number(base, previous_extractions_dir, output_dir)
         filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
     else:  # parameter
         # param_cancer_deriv001.yaml
         base = f"{identifier}_{cancer_type}"
-        deriv_num = find_next_derivation_number(base)
+        deriv_num = find_next_derivation_number(base, output_dir=output_dir)
 
         # Generate derivation_id and add to JSON
         derivation_id = generate_derivation_id(identifier, cancer_type, deriv_num)
@@ -638,31 +643,31 @@ def process_results(results_file: Path, output_dir: Path, input_csv: Path = None
             if workflow_type == "test_statistic":
                 # test_stat_id_cancer_deriv001.yaml
                 base = f"{identifier}_{cancer_type}"
-                deriv_num = find_next_derivation_number(base)
+                deriv_num = find_next_derivation_number(base, output_dir=output_dir)
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
             elif workflow_type == "calibration_target":
                 # cal_target_id_cancer_deriv001.yaml
                 base = f"{identifier}_{cancer_type}"
-                deriv_num = find_next_derivation_number(base)
+                deriv_num = find_next_derivation_number(base, output_dir=output_dir)
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
             elif workflow_type == "isolated_system_target":
                 # target_id_cancer_deriv001.yaml
                 base = f"{identifier}_{cancer_type}"
-                deriv_num = find_next_derivation_number(base)
+                deriv_num = find_next_derivation_number(base, output_dir=output_dir)
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
             elif workflow_type == "submodel_target":
                 # target_id_cancer_deriv001.yaml
                 base = f"{identifier}_{cancer_type}"
-                deriv_num = find_next_derivation_number(base)
+                deriv_num = find_next_derivation_number(base, output_dir=output_dir)
                 filename = f"{base}_deriv{deriv_num:03d}.yaml"
 
             else:  # parameter
                 # param_cancer_deriv001.yaml
                 base = f"{identifier}_{cancer_type}"
-                deriv_num = find_next_derivation_number(base)
+                deriv_num = find_next_derivation_number(base, output_dir=output_dir)
 
                 # Generate derivation_id and add to JSON
                 derivation_id = generate_derivation_id(identifier, cancer_type, deriv_num)

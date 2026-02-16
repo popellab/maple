@@ -66,8 +66,17 @@ class CreatePreviewStep(WorkflowStep):
                 )
             elif context.workflow_type == "calibration_target":
                 species_units_file = context.config.jobs_dir / "input_data" / "species_units.json"
+                # Auto-discover reference_values.yaml next to model_structure or species_units
+                reference_values_file = None
+                if context.config.model_structure_file:
+                    candidate = context.config.model_structure_file.parent / "reference_values.yaml"
+                    if candidate.exists():
+                        reference_values_file = candidate
                 prompts = builder.process(
-                    context.input_csv, species_units_file, context.config.reasoning_effort
+                    context.input_csv,
+                    species_units_file,
+                    context.config.reasoning_effort,
+                    reference_values_file=reference_values_file,
                 )
             elif context.workflow_type == "isolated_system_target":
                 # Requires model_structure_file and model_context_file

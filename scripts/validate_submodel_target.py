@@ -24,13 +24,25 @@ from qsp_llm_workflows.core.calibration.submodel_target import (
 from qsp_llm_workflows.core.model_structure import ModelStructure
 
 
-def validate_yaml(yaml_path: str, model_structure: ModelStructure) -> bool:
+def _load_reference_db(yaml_path: str) -> dict:
+    """Load reference values from YAML and return name -> value mapping."""
+    with open(yaml_path) as f:
+        data = yaml.safe_load(f)
+    return {v["name"]: float(v["value"]) for v in data["values"]}
+
+
+def validate_yaml(
+    yaml_path: str,
+    model_structure: ModelStructure,
+    reference_db: dict | None = None,
+) -> bool:
     """
     Validate a YAML file against SubmodelTarget schema.
 
     Args:
         yaml_path: Path to the YAML file
         model_structure: ModelStructure instance for unit validation
+        reference_db: Reference values database (optional)
 
     Returns:
         True if valid, False otherwise
@@ -49,11 +61,16 @@ def validate_yaml(yaml_path: str, model_structure: ModelStructure) -> bool:
         print(f"Error: Invalid YAML syntax:\n{e}")
         return False
 
+    # Build validation context
+    context = {"model_structure": model_structure}
+    if reference_db is not None:
+        context["reference_db"] = reference_db
+
     # Validate against model with model_structure context
     try:
         target = SubmodelTarget.model_validate(
             data,
-            context={"model_structure": model_structure},
+            context=context,
         )
         print(f"✓ Valid: {path.name}")
         print(f"  target_id: {target.target_id}")
@@ -86,6 +103,13 @@ def main():
         help="Path to model_structure.json (or set MODEL_STRUCTURE_PATH env var)",
     )
     parser.add_argument(
+        "--reference-values",
+        type=str,
+        default=os.environ.get("REFERENCE_VALUES_PATH"),
+        help="Path to reference_values.yaml (or set REFERENCE_VALUES_PATH env var). "
+        "Auto-discovered next to model_structure.json if not specified.",
+    )
+    parser.add_argument(
         "yaml_files",
         nargs="+",
         help="YAML file(s) to validate",
@@ -112,10 +136,27 @@ def main():
         print(f"Error loading model structure: {e}")
         sys.exit(1)
 
+    # Load reference database (auto-discover next to model_structure if not specified)
+    reference_db = None
+    ref_path = args.reference_values
+    if not ref_path:
+        auto_path = model_structure_path.parent / "reference_values.yaml"
+        if auto_path.exists():
+            ref_path = str(auto_path)
+
+    if ref_path:
+        try:
+            reference_db = _load_reference_db(ref_path)
+            print(f"Loaded reference database: {len(reference_db)} values")
+            print()
+        except Exception as e:
+            print(f"Warning: Could not load reference database: {e}")
+            print()
+
     # Validate each YAML file
     results = []
     for yaml_path in args.yaml_files:
-        valid = validate_yaml(yaml_path, model_structure)
+        valid = validate_yaml(yaml_path, model_structure, reference_db=reference_db)
         results.append((yaml_path, valid))
         if len(args.yaml_files) > 1:
             print()
