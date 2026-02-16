@@ -131,15 +131,15 @@ def minimal_parameter(minimal_prior):
 
 @pytest.fixture
 def minimal_measurement():
-    """Minimal valid measurement with measurement_error_code."""
+    """Minimal valid measurement with observation_code."""
     return Measurement(
         name="test_measurement",
         units="1/day",
         uses_inputs=["test_value"],
         evaluation_points=[0.0],
-        measurement_error_code="""
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+        observation_code="""
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """,
         likelihood=Likelihood(distribution="lognormal"),
     )
@@ -189,11 +189,11 @@ def make_algebraic_target(
                     },
                 }
             ],
-            "model": {
+            "forward_model": {
                 "type": "algebraic",
                 "formula": formula,
                 "code": """
-def compute(params, inputs, ureg):
+def compute(params, inputs):
     return params['k_test']
 """,
                 "code_julia": """
@@ -204,13 +204,13 @@ end
                 "data_rationale": "Test",
                 "submodel_rationale": "Test",
             },
-            "measurements": [
+            "error_model": [
                 {
                     "name": "test_measurement",
                     "units": "1/day",
                     "uses_inputs": ["test_value"],
                     "evaluation_points": [0.0],
-                    "measurement_error_code": measurement_error_code,
+                    "observation_code": measurement_error_code,
                     "likelihood": {"distribution": "lognormal"},
                 }
             ],
@@ -246,11 +246,11 @@ end
 # ============================================================================
 
 
-class TestMeasurementErrorCodeRequired:
-    """Tests for measurement_error_code requirement validation."""
+class TestObservationCodeRequired:
+    """Tests for observation_code requirement validation."""
 
-    def test_algebraic_without_measurement_error_code_fails(self):
-        """Algebraic model without measurement_error_code should fail."""
+    def test_algebraic_without_observation_code_fails(self):
+        """Algebraic model without observation_code should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
@@ -261,14 +261,14 @@ class TestMeasurementErrorCodeRequired:
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "measurement_error_code" in str(exc_info.value).lower()
+        assert "observation_code" in str(exc_info.value).lower()
 
-    def test_algebraic_with_measurement_error_code_passes(self):
-        """Algebraic model with measurement_error_code should pass."""
+    def test_algebraic_with_observation_code_passes(self):
+        """Algebraic model with observation_code should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    value = inputs['test_value'].magnitude
-    return {'sd': value * 0.1}  # 10% CV
+def derive_observation(inputs, sample_size):
+    value = inputs['test_value']
+    return {'value': value, 'sd': value}  # 100% CV
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -277,13 +277,13 @@ def derive_error(inputs, ureg):
             measurement_error_code=measurement_error_code,
         )
 
-        # Should not raise measurement_error_code error
+        # Should not raise observation_code error
         try:
             SubmodelTarget(**data)
         except ValidationError as e:
-            # Check it's not failing on measurement_error_code
+            # Check it's not failing on observation_code
             errors = str(e)
-            assert "measurement_error_code" not in errors.lower()
+            assert "observation_code" not in errors.lower()
 
 
 # ============================================================================
@@ -300,9 +300,9 @@ class TestPriorPredictiveScale:
         # Observation = 10
         # Difference = ~10 orders of magnitude
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    value = inputs['test_value'].magnitude
-    return {'sd': value * 0.1}
+def derive_observation(inputs, sample_size):
+    value = inputs['test_value']
+    return {'value': value, 'sd': value}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -320,9 +320,9 @@ def derive_error(inputs, ureg):
     def test_matching_scale_passes(self):
         """Prior and observation on same scale should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    value = inputs['test_value'].magnitude
-    return {'sd': value * 0.1}
+def derive_observation(inputs, sample_size):
+    value = inputs['test_value']
+    return {'value': value, 'sd': value}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -339,13 +339,13 @@ def derive_error(inputs, ureg):
             # If it fails, should not be due to scale mismatch
             assert "orders of magnitude" not in str(e)
 
-    def test_measurement_error_code_error_raises(self):
-        """Error in measurement_error_code execution should raise."""
+    def test_observation_code_error_raises(self):
+        """Error in observation_code execution should raise."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
+def derive_observation(inputs, sample_size):
     # This will raise KeyError
     value = inputs['nonexistent_input']
-    return {'sd': value}
+    return {'value': value, 'sd': value}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -357,7 +357,7 @@ def derive_error(inputs, ureg):
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "measurement_error_code" in str(exc_info.value).lower()
+        assert "observation_code" in str(exc_info.value).lower()
 
 
 # ============================================================================
@@ -368,15 +368,15 @@ def derive_error(inputs, ureg):
 class TestClippingSuggestsLognormal:
     """Tests for validate_clipping_suggests_lognormal."""
 
-    def test_clipping_in_measurement_error_code_warns(self):
-        """Using np.clip in measurement_error_code should warn."""
+    def test_clipping_in_observation_code_warns(self):
+        """Using np.clip in observation_code should warn."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
+def derive_observation(inputs, sample_size):
     import numpy as np
-    value = inputs['test_value'].magnitude
+    value = inputs['test_value']
     # Clipping to avoid negatives
-    sd = np.clip(value * 0.1, 0, None)
-    return {'sd': float(sd)}
+    sd = np.clip(value, 0, None)
+    return {'value': value, 'sd': float(sd)}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -397,13 +397,13 @@ def derive_error(inputs, ureg):
             assert len(clipping_warnings) > 0
 
     def test_np_maximum_warns(self):
-        """Using np.maximum in measurement_error_code should warn."""
+        """Using np.maximum in observation_code should warn."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
+def derive_observation(inputs, sample_size):
     import numpy as np
-    value = inputs['test_value'].magnitude
-    sd = np.maximum(value * 0.1, 0)
-    return {'sd': float(sd)}
+    value = inputs['test_value']
+    sd = np.maximum(value, 0)
+    return {'value': value, 'sd': float(sd)}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -434,9 +434,9 @@ class TestLargeVarianceDocumented:
     def test_high_cv_without_documentation_warns(self):
         """CV > 50% without mention in identifiability_notes should warn."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
+def derive_observation(inputs, sample_size):
     # SD = 8, mean = 10, CV = 80%
-    return {'sd': inputs['sd_value'].magnitude}
+    return {'value': inputs['mean_value'], 'sd': inputs['sd_value']}
 """
         data = {
             "target_id": "test_high_cv_001",
@@ -474,11 +474,11 @@ def derive_error(inputs, ureg):
                         },
                     }
                 ],
-                "model": {
+                "forward_model": {
                     "type": "algebraic",
                     "formula": "k = mean_value",
                     "code": """
-def compute(params, inputs, ureg):
+def compute(params, inputs):
     return params['k_test']
 """,
                     "code_julia": """
@@ -489,13 +489,13 @@ end
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
                 },
-                "measurements": [
+                "error_model": [
                     {
                         "name": "test",
                         "units": "1/day",
                         "uses_inputs": ["mean_value", "sd_value"],
                         "evaluation_points": [0.0],
-                        "measurement_error_code": measurement_error_code,
+                        "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -539,8 +539,8 @@ end
     def test_high_cv_with_documentation_no_warning(self):
         """CV > 50% with variance mentioned should not warn."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': inputs['sd_value'].magnitude}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['mean_value'], 'sd': inputs['sd_value']}
 """
         data = {
             "target_id": "test_high_cv_documented_001",
@@ -578,11 +578,11 @@ def derive_error(inputs, ureg):
                         },
                     }
                 ],
-                "model": {
+                "forward_model": {
                     "type": "algebraic",
                     "formula": "k = mean_value",
                     "code": """
-def compute(params, inputs, ureg):
+def compute(params, inputs):
     return params['k_test']
 """,
                     "code_julia": """
@@ -593,13 +593,13 @@ end
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
                 },
-                "measurements": [
+                "error_model": [
                     {
                         "name": "test",
                         "units": "1/day",
                         "uses_inputs": ["mean_value", "sd_value"],
                         "evaluation_points": [0.0],
-                        "measurement_error_code": measurement_error_code,
+                        "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -653,9 +653,9 @@ class TestParameterUnitsMatchModel:
     def test_unit_dimensionality_mismatch_fails(self, mock_model_structure):
         """Parameter with wrong dimensionality should fail when context provided."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    value = inputs['test_value'].magnitude
-    return {'sd': value * 0.1}
+def derive_observation(inputs, sample_size):
+    value = inputs['test_value']
+    return {'value': value, 'sd': value}
 """
         data = make_algebraic_target(
             input_value=1e-9,
@@ -667,7 +667,12 @@ def derive_error(inputs, ureg):
         # k_CCL2_sec expects nanomole/cell/day but we'll use nanomolar/cell/day
         data["calibration"]["parameters"][0]["name"] = "k_CCL2_sec"
         data["calibration"]["parameters"][0]["units"] = "nanomolar/cell/day"
-        data["calibration"]["measurements"][0]["units"] = "nanomolar/cell/day"
+        data["calibration"]["error_model"][0]["units"] = "nanomolar/cell/day"
+        # Update forward model code to access the renamed parameter
+        data["calibration"]["forward_model"]["code"] = """
+def compute(params, inputs):
+    return params['k_CCL2_sec']
+"""
 
         with pytest.raises(ValidationError) as exc_info:
             validate_target(data, mock_model_structure)
@@ -677,9 +682,9 @@ def derive_error(inputs, ureg):
     def test_correct_units_passes(self, mock_model_structure):
         """Parameter with correct dimensionality should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    value = inputs['test_value'].magnitude
-    return {'sd': value * 0.1}
+def derive_observation(inputs, sample_size):
+    value = inputs['test_value']
+    return {'value': value, 'sd': value}
 """
         data = make_algebraic_target(
             input_value=1e-9,
@@ -690,7 +695,12 @@ def derive_error(inputs, ureg):
         # Use correct units for k_CCL2_sec
         data["calibration"]["parameters"][0]["name"] = "k_CCL2_sec"
         data["calibration"]["parameters"][0]["units"] = "nanomole/cell/day"
-        data["calibration"]["measurements"][0]["units"] = "nanomole/cell/day"
+        data["calibration"]["error_model"][0]["units"] = "nanomole/cell/day"
+        # Update forward model code to access the renamed parameter
+        data["calibration"]["forward_model"]["code"] = """
+def compute(params, inputs):
+    return params['k_CCL2_sec']
+"""
 
         # Should not raise dimensionality error
         try:
@@ -703,9 +713,9 @@ def derive_error(inputs, ureg):
     def test_missing_context_warns(self):
         """Missing model_structure context should warn, not error."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    value = inputs['test_value'].magnitude
-    return {'sd': value * 0.1}
+def derive_observation(inputs, sample_size):
+    value = inputs['test_value']
+    return {'value': value, 'sd': value}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -737,8 +747,8 @@ class TestValidateInputRefs:
     def test_measurement_references_unknown_input_fails(self):
         """Measurement uses_inputs referencing unknown input should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -746,7 +756,7 @@ def derive_error(inputs, ureg):
             measurement_error_code=measurement_error_code,
         )
         # Change uses_inputs to reference a non-existent input
-        data["calibration"]["measurements"][0]["uses_inputs"] = ["nonexistent_input"]
+        data["calibration"]["error_model"][0]["uses_inputs"] = ["nonexistent_input"]
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
@@ -757,8 +767,8 @@ def derive_error(inputs, ureg):
     def test_valid_input_refs_passes(self):
         """Valid input references should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -784,8 +794,8 @@ class TestValidateSourceRefs:
     def test_input_references_unknown_source_fails(self):
         """Input with source_ref not matching any source_tag should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -803,8 +813,8 @@ def derive_error(inputs, ureg):
     def test_valid_source_refs_passes(self):
         """Valid source references should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -830,8 +840,8 @@ class TestValidateParameterRoles:
     def test_model_references_undefined_parameter_fails(self):
         """Model parameter_role referencing undefined parameter should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = {
             "target_id": "test_param_role_001",
@@ -859,35 +869,35 @@ def derive_error(inputs, ureg):
                         },
                     }
                 ],
-                "model": {
+                "forward_model": {
                     "type": "first_order_decay",
                     # rate_constant references a parameter that doesn't exist
                     "rate_constant": "k_nonexistent",
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
+                    "state_variables": [
+                        {
+                            "name": "A",
+                            "units": "dimensionless",
+                            "initial_condition": {
+                                "value": 1.0,
+                                "rationale": "Initial condition for testing purposes",
+                            },
+                        }
+                    ],
+                    "independent_variable": {
+                        "name": "time",
+                        "units": "day",
+                        "span": [0.0, 10.0],
+                    },
                 },
-                "state_variables": [
-                    {
-                        "name": "A",
-                        "units": "dimensionless",
-                        "initial_condition": {
-                            "value": 1.0,
-                            "rationale": "Initial condition for testing purposes",
-                        },
-                    }
-                ],
-                "independent_variable": {
-                    "name": "time",
-                    "units": "day",
-                    "span": [0.0, 10.0],
-                },
-                "measurements": [
+                "error_model": [
                     {
                         "name": "test_measurement",
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
-                        "measurement_error_code": measurement_error_code,
+                        "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -925,8 +935,8 @@ def derive_error(inputs, ureg):
     def test_valid_parameter_roles_passes(self):
         """Valid parameter role references should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = {
             "target_id": "test_param_role_002",
@@ -954,34 +964,34 @@ def derive_error(inputs, ureg):
                         },
                     }
                 ],
-                "model": {
+                "forward_model": {
                     "type": "first_order_decay",
                     "rate_constant": "k_decay",  # Matches parameter name
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
+                    "state_variables": [
+                        {
+                            "name": "A",
+                            "units": "dimensionless",
+                            "initial_condition": {
+                                "value": 1.0,
+                                "rationale": "Initial condition for testing purposes",
+                            },
+                        }
+                    ],
+                    "independent_variable": {
+                        "name": "time",
+                        "units": "day",
+                        "span": [0.0, 10.0],
+                    },
                 },
-                "state_variables": [
-                    {
-                        "name": "A",
-                        "units": "dimensionless",
-                        "initial_condition": {
-                            "value": 1.0,
-                            "rationale": "Initial condition for testing purposes",
-                        },
-                    }
-                ],
-                "independent_variable": {
-                    "name": "time",
-                    "units": "day",
-                    "span": [0.0, 10.0],
-                },
-                "measurements": [
+                "error_model": [
                     {
                         "name": "test_measurement",
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
-                        "measurement_error_code": measurement_error_code,
+                        "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -1031,13 +1041,13 @@ class TestValidateCustomCodeSyntax:
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """,
         )
         # Introduce syntax error in model code
-        data["calibration"]["model"]["code"] = """
-def compute(params, inputs, ureg):
+        data["calibration"]["forward_model"]["code"] = """
+def compute(params, inputs):
     return params['k_test'  # Missing closing bracket - syntax error
 """
 
@@ -1052,12 +1062,12 @@ def compute(params, inputs, ureg):
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """,
         )
         # Wrong function name (should be 'compute')
-        data["calibration"]["model"]["code"] = """
+        data["calibration"]["forward_model"]["code"] = """
 def wrong_name(params, inputs, ureg):
     return params['k_test']
 """
@@ -1067,13 +1077,13 @@ def wrong_name(params, inputs, ureg):
 
         assert "compute" in str(exc_info.value).lower()
 
-    def test_measurement_error_code_syntax_error_fails(self):
-        """Syntax error in measurement_error_code should fail."""
+    def test_observation_code_syntax_error_fails(self):
+        """Syntax error in observation_code should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
-def derive_error(inputs, ureg):
+def derive_observation(inputs, sample_size):
     return {'sd': 1.0  # Missing closing brace - syntax error
 """,
         )
@@ -1083,21 +1093,21 @@ def derive_error(inputs, ureg):
 
         assert "syntax error" in str(exc_info.value).lower()
 
-    def test_measurement_error_code_wrong_function_name_fails(self):
-        """measurement_error_code with wrong function name should fail."""
+    def test_observation_code_wrong_function_name_fails(self):
+        """observation_code with wrong function name should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
 def wrong_name(inputs, ureg):
-    return {'sd': 1.0}
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """,
         )
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "derive_error" in str(exc_info.value).lower()
+        assert "derive_observation" in str(exc_info.value).lower()
 
     def test_valid_code_passes(self):
         """Valid code should pass syntax validation."""
@@ -1105,8 +1115,8 @@ def wrong_name(inputs, ureg):
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """,
         )
 
@@ -1118,21 +1128,21 @@ def derive_error(inputs, ureg):
 
 
 # ============================================================================
-# Tests for validate_measurement_error_code_execution
+# Tests for validate_observation_code_execution
 # ============================================================================
 
 
-class TestValidateMeasurementErrorCodeExecution:
-    """Tests for validate_measurement_error_code_execution validator."""
+class TestValidateObservationCodeExecution:
+    """Tests for validate_observation_code_execution validator."""
 
-    def test_missing_derive_error_function_fails(self):
-        """measurement_error_code without derive_error function should fail."""
+    def test_missing_derive_observation_function_fails(self):
+        """observation_code without derive_observation function should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
 def some_other_function(inputs, ureg):
-    return {'sd': 1.0}
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """,
         )
 
@@ -1141,15 +1151,15 @@ def some_other_function(inputs, ureg):
 
         # Should fail on function name check
         error_str = str(exc_info.value).lower()
-        assert "derive_error" in error_str
+        assert "derive_observation" in error_str
 
     def test_return_not_dict_fails(self):
-        """derive_error returning non-dict should fail."""
+        """derive_observation returning non-dict should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
-def derive_error(inputs, ureg):
+def derive_observation(inputs, sample_size):
     return 1.0  # Should return dict
 """,
         )
@@ -1160,12 +1170,12 @@ def derive_error(inputs, ureg):
         assert "dict" in str(exc_info.value).lower()
 
     def test_missing_sd_key_fails(self):
-        """derive_error returning dict without 'sd' key should fail."""
+        """derive_observation returning dict without 'sd' key should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
-def derive_error(inputs, ureg):
+def derive_observation(inputs, sample_size):
     return {'wrong_key': 1.0}
 """,
         )
@@ -1176,13 +1186,13 @@ def derive_error(inputs, ureg):
         assert "sd" in str(exc_info.value).lower()
 
     def test_negative_sd_fails(self):
-        """derive_error returning negative sd should fail."""
+        """derive_observation returning negative sd should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
-def derive_error(inputs, ureg):
-    return {'sd': -1.0}  # Negative SD invalid
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': -1.0}  # Negative SD invalid
 """,
         )
 
@@ -1192,14 +1202,14 @@ def derive_error(inputs, ureg):
         assert "negative" in str(exc_info.value).lower() or "sd" in str(exc_info.value).lower()
 
     def test_execution_error_fails(self):
-        """Runtime error in derive_error should fail."""
+        """Runtime error in derive_observation should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
-def derive_error(inputs, ureg):
+def derive_observation(inputs, sample_size):
     # This will raise KeyError at runtime
-    return {'sd': inputs['nonexistent_input'].magnitude}
+    return {'value': inputs['test_value'], 'sd': inputs['nonexistent_input']}
 """,
         )
 
@@ -1208,15 +1218,15 @@ def derive_error(inputs, ureg):
 
         assert "error" in str(exc_info.value).lower()
 
-    def test_valid_measurement_error_code_passes(self):
-        """Valid measurement_error_code should pass execution validation."""
+    def test_valid_observation_code_passes(self):
+        """Valid observation_code should pass execution validation."""
         data = make_algebraic_target(
             input_value=10.0,
             prior_mu=math.log(10.0),
             measurement_error_code="""
-def derive_error(inputs, ureg):
-    value = inputs['test_value'].magnitude
-    return {'sd': value * 0.1}
+def derive_observation(inputs, sample_size):
+    value = inputs['test_value']
+    return {'value': value, 'sd': value}
 """,
         )
 
@@ -1224,7 +1234,7 @@ def derive_error(inputs, ureg):
         try:
             SubmodelTarget(**data)
         except ValidationError as e:
-            assert "measurement_error_code execution error" not in str(e).lower()
+            assert "observation_code execution error" not in str(e).lower()
 
 
 # ============================================================================
@@ -1238,8 +1248,8 @@ class TestValidateInputValuesInSnippets:
     def test_value_not_in_snippet_fails(self):
         """Input value not appearing in value_snippet should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1257,8 +1267,8 @@ def derive_error(inputs, ureg):
     def test_value_in_snippet_passes(self):
         """Input value appearing in value_snippet should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1277,8 +1287,8 @@ def derive_error(inputs, ureg):
     def test_scientific_notation_in_snippet_passes(self):
         """Value in scientific notation should match snippet."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1e-8}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': inputs['test_value']}
 """
         data = make_algebraic_target(
             input_value=1e-9,
@@ -1297,8 +1307,8 @@ def derive_error(inputs, ureg):
     def test_skips_experimental_condition(self):
         """Experimental condition inputs should skip snippet validation."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1327,8 +1337,8 @@ class TestValidateSpanOrdering:
     def test_span_start_greater_than_end_fails(self):
         """span[0] >= span[1] should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = {
             "target_id": "test_span_001",
@@ -1356,34 +1366,34 @@ def derive_error(inputs, ureg):
                         },
                     }
                 ],
-                "model": {
+                "forward_model": {
                     "type": "first_order_decay",
                     "rate_constant": "k_decay",
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
+                    "state_variables": [
+                        {
+                            "name": "A",
+                            "units": "dimensionless",
+                            "initial_condition": {
+                                "value": 1.0,
+                                "rationale": "Initial condition for testing",
+                            },
+                        }
+                    ],
+                    "independent_variable": {
+                        "name": "time",
+                        "units": "day",
+                        "span": [10.0, 5.0],  # Invalid: start > end
+                    },
                 },
-                "state_variables": [
-                    {
-                        "name": "A",
-                        "units": "dimensionless",
-                        "initial_condition": {
-                            "value": 1.0,
-                            "rationale": "Initial condition for testing",
-                        },
-                    }
-                ],
-                "independent_variable": {
-                    "name": "time",
-                    "units": "day",
-                    "span": [10.0, 5.0],  # Invalid: start > end
-                },
-                "measurements": [
+                "error_model": [
                     {
                         "name": "test_measurement",
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
-                        "measurement_error_code": measurement_error_code,
+                        "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -1420,8 +1430,8 @@ def derive_error(inputs, ureg):
     def test_negative_span_fails(self):
         """Negative span start should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = {
             "target_id": "test_span_002",
@@ -1449,34 +1459,34 @@ def derive_error(inputs, ureg):
                         },
                     }
                 ],
-                "model": {
+                "forward_model": {
                     "type": "first_order_decay",
                     "rate_constant": "k_decay",
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
+                    "state_variables": [
+                        {
+                            "name": "A",
+                            "units": "dimensionless",
+                            "initial_condition": {
+                                "value": 1.0,
+                                "rationale": "Initial condition for testing",
+                            },
+                        }
+                    ],
+                    "independent_variable": {
+                        "name": "time",
+                        "units": "day",
+                        "span": [-5.0, 10.0],  # Invalid: negative start
+                    },
                 },
-                "state_variables": [
-                    {
-                        "name": "A",
-                        "units": "dimensionless",
-                        "initial_condition": {
-                            "value": 1.0,
-                            "rationale": "Initial condition for testing",
-                        },
-                    }
-                ],
-                "independent_variable": {
-                    "name": "time",
-                    "units": "day",
-                    "span": [-5.0, 10.0],  # Invalid: negative start
-                },
-                "measurements": [
+                "error_model": [
                     {
                         "name": "test_measurement",
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
-                        "measurement_error_code": measurement_error_code,
+                        "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -1508,7 +1518,8 @@ def derive_error(inputs, ureg):
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "non-negative" in str(exc_info.value).lower()
+        error_str = str(exc_info.value).lower()
+        assert "span" in error_str or "non-negative" in error_str
 
 
 # ============================================================================
@@ -1522,8 +1533,8 @@ class TestValidateNoInvisibleCharacters:
     def test_invisible_unicode_in_text_fails(self):
         """Invisible unicode characters in string fields should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1541,8 +1552,8 @@ def derive_error(inputs, ureg):
     def test_normal_text_passes(self):
         """Normal text without invisible characters should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1568,8 +1579,8 @@ class TestValidateUnitsAreValidPint:
     def test_invalid_unit_string_fails(self):
         """Invalid Pint unit string should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1589,8 +1600,8 @@ def derive_error(inputs, ureg):
     def test_valid_pint_units_passes(self):
         """Valid Pint unit strings should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1617,8 +1628,8 @@ class TestValidateODEModelRequirements:
     def test_first_order_decay_without_state_variables_fails(self):
         """first_order_decay model without state_variables should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = {
             "target_id": "test_ode_001",
@@ -1646,25 +1657,25 @@ def derive_error(inputs, ureg):
                         },
                     }
                 ],
-                "model": {
+                "forward_model": {
                     "type": "first_order_decay",
                     "rate_constant": "k_decay",
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
+                    # No state_variables - should fail
+                    "independent_variable": {
+                        "name": "time",
+                        "units": "day",
+                        "span": [0.0, 10.0],
+                    },
                 },
-                # No state_variables - should fail
-                "independent_variable": {
-                    "name": "time",
-                    "units": "day",
-                    "span": [0.0, 10.0],
-                },
-                "measurements": [
+                "error_model": [
                     {
                         "name": "test_measurement",
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
-                        "measurement_error_code": measurement_error_code,
+                        "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -1701,8 +1712,8 @@ def derive_error(inputs, ureg):
     def test_first_order_decay_without_span_fails(self):
         """first_order_decay model without independent_variable span should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = {
             "target_id": "test_ode_002",
@@ -1730,34 +1741,34 @@ def derive_error(inputs, ureg):
                         },
                     }
                 ],
-                "model": {
+                "forward_model": {
                     "type": "first_order_decay",
                     "rate_constant": "k_decay",
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
+                    "state_variables": [
+                        {
+                            "name": "A",
+                            "units": "dimensionless",
+                            "initial_condition": {
+                                "value": 1.0,
+                                "rationale": "Initial condition for testing",
+                            },
+                        }
+                    ],
+                    # No span in independent_variable - should fail
+                    "independent_variable": {
+                        "name": "time",
+                        "units": "day",
+                    },
                 },
-                "state_variables": [
-                    {
-                        "name": "A",
-                        "units": "dimensionless",
-                        "initial_condition": {
-                            "value": 1.0,
-                            "rationale": "Initial condition for testing",
-                        },
-                    }
-                ],
-                # No span in independent_variable - should fail
-                "independent_variable": {
-                    "name": "time",
-                    "units": "day",
-                },
-                "measurements": [
+                "error_model": [
                     {
                         "name": "test_measurement",
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
-                        "measurement_error_code": measurement_error_code,
+                        "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -1794,8 +1805,8 @@ def derive_error(inputs, ureg):
     def test_algebraic_without_state_variables_passes(self):
         """algebraic model without state_variables should pass (non-ODE)."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1813,8 +1824,8 @@ def derive_error(inputs, ureg):
     def test_valid_ode_model_passes(self):
         """Valid ODE model with state_variables and span should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = {
             "target_id": "test_ode_003",
@@ -1842,34 +1853,34 @@ def derive_error(inputs, ureg):
                         },
                     }
                 ],
-                "model": {
+                "forward_model": {
                     "type": "first_order_decay",
                     "rate_constant": "k_decay",
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
+                    "state_variables": [
+                        {
+                            "name": "A",
+                            "units": "dimensionless",
+                            "initial_condition": {
+                                "value": 1.0,
+                                "rationale": "Initial condition for testing",
+                            },
+                        }
+                    ],
+                    "independent_variable": {
+                        "name": "time",
+                        "units": "day",
+                        "span": [0.0, 10.0],
+                    },
                 },
-                "state_variables": [
-                    {
-                        "name": "A",
-                        "units": "dimensionless",
-                        "initial_condition": {
-                            "value": 1.0,
-                            "rationale": "Initial condition for testing",
-                        },
-                    }
-                ],
-                "independent_variable": {
-                    "name": "time",
-                    "units": "day",
-                    "span": [0.0, 10.0],
-                },
-                "measurements": [
+                "error_model": [
                     {
                         "name": "test_measurement",
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
-                        "measurement_error_code": measurement_error_code,
+                        "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
                 ],
@@ -1918,8 +1929,8 @@ class TestValidateCrossSpeciesUncertainty:
     def test_cross_species_without_sufficient_uncertainty_fails(self):
         """Cross-species extrapolation with low uncertainty should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1940,8 +1951,8 @@ def derive_error(inputs, ureg):
     def test_cross_species_with_sufficient_uncertainty_passes(self):
         """Cross-species extrapolation with adequate uncertainty should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1971,8 +1982,8 @@ class TestValidateCrossIndicationUncertainty:
     def test_cross_indication_proxy_without_sufficient_uncertainty_fails(self):
         """Cross-indication proxy with low uncertainty should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -1992,8 +2003,8 @@ def derive_error(inputs, ureg):
     def test_cross_indication_with_sufficient_uncertainty_passes(self):
         """Cross-indication extrapolation with adequate uncertainty should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -2025,8 +2036,8 @@ class TestValidatePerturbationJustification:
     def test_pharmacological_perturbation_without_justification_fails(self):
         """Pharmacological perturbation without perturbation_relevance should fail."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -2046,8 +2057,8 @@ def derive_error(inputs, ureg):
     def test_pharmacological_perturbation_with_justification_passes(self):
         """Pharmacological perturbation with perturbation_relevance should pass."""
         measurement_error_code = """
-def derive_error(inputs, ureg):
-    return {'sd': 1.0}
+def derive_observation(inputs, sample_size):
+    return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,

@@ -384,8 +384,8 @@ class MissingFieldError(CalibrationTargetValidationError):
     category = "structural"
 
     @classmethod
-    def from_errors(cls, errors: List[str]) -> "MissingFieldError":
-        message = "Missing required fields:\n  - " + "\n  - ".join(errors)
+    def from_errors(cls, errors: List[str], prefix: str = "Missing required fields") -> "MissingFieldError":
+        message = f"{prefix}:\n  - " + "\n  - ".join(errors)
         return cls(message, details=errors)
 
 
