@@ -50,3 +50,16 @@ def create_unit_registry() -> pint.UnitRegistry:
 
 # Shared registry instance for use across the codebase
 ureg = create_unit_registry()
+
+
+def make_quantity(value: float, units: str) -> pint.Quantity:
+    """Create a Pint Quantity, safely handling dimensionless units.
+
+    ``ureg('1')`` returns a plain int, so ``value * ureg('1')`` loses the
+    Quantity wrapper and downstream ``.magnitude`` / ``.dimensionality``
+    access fails.  This helper normalises ``'1'`` → ``'dimensionless'``
+    before multiplying.
+    """
+    if units.strip() == "1":
+        units = "dimensionless"
+    return value * ureg(units)

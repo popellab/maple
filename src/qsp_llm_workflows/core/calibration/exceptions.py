@@ -306,6 +306,17 @@ class ParameterReferenceError(CalibrationReferenceError):
         return cls(message, details=errors)
 
 
+class ReferenceRefError(CalibrationReferenceError):
+    """A ReferenceRef references a name not found in the reference database."""
+
+    category = "reference"
+
+    @classmethod
+    def from_errors(cls, errors: List[str]) -> "ReferenceRefError":
+        message = "Invalid reference_ref values:\n  - " + "\n  - ".join(errors)
+        return cls(message, details=errors)
+
+
 class StateVariableReferenceError(CalibrationReferenceError):
     """An observable references a state variable that doesn't exist."""
 
@@ -455,6 +466,7 @@ EXCEPTION_CATEGORIES = {
     "InputReferenceError": "reference",
     "SourceRefError": "reference",
     "ParameterReferenceError": "reference",
+    "ReferenceRefError": "reference",
     "StateVariableReferenceError": "reference",
     "SpeciesNotFoundError": "reference",
     "CalibrationReferenceError": "reference",

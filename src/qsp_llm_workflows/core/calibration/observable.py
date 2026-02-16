@@ -20,6 +20,99 @@ from qsp_llm_workflows.core.calibration.shared_models import SubmodelInput
 SupportType = Literal["positive", "non_negative", "unit_interval", "positive_unbounded", "real"]
 
 
+class AggregationType(str, Enum):
+    """Type of population-level aggregation for clinical endpoints.
+
+    Some calibration targets (e.g., ORR, median OS) cannot be expressed as
+    single-patient observables — they require aggregating across a virtual
+    patient cohort.
+    """
+
+    NONE = "none"
+    """No aggregation; observable is per-patient (default)."""
+
+    RESPONSE_RATE = "response_rate"
+    """Fraction of patients meeting a threshold (e.g., ORR via RECIST).
+    Requires threshold_code defining per-patient binary classification.
+    """
+
+    MEDIAN_TIME_TO_EVENT = "median_time_to_event"
+    """Median time until an event (e.g., median OS, median PFS).
+    The observable code computes per-patient event times.
+    """
+
+    SURVIVAL_RATE = "survival_rate"
+    """Fraction of patients surviving past a time point (e.g., 1-year OS).
+    Requires time_point and time_unit.
+    """
+
+
+class PopulationAggregation(BaseModel):
+    """
+    Population-level aggregation specification for clinical endpoints.
+
+    Attached to Observable when the calibration target is a population summary
+    statistic (ORR, median OS, 1-year OS, MPR rate) rather than a per-patient
+    observable.
+    """
+
+    type: AggregationType = Field(description="Type of population aggregation to apply.")
+
+    threshold_code: Optional[str] = Field(
+        default=None,
+        description=(
+            "Python code defining per-patient binary classification for response_rate.\n"
+            "Function signature: classify_patient(time, species_dict, constants, ureg) -> bool\n"
+            "Returns True if patient meets the response criterion.\n\n"
+            "Example (RECIST partial response):\n"
+            "def classify_patient(time, species_dict, constants, ureg):\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    baseline = tumor[0]\n"
+            "    nadir = min(tumor)\n"
+            "    return (baseline - nadir) / baseline >= 0.3"
+        ),
+    )
+
+    time_point: Optional[float] = Field(
+        default=None,
+        description="Time point for survival_rate aggregation (e.g., 365.25 for 1-year OS).",
+    )
+
+    time_unit: Optional[str] = Field(
+        default=None,
+        description="Pint-parseable unit for time_point (e.g., 'day', 'month').",
+    )
+
+    rationale: str = Field(
+        description=(
+            "Why this observable requires population aggregation rather than "
+            "per-patient evaluation. Reference the clinical endpoint definition."
+        )
+    )
+
+    @model_validator(mode="after")
+    def validate_aggregation_fields(self) -> "PopulationAggregation":
+        """Ensure required fields are present for each aggregation type."""
+        if self.type == AggregationType.RESPONSE_RATE:
+            if self.threshold_code is None:
+                raise ValueError(
+                    "threshold_code is required for response_rate aggregation. "
+                    "Provide a classify_patient() function that returns True/False per patient."
+                )
+        elif self.type == AggregationType.SURVIVAL_RATE:
+            missing = []
+            if self.time_point is None:
+                missing.append("time_point")
+            if self.time_unit is None:
+                missing.append("time_unit")
+            if missing:
+                raise ValueError(
+                    f"survival_rate aggregation requires {', '.join(missing)}. "
+                    f"Specify the time horizon for survival assessment."
+                )
+        return self
+
+
 class SubmodelPattern(str, Enum):
     """
     Standard ODE patterns for isolated system submodels.
@@ -56,6 +149,23 @@ class SubmodelPattern(str, Enum):
     """Non-standard pattern that doesn't fit the above categories."""
 
 
+class ConstantSourceType(str, Enum):
+    """How an observable constant's value is justified."""
+
+    REFERENCE_DB = "reference_db"
+    """Value comes directly from the curated reference values database.
+    Requires reference_db_name to match an entry in reference_values.yaml."""
+
+    DERIVED_FROM_REFERENCE_DB = "derived_from_reference_db"
+    """Value is computed from one or more reference DB entries (e.g., area from diameter).
+    Requires reference_db_names listing the entries used in the derivation.
+    The biological_basis must show the derivation calculation."""
+
+    LITERATURE = "literature"
+    """Value comes from a specific paper.
+    Requires source_tag matching a defined source in the calibration target."""
+
+
 class ObservableConstant(BaseModel):
     """
     A constant used in observable code with explicit biological justification.
@@ -63,6 +173,9 @@ class ObservableConstant(BaseModel):
     All numeric constants with units that appear in observable code must be declared
     here. This prevents arbitrary magic numbers and forces explicit documentation
     of biological assumptions.
+
+    Every constant MUST be traceable to either the reference values database or
+    a specific literature source. No ungrounded "modeling assumptions" allowed.
     """
 
     name: str = Field(
@@ -81,26 +194,77 @@ class ObservableConstant(BaseModel):
         )
     )
 
-    biological_basis: Optional[str] = Field(
-        default=None,
+    biological_basis: str = Field(
+        min_length=20,
         description=(
-            "Explanation of where this value comes from biologically.\n"
+            "REQUIRED explanation of where this value comes from biologically.\n"
             "Include the reasoning or calculation, not just the value.\n"
-            "Optional - can be added during human review if not provided.\n\n"
+            "Must be substantive (minimum 20 characters).\n\n"
             "Examples:\n"
-            "- 'Cancer cell diameter ~17 μm → cross-sectional area = π×(8.5 μm)² = 227 μm² = 2.27e-4 mm²'\n"
-            "- 'T cell diameter ~7 μm → volume = 4/3×π×(3.5 μm)³ ≈ 180 μm³'\n"
-            "- 'Assumed spherical packing with 74% density'"
+            "- 'From reference DB pdac_cancer_cell_diameter (17 μm) → area = π×(8.5 μm)² = 2.27e-4 mm²'\n"
+            "- 'From reference DB ihc_section_volume_4um: 4e-6 cm³/mm² for standard 4-μm sections'\n"
+            "- 'From Table 2 of Smith2020: mean cancer cell diameter = 17.3 ± 2.1 μm'"
         ),
     )
 
-    source_ref: str = Field(
+    source_type: ConstantSourceType = Field(
         description=(
-            "Reference for this constant value.\n"
-            "Use 'modeling_assumption' for geometric calculations or well-established values.\n"
-            "Use a source_tag (e.g., 'Smith2020_CellSize') for literature-derived values."
+            "How this constant's value is justified. Every constant must trace to a verifiable source:\n"
+            "- reference_db: Value taken directly from curated reference_values.yaml\n"
+            "- derived_from_reference_db: Computed from reference DB entries (show derivation in biological_basis)\n"
+            "- literature: From a specific paper (must match a source_tag in this target's sources)"
         )
     )
+
+    reference_db_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Name of the reference DB entry (for source_type='reference_db').\n"
+            "Must exactly match a 'name' field in reference_values.yaml.\n"
+            "Example: 'ihc_section_volume_4um', 'pdac_cancer_cell_diameter'"
+        ),
+    )
+
+    reference_db_names: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "List of reference DB entries used in derivation (for source_type='derived_from_reference_db').\n"
+            "Each must match a 'name' field in reference_values.yaml.\n"
+            "Example: ['pdac_cancer_cell_diameter'] for area derived from diameter."
+        ),
+    )
+
+    source_tag: Optional[str] = Field(
+        default=None,
+        description=(
+            "Source tag for literature-derived constants (for source_type='literature').\n"
+            "Must match a source_tag defined in this target's primary or secondary sources.\n"
+            "Example: 'Smith2020_CellSize'"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_source_fields(self) -> "ObservableConstant":
+        """Ensure required fields are present for each source type."""
+        if self.source_type == ConstantSourceType.REFERENCE_DB:
+            if not self.reference_db_name:
+                raise ValueError(
+                    f"Observable constant '{self.name}': source_type='reference_db' requires "
+                    f"reference_db_name matching an entry in reference_values.yaml."
+                )
+        elif self.source_type == ConstantSourceType.DERIVED_FROM_REFERENCE_DB:
+            if not self.reference_db_names:
+                raise ValueError(
+                    f"Observable constant '{self.name}': source_type='derived_from_reference_db' requires "
+                    f"reference_db_names listing the reference DB entries used in the derivation."
+                )
+        elif self.source_type == ConstantSourceType.LITERATURE:
+            if not self.source_tag:
+                raise ValueError(
+                    f"Observable constant '{self.name}': source_type='literature' requires "
+                    f"source_tag matching a defined source in this calibration target."
+                )
+        return self
 
 
 class Observable(BaseModel):
@@ -172,6 +336,15 @@ class Observable(BaseModel):
         description=(
             "Explanation of how the literature measurement maps to model species.\n"
             "Recommended when the mapping is non-obvious or involves aggregation."
+        ),
+    )
+
+    aggregation: Optional[PopulationAggregation] = Field(
+        default=None,
+        description=(
+            "Population-level aggregation specification. Use when the calibration target "
+            "is a population summary (ORR, median OS, 1-year OS) rather than a per-patient "
+            "observable. When None (default), the observable is per-patient."
         ),
     )
 

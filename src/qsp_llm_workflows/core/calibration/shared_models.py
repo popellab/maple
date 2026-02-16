@@ -11,7 +11,14 @@ from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from qsp_llm_workflows.core.calibration.enums import ExtractionMethod, SourceType
+from qsp_llm_workflows.core.calibration.enums import (
+    ExtractionMethod,
+    IndicationMatch,
+    PerturbationType,
+    SourceQuality,
+    SourceType,
+    TMECompatibility,
+)
 
 
 class InputType(str, Enum):
@@ -524,4 +531,108 @@ class DoseResponseData(BaseModel):
     source_ref: Optional[str] = Field(None, description="Source reference tag for this data")
     figure_or_table: Optional[str] = Field(
         None, description="Figure/table reference (e.g., 'Figure 3B')"
+    )
+
+
+# =============================================================================
+# SOURCE RELEVANCE ASSESSMENT
+# =============================================================================
+
+
+class SourceRelevanceAssessment(BaseModel):
+    """
+    Structured assessment of source-to-target relevance for calibration targets.
+
+    This model captures how well the source data translates to the target model,
+    including indication match, source quality, perturbation context, and TME
+    compatibility. Validators use this information to flag potential issues.
+    """
+
+    # Indication relevance
+    indication_match: IndicationMatch = Field(
+        description=(
+            "How well does the source indication match the target indication?\n"
+            "- exact: Same disease (e.g., PDAC data for PDAC model)\n"
+            "- related: Same organ or disease class (e.g., other pancreatic diseases)\n"
+            "- proxy: Different tissue used as mechanistic proxy (e.g., melanoma for PDAC)\n"
+            "- unrelated: No clear biological connection"
+        )
+    )
+    indication_match_justification: str = Field(
+        min_length=50,
+        description=(
+            "Justify the indication match rating. If PROXY or UNRELATED, explain "
+            "why this source is acceptable and what translation uncertainty is expected."
+        ),
+    )
+
+    # Species
+    species_source: str = Field(description="Species in the source study (human, mouse, rat, etc.)")
+    species_target: str = Field(
+        default="human", description="Target species for the model (usually 'human')"
+    )
+
+    # Source quality
+    source_quality: SourceQuality = Field(
+        description=(
+            "Quality tier of the primary data source.\n"
+            "IMPORTANT: 'non_peer_reviewed' includes Wikipedia, preprints, and "
+            "unreviewed sources. Avoid if possible; if used, document rationale."
+        )
+    )
+
+    # Perturbation context
+    perturbation_type: PerturbationType = Field(
+        description=(
+            "Type of experimental perturbation in the source study.\n"
+            "If 'pharmacological' or 'genetic_perturbation', explain in "
+            "perturbation_relevance how this relates to physiological parameter values."
+        )
+    )
+    perturbation_relevance: Optional[str] = Field(
+        default=None,
+        description=(
+            "For pharmacological/genetic perturbations: explain relevance to the "
+            "physiological parameter being estimated. E.g., if using drug-induced "
+            "death rates, explain whether this represents an upper bound, typical "
+            "value, or requires scaling."
+        ),
+    )
+
+    # TME compatibility (for immune/stromal parameters)
+    tme_compatibility: Optional[TMECompatibility] = Field(
+        default=None,
+        description=(
+            "For immune/stromal parameters: TME compatibility assessment.\n"
+            "- high: Source TME similar to target (e.g., both desmoplastic)\n"
+            "- moderate: Some TME differences that may affect values\n"
+            "- low: Major differences (e.g., T cell-permissive model for T cell-excluded tumor)"
+        ),
+    )
+    tme_compatibility_notes: Optional[str] = Field(
+        default=None,
+        description=(
+            "Notes on TME differences and their expected impact on the parameter. "
+            "E.g., 'EG7 thymoma is highly T cell-permissive; PDAC is T cell-excluded. "
+            "Expect 10-100x overestimation of infiltration rates.'"
+        ),
+    )
+
+    # Translation uncertainty
+    estimated_translation_uncertainty_fold: float = Field(
+        ge=1.0,
+        le=1000.0,
+        description=(
+            "Estimated fold-uncertainty due to source-to-target translation.\n"
+            "1.0 = no additional uncertainty (exact match)\n"
+            "3.0 = typical for cross-species or related indication\n"
+            "10.0 = typical for proxy indication or low TME compatibility\n"
+            "30-100 = cross-indication with major biological differences"
+        ),
+    )
+
+    # Computed confidence score (optional, can be set by validators)
+    validation_warnings: Optional[List[str]] = Field(
+        default=None,
+        description="Validation warnings generated by automated checks (populated by validators)",
     )
