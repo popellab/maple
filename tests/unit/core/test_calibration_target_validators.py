@@ -935,8 +935,9 @@ class TestCalibrationTargetValidators:
                 "name": "area_per_cancer_cell",
                 "value": 2.27e-4,
                 "units": "mm**2/cell",
-                "biological_basis": "Cancer cell ~17 μm diameter → π×(8.5 μm)² = 2.27e-4 mm²",
-                "source_ref": "modeling_assumption",
+                "biological_basis": "From reference DB pdac_cancer_cell_diameter (17 μm) → π×(8.5 μm)² = 2.27e-4 mm²",
+                "source_type": "derived_from_reference_db",
+                "reference_db_names": ["pdac_cancer_cell_diameter"],
             }
         ]
         # Use constant via constants dict (no hardcoded numbers with units)
@@ -1313,6 +1314,72 @@ class TestRegressionBugsFromLogfire:
         error_str = str(exc_info.value)
         assert "not found in value_snippet" in error_str
         assert "inferred_estimate" in error_str  # NEW: suggests the alternative
+
+    def test_figure_source_type_skips_snippet_validation(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Figure-sourced inputs should skip snippet value check.
+
+        When source_type='figure', the numeric value is read from a plot and
+        won't appear literally in the text snippet (which contains the caption).
+        """
+        from qsp_llm_workflows.core.calibration.enums import SourceType
+
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Input where value is read from a figure (not in snippet text)
+        data["empirical_data"]["inputs"] = [
+            {
+                "name": "cd8_ratio_mean",
+                "value": 1.0,
+                "units": "dimensionless",
+                "description": "Mean CD8/tumor ratio read from scatter plot",
+                "source_ref": "smith_2020",
+                "value_location": "Figure 2A",
+                "value_snippet": "CD8+ T cell infiltration across patient cohort (Figure 2A)",
+                "source_type": "figure",
+                "figure_id": "Figure 2A",
+                "extraction_method": "manual",
+                "extraction_notes": "Read from y-axis median marker",
+            },
+            {
+                "name": "cd8_ratio_sigma_log",
+                "value": 0.5,
+                "units": "dimensionless",
+                "description": "Log-scale SD from lognormal fit",
+                "source_ref": "smith_2020",
+                "value_location": "Table 2",
+                "value_snippet": "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)",
+            },
+        ]
+
+        # Should pass - figure source_type skips snippet validation
+        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        assert target is not None
+        assert target.empirical_data.inputs[0].source_type == SourceType.FIGURE
+
+    def test_snippet_error_mentions_figure_source_type(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Snippet validation error should mention source_type='figure' as option.
+
+        When a value fails snippet validation, the error message should guide
+        the LLM to use source_type='figure' if the value comes from a plot.
+        """
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Value not in snippet and no escape hatch set
+        data["empirical_data"]["inputs"][0]["value"] = 42.7
+        data["empirical_data"]["inputs"][0][
+            "value_snippet"
+        ] = "See Figure 3B for CD8 density across the cohort"
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value)
+        assert "not found in value_snippet" in error_str
+        assert "source_type='figure'" in error_str
 
     def test_distribution_code_array_error_has_helpful_message(
         self, species_units, golden_calibration_target_data, mock_crossref_success

@@ -424,7 +424,7 @@ class IsolatedSystemTarget(CalibrationTarget):
         """
         if self.submodel is None:
             return self
-        from qsp_llm_workflows.core.unit_registry import ureg
+        from qsp_llm_workflows.core.unit_registry import make_quantity, ureg
 
         model_structure = self._require_model_structure(info)
 
@@ -455,7 +455,7 @@ class IsolatedSystemTarget(CalibrationTarget):
                 if isinstance(inp.value, list):
                     inputs_pint[inp.name] = inp.value[0] * ureg(inp.units)
                 else:
-                    inputs_pint[inp.name] = inp.value * ureg(inp.units)
+                    inputs_pint[inp.name] = make_quantity(inp.value, inp.units)
             except Exception:
                 # If unit parsing fails, fall back to dimensionless
                 val = inp.value[0] if isinstance(inp.value, list) else inp.value
@@ -683,8 +683,9 @@ class IsolatedSystemTarget(CalibrationTarget):
                 + "     - name: cell_volume\n"
                 + "       value: 1766.0\n"
                 + "       units: micrometer**3\n"
-                + "       biological_basis: 'PDAC cell ~15 μm diameter → V = 4/3×π×(7.5)³'\n"
-                + "       source_ref: modeling_assumption\n"
+                + "       biological_basis: 'From reference DB pdac_cancer_cell_diameter (15 μm) → V = 4/3×π×(7.5)³'\n"
+                + "       source_type: derived_from_reference_db\n"
+                + "       reference_db_names: [pdac_cancer_cell_diameter]\n"
                 + "  2. Use in code: cell_vol = constants['cell_volume']"
             )
 

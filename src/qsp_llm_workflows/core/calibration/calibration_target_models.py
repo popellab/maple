@@ -17,6 +17,13 @@ import numpy as np
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 # Import from calibration submodules
+from qsp_llm_workflows.core.calibration.enums import (
+    IndicationMatch,
+    PerturbationType,
+    SourceQuality,
+    SourceType,
+    TMECompatibility,
+)
 from qsp_llm_workflows.core.calibration.exceptions import (
     ArrayLengthError,
     CalibrationTargetValidationError,
@@ -36,15 +43,21 @@ from qsp_llm_workflows.core.calibration.exceptions import (
     SourceRefError,
     SpeciesNotFoundError,
     UnitConversionError,
+    UnitParsingError,
 )
 from qsp_llm_workflows.core.calibration.experimental_context import ExperimentalContext
-from qsp_llm_workflows.core.calibration.observable import Observable
+from qsp_llm_workflows.core.calibration.observable import (
+    AggregationType,
+    ConstantSourceType,
+    Observable,
+)
 from qsp_llm_workflows.core.calibration.scenario import Scenario
 from qsp_llm_workflows.core.calibration.shared_models import (
     EstimateInput,
     ModelingAssumption,
     SecondarySource,
     Source,
+    SourceRelevanceAssessment,
 )
 from qsp_llm_workflows.core.calibration.validators import (
     check_value_in_text,
@@ -420,6 +433,16 @@ class CalibrationTarget(BaseModel):
         default_factory=list, description="Secondary data sources (reference values, constants)"
     )
 
+    # --- Source relevance (optional for CalibrationTarget, required for SubmodelTarget) ---
+    source_relevance: Optional[SourceRelevanceAssessment] = Field(
+        default=None,
+        description=(
+            "Structured assessment of how well the source data translates to the target model. "
+            "Optional for CalibrationTarget (typically exact-match human clinical data). "
+            "Captures indication match, source quality, perturbation context, and TME compatibility."
+        ),
+    )
+
     @classmethod
     def get_header_fields(cls) -> set[str]:
         """Get set of field names that are headers (from CalibrationTargetFooters)."""
@@ -567,6 +590,56 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_units_are_valid_pint(self) -> "CalibrationTarget":
+        """
+        Validator (ERROR): Statically check that all unit strings are parseable by Pint.
+
+        Catches invalid units early with clear error messages, before they cause
+        cryptic Pint failures during code execution.
+        """
+        # Skip for IsolatedSystemTarget (has its own unit validation)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        errors = []
+
+        def _check_unit(unit_str: Optional[str], location: str) -> None:
+            if unit_str is None:
+                return
+            try:
+                ureg(unit_str)
+            except Exception as e:
+                errors.append(f"{location}: '{unit_str}' ({e})")
+
+        # observable.units
+        _check_unit(self.observable.units, "observable.units")
+
+        # empirical_data.units
+        _check_unit(self.empirical_data.units, "empirical_data.units")
+
+        # observable.constants[*].units
+        for const in self.observable.constants:
+            _check_unit(const.units, f"observable.constants['{const.name}'].units")
+
+        # observable.inputs[*].units
+        for inp in self.observable.inputs:
+            _check_unit(inp.units, f"observable.inputs['{inp.name}'].units")
+
+        # empirical_data.index_unit
+        _check_unit(self.empirical_data.index_unit, "empirical_data.index_unit")
+
+        # aggregation.time_unit (if present)
+        if self.observable.aggregation is not None and self.observable.aggregation.time_unit is not None:
+            _check_unit(self.observable.aggregation.time_unit, "observable.aggregation.time_unit")
+
+        if errors:
+            raise UnitParsingError.from_errors(errors)
+
+        return self
+
+    @model_validator(mode="after")
     def validate_observable_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
         """
         Validator: Check that observable code executes and returns correct units.
@@ -687,6 +760,223 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_aggregation_support_consistency(self) -> "CalibrationTarget":
+        """
+        Validator (WARNING): Check that population aggregation type is consistent with support.
+
+        Response rates and survival rates produce values in [0, 1], so
+        support should be 'unit_interval'.
+        """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
+        import warnings
+
+        agg = self.observable.aggregation
+        if agg is not None and agg.type in (
+            AggregationType.RESPONSE_RATE,
+            AggregationType.SURVIVAL_RATE,
+        ):
+            if self.observable.support != "unit_interval":
+                warnings.warn(
+                    f"observable.aggregation.type is '{agg.type.value}' which produces values in [0, 1], "
+                    f"but observable.support is '{self.observable.support}'. "
+                    f"Consider setting support to 'unit_interval'.",
+                    UserWarning,
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def warn_evaluation_timing(self) -> "CalibrationTarget":
+        """
+        Validator (WARNING): Warn when time-indexed data has no scenario context.
+
+        Time-course calibration targets need a scenario to anchor the timeline
+        (e.g., treatment start, measurement protocol).
+        """
+        import warnings
+
+        if (
+            self.empirical_data.index_type is not None
+            and self.empirical_data.index_type == IndexType.TIME
+            and self.scenario is None
+        ):
+            warnings.warn(
+                "empirical_data has index_type='time' but no scenario is defined. "
+                "Time-course data typically needs a scenario to anchor the timeline "
+                "(treatment start, measurement schedule). Consider adding a scenario.",
+                UserWarning,
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def warn_observation_sd_unreasonable(self) -> "CalibrationTarget":
+        """
+        Validator (WARNING): Flag unreasonable implied CV from CI95 width.
+
+        Computes implied coefficient of variation from the CI95 width relative
+        to the median. Warns if CV > 200% (suspiciously wide) or CV < 1%
+        (suspiciously narrow, possibly a copy-paste error).
+        """
+        import warnings
+
+        for i, (med, ci) in enumerate(
+            zip(self.empirical_data.median, self.empirical_data.ci95)
+        ):
+            if med == 0:
+                continue
+            ci_width = ci[1] - ci[0]
+            # Approximate SD from CI95 width: SD ≈ CI_width / (2 * 1.96)
+            implied_sd = ci_width / 3.92
+            implied_cv = abs(implied_sd / med)
+
+            idx_label = f"[{i}]" if len(self.empirical_data.median) > 1 else ""
+
+            if implied_cv > 2.0:
+                warnings.warn(
+                    f"Implied CV{idx_label} = {implied_cv:.0%} (from CI95 width / median). "
+                    f"CV > 200% is unusually large — verify that ci95 and median are in the same units "
+                    f"and that the uncertainty hasn't been inflated.",
+                    UserWarning,
+                )
+            elif implied_cv < 0.01:
+                warnings.warn(
+                    f"Implied CV{idx_label} = {implied_cv:.2%} (from CI95 width / median). "
+                    f"CV < 1% is unusually small — verify that ci95 bounds differ from the median "
+                    f"and aren't copy-paste duplicates.",
+                    UserWarning,
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_source_quality_peer_reviewed(self) -> "CalibrationTarget":
+        """Validator (WARNING): Flag non-peer-reviewed sources."""
+        if self.source_relevance is None:
+            return self
+
+        import warnings
+
+        if self.source_relevance.source_quality == SourceQuality.NON_PEER_REVIEWED:
+            warnings.warn(
+                "source_relevance.source_quality is 'non_peer_reviewed'. "
+                "Prefer peer-reviewed primary literature for calibration targets. "
+                "If this source must be used, document the rationale in key_assumptions.",
+                UserWarning,
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_cross_indication_uncertainty(self) -> "CalibrationTarget":
+        """Validator (WARNING): Flag proxy/unrelated indication with insufficient uncertainty."""
+        if self.source_relevance is None:
+            return self
+
+        import warnings
+
+        sr = self.source_relevance
+        if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
+            if sr.estimated_translation_uncertainty_fold < 3.0:
+                warnings.warn(
+                    f"source_relevance.indication_match is '{sr.indication_match.value}' but "
+                    f"estimated_translation_uncertainty_fold is only {sr.estimated_translation_uncertainty_fold}x. "
+                    f"Proxy/unrelated indications typically require >= 3x translation uncertainty.",
+                    UserWarning,
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_pharmacological_perturbation_justification(self) -> "CalibrationTarget":
+        """Validator (WARNING): Flag pharmacological perturbation without relevance explanation."""
+        if self.source_relevance is None:
+            return self
+
+        import warnings
+
+        sr = self.source_relevance
+        if sr.perturbation_type == PerturbationType.PHARMACOLOGICAL:
+            if not sr.perturbation_relevance:
+                warnings.warn(
+                    "source_relevance.perturbation_type is 'pharmacological' but "
+                    "perturbation_relevance is not provided. Document how the drug-induced "
+                    "measurement relates to the physiological parameter being estimated.",
+                    UserWarning,
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_genetic_perturbation_justification(self) -> "CalibrationTarget":
+        """Validator (WARNING): Flag genetic perturbation without relevance explanation."""
+        if self.source_relevance is None:
+            return self
+
+        import warnings
+
+        sr = self.source_relevance
+        if sr.perturbation_type == PerturbationType.GENETIC:
+            if not sr.perturbation_relevance:
+                warnings.warn(
+                    "source_relevance.perturbation_type is 'genetic_perturbation' but "
+                    "perturbation_relevance is not provided. Document how the knockout/knockdown "
+                    "measurement relates to the wild-type parameter being estimated.",
+                    UserWarning,
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_low_tme_compatibility_uncertainty(self) -> "CalibrationTarget":
+        """Validator (WARNING): Flag low TME compatibility with insufficient uncertainty."""
+        if self.source_relevance is None:
+            return self
+
+        import warnings
+
+        sr = self.source_relevance
+        if sr.tme_compatibility == TMECompatibility.LOW:
+            if sr.estimated_translation_uncertainty_fold < 10.0:
+                warnings.warn(
+                    f"source_relevance.tme_compatibility is 'low' but "
+                    f"estimated_translation_uncertainty_fold is only {sr.estimated_translation_uncertainty_fold}x. "
+                    f"Low TME compatibility typically requires >= 10x translation uncertainty.",
+                    UserWarning,
+                )
+            if not sr.tme_compatibility_notes:
+                warnings.warn(
+                    "source_relevance.tme_compatibility is 'low' but tme_compatibility_notes "
+                    "is not provided. Document the TME differences and their expected impact.",
+                    UserWarning,
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_cross_species_uncertainty(self) -> "CalibrationTarget":
+        """Validator (WARNING): Flag cross-species data with insufficient uncertainty."""
+        if self.source_relevance is None:
+            return self
+
+        import warnings
+
+        sr = self.source_relevance
+        if sr.species_source != sr.species_target:
+            if sr.estimated_translation_uncertainty_fold < 2.0:
+                warnings.warn(
+                    f"Cross-species data (source: {sr.species_source}, target: {sr.species_target}) "
+                    f"but estimated_translation_uncertainty_fold is only {sr.estimated_translation_uncertainty_fold}x. "
+                    f"Cross-species translation typically requires >= 2x uncertainty.",
+                    UserWarning,
+                )
+
+        return self
+
+    @model_validator(mode="after")
     def validate_input_values_in_snippets(self) -> "CalibrationTarget":
         """Validator: Check that input values appear in their value_snippet.
 
@@ -716,6 +1006,10 @@ class CalibrationTarget(BaseModel):
                 if hasattr(inp, "input_type") and inp.input_type == InputType.INFERRED_ESTIMATE:
                     continue
 
+                # Skip validation for figure-sourced values (not expected in text snippets)
+                if hasattr(inp, "source_type") and inp.source_type == SourceType.FIGURE:
+                    continue
+
                 # Handle both scalar and vector-valued inputs
                 values_to_check = [value] if not isinstance(value, list) else value
 
@@ -735,7 +1029,8 @@ class CalibrationTarget(BaseModel):
                         f"  - Different numeric format in the paper (e.g., '2.5×10⁻³' vs '0.0025')\n"
                         f"  - Value reported in different units that need conversion\n"
                         f"  - Snippet truncated before the value appears\n"
-                        f"  - If value is INTERPRETED from qualitative text, use input_type='inferred_estimate'"
+                        f"  - If value is INTERPRETED from qualitative text, use input_type='inferred_estimate'\n"
+                        f"  - If value is READ FROM A FIGURE (plot/chart), use source_type='figure' with figure_id and extraction_method"
                     )
 
         # Check empirical_data.inputs
@@ -753,7 +1048,7 @@ class CalibrationTarget(BaseModel):
         Validator: Check that derivation_code executes, returns correct structure and units,
         and computed values match reported values (element-wise for vector data).
         """
-        from qsp_llm_workflows.core.unit_registry import ureg
+        from qsp_llm_workflows.core.unit_registry import make_quantity, ureg
         from qsp_llm_workflows.core.calibration.code_validator import (
             CodeType,
             validate_code_block,
@@ -806,7 +1101,7 @@ class CalibrationTarget(BaseModel):
                 if isinstance(inp.value, list):
                     mock_inputs[inp.name] = np.array(inp.value) * ureg(inp.units)
                 else:
-                    mock_inputs[inp.name] = inp.value * ureg(inp.units)
+                    mock_inputs[inp.name] = make_quantity(inp.value, inp.units)
             # Add modeling assumptions
             for assumption in self.empirical_data.assumptions:
                 if isinstance(assumption.value, list):
@@ -990,6 +1285,72 @@ class CalibrationTarget(BaseModel):
         # Check observable.inputs (if present and not IsolatedSystemTarget)
         if type(self).__name__ != "IsolatedSystemTarget" and self.observable.inputs:
             check_refs(self.observable.inputs, "observable")
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_constant_source_refs(self, info: ValidationInfo) -> "CalibrationTarget":
+        """
+        Validator (ERROR): Verify observable constant sources are traceable.
+
+        Every observable constant must have a verifiable source:
+        - reference_db: reference_db_name must match an entry in reference_values.yaml
+        - derived_from_reference_db: all reference_db_names must match entries
+        - literature: source_tag must match a defined source in this target
+
+        This prevents ungrounded "modeling assumptions" from entering constants.
+        """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
+        if not self.observable.constants:
+            return self
+
+        # Build set of valid literature source tags
+        valid_tags = {self.primary_data_source.source_tag}
+        valid_tags.update(s.source_tag for s in self.secondary_data_sources)
+
+        # Get reference DB names from validation context (if available)
+        # reference_db is a dict[str, float] mapping name → value
+        reference_db_names = set()
+        if info.context and "reference_db" in info.context:
+            reference_db_names = set(info.context["reference_db"].keys())
+
+        for const in self.observable.constants:
+            if const.source_type == ConstantSourceType.LITERATURE:
+                if const.source_tag not in valid_tags:
+                    raise SourceRefError(
+                        f"Observable constant '{const.name}' has source_tag '{const.source_tag}' "
+                        f"which is not defined in this target's sources.\n"
+                        f"Valid source tags: {sorted(valid_tags)}\n"
+                        f"Add the source to secondary_data_sources, or use "
+                        f"source_type='reference_db' with a reference_values.yaml entry."
+                    )
+
+            elif const.source_type == ConstantSourceType.REFERENCE_DB:
+                if reference_db_names and const.reference_db_name not in reference_db_names:
+                    raise SourceRefError(
+                        f"Observable constant '{const.name}' references "
+                        f"reference_db_name='{const.reference_db_name}' which was not found "
+                        f"in reference_values.yaml.\n"
+                        f"Available entries: {sorted(reference_db_names)}\n"
+                        f"Add the entry to reference_values.yaml or use a different source."
+                    )
+
+            elif const.source_type == ConstantSourceType.DERIVED_FROM_REFERENCE_DB:
+                if reference_db_names and const.reference_db_names:
+                    missing = [
+                        name for name in const.reference_db_names
+                        if name not in reference_db_names
+                    ]
+                    if missing:
+                        raise SourceRefError(
+                            f"Observable constant '{const.name}' derives from reference DB entries "
+                            f"that were not found: {missing}\n"
+                            f"Available entries: {sorted(reference_db_names)}\n"
+                            f"Add the missing entries to reference_values.yaml."
+                        )
 
         return self
 
@@ -1315,10 +1676,86 @@ class CalibrationTarget(BaseModel):
                 + "     - name: area_per_cancer_cell\n"
                 + "       value: 2.27e-4\n"
                 + "       units: mm**2/cell\n"
-                + "       biological_basis: 'Cancer cell diameter ~17 μm → area = π×(8.5 μm)²'\n"
-                + "       source_ref: modeling_assumption\n"
+                + "       biological_basis: 'From reference DB pdac_cancer_cell_diameter (17 μm) → area = π×(8.5 μm)²'\n"
+                + "       source_type: derived_from_reference_db\n"
+                + "       reference_db_names: [pdac_cancer_cell_diameter]\n"
                 + "  2. Use in code: area_per_cell = constants['area_per_cancer_cell']"
             )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_no_extreme_dimensionless_constants(self) -> "CalibrationTarget":
+        """
+        Validator (ERROR): Flag dimensionless constants with extreme magnitude.
+
+        Dimensionless scaling factors > 10 or < 0.1 almost always indicate
+        extraction errors rather than legitimate conversion factors. Legitimate
+        conversions (cell area, volume, molecular weight) have physical units.
+
+        This catches fudge factors like 'cd8_density_scale = 0.00283' or
+        'cd8_fold_scaling_factor = 100' that mask model-data mismatches.
+        """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
+        from qsp_llm_workflows.core.unit_registry import ureg
+
+        for const in self.observable.constants:
+            try:
+                quantity = const.value * ureg(const.units)
+                is_dimensionless = quantity.dimensionless
+            except Exception:
+                is_dimensionless = const.units.strip().lower() in (
+                    "dimensionless", ""
+                )
+
+            if is_dimensionless and const.value != 0 and (
+                abs(const.value) > 10 or abs(const.value) < 0.1
+            ):
+                raise ScaleMismatchError(
+                    f"Observable constant '{const.name}' has extreme dimensionless "
+                    f"value {const.value}.\n"
+                    f"Dimensionless scaling factors > 10 or < 0.1 almost always "
+                    f"indicate an extraction error (wrong statistic type, wrong "
+                    f"units, cross-arm confusion, or wrong denominator in a ratio).\n\n"
+                    f"If this is a legitimate conversion factor, it should have "
+                    f"physical units (e.g., mm**2/cell, not dimensionless).\n"
+                    f"Re-examine the data extraction before adding scaling factors."
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def warn_extreme_constant_magnitude(self) -> "CalibrationTarget":
+        """
+        Validator (WARNING): Flag constants with very large or very small values.
+
+        Constants with |log10(value)| > 4 (i.e., value > 10000 or value < 0.0001)
+        warrant scrutiny even when they have physical units, as they may indicate
+        unit mismatches or conversion errors.
+        """
+        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
+        import math
+        import warnings
+
+        for const in self.observable.constants:
+            if const.value == 0:
+                continue
+            log_magnitude = abs(math.log10(abs(const.value)))
+            if log_magnitude > 4:
+                warnings.warn(
+                    f"Observable constant '{const.name}' has value {const.value} "
+                    f"(magnitude ~10^{log_magnitude:.0f}). Constants with extreme "
+                    f"magnitude often indicate unit mismatches or conversion errors. "
+                    f"Verify the biological_basis is correct and the value uses "
+                    f"appropriate units.",
+                    UserWarning,
+                )
 
         return self
 

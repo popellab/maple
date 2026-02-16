@@ -713,8 +713,9 @@ class TestHardcodedConstantsValidation:
                 "name": "cell_volume",
                 "value": 1766.0,
                 "units": "micrometer**3",
-                "biological_basis": "PDAC cell ~15 μm diameter",
-                "source_ref": "modeling_assumption",
+                "biological_basis": "PDAC cell ~15 μm diameter → V = 4/3×π×(7.5 μm)³ ≈ 1766 μm³",
+                "source_type": "derived_from_reference_db",
+                "reference_db_names": ["pdac_cancer_cell_diameter"],
             }
         ]
         data["empirical_data"]["units"] = "micrometer**3"
