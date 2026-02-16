@@ -12,6 +12,8 @@ from typing import List, Dict, Any, Optional
 
 from pydantic_ai import Agent, WebSearchTool, CodeExecutionTool
 
+from qsp_llm_workflows.core.tools.view_figure import view_figure
+
 from qsp_llm_workflows.core.prompt_builder import (
     ParameterPromptBuilder,
     TestStatisticPromptBuilder,
@@ -97,8 +99,17 @@ class ImmediateRequestProcessor:
         elif workflow_type == "test_statistic":
             return self.test_statistic_creator.process(input_csv, None, reasoning_effort)
         elif workflow_type == "calibration_target":
+            # Auto-discover reference_values.yaml next to model_structure or species_units
+            reference_values_file = None
+            if self.model_structure_file:
+                candidate = self.model_structure_file.parent / "reference_values.yaml"
+                if candidate.exists():
+                    reference_values_file = candidate
             return self.calibration_target_creator.process(
-                input_csv, species_units_file, reasoning_effort
+                input_csv,
+                species_units_file,
+                reasoning_effort,
+                reference_values_file=reference_values_file,
             )
         elif workflow_type == "isolated_system_target":
             # Requires model_structure_file and model_context_file
@@ -185,14 +196,16 @@ class ImmediateRequestProcessor:
             # Get validation context from request (for species_units)
             validation_context = request.get("validation_context", {})
 
-            # Build tools list - web search and code execution
+            # Build tools list - web search, code execution, and figure viewing
             builtin_tools = [WebSearchTool(), CodeExecutionTool()]
+            custom_tools = [view_figure]
 
             agent = Agent(
                 openai_model,
                 output_type=pydantic_model,
                 model_settings=settings,
                 builtin_tools=builtin_tools,
+                tools=custom_tools,
                 validation_context=validation_context,
                 retries=max_retries,
             )
