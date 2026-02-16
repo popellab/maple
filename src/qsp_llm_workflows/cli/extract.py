@@ -103,6 +103,12 @@ Examples:
         "for constituent parameters (default: only exclude sources from same target_id)",
     )
 
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Skip interactive target selection (process all rows in CSV)",
+    )
+
     args = parser.parse_args()
 
     # Validate input file
@@ -181,6 +187,17 @@ Examples:
         print("Make sure OPENAI_API_KEY is set in .env file", file=sys.stderr)
         sys.exit(1)
 
+    # Interactive target selection
+    effective_csv = Path(args.input_csv)
+    if not args.no_interactive and sys.stdin.isatty():
+        from qsp_llm_workflows.cli.interactive import interactive_select
+
+        filtered_csv = interactive_select(effective_csv, args.type)
+        if filtered_csv is None:
+            print("Extraction cancelled.", file=sys.stderr)
+            sys.exit(0)
+        effective_csv = filtered_csv
+
     # Create orchestrator
     orchestrator = WorkflowOrchestrator(config)
 
@@ -191,13 +208,13 @@ Examples:
             print(f"Building prompts for {args.type} extraction workflow...")
         else:
             print(f"\nStarting {args.type} extraction workflow (Pydantic AI)...")
-        print(f"Input: {args.input_csv}")
+        print(f"Input: {effective_csv}")
         print(f"Model: {args.model}")
         print(f"Reasoning effort: {args.reasoning_effort}")
         print()
 
         result = orchestrator.run_complete_workflow(
-            input_csv=Path(args.input_csv),
+            input_csv=effective_csv,
             workflow_type=args.type,
             progress_callback=print_progress,
             preview_prompts=args.preview_prompts,
