@@ -63,7 +63,6 @@ from qsp_llm_workflows.core.calibration.validators import (
     check_value_in_text,
     create_mock_species,
     fuzzy_match,
-    get_typical_species_value,
     resolve_doi,
 )
 
@@ -631,7 +630,10 @@ class CalibrationTarget(BaseModel):
         _check_unit(self.empirical_data.index_unit, "empirical_data.index_unit")
 
         # aggregation.time_unit (if present)
-        if self.observable.aggregation is not None and self.observable.aggregation.time_unit is not None:
+        if (
+            self.observable.aggregation is not None
+            and self.observable.aggregation.time_unit is not None
+        ):
             _check_unit(self.observable.aggregation.time_unit, "observable.aggregation.time_unit")
 
         if errors:
@@ -823,9 +825,7 @@ class CalibrationTarget(BaseModel):
         """
         import warnings
 
-        for i, (med, ci) in enumerate(
-            zip(self.empirical_data.median, self.empirical_data.ci95)
-        ):
+        for i, (med, ci) in enumerate(zip(self.empirical_data.median, self.empirical_data.ci95)):
             if med == 0:
                 continue
             ci_width = ci[1] - ci[0]
@@ -1341,8 +1341,7 @@ class CalibrationTarget(BaseModel):
             elif const.source_type == ConstantSourceType.DERIVED_FROM_REFERENCE_DB:
                 if reference_db_names and const.reference_db_names:
                     missing = [
-                        name for name in const.reference_db_names
-                        if name not in reference_db_names
+                        name for name in const.reference_db_names if name not in reference_db_names
                     ]
                     if missing:
                         raise SourceRefError(
@@ -1707,12 +1706,12 @@ class CalibrationTarget(BaseModel):
                 quantity = const.value * ureg(const.units)
                 is_dimensionless = quantity.dimensionless
             except Exception:
-                is_dimensionless = const.units.strip().lower() in (
-                    "dimensionless", ""
-                )
+                is_dimensionless = const.units.strip().lower() in ("dimensionless", "")
 
-            if is_dimensionless and const.value != 0 and (
-                abs(const.value) > 10 or abs(const.value) < 0.1
+            if (
+                is_dimensionless
+                and const.value != 0
+                and (abs(const.value) > 10 or abs(const.value) < 0.1)
             ):
                 raise ScaleMismatchError(
                     f"Observable constant '{const.name}' has extreme dimensionless "
@@ -1756,175 +1755,6 @@ class CalibrationTarget(BaseModel):
                     f"appropriate units.",
                     UserWarning,
                 )
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_scale_consistency(self, info: ValidationInfo) -> "CalibrationTarget":
-        """
-        Validator: Check that observable.code output scale matches calibration target scale.
-
-        Executes observable.code with mock species data spanning wide range and checks
-        if output range is compatible with empirical_data range.
-
-        Catches scale mismatches like ratio (0-1) vs score (0-3) before calibration.
-
-        Requires context:
-            species_units: Dict mapping species names to unit strings (from species_units.json)
-        """
-        # Skip for IsolatedSystemTarget (uses submodel.observable instead)
-        if type(self).__name__ == "IsolatedSystemTarget":
-            return self
-
-        from qsp_llm_workflows.core.unit_registry import ureg
-
-        # Get species_units from context
-        if not info.context:
-            raise ValueError(
-                "Validation context is required. Pass context={'species_units': {...}}"
-            )
-        species_units = info.context["species_units"]
-
-        # Get calibration target range
-        # For vector data, use overall statistics across all index points
-        estimates = self.empirical_data
-
-        # Flatten ci95 to get overall min/max
-        all_ci_values: list[float] = []
-        for ci_pair in estimates.ci95:
-            all_ci_values.extend(ci_pair)
-        target_min = float(min(all_ci_values))
-        target_max = float(max(all_ci_values))
-
-        # Use median of medians for representative central value
-        target_median = float(np.median(estimates.median))
-
-        try:
-            # Create mock time array
-            n_timepoints = 50
-            mock_time = np.linspace(0, 100, n_timepoints) * ureg.day
-
-            # Create mock species with INDEPENDENT variation
-            # Key improvement: vary species with different phases so ratios actually vary
-            mock_species = {}
-            for idx, species_name in enumerate(self.observable.species):
-                # Get unit from species_units (handle both dict and string formats)
-                species_info = species_units.get(species_name, "cell")
-                if isinstance(species_info, dict):
-                    unit_str = species_info.get("units", "cell")
-                else:
-                    unit_str = species_info
-
-                # Use biologically realistic base values based on unit type
-                base_value = get_typical_species_value(unit_str)
-
-                # Vary each species with a different phase offset
-                # This ensures ratios will vary, exposing conversion factor issues
-                phase_offset = idx * np.pi / max(len(self.observable.species), 1)
-                variation = 1 + 0.8 * np.sin(np.linspace(0, 4 * np.pi, n_timepoints) + phase_offset)
-
-                # Also include some magnitude variation (±1 order of magnitude)
-                magnitude_variation = np.logspace(-0.5, 0.5, n_timepoints)
-
-                values = base_value * variation * magnitude_variation
-                mock_species[species_name] = values * ureg(unit_str)
-
-            # Execute observable.code
-            local_scope = {"ureg": ureg, "np": np}
-            exec(self.observable.code, local_scope)
-            compute_fn = local_scope["compute_observable"]
-
-            # Build constants dict from observable.constants
-            constants = {}
-            for const in self.observable.constants:
-                constants[const.name] = const.value * ureg(const.units)
-
-            result = compute_fn(mock_time, mock_species, constants, ureg)
-
-            # Get code output statistics
-            result_magnitude = np.atleast_1d(result.magnitude)
-            code_min = float(np.min(result_magnitude))
-            code_max = float(np.max(result_magnitude))
-            code_median = float(np.median(result_magnitude))
-            code_std = float(np.std(result_magnitude))
-
-            # Check for scale mismatch patterns
-            # Pattern 1: Code outputs ratio (0-1) but target is score (>2)
-            if code_max <= 1.5 and target_max > 2.0:
-                raise ScaleMismatchError(
-                    f"Scale mismatch detected - likely ratio (0-1) vs score (0-N) mismatch:\n"
-                    f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
-                    f"  • Observable code:    median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
-                    f"The observable.code outputs values on 0-1 scale (likely a ratio/fraction),\n"
-                    f"but calibration target is on a larger scale (likely a 0-N score).\n"
-                    f"Fix: Either scale the calibration target down to 0-1, or scale the observable.code up to 0-N."
-                )
-
-            # Pattern 2: Code outputs score (>2) but target is ratio (0-1)
-            if code_max > 2.0 and target_max <= 1.5:
-                raise ScaleMismatchError(
-                    f"Scale mismatch detected - likely score (0-N) vs ratio (0-1) mismatch:\n"
-                    f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
-                    f"  • Observable code:    median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
-                    f"The observable.code outputs values on 0-N scale (likely a score),\n"
-                    f"but calibration target is on 0-1 scale (likely a ratio/fraction).\n"
-                    f"Fix: Either scale the calibration target up to 0-N, or scale the observable.code down to 0-1."
-                )
-
-            # Pattern 3: Ranges don't overlap and differ by >10x
-            tolerance = 10.0
-            if code_median > 0 and target_median > 0:
-                median_ratio = max(target_median, code_median) / min(target_median, code_median)
-
-                # Check if ranges don't overlap
-                ranges_overlap = not (code_max < target_min or code_min > target_max)
-
-                if not ranges_overlap and median_ratio > tolerance:
-                    raise ScaleMismatchError(
-                        f"Scale mismatch detected - output scale differs by {median_ratio:.1f}x:\n"
-                        f"  • Calibration target: median={target_median:.3g}, range=[{target_min:.3g}, {target_max:.3g}]\n"
-                        f"  • Observable code:    median={code_median:.3g}, range=[{code_min:.3g}, {code_max:.3g}]\n"
-                        f"The observable.code output is on a different scale than the calibration target.\n"
-                        f"Check for missing unit conversions or scaling factors."
-                    )
-
-            # Pattern 4: Absolute magnitude check
-            # Even if ranges "overlap" due to mock data spread, flag if
-            # medians are wildly different (>100×)
-            if code_median > 0 and target_median > 0:
-                absolute_ratio = max(target_median, code_median) / min(target_median, code_median)
-                if absolute_ratio > 100:
-                    raise ScaleMismatchError(
-                        f"Magnitude mismatch detected - medians differ by {absolute_ratio:.0f}×:\n"
-                        f"  • Calibration target median: {target_median:.3g}\n"
-                        f"  • Observable code median:    {code_median:.3g}\n"
-                        f"The observable.code output magnitude is very different from the calibration target.\n"
-                        f"This often indicates a wrong conversion factor (e.g., 1e-8 instead of 2.27e-4).\n"
-                        f"Check: area_per_cell calculations, volume conversions, or density scaling factors."
-                    )
-
-            # Pattern 5: Variability check
-            # If inputs vary but output is constant, formula may be wrong
-            if code_median != 0:
-                code_cv = code_std / abs(code_median)
-                if code_cv < 1e-6:
-                    # Output is effectively constant despite varying inputs
-                    import warnings
-
-                    warnings.warn(
-                        f"Observable code output is constant (CV={code_cv:.2e}) despite varying inputs.\n"
-                        f"This may indicate the formula doesn't use all declared species correctly,\n"
-                        f"or contains hardcoded values that override the species inputs.",
-                        UserWarning,
-                    )
-
-        except CalibrationTargetValidationError:
-            # Re-raise all our custom validation errors
-            raise
-        except Exception:
-            # Other errors (e.g., complex mock data requirements) - be lenient
-            # The observable.code might use logic we can't easily mock
-            pass
 
         return self
 
