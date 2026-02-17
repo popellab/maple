@@ -34,7 +34,7 @@ import pytest
 from unittest.mock import Mock, patch
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.calibration import CalibrationTarget
+from qsp_llm_workflows.core.calibration import CalibrationTarget, Observable
 
 
 # ============================================================================
@@ -1481,3 +1481,75 @@ class TestRegressionBugsFromLogfire:
             )
             assert target is not None
             assert len(target.secondary_data_sources) == 1
+
+
+class TestObservableDenominatorAudit:
+    """Tests for the Observable denominator audit validator."""
+
+    def _make_observable(self, **overrides):
+        """Helper to create Observable with sensible defaults."""
+        base = {
+            "code": (
+                "def compute_observable(time, species_dict, constants, ureg):\n"
+                "    return species_dict['V_T.CD8']"
+            ),
+            "units": "dimensionless",
+            "species": ["V_T.CD8"],
+            "support": "positive_unbounded",
+        }
+        base.update(overrides)
+        return Observable(**base)
+
+    def test_observable_without_denominator_fields_passes(self):
+        """Observable without denominator fields passes for non-density units."""
+        obs = self._make_observable()
+        assert obs.experimental_denominator is None
+        assert obs.model_denominator_species is None
+
+    def test_density_observable_without_experimental_denominator_fails(self):
+        """Density observable (cell/mm**2) must declare experimental_denominator."""
+        with pytest.raises(ValidationError, match="experimental_denominator"):
+            self._make_observable(
+                units="cell / millimeter**2",
+                support="positive",
+            )
+
+    def test_density_observable_with_denominator_audit_passes(self):
+        """Density observable with full denominator audit passes."""
+        obs = self._make_observable(
+            units="cell / millimeter**2",
+            support="positive",
+            experimental_denominator="mm^2 of tumor tissue (whole section including stroma)",
+            model_denominator_species=["V_T.C1"],
+        )
+        assert obs.experimental_denominator is not None
+        assert obs.model_denominator_species == ["V_T.C1"]
+
+    def test_experimental_denominator_without_model_species_fails(self):
+        """Setting experimental_denominator without model_denominator_species fails."""
+        with pytest.raises(ValidationError, match="model_denominator_species"):
+            self._make_observable(
+                experimental_denominator="CD3+ T cells",
+            )
+
+    def test_fraction_with_full_denominator_audit_passes(self):
+        """Fraction observable with all denominator fields passes."""
+        obs = self._make_observable(
+            units="dimensionless",
+            support="unit_interval",
+            experimental_denominator="all cells in ROI (all nucleated cells)",
+            model_denominator_species=["V_T.CD8", "V_T.Th", "V_T.Treg", "V_T.Mac_M1"],
+            unmodeled_denominator_components=(
+                "B cells (50-70% of LA cells) not modeled; model prediction "
+                "will be ~2-3x higher than experimental value."
+            ),
+        )
+        assert obs.unmodeled_denominator_components is not None
+
+    def test_non_density_units_with_slash_no_cell_passes(self):
+        """Non-cell density units like nanomolarity (nM) don't trigger the audit."""
+        obs = self._make_observable(
+            units="nanomolarity",
+            support="positive",
+        )
+        assert obs.experimental_denominator is None

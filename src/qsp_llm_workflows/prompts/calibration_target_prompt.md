@@ -299,6 +299,50 @@ When the calibration target requests a fold-change (pre-to-post treatment change
 
 Legitimate conversion factors have clear physical meaning (e.g., cell cross-sectional area = 2.27e-4 mm²/cell from geometry) and should never be dimensionless fudge factors.
 
+### Denominator Audit
+
+**CRITICAL:** When your observable computes a ratio (density, fraction, percentage), verify that the numerator and denominator match the experimental measurement:
+
+1. **State the experimental denominator explicitly.** What does the paper divide by?
+   - "per mm² of tumor tissue" (includes stroma + cancer + immune cells)
+   - "% of all cells in ROI" (all nucleated cells)
+   - "% of CD45+ cells" (all leukocytes)
+   - "% of CD3+ cells" (all T cells)
+
+2. **State the model denominator.** What does your observable code divide by?
+   - `V_T.C1 * area_per_cell` (cancer-cell-only area — **ignores stroma**)
+   - Sum of T cell species only (excludes myeloid, B cells)
+   - Sum of all immune species (excludes cancer cells, fibroblasts)
+
+3. **Confirm they match.** If not, either:
+   - Add correction constants (e.g., `stromal_fraction`) with reference DB source
+   - Restructure the observable to eliminate the mismatch (e.g., use a ratio of two densities from the same paper — see "Prefer Ratios" below)
+   - Document the residual mismatch magnitude in `key_assumptions` and in `observable.unmodeled_denominator_components`
+
+**Common pitfall — desmoplastic tumors (PDAC, cholangiocarcinoma):** PDAC is 60–90% stroma. Using `C1 * area_per_cancer_cell` as tumor tissue area underestimates the true section area by 3–10×, systematically overpredicting cell densities. Always include `pdac_stromal_fraction` from the reference DB, or — better — prefer dimensionless ratios.
+
+**Common pitfall — lymphoid aggregates / tertiary lymphoid structures:** LAs are immune-cell-dense regions where B cells constitute 50–70% of cells. B cells are typically not modeled. If the measurement denominator is "all cells in LA ROI", using only modeled immune species in the denominator will overestimate the predicted fraction by 2–3×. Document this in `unmodeled_denominator_components`.
+
+### Prefer Dimensionless Ratios Over Absolute Densities
+
+When the same paper reports densities for multiple cell types measured on the same tissue sections (e.g., CD3+ and Foxp3+ cells/mm²), **prefer computing their RATIO** rather than calibrating against absolute densities. Ratios:
+
+- **Cancel the tissue area factor** (no stroma correction or section thickness needed)
+- **Are independent of counting field size** and magnification
+- **Use paper-specific denominators** (more accurate than generic reference values)
+
+**Example:** A paper reports Foxp3+ = 48.5 cells/mm² and CD3+ = 942.5 cells/mm² from the same cohort and sections. Use Foxp3+/CD3+ = 0.051 (dimensionless) rather than trying to convert 48.5 cells/mm² to model cell counts via tissue area estimation.
+
+**When to use ratios:**
+- Paper reports ≥2 cell-type densities from the same sections/cohort
+- The ratio maps cleanly to model species (e.g., CD3+ → all T cells, CD8+/CD3+ → effector fraction)
+- The absolute density target would require uncertain conversion constants (stromal fraction, section volume, cellularity)
+
+**When absolute densities are unavoidable:**
+- Only one cell type measured (no denominator available from the same paper)
+- The calibration specifically targets absolute cell count (e.g., tumor burden in cells)
+- The ratio would require species not tracked in the model
+
 ---
 
 ## Critical Requirements
@@ -366,10 +410,10 @@ Each measurement requires:
    - **Avoid circular reasoning**: Don't define timing by the observable being measured (e.g., don't say "when tumor reaches X cm" if measuring tumor size)
    - **Be specific about causality**: Distinguish between biological thresholds (disease progression) and clinical decisions (institutional protocols, symptom-triggered interventions)
 
-**Example measurement:**
+**Example measurement (absolute density with stroma correction):**
 ```yaml
 measurements:
-  - measurement_description: "CD8+ T cell density per tumor area via IHC, cells/mm²"
+  - measurement_description: "CD8+ T cell density per tumor tissue area via IHC, cells/mm²"
     measurement_species: ['V_T.CD8', 'V_T.C1']
     measurement_constants:
       - name: area_per_cancer_cell
@@ -378,14 +422,43 @@ measurements:
         biological_basis: "From reference DB pdac_cancer_cell_diameter (17 μm) → π×(8.5 μm)² = 2.27e-4 mm²"
         source_type: derived_from_reference_db
         reference_db_names: [pdac_cancer_cell_diameter]
+      - name: stromal_fraction
+        value: 0.75
+        units: dimensionless
+        biological_basis: "PDAC tumors are highly desmoplastic with 60-90% stromal content. Reference DB consensus value 0.75."
+        source_type: reference_db
+        reference_db_name: pdac_stromal_fraction
     measurement_code: |
       def compute_measurement(time, species_dict, ureg, constants):
           cd8 = species_dict['V_T.CD8']
           c_cells = species_dict['V_T.C1']
-          tumor_area = c_cells * constants['area_per_cancer_cell']
+          area_per_cell = constants['area_per_cancer_cell']
+          stroma_frac = constants['stromal_fraction']
+          # Tissue area includes cancer cells AND stroma
+          tumor_area = c_cells * area_per_cell / (1 - stroma_frac)
           return (cd8 / tumor_area).to('cell/mm**2')
     support: positive
     threshold_description: "At tumor resection"
+    experimental_denominator: "mm^2 of tumor tissue section (cancer cells + stroma)"
+    model_denominator_species: ['V_T.C1']
+```
+
+**Example measurement (dimensionless ratio — preferred when available):**
+```yaml
+measurements:
+  - measurement_description: "Foxp3+ fraction of T cells (Foxp3+/CD3+) via IHC"
+    measurement_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
+    measurement_constants: []
+    measurement_code: |
+      def compute_measurement(time, species_dict, ureg, constants):
+          treg = species_dict['V_T.Treg']
+          total_t = (treg + species_dict['V_T.CD8'] + species_dict['V_T.Th']
+                     + species_dict['V_T.CD8_exh'] + species_dict['V_T.Th_exh'])
+          return (treg / total_t).to('dimensionless')
+    support: unit_interval
+    threshold_description: "At tumor resection"
+    experimental_denominator: "CD3+ T cells (all T cell subsets)"
+    model_denominator_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
 ```
 
 **Key principles for measurement_code:**

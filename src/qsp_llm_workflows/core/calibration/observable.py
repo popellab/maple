@@ -283,12 +283,14 @@ class Observable(BaseModel):
             "- constants: dict mapping constant names to Pint Quantities (from constants field)\n"
             "- ureg: Pint UnitRegistry for unit conversions\n\n"
             "Must return a Pint Quantity array with units matching empirical_data.units.\n\n"
-            "Example (cell density):\n"
+            "Example (cell density with stroma correction):\n"
             "def compute_observable(time, species_dict, constants, ureg):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    cancer_cells = species_dict['V_T.C1']\n"
             "    area_per_cell = constants['area_per_cancer_cell']\n"
-            "    tumor_area = cancer_cells * area_per_cell\n"
+            "    stroma_frac = constants['stromal_fraction']\n"
+            "    # Tissue area includes cancer cells AND stroma\n"
+            "    tumor_area = cancer_cells * area_per_cell / (1 - stroma_frac)\n"
             "    density = cd8 / tumor_area\n"
             "    return density.to('cell/mm**2')"
         )
@@ -338,6 +340,70 @@ class Observable(BaseModel):
             "Recommended when the mapping is non-obvious or involves aggregation."
         ),
     )
+
+    experimental_denominator: Optional[str] = Field(
+        default=None,
+        description=(
+            "What the experimental measurement divides by. Required when the "
+            "observable is a density or fraction.\n\n"
+            "Examples:\n"
+            "- 'mm^2 of tumor tissue (whole section including stroma)'\n"
+            "- 'all cells in ROI (all nucleated cells)'\n"
+            "- 'CD3+ T cells (pan-T-cell marker)'\n"
+            "- 'CD45+ leukocytes'"
+        ),
+    )
+
+    model_denominator_species: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Which model species compose the denominator in the observable code. "
+            "Required when experimental_denominator is set.\n"
+            "Format: 'compartment.species' (e.g., ['V_T.CD8', 'V_T.Th', 'V_T.Treg']).\n"
+            "For area-based denominators, list the species used to compute area "
+            "(e.g., ['V_T.C1'] when tumor area = C1 * area_per_cell)."
+        ),
+    )
+
+    unmodeled_denominator_components: Optional[str] = Field(
+        default=None,
+        description=(
+            "Components present in the experimental denominator but absent from the "
+            "model. Document expected direction and magnitude of systematic bias.\n\n"
+            "Examples:\n"
+            "- 'B cells (50-70% of LA cells) not modeled; model prediction will be "
+            "~2-3x higher than experimental value.'\n"
+            "- 'Stromal cells constitute 60-90% of PDAC tissue area; without stromal "
+            "fraction correction the model would overpredict density by 3-10x.'\n"
+            "- None (denominator fully captured by model species)."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_denominator_fields(self) -> "Observable":
+        """Validate denominator audit fields for density/fraction observables."""
+        if self.experimental_denominator and not self.model_denominator_species:
+            raise ValueError(
+                f"Observable has experimental_denominator='{self.experimental_denominator}' "
+                f"but model_denominator_species is not set. Specify which model species "
+                f"compose the denominator to complete the denominator audit."
+            )
+
+        # Density observables (units like cell/mm**2) must have denominator audit
+        is_density = (
+            self.units not in ("dimensionless",)
+            and "/" in self.units
+            and self.support in ("positive", "non_negative")
+        )
+        if is_density and not self.experimental_denominator:
+            raise ValueError(
+                f"Observable with units='{self.units}' and support='{self.support}' "
+                f"is a density but experimental_denominator is not set. "
+                f"Document what the experiment divides by (e.g., 'mm^2 of tumor "
+                f"tissue including stroma') to enable denominator audit."
+            )
+
+        return self
 
     aggregation: Optional[PopulationAggregation] = Field(
         default=None,
