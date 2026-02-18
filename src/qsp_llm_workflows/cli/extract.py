@@ -71,6 +71,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--reference-values",
+        type=Path,
+        help="Path to reference_values.yaml with curated constants (cell diameters, MW, tissue densities)",
+    )
+
+    parser.add_argument(
         "--model-structure",
         type=Path,
         help="Path to model_structure.json for parameter context and validation (isolated_system_target)",
@@ -146,7 +152,16 @@ Examples:
     # Validate optional paths
     model_structure_file = None
     model_context_file = None
+    reference_values_file = None
     previous_extractions_dir = None
+
+    if args.reference_values:
+        if not args.reference_values.exists():
+            print(
+                f"Error: Reference values file not found: {args.reference_values}", file=sys.stderr
+            )
+            sys.exit(1)
+        reference_values_file = args.reference_values.resolve()
 
     if args.model_structure:
         if not args.model_structure.exists():
@@ -176,6 +191,7 @@ Examples:
             openai_api_key=env_config.openai_api_key,
             openai_model=args.model,
             reasoning_effort=args.reasoning_effort,
+            reference_values_file=reference_values_file,
             model_structure_file=model_structure_file,
             model_context_file=model_context_file,
             previous_extractions_dir=previous_extractions_dir,

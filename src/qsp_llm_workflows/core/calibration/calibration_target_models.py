@@ -32,6 +32,7 @@ from qsp_llm_workflows.core.calibration.exceptions import (
     ComputedValueMismatchError,
     ControlCharacterError,
     DimensionalityMismatchError,
+    DOIMetadataMismatchError,
     DOIResolutionError,
     HardcodedConstantError,
     MissingUnitsError,
@@ -521,6 +522,46 @@ class CalibrationTarget(BaseModel):
                         f"  - Check for special characters, subscripts, or abbreviations\n"
                         f"  - Ensure the DOI matches the paper you're citing"
                     )
+        return self
+
+    @model_validator(mode="after")
+    def validate_first_author_match(self) -> "CalibrationTarget":
+        """Validator: Check that first author matches CrossRef metadata."""
+        if self.primary_data_source.doi and self.primary_data_source.first_author:
+            metadata = resolve_doi(self.primary_data_source.doi)
+            if metadata:
+                crossref_author = metadata.get("first_author", "")
+                if crossref_author:
+                    provided = self.primary_data_source.first_author.strip().lower()
+                    expected = crossref_author.strip().lower()
+                    if provided != expected:
+                        raise DOIMetadataMismatchError(
+                            f"First author mismatch:\n"
+                            f"  CrossRef: '{crossref_author}'\n"
+                            f"  Provided: '{self.primary_data_source.first_author}'\n\n"
+                            f"How to fix:\n"
+                            f"  - Check the first author's family name on the paper\n"
+                            f"  - Ensure you're citing the first author, not the senior/corresponding author"
+                        )
+        return self
+
+    @model_validator(mode="after")
+    def validate_year_match(self) -> "CalibrationTarget":
+        """Validator: Check that publication year matches CrossRef metadata."""
+        if self.primary_data_source.doi and self.primary_data_source.year:
+            metadata = resolve_doi(self.primary_data_source.doi)
+            if metadata:
+                crossref_year = metadata.get("year")
+                if crossref_year is not None:
+                    if self.primary_data_source.year != crossref_year:
+                        raise DOIMetadataMismatchError(
+                            f"Publication year mismatch:\n"
+                            f"  CrossRef: {crossref_year}\n"
+                            f"  Provided: {self.primary_data_source.year}\n\n"
+                            f"How to fix:\n"
+                            f"  - Check the publication year on the publisher's website\n"
+                            f"  - Note: year may differ from preprint year or acceptance date"
+                        )
         return self
 
     @model_validator(mode="after")

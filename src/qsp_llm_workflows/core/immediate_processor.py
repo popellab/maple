@@ -42,6 +42,7 @@ class ImmediateRequestProcessor:
         api_key: str,
         model_structure_file: Optional[Path] = None,
         model_context_file: Optional[Path] = None,
+        reference_values_file: Optional[Path] = None,
         previous_extractions_dir: Optional[Path] = None,
     ):
         """
@@ -52,12 +53,14 @@ class ImmediateRequestProcessor:
             api_key: OpenAI API key
             model_structure_file: Optional path to model_structure.json for isolated system targets
             model_context_file: Optional path to model_context.txt for isolated system targets
+            reference_values_file: Optional path to reference_values.yaml with curated constants
             previous_extractions_dir: Optional path to directory with previous extractions
         """
         self.base_dir = Path(base_dir)
         self.api_key = api_key
         self.model_structure_file = model_structure_file
         self.model_context_file = model_context_file
+        self.reference_values_file = reference_values_file
         self.previous_extractions_dir = previous_extractions_dir
 
         # Setup logfire once (optional instrumentation for debugging)
@@ -99,17 +102,11 @@ class ImmediateRequestProcessor:
         elif workflow_type == "test_statistic":
             return self.test_statistic_creator.process(input_csv, None, reasoning_effort)
         elif workflow_type == "calibration_target":
-            # Auto-discover reference_values.yaml next to model_structure or species_units
-            reference_values_file = None
-            if self.model_structure_file:
-                candidate = self.model_structure_file.parent / "reference_values.yaml"
-                if candidate.exists():
-                    reference_values_file = candidate
             return self.calibration_target_creator.process(
                 input_csv,
                 species_units_file,
                 reasoning_effort,
-                reference_values_file=reference_values_file,
+                reference_values_file=self.reference_values_file,
             )
         elif workflow_type == "isolated_system_target":
             # Requires model_structure_file and model_context_file
@@ -139,6 +136,7 @@ class ImmediateRequestProcessor:
                 species_units_file,
                 reasoning_effort,
                 previous_extractions_dir=self.previous_extractions_dir,
+                reference_values_file=self.reference_values_file,
             )
         else:
             return []

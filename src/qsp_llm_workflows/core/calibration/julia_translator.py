@@ -943,16 +943,11 @@ class JuliaTranslator:
         Args:
             model_structure_path: Path to model_structure.json file
             reference_values_path: Optional path to reference_values.yaml.
-                Auto-discovers reference_values.yaml next to model_structure.json if not specified.
 
         Returns:
             JuliaTranslator instance
         """
         model_structure = ModelStructure.from_json(model_structure_path)
-        if reference_values_path is None:
-            auto_path = Path(model_structure_path).parent / "reference_values.yaml"
-            if auto_path.exists():
-                reference_values_path = str(auto_path)
         ref_db = _load_reference_values(reference_values_path) if reference_values_path else None
         return cls(model_structure, reference_db=ref_db)
 
@@ -1049,11 +1044,6 @@ class JointInferenceBuilder:
             JointInferenceBuilder instance
         """
         model_structure = ModelStructure.from_json(model_structure_path)
-        # Auto-discover reference_values.yaml next to model_structure.json if not specified
-        if reference_values_path is None:
-            auto_path = Path(model_structure_path).parent / "reference_values.yaml"
-            if auto_path.exists():
-                reference_values_path = str(auto_path)
         ref_db = _load_reference_values(reference_values_path) if reference_values_path else None
         return cls(model_structure, reference_db=ref_db)
 

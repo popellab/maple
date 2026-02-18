@@ -57,6 +57,12 @@ class WorkflowConfig(BaseModel):
         description="Path to model_context.txt with high-level model description",
     )
 
+    # Reference values database for calibration targets
+    reference_values_file: Optional[Path] = Field(
+        default=None,
+        description="Path to reference_values.yaml with curated constants (cell diameters, MW, etc.)",
+    )
+
     # Previous extractions directory for submodel targets
     previous_extractions_dir: Optional[Path] = Field(
         default=None,

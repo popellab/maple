@@ -503,7 +503,7 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
             with open(species_units_file, "r") as f:
                 all_species_units = json.load(f)
 
-        # Load reference values database (auto-discover next to species_units_file)
+        # Load reference values database
         reference_db_entries = None
         reference_db = None
         if reference_values_file and reference_values_file.exists():
@@ -513,18 +513,6 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
                 _ref_data = _yaml.safe_load(_f)
             reference_db_entries = _ref_data.get("values", [])
             reference_db = {v["name"]: float(v["value"]) for v in reference_db_entries}
-        elif species_units_file:
-            # Auto-discover reference_values.yaml next to species_units_file
-            auto_ref_path = species_units_file.parent / "reference_values.yaml"
-            if auto_ref_path.exists():
-                import yaml as _yaml
-
-                with open(auto_ref_path) as _f:
-                    _ref_data = _yaml.safe_load(_f)
-                reference_db_entries = _ref_data.get("values", [])
-                reference_db = {
-                    v["name"]: float(v["value"]) for v in reference_db_entries
-                }
 
         requests = []
         with open(input_csv, "r", encoding="utf-8") as f:
@@ -1031,6 +1019,7 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
         species_units_file: Optional[Path] = None,
         reasoning_effort: str = "high",
         previous_extractions_dir: Optional[Path] = None,
+        reference_values_file: Optional[Path] = None,
     ) -> List[Dict[str, Any]]:
         """
         Process submodel target inputs and generate prompts.
@@ -1043,6 +1032,7 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
             previous_extractions_dir: Optional path to directory with previous extractions
                                       to avoid re-using the same primary sources
+            reference_values_file: Optional path to reference_values.yaml with curated constants
 
         Returns:
             List of prompt request dictionaries
@@ -1077,16 +1067,15 @@ class SubmodelTargetPromptBuilder(PromptBuilder):
             with open(species_units_file, "r") as f:
                 all_species_units = json.load(f)
 
-        # Load reference values (auto-discover next to model_structure)
+        # Load reference values database
         reference_db = None
         reference_db_entries = None
-        auto_ref_path = model_structure_file.parent / "reference_values.yaml"
-        if auto_ref_path.exists():
+        if reference_values_file and reference_values_file.exists():
             import yaml as _yaml
 
-            with open(auto_ref_path) as _f:
+            with open(reference_values_file) as _f:
                 _ref_data = _yaml.safe_load(_f)
-            reference_db_entries = _ref_data["values"]
+            reference_db_entries = _ref_data.get("values", [])
             reference_db = {v["name"]: float(v["value"]) for v in reference_db_entries}
 
         requests = []

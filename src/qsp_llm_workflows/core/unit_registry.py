@@ -45,6 +45,9 @@ def create_unit_registry() -> pint.UnitRegistry:
     ureg.define("millimolarity = millimolar")
     ureg.define("molarity = molar")
 
+    # SimBiology uses "millimeter_mercury" but Pint uses "mmHg"
+    ureg.define("millimeter_mercury = mmHg")
+
     return ureg
 
 
