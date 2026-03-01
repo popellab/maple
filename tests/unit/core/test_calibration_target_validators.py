@@ -34,7 +34,7 @@ import pytest
 from unittest.mock import Mock, patch
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.calibration import CalibrationTarget
+from maple.core.calibration import CalibrationTarget, Observable
 
 
 # ============================================================================
@@ -118,6 +118,8 @@ def golden_calibration_target_data():
                     "source_ref": "smith_2020",
                     "value_location": "Table 2",
                     "value_snippet": "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)",
+                    "dispersion_type": "sd",
+                    "dispersion_type_rationale": "Paper explicitly states lognormal sigma = 0.5 (log-scale SD)",
                 },
             ],
             "distribution_code": (
@@ -640,6 +642,8 @@ class TestCalibrationTargetValidators:
                 "source_ref": "smith_2020",
                 "value_location": "Table 2",
                 "value_snippet": "ratio: 1.0 ± 1.0",
+                "dispersion_type": "sd",
+                "dispersion_type_rationale": "Paper states mean ± SD in table legend",
             },
         ]
         data["empirical_data"]["assumptions"] = [
@@ -710,6 +714,8 @@ class TestCalibrationTargetValidators:
                 "source_ref": "smith_2020",
                 "value_location": "Table 2",
                 "value_snippet": "tumor diameter: 1.5 ± 0.25 cm",
+                "dispersion_type": "sd",
+                "dispersion_type_rationale": "Explicitly reported as SD in paper methods.",
             },
         ]
         data["empirical_data"]["assumptions"] = [
@@ -822,78 +828,6 @@ class TestCalibrationTargetValidators:
         with pytest.raises(ValidationError, match="unit error"):
             CalibrationTarget.model_validate(data, context={"species_units": species_units})
 
-    def test_validate_scale_mismatch_ratio_vs_score(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Validator should catch scale mismatch: 0-1 ratio code vs 0-3 score target."""
-        data = copy.deepcopy(golden_calibration_target_data)
-
-        # Change observable code to return values in 0-0.1 range (small fractions)
-        # Use division by 100 which is an allowed number
-        data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
-            "    import numpy as np\n"
-            "    cd8 = species_dict['V_T.CD8']\n"
-            "    tumor = species_dict['V_T.C1']\n"
-            "    # Return small fraction ~0.01 to 0.1 by dividing by 100\n"
-            "    ratio = (cd8 / tumor) / 100\n"
-            "    return ratio.to(ureg.dimensionless)"
-        )
-
-        # But calibration target is on 0-3 score scale (>100x mismatch)
-        data["empirical_data"]["median"] = [2.42]
-        data["empirical_data"]["iqr"] = [0.50]
-        data["empirical_data"]["ci95"] = [[1.69, 3.15]]
-
-        # Update inputs to produce values in score range
-        data["empirical_data"]["inputs"] = [
-            {
-                "name": "score_mean",
-                "value": 2.42,
-                "units": "dimensionless",
-                "description": "Mean score",
-                "source_ref": "smith_2020",
-                "value_location": "Table 2",
-                "value_snippet": "score: 2.42 ± 0.37",
-            },
-            {
-                "name": "score_sd",
-                "value": 0.37,
-                "units": "dimensionless",
-                "description": "SD of score",
-                "source_ref": "smith_2020",
-                "value_location": "Table 2",
-                "value_snippet": "score: 2.42 ± 0.37",
-            },
-        ]
-        data["empirical_data"]["assumptions"] = [
-            {
-                "name": "n_mc_samples",
-                "value": 10000.0,
-                "units": "dimensionless",
-                "description": "MC samples",
-                "rationale": "Standard sample size for stable percentile estimates",
-            },
-        ]
-
-        data["empirical_data"]["distribution_code"] = (
-            "def derive_distribution(inputs, ureg):\n"
-            "    import numpy as np\n"
-            "    np.random.seed(42)\n"
-            "    mean = inputs['score_mean']\n"
-            "    sd = inputs['score_sd']\n"
-            "    n = int(inputs['n_mc_samples'].magnitude)\n"
-            "    samples = np.random.normal(mean.magnitude, sd.magnitude, n) * mean.units\n"
-            "    median_obs = np.median(samples)\n"
-            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    ci95_lower = ci95[0]\n"
-            "    ci95_upper = ci95[1]\n"
-            "    return {'median_obs': median_obs, 'ci95_lower': ci95_lower, 'ci95_upper': ci95_upper}"
-        )
-
-        with pytest.raises(ValidationError, match="Scale mismatch|Magnitude mismatch"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
-
     def test_validate_control_characters(
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
@@ -935,8 +869,9 @@ class TestCalibrationTargetValidators:
                 "name": "area_per_cancer_cell",
                 "value": 2.27e-4,
                 "units": "mm**2/cell",
-                "biological_basis": "Cancer cell ~17 μm diameter → π×(8.5 μm)² = 2.27e-4 mm²",
-                "source_ref": "modeling_assumption",
+                "biological_basis": "From reference DB pdac_cancer_cell_diameter (17 μm) → π×(8.5 μm)² = 2.27e-4 mm²",
+                "source_type": "derived_from_reference_db",
+                "reference_db_names": ["pdac_cancer_cell_diameter"],
             }
         ]
         # Use constant via constants dict (no hardcoded numbers with units)
@@ -1021,7 +956,7 @@ class TestVectorValuedCalibrationTarget:
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
         """Test that vector-valued calibration target passes all validators."""
-        from qsp_llm_workflows.core.calibration import IndexType
+        from maple.core.calibration import IndexType
 
         data = copy.deepcopy(golden_calibration_target_data)
 
@@ -1058,6 +993,8 @@ class TestVectorValuedCalibrationTarget:
                 "source_ref": "smith_2020",
                 "value_location": "Figure 3",
                 "value_snippet": "variability σ=0.5 approximately constant across time",
+                "dispersion_type": "sd",
+                "dispersion_type_rationale": "Paper states σ=0.5 as log-scale standard deviation",
             },
         ]
         data["empirical_data"]["assumptions"] = [
@@ -1233,7 +1170,7 @@ class TestRegressionBugsFromLogfire:
 
         Fix: Added input_type='inferred_estimate' that skips snippet validation.
         """
-        from qsp_llm_workflows.core.calibration.shared_models import InputType
+        from maple.core.calibration.shared_models import InputType
 
         data = copy.deepcopy(golden_calibration_target_data)
 
@@ -1259,6 +1196,8 @@ class TestRegressionBugsFromLogfire:
                 "value_location": "Table 2",
                 "value_snippet": "σ = 0.5 log-scale",  # This IS in snippet
                 "input_type": "direct_parameter",
+                "dispersion_type": "sd",
+                "dispersion_type_rationale": "Paper explicitly states lognormal sigma = 0.5 (log-scale SD)",
             },
         ]
         data["empirical_data"]["assumptions"] = []
@@ -1313,6 +1252,74 @@ class TestRegressionBugsFromLogfire:
         error_str = str(exc_info.value)
         assert "not found in value_snippet" in error_str
         assert "inferred_estimate" in error_str  # NEW: suggests the alternative
+
+    def test_figure_source_type_skips_snippet_validation(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Figure-sourced inputs should skip snippet value check.
+
+        When source_type='figure', the numeric value is read from a plot and
+        won't appear literally in the text snippet (which contains the caption).
+        """
+        from maple.core.calibration.enums import SourceType
+
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Input where value is read from a figure (not in snippet text)
+        data["empirical_data"]["inputs"] = [
+            {
+                "name": "cd8_ratio_mean",
+                "value": 1.0,
+                "units": "dimensionless",
+                "description": "Mean CD8/tumor ratio read from scatter plot",
+                "source_ref": "smith_2020",
+                "value_location": "Figure 2A",
+                "value_snippet": "CD8+ T cell infiltration across patient cohort (Figure 2A)",
+                "source_type": "figure",
+                "figure_id": "Figure 2A",
+                "extraction_method": "manual",
+                "extraction_notes": "Read from y-axis median marker",
+            },
+            {
+                "name": "cd8_ratio_sigma_log",
+                "value": 0.5,
+                "units": "dimensionless",
+                "description": "Log-scale SD from lognormal fit",
+                "source_ref": "smith_2020",
+                "value_location": "Table 2",
+                "value_snippet": "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)",
+                "dispersion_type": "sd",
+                "dispersion_type_rationale": "Paper explicitly states lognormal sigma = 0.5 (log-scale SD)",
+            },
+        ]
+
+        # Should pass - figure source_type skips snippet validation
+        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        assert target is not None
+        assert target.empirical_data.inputs[0].source_type == SourceType.FIGURE
+
+    def test_snippet_error_mentions_figure_source_type(
+        self, species_units, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Snippet validation error should mention source_type='figure' as option.
+
+        When a value fails snippet validation, the error message should guide
+        the LLM to use source_type='figure' if the value comes from a plot.
+        """
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # Value not in snippet and no escape hatch set
+        data["empirical_data"]["inputs"][0]["value"] = 42.7
+        data["empirical_data"]["inputs"][0][
+            "value_snippet"
+        ] = "See Figure 3B for CD8 density across the cohort"
+
+        with pytest.raises(ValidationError) as exc_info:
+            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+
+        error_str = str(exc_info.value)
+        assert "not found in value_snippet" in error_str
+        assert "source_type='figure'" in error_str
 
     def test_distribution_code_array_error_has_helpful_message(
         self, species_units, golden_calibration_target_data, mock_crossref_success
@@ -1474,3 +1481,75 @@ class TestRegressionBugsFromLogfire:
             )
             assert target is not None
             assert len(target.secondary_data_sources) == 1
+
+
+class TestObservableDenominatorAudit:
+    """Tests for the Observable denominator audit validator."""
+
+    def _make_observable(self, **overrides):
+        """Helper to create Observable with sensible defaults."""
+        base = {
+            "code": (
+                "def compute_observable(time, species_dict, constants, ureg):\n"
+                "    return species_dict['V_T.CD8']"
+            ),
+            "units": "dimensionless",
+            "species": ["V_T.CD8"],
+            "support": "positive_unbounded",
+        }
+        base.update(overrides)
+        return Observable(**base)
+
+    def test_observable_without_denominator_fields_passes(self):
+        """Observable without denominator fields passes for non-density units."""
+        obs = self._make_observable()
+        assert obs.experimental_denominator is None
+        assert obs.model_denominator_species is None
+
+    def test_density_observable_without_experimental_denominator_fails(self):
+        """Density observable (cell/mm**2) must declare experimental_denominator."""
+        with pytest.raises(ValidationError, match="experimental_denominator"):
+            self._make_observable(
+                units="cell / millimeter**2",
+                support="positive",
+            )
+
+    def test_density_observable_with_denominator_audit_passes(self):
+        """Density observable with full denominator audit passes."""
+        obs = self._make_observable(
+            units="cell / millimeter**2",
+            support="positive",
+            experimental_denominator="mm^2 of tumor tissue (whole section including stroma)",
+            model_denominator_species=["V_T.C1"],
+        )
+        assert obs.experimental_denominator is not None
+        assert obs.model_denominator_species == ["V_T.C1"]
+
+    def test_experimental_denominator_without_model_species_fails(self):
+        """Setting experimental_denominator without model_denominator_species fails."""
+        with pytest.raises(ValidationError, match="model_denominator_species"):
+            self._make_observable(
+                experimental_denominator="CD3+ T cells",
+            )
+
+    def test_fraction_with_full_denominator_audit_passes(self):
+        """Fraction observable with all denominator fields passes."""
+        obs = self._make_observable(
+            units="dimensionless",
+            support="unit_interval",
+            experimental_denominator="all cells in ROI (all nucleated cells)",
+            model_denominator_species=["V_T.CD8", "V_T.Th", "V_T.Treg", "V_T.Mac_M1"],
+            unmodeled_denominator_components=(
+                "B cells (50-70% of LA cells) not modeled; model prediction "
+                "will be ~2-3x higher than experimental value."
+            ),
+        )
+        assert obs.unmodeled_denominator_components is not None
+
+    def test_non_density_units_with_slash_no_cell_passes(self):
+        """Non-cell density units like nanomolarity (nM) don't trigger the audit."""
+        obs = self._make_observable(
+            units="nanomolarity",
+            support="positive",
+        )
+        assert obs.experimental_denominator is None

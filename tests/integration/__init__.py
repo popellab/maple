@@ -1,1 +1,1 @@
-"""Integration tests for qsp_llm_workflows."""
+"""Integration tests for maple."""

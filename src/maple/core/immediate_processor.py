@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""
+Direct immediate mode processing via Pydantic AI.
+
+Processes CSV rows directly using Pydantic AI.
+Uses Pydantic AI with tool calling for structured outputs (supports discriminated unions).
+"""
+
+import asyncio
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+
+from pydantic_ai import Agent, WebSearchTool, CodeExecutionTool
+
+from maple.core.tools.view_figure import view_figure
+
+from maple.core.prompt_builder import (
+    CalibrationTargetPromptBuilder,
+    SubmodelTargetPromptBuilder,
+)
+
+# Optional logfire instrumentation (comes with pydantic-ai)
+try:
+    import logfire
+    from opentelemetry import trace as otel_trace
+
+    LOGFIRE_AVAILABLE = True
+except ImportError:
+    LOGFIRE_AVAILABLE = False
+    otel_trace = None
+
+
+class ImmediateRequestProcessor:
+    """Process extraction requests directly via Pydantic AI."""
+
+    def __init__(
+        self,
+        base_dir: Path,
+        api_key: str,
+        model_structure_file: Optional[Path] = None,
+        model_context_file: Optional[Path] = None,
+        reference_values_file: Optional[Path] = None,
+        previous_extractions_dir: Optional[Path] = None,
+    ):
+        """
+        Initialize immediate request processor.
+
+        Args:
+            base_dir: Base directory for prompt assembly
+            api_key: OpenAI API key
+            model_structure_file: Optional path to model_structure.json for isolated system targets
+            model_context_file: Optional path to model_context.txt for isolated system targets
+            reference_values_file: Optional path to reference_values.yaml with curated constants
+            previous_extractions_dir: Optional path to directory with previous extractions
+        """
+        self.base_dir = Path(base_dir)
+        self.api_key = api_key
+        self.model_structure_file = model_structure_file
+        self.model_context_file = model_context_file
+        self.reference_values_file = reference_values_file
+        self.previous_extractions_dir = previous_extractions_dir
+
+        # Setup logfire once (optional instrumentation for debugging)
+        if LOGFIRE_AVAILABLE:
+            logfire.configure()
+            logfire.instrument_pydantic_ai()
+
+        # Initialize prompt builders for prompt building (DRY principle)
+        self.calibration_target_creator = CalibrationTargetPromptBuilder(base_dir)
+        self.submodel_target_creator = SubmodelTargetPromptBuilder(base_dir)
+
+    def get_prompts(
+        self,
+        input_csv: Path,
+        workflow_type: str,
+        species_units_file: Optional[Path] = None,
+        reasoning_effort: str = "medium",
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate prompts using appropriate prompt builder.
+
+        This ensures DRY principle - all prompt building logic is in prompt builders.
+
+        Args:
+            input_csv: Path to input CSV
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
+            species_units_file: Optional species units file for calibration targets
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
+
+        Returns:
+            List of prompt dictionaries
+        """
+        if workflow_type == "calibration_target":
+            return self.calibration_target_creator.process(
+                input_csv,
+                species_units_file,
+                reasoning_effort,
+                reference_values_file=self.reference_values_file,
+            )
+        elif workflow_type == "submodel_target":
+            # Requires model_structure_file and model_context_file
+            if not self.model_structure_file:
+                raise ValueError("model_structure_file required for submodel_target workflow")
+            if not self.model_context_file:
+                raise ValueError("model_context_file required for submodel_target workflow")
+            return self.submodel_target_creator.process(
+                input_csv,
+                self.model_structure_file,
+                self.model_context_file,
+                species_units_file,
+                reasoning_effort,
+                previous_extractions_dir=self.previous_extractions_dir,
+                reference_values_file=self.reference_values_file,
+            )
+        else:
+            return []
+
+    async def process_single_request(
+        self,
+        request: Dict[str, Any],
+        index: int,
+        reasoning_effort: str,
+        workflow_type: str = "parameter",
+        progress_callback: Optional[callable] = None,
+        model: str = "gpt-5.1",
+        max_retries: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        Process a single extraction request using Pydantic AI.
+
+        Args:
+            request: Prompt dictionary from prompt builder
+            index: Request index
+            reasoning_effort: Reasoning effort level ("low", "medium", "high")
+            workflow_type: Type of workflow for tool selection
+            progress_callback: Optional callback for progress updates
+            model: OpenAI model to use
+            max_retries: Maximum retries for output validation
+
+        Returns:
+            Result dictionary in workflow-compatible format
+        """
+        # Import here to avoid circular imports and allow lazy loading
+        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+        custom_id = request["custom_id"]
+        prompt = request["prompt"]
+        pydantic_model = request["pydantic_model"]
+
+        # Extract item name from custom_id for logging
+        # Format: cal_target_{id}_{i} or parameter_{name}_{cancer}_{i} or test_stat_{id}_{i}
+        parts = custom_id.split("_")
+        if len(parts) >= 3:
+            # Remove prefix (first 2 parts) and suffix (last part which is index)
+            item_name = "_".join(parts[2:-1])
+        else:
+            item_name = f"item_{index}"
+
+        if progress_callback:
+            progress_callback(f"  [{index + 1}] Processing {item_name}...")
+
+        try:
+            # Use Pydantic AI (supports discriminated unions via tool calling)
+            openai_model = OpenAIResponsesModel(model)
+            settings = OpenAIResponsesModelSettings(
+                openai_reasoning_summary="concise", openai_reasoning_effort=reasoning_effort
+            )
+            # Get validation context from request (for species_units)
+            validation_context = request.get("validation_context", {})
+
+            # Build tools list - web search, code execution, and figure viewing
+            builtin_tools = [WebSearchTool(), CodeExecutionTool()]
+            custom_tools = [view_figure]
+
+            agent = Agent(
+                openai_model,
+                output_type=pydantic_model,
+                model_settings=settings,
+                builtin_tools=builtin_tools,
+                tools=custom_tools,
+                validation_context=validation_context,
+                retries=max_retries,
+            )
+
+            # Run agent with prompt, capturing logfire trace_id if available
+            logfire_trace_id = None
+            if LOGFIRE_AVAILABLE:
+                with logfire.span(f"extract_{custom_id}"):
+                    result = await agent.run(prompt)
+                    # Get trace_id from current span context (OpenTelemetry)
+                    current_span = otel_trace.get_current_span()
+                    span_context = current_span.get_span_context()
+                    if span_context.is_valid:
+                        logfire_trace_id = format(span_context.trace_id, "032x")
+            else:
+                result = await agent.run(prompt)
+
+            parsed_data = result.output.model_dump()
+            request_id = "pydantic_ai_" + custom_id
+
+            if progress_callback:
+                progress_callback(f"  [{index + 1}] ✓ Completed {item_name}")
+
+            return {
+                "custom_id": custom_id,
+                "logfire_trace_id": logfire_trace_id,
+                "model": model,
+                "reasoning_effort": reasoning_effort,
+                "response": {
+                    "status_code": 200,
+                    "request_id": request_id,
+                    "body": parsed_data,
+                },
+                "error": None,
+            }
+
+        except Exception as e:
+            if progress_callback:
+                progress_callback(f"  [{index + 1}] ✗ Failed {item_name}: {e}")
+
+            return {
+                "custom_id": custom_id,
+                "response": {
+                    "status_code": 500,
+                    "request_id": None,
+                    "body": {"error": str(e)},
+                },
+                "error": {
+                    "message": str(e),
+                    "type": type(e).__name__,
+                },
+            }
+
+    async def process_all_requests(
+        self,
+        input_csv: Path,
+        workflow_type: str,
+        progress_callback: Optional[callable] = None,
+        result_callback: Optional[callable] = None,
+        reasoning_effort: str = "medium",
+        model: str = "gpt-5.1",
+        max_retries: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Process all requests from CSV file using Pydantic AI.
+
+        Args:
+            input_csv: Path to input CSV file
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
+            progress_callback: Optional callback for progress updates
+            result_callback: Optional callback called immediately as each result completes
+            reasoning_effort: Reasoning effort level
+            model: OpenAI model to use
+            max_retries: Maximum retries for output validation
+
+        Returns:
+            List of results in standard format
+        """
+        # Get species_units_file for calibration/isolated system/submodel targets
+        species_units_file = None
+        if workflow_type in ("calibration_target", "isolated_system_target", "submodel_target"):
+            species_units_file = self.base_dir / "jobs" / "input_data" / "species_units.json"
+
+        # Generate prompts using prompt builder (DRY principle)
+        prompts = self.get_prompts(input_csv, workflow_type, species_units_file, reasoning_effort)
+
+        if progress_callback:
+            progress_callback(f"Processing {len(prompts)} requests via Pydantic AI...\n")
+
+        # Create tasks for all requests
+        tasks = [
+            self.process_single_request(
+                prompt, i, reasoning_effort, workflow_type, progress_callback, model, max_retries
+            )
+            for i, prompt in enumerate(prompts)
+        ]
+
+        # Process concurrently, calling result_callback as each completes
+        results = []
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            results.append(result)
+
+            # Call result_callback synchronously (it's quick I/O)
+            if result_callback:
+                result_callback(result)
+
+        if progress_callback:
+            success_count = sum(1 for r in results if r.get("error") is None)
+            progress_callback(f"\n✓ Completed {success_count}/{len(results)} requests")
+
+        return results
+
+    def run(
+        self,
+        input_csv: Path,
+        workflow_type: str,
+        progress_callback: Optional[callable] = None,
+        result_callback: Optional[callable] = None,
+        reasoning_effort: str = "medium",
+        model: str = "gpt-5.1",
+        max_retries: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Synchronous wrapper for async processing via Pydantic AI.
+
+        Args:
+            input_csv: Path to input CSV file
+            workflow_type: "parameter", "test_statistic", or "calibration_target"
+            progress_callback: Optional callback for progress updates
+            result_callback: Optional callback called immediately as each result completes
+            reasoning_effort: Reasoning effort level
+            model: OpenAI model to use
+            max_retries: Maximum retries for output validation
+
+        Returns:
+            List of results in standard format
+        """
+        return asyncio.run(
+            self.process_all_requests(
+                input_csv,
+                workflow_type,
+                progress_callback,
+                result_callback,
+                reasoning_effort,
+                model,
+                max_retries,
+            )
+        )

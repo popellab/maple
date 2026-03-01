@@ -3,23 +3,22 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "qsp-llm-workflows"
+name = "maple"
 version = "0.1.0"
 description = "LLM workflow automation tools for extracting QSP metadata from scientific literature"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Joel Eliason", email = "your.email@example.com"}
+    {name = "Joel Eliason", email = "jeliaso2@jh.edu"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 dependencies = [
@@ -32,48 +31,45 @@ dependencies = [
     "pydantic-ai>=0.0.14",  # For structured outputs with discriminated unions
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
-    "pint>=0.25",  # For unit-aware test statistic calculations
+    "pint>=0.25",  # For unit-aware calculations
     "ruamel.yaml>=0.18",  # Better YAML formatting with block scalars
-    "scipy>=1.11.0",  # For ODE integration in IsolatedSystemTarget validation
+    "scipy>=1.11.0",  # For ODE integration in SubmodelTarget validation
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
-    "black>=23.0",
+    "black==24.10.0",
     "ruff>=0.1.0",
     "freezegun>=1.2.0",
 ]
 
-[project.scripts]
-# Main workflow commands
-qsp-extract = "qsp_llm_workflows.cli.extract:main"
-qsp-validate = "qsp_llm_workflows.cli.validate:main"
-qsp-review = "qsp_llm_workflows.cli.review:main"
+[project.urls]
+Homepage = "https://github.com/popellab/maple"
+Repository = "https://github.com/popellab/maple"
+"Bug Tracker" = "https://github.com/popellab/maple/issues"
 
-# Individual tools
-qsp-enrich-csv = "qsp_llm_workflows.cli.enrich:main"
-qsp-export-model = "qsp_llm_workflows.cli.export_model:main"
-qsp-quick-estimate = "qsp_llm_workflows.cli.quick_estimate:main"
-qsp-quick-estimate-individual = "qsp_llm_workflows.cli.quick_estimate_individual:main"
+[project.scripts]
+qsp-extract = "maple.cli.extract:main"
+qsp-export-model = "maple.cli.export_model:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["qsp_llm_workflows*"]
+include = ["maple*"]
 
 [tool.setuptools.package-data]
-"qsp_llm_workflows" = [
+"maple" = [
     "templates/**/*",
     "prompts/**/*",
 ]
 
 [tool.black]
 line-length = 100
-target-version = ['py38']
+target-version = ['py311']
 
 [tool.ruff]
 line-length = 100
-target-version = "py38"
+target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -89,5 +85,5 @@ markers = [
 ]
 # Ignore Pydantic models that start with "Test" (not test classes)
 filterwarnings = [
-    "ignore::pytest.PytestCollectionWarning:qsp_llm_workflows.core.pydantic_models",
+    "ignore::pytest.PytestCollectionWarning",
 ]

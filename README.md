@@ -1,125 +1,161 @@
-# QSP LLM Workflows
+# MAPLE
 
-[![Tests](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml)
+[![Tests](https://github.com/popellab/maple/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/maple/actions/workflows/test.yml)
 
-Extract calibration targets from scientific literature for quantitative systems pharmacology (QSP) model calibration. This package uses OpenAI's API to read papers, extract experimental data with uncertainty estimates, and generate Python code for Bayesian inference.
+Extract calibration targets from scientific literature for quantitative systems pharmacology (QSP) model calibration. Uses structured YAML schemas with Pydantic validation, then translates to Julia/Turing.jl for Bayesian inference.
 
 ## Installation
 
 ```bash
-git clone https://github.com/popellab/qsp-llm-workflows.git
-cd qsp-llm-workflows
+git clone https://github.com/popellab/maple.git
+cd maple
 python -m venv venv
 source venv/bin/activate
 pip install -e .
 ```
 
-Store your OpenAI API key:
-```bash
-echo "OPENAI_API_KEY=sk-your-key-here" > .env
-```
+## SubmodelTarget Schema
 
-## Quick Start
+The **SubmodelTarget** schema is the primary format for calibration targets. It separates:
+- **inputs**: Values extracted from literature with full provenance
+- **calibration**: How those values constrain model parameters (priors, ODE model, measurements)
 
-### 1. Export model structure
-
-```bash
-qsp-export-model \
-  --matlab-model ../your-model/model.m \
-  --output jobs/input_data/model_definitions.json \
-  --export-structure jobs/input_data/model_structure.json
-```
-
-### 2. Create input CSV
-
-```csv
-target_id,cancer_type,parameters,notes
-cd8_proliferation,PDAC,"k_CD8_pro","CD8 T cell proliferation from in vitro assays"
-spheroid_growth,PDAC,"k_C1_growth,C_max","Cancer growth from spheroid experiments"
-```
-
-### 3. Run extraction
-
-```bash
-qsp-extract \
-  targets.csv \
-  --type isolated_system_target \
-  --output-dir metadata-storage \
-  --model-structure jobs/input_data/model_structure.json
-```
-
-### 4. Review outputs
-
-Results are unpacked to `metadata-storage/to-review/isolated_system_targets/` as YAML files containing:
-- Study interpretation and key assumptions
-- ODE submodel code sharing parameter names with your full model
-- Empirical data with uncertainty (median, 95% CI, sample size)
-- Python code deriving distributions from literature values
-- Source tracking with DOIs and text snippets
-
-## What gets extracted
-
-**IsolatedSystemTarget** (primary workflow): For in vitro, ex vivo, or preclinical data. Generates a simplified ODE submodel that captures experimental dynamics while sharing parameter names with your full QSP model. This enables joint Bayesian inference across multiple calibration targets.
-
-Example output structure:
+Example structure:
 ```yaml
-study_interpretation: |
-  CD8+ T cell proliferation measured via CFSE dilution in 7-day culture...
+target_id: psc_proliferation_PDAC_deriv001
 
-submodel:
-  code: |
-    def submodel(t, y, params, inputs):
-        N = y[0]
-        k_pro = params['k_CD8_pro']
-        return [k_pro * N]
-  parameters: [k_CD8_pro]
-  t_span: [0, 7]
-  t_unit: day
+inputs:
+  - name: fold_increase_mean
+    value: 4.37
+    units: dimensionless
+    role: target
+    input_type: direct_measurement
+    source_ref: schneider_2001
+    value_snippet: "PDGF increased DNA synthesis 4.37 ± 0.89-fold"
 
-empirical_data:
-  median: [2.5]
-  ci95: [[1.8, 3.2]]
-  units: 1/day
-  sample_size: 5
-  distribution_code: |
-    def derive_distribution(inputs, ureg):
-        # Converts literature values to parameter distribution
-        ...
+calibration:
+  parameters:
+    - name: k_apsc_prolif
+      units: 1/day
+      prior:
+        distribution: lognormal
+        mu: 0.0
+        sigma: 1.0
+  forward_model:
+    type: exponential_growth
+    rate_constant: k_apsc_prolif
+    state_variables:
+      - name: N
+        units: dimensionless
+        initial_condition: {value: 1.0, rationale: "Normalized"}
+    independent_variable:
+      name: time
+      units: day
+      span: [0, 3]
+  error_model:
+    - name: fold_increase
+      units: dimensionless
+      uses_inputs: [fold_increase_mean, fold_increase_sd]
+      evaluation_points: [3.0]
+      observation_code: |
+        def derive_observation(inputs, sample_size, ureg):
+            return {
+                'value': inputs['fold_increase_mean'],
+                'sd': inputs['fold_increase_sd'].magnitude,
+            }
+      likelihood: {distribution: lognormal}
 ```
 
-**CalibrationTarget**: For clinical/in vivo data where the full model is needed. Uses an `observable` function to compute measurements from model species.
+### Validation
 
-## Project structure
+```bash
+python scripts/validate_submodel_target.py path/to/target.yaml
+```
+
+The schema validates:
+- All references (`input_ref`, `uses_inputs`, `source_ref`) point to existing items
+- Extracted values appear in `value_snippet` (anti-hallucination check)
+- Snippets appear in actual paper text (via Europe PMC/Unpaywall)
+- DOIs resolve and metadata matches
+- Prior predictions are on the same scale as observations
+
+### LLM Extraction
+
+Extract SubmodelTarget YAMLs from scientific literature:
+
+```bash
+qsp-extract targets.csv \
+  --type submodel_target \
+  --model-structure model_structure.json \
+  --model-context model_context.txt \
+  --output-dir metadata-storage
+```
+
+## Julia Code Generation
+
+Translate validated YAML targets to Julia/Turing.jl for Bayesian inference:
+
+```bash
+# Single target (--model-structure required)
+python -m maple.core.calibration.julia_translator \
+    --model-structure model_structure.json \
+    target.yaml
+
+# Joint inference (parameters with same name are shared)
+python -m maple.core.calibration.julia_translator --joint \
+    --model-structure model_structure.json \
+    target1.yaml target2.yaml target3.yaml \
+    --output joint_calibration.jl
+
+# Use --fixed-sigma to treat all sigmas as fixed (faster sampling)
+python -m maple.core.calibration.julia_translator --joint \
+    --model-structure model_structure.json \
+    --fixed-sigma \
+    target1.yaml target2.yaml target3.yaml
+```
+
+The translator generates complete Julia scripts with:
+- ODE functions (or algebraic compute functions)
+- Turing `@model` blocks with priors and likelihoods (normal or lognormal)
+- Optional priors on sigma when `sd_uncertain: true`
+- NUTS sampling code with convergence diagnostics
+- Posterior marginal plots with prior overlays
+
+## CalibrationTarget Schema
+
+The **CalibrationTarget** schema handles clinical/in vivo observables that require full model simulation context:
+
+```bash
+# Validate calibration target YAMLs
+python scripts/validate_calibration_target.py \
+  --species-units path/to/species_units.json \
+  target.yaml
+
+# Extract calibration targets from literature
+qsp-extract targets.csv \
+  --type calibration_target \
+  --output-dir metadata-storage
+```
+
+## Project Structure
 
 ```
-src/qsp_llm_workflows/
+src/maple/
 ├── core/
-│   └── calibration/              # Calibration target models
-│       ├── calibration_target_models.py  # CalibrationTarget base
-│       ├── isolated_system_target.py     # IsolatedSystemTarget
-│       ├── observable.py                 # Submodel, Observable
-│       ├── shared_models.py              # EstimateInput, Source
-│       └── code_validator.py             # Code validation
-├── cli/                          # qsp-extract, qsp-validate, etc.
-├── prompts/                      # LLM instruction prompts
-└── templates/                    # YAML output templates
+│   ├── calibration/
+│   │   ├── submodel_target.py         # SubmodelTarget schema
+│   │   ├── calibration_target_models.py  # CalibrationTarget schema
+│   │   ├── julia_translator.py        # YAML → Julia/Turing.jl
+│   │   └── ...
+│   ├── tools/                         # LLM agent tools
+│   └── workflow/                      # Workflow orchestration
+├── cli/                               # CLI entry points
+└── prompts/                           # LLM instruction prompts
 ```
-
-## Key concepts
-
-**Submodel**: A standalone ODE system that approximates full model dynamics for the isolated experimental system. Uses the same parameter names as your full model.
-
-**Direct conversion mode**: For simple analytical relationships (k = ln(2) / t_half), omit the submodel and let `distribution_code` compute the parameter directly.
-
-**Input types**: Literature values can be classified as `direct_parameter` (literal values), `proxy_measurement` (requires conversion), `experimental_condition` (protocol choices), or `inferred_estimate` (interpreted from qualitative text).
-
-**Vector-valued data**: Time-course and dose-response data supported via `index_values`, `index_unit`, and `index_type` fields.
 
 ## Documentation
 
-- [Calibration workflow guide](docs/calibration_workflow.md) - Complete guide to IsolatedSystemTarget extraction
-- [Legacy workflows](docs/automated_workflow.md) - Parameter estimates and test statistics (legacy)
-- [CLAUDE.md](CLAUDE.md) - Package internals for developers
+- [CLAUDE.md](CLAUDE.md) - Developer guide and schema details
 
 ## License
 

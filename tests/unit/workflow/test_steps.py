@@ -7,11 +7,11 @@ Tests each workflow step in isolation with mocked dependencies.
 import pytest
 from unittest.mock import Mock, patch
 
-from qsp_llm_workflows.core.workflow.context import WorkflowContext
-from qsp_llm_workflows.core.workflow.steps import (
+from maple.core.workflow.context import WorkflowContext
+from maple.core.workflow.steps import (
     UnpackResultsStep,
 )
-from qsp_llm_workflows.core.exceptions import (
+from maple.core.exceptions import (
     ResultsUnpackError,
 )
 
@@ -19,8 +19,8 @@ from qsp_llm_workflows.core.exceptions import (
 class TestUnpackResultsStep:
     """Test UnpackResultsStep."""
 
-    @patch("qsp_llm_workflows.core.workflow.steps.process_results")
-    @patch("qsp_llm_workflows.core.workflow.steps.create_unique_output_directory")
+    @patch("maple.core.workflow.steps.process_results")
+    @patch("maple.core.workflow.steps.create_unique_output_directory")
     def test_unpack_results(self, mock_create_dir, mock_process, tmp_path):
         """Test unpacking results to unique directory."""
         # Setup

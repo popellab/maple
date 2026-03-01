@@ -1,4 +1,4 @@
-# Install the qsp-llm-workflows package in editable mode
+# Install the maple package in editable mode
 # This automatically installs all dependencies listed in pyproject.toml
 -e .
 

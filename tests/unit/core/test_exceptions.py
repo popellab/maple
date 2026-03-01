@@ -4,7 +4,7 @@ Unit tests for custom exception hierarchy.
 Tests exception creation, context preservation, and inheritance.
 """
 
-from qsp_llm_workflows.core.exceptions import (
+from maple.core.exceptions import (
     WorkflowException,
     ConfigurationError,
     ImmediateProcessingError,

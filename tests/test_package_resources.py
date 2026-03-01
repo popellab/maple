@@ -5,20 +5,17 @@ These tests catch issues like missing MATLAB scripts, templates, or prompts
 that would cause runtime errors.
 """
 
-from qsp_llm_workflows.core.resource_utils import get_package_root
+from maple.core.resource_utils import get_package_root
 
 
 def test_matlab_export_script_exists():
     """Test that MATLAB export script exists in package."""
-    # Get package root
     package_root = get_package_root()
     matlab_dir = package_root / "matlab"
     export_script = matlab_dir / "export_model_definitions.m"
 
     assert matlab_dir.exists(), f"MATLAB directory not found: {matlab_dir}"
     assert export_script.exists(), f"MATLAB export script not found: {export_script}"
-
-    # Verify it's a valid file with content
     assert export_script.stat().st_size > 0, "MATLAB export script is empty"
 
 
@@ -31,22 +28,22 @@ def test_matlab_helper_script_exists():
     assert helper_script.stat().st_size > 0, "MATLAB helper script is empty"
 
 
-def test_parameter_prompt_exists():
-    """Test that parameter extraction prompt exists."""
+def test_submodel_target_prompt_exists():
+    """Test that submodel target prompt exists."""
     package_root = get_package_root()
-    prompt_file = package_root / "prompts" / "qsp_parameter_extraction_prompt.md"
+    prompt_file = package_root / "prompts" / "submodel_target_prompt.md"
 
-    assert prompt_file.exists(), f"Parameter prompt not found: {prompt_file}"
-    assert prompt_file.stat().st_size > 0, "Parameter prompt is empty"
+    assert prompt_file.exists(), f"Submodel target prompt not found: {prompt_file}"
+    assert prompt_file.stat().st_size > 0, "Submodel target prompt is empty"
 
 
-def test_test_statistic_prompt_exists():
-    """Test that test statistic prompt exists."""
+def test_calibration_target_prompt_exists():
+    """Test that calibration target prompt exists."""
     package_root = get_package_root()
-    prompt_file = package_root / "prompts" / "test_statistic_prompt.md"
+    prompt_file = package_root / "prompts" / "calibration_target_prompt.md"
 
-    assert prompt_file.exists(), f"Test statistic prompt not found: {prompt_file}"
-    assert prompt_file.stat().st_size > 0, "Test statistic prompt is empty"
+    assert prompt_file.exists(), f"Calibration target prompt not found: {prompt_file}"
+    assert prompt_file.stat().st_size > 0, "Calibration target prompt is empty"
 
 
 def test_all_matlab_scripts_are_readable():
@@ -54,9 +51,7 @@ def test_all_matlab_scripts_are_readable():
     package_root = get_package_root()
     matlab_dir = package_root / "matlab"
 
-    # Find all .m files
     matlab_files = list(matlab_dir.glob("*.m"))
-
     assert len(matlab_files) > 0, "No MATLAB files found"
 
     for matlab_file in matlab_files:
@@ -71,9 +66,7 @@ def test_all_prompts_are_readable():
     package_root = get_package_root()
     prompts_dir = package_root / "prompts"
 
-    # Find all .md files
     prompt_files = list(prompts_dir.glob("*.md"))
-
     assert len(prompt_files) > 0, "No prompt files found"
 
     for prompt_file in prompt_files:

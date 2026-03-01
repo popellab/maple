@@ -5,7 +5,7 @@ Tests for the shared Pint UnitRegistry.
 import numpy as np
 import pint
 
-from qsp_llm_workflows.core.unit_registry import create_unit_registry, ureg
+from maple.core.unit_registry import create_unit_registry, ureg
 
 
 class TestUnitRegistry:

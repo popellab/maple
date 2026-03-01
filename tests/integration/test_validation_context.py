@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from qsp_llm_workflows.core.model_structure import ModelStructure
+from maple.core.model_structure import ModelStructure
 
 
 # Path to real model_structure.json in jobs/input_data/

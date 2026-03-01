@@ -8,8 +8,8 @@ import pytest
 from pathlib import Path
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.config import WorkflowConfig
-from qsp_llm_workflows.core.exceptions import ConfigurationError
+from maple.core.config import WorkflowConfig
+from maple.core.exceptions import ConfigurationError
 
 
 class TestWorkflowConfig:
@@ -31,7 +31,7 @@ class TestWorkflowConfig:
 
         # Check defaults
         assert config.openai_model == "gpt-5"
-        assert config.reasoning_effort == "high"
+        assert config.reasoning_effort == "medium"
 
     def test_create_config_with_overrides(self, tmp_path):
         """Test creating config with custom values."""
