@@ -6,7 +6,7 @@ Developer guide for Claude Code when working with this repository.
 
 ## Overview
 
-This repository provides tools for extracting QSP calibration targets from scientific literature and translating them to Julia/Turing.jl for Bayesian inference.
+MAPLE (Model-Aware Parameterization from Literature Evidence) provides tools for extracting QSP calibration targets from scientific literature and translating them to Julia/Turing.jl for Bayesian inference.
 
 **Two extraction workflows:**
 - **SubmodelTarget**: In vitro / preclinical data with self-contained forward models (ODE or algebraic) and Julia/Turing.jl translation

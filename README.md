@@ -1,4 +1,4 @@
-# MAPLE
+# MAPLE — Model-Aware Parameterization from Literature Evidence
 
 [![Tests](https://github.com/popellab/maple/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/maple/actions/workflows/test.yml)
 
