@@ -121,29 +121,37 @@ The translator generates complete Julia scripts with:
 - NUTS sampling code with convergence diagnostics
 - Posterior marginal plots with prior overlays
 
+## CalibrationTarget Schema
+
+The **CalibrationTarget** schema handles clinical/in vivo observables that require full model simulation context:
+
+```bash
+# Validate calibration target YAMLs
+python scripts/validate_calibration_target.py \
+  --species-units path/to/species_units.json \
+  target.yaml
+
+# Extract calibration targets from literature
+qsp-extract targets.csv \
+  --type calibration_target \
+  --output-dir metadata-storage
+```
+
 ## Project Structure
 
 ```
 src/maple/
 ├── core/
-│   └── calibration/
-│       ├── submodel_target.py      # SubmodelTarget schema (primary)
-│       ├── julia_translator.py     # YAML → Julia/Turing.jl
-│       └── ...
-├── cli/                            # Command-line tools
-└── prompts/                        # LLM instruction prompts
+│   ├── calibration/
+│   │   ├── submodel_target.py         # SubmodelTarget schema
+│   │   ├── calibration_target_models.py  # CalibrationTarget schema
+│   │   ├── julia_translator.py        # YAML → Julia/Turing.jl
+│   │   └── ...
+│   ├── tools/                         # LLM agent tools
+│   └── workflow/                      # Workflow orchestration
+├── cli/                               # CLI entry points
+└── prompts/                           # LLM instruction prompts
 ```
-
-## Older Workflows
-
-The following schemas are from earlier development and may be deprecated:
-
-- **IsolatedSystemTarget**: Earlier schema for in vitro/preclinical data with Python submodel code
-- **CalibrationTarget**: Base class for clinical/in vivo data requiring full model simulation
-- **Parameter extraction**: Direct parameter value extraction (legacy)
-- **Test statistics**: Validation constraints from experimental data (legacy)
-
-See [docs/](docs/) for documentation on these older workflows.
 
 ## Documentation
 

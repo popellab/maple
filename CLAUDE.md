@@ -8,14 +8,10 @@ Developer guide for Claude Code when working with this repository.
 
 This repository provides tools for extracting QSP calibration targets from scientific literature and translating them to Julia/Turing.jl for Bayesian inference.
 
-**Primary Workflow:**
+**Workflows:**
 - **SubmodelTarget** schema: Structured YAML format separating data extraction from model specification
+- **CalibrationTarget** schema: Base class for full-model clinical/in vivo observables
 - **Julia Translator**: Converts validated YAML to executable Turing.jl inference scripts
-
-**Older Workflows (may be deprecated):**
-- **IsolatedSystemTarget**: Earlier schema with Python submodel code
-- **CalibrationTarget**: Base class for full-model observables
-- **Parameter extraction / Test statistics**: Legacy LLM extraction workflows
 
 ## Installation
 
@@ -310,14 +306,40 @@ The translator produces complete Julia scripts with:
 src/maple/
 ├── core/
 │   ├── calibration/
-│   │   ├── submodel_target.py      # SubmodelTarget schema (primary)
-│   │   ├── julia_translator.py     # YAML → Julia/Turing.jl
-│   │   ├── isolated_system_target.py  # Older schema
-│   │   ├── calibration_target_models.py  # Base classes
-│   │   └── ...
-│   └── unit_registry.py            # Shared Pint UnitRegistry
-├── cli/                            # Command-line tools
-└── prompts/                        # LLM instruction prompts
+│   │   ├── submodel_target.py         # SubmodelTarget schema
+│   │   ├── calibration_target_models.py  # CalibrationTarget schema
+│   │   ├── julia_translator.py        # YAML → Julia/Turing.jl
+│   │   ├── code_validator.py          # Python code validation
+│   │   ├── enums.py                   # Shared enums
+│   │   ├── exceptions.py              # Validation error hierarchy
+│   │   ├── experimental_context.py    # ExperimentalContext model
+│   │   ├── observable.py              # Observable models
+│   │   ├── scenario.py                # Scenario models
+│   │   ├── shared_models.py           # Shared Pydantic models
+│   │   ├── submodel_utils.py          # Submodel utilities
+│   │   └── validators.py              # Validation functions
+│   ├── tools/
+│   │   └── view_figure.py             # Figure extraction tool
+│   ├── workflow/
+│   │   ├── context.py                 # Workflow context
+│   │   ├── step.py                    # Workflow step ABC
+│   │   └── steps.py                   # Concrete workflow steps
+│   ├── config.py                      # WorkflowConfig
+│   ├── exceptions.py                  # Workflow exceptions
+│   ├── immediate_processor.py         # Pydantic AI request processor
+│   ├── model_structure.py             # ModelStructure for validation
+│   ├── model_structure_exporter.py    # SimBiology → JSON export
+│   ├── output_directory.py            # Output directory management
+│   ├── prompt_builder.py              # Prompt builder classes
+│   ├── prompts.py                     # Prompt assembly functions
+│   ├── resource_utils.py              # Package resource access
+│   ├── unit_registry.py               # Shared Pint UnitRegistry
+│   └── workflow_orchestrator.py       # Main orchestrator
+├── cli/
+│   ├── extract.py                     # qsp-extract entry point
+│   ├── export_model.py                # qsp-export-model entry point
+│   └── interactive.py                 # Interactive target selection
+└── prompts/                           # LLM instruction prompts
 ```
 
 ## Shared Pint UnitRegistry
@@ -339,66 +361,13 @@ concentration = 5.0 * ureg.nanomolarity
 
 ## Development
 
-### Git Commands
-
-```bash
-git status
-git diff
-git add .
-```
-
 ### Running Tests
 
 ```bash
-python -c "from maple import PromptAssembler; print('Import works')"
+pytest
 ```
 
----
+### CLI Entry Points
 
-## Older Workflows (Experimental/Deprecated)
-
-The sections below document older schemas that may be deprecated in favor of SubmodelTarget.
-
-### IsolatedSystemTarget Schema
-
-Earlier schema for in vitro/preclinical data. Uses Python submodel code instead of the typed model discriminated union.
-
-**Key differences from SubmodelTarget:**
-- Submodel code is Python (not typed model types)
-- More complex nested structure
-- No built-in Julia translation
-
-**Structure:**
-```
-IsolatedSystemTarget(CalibrationTarget)
-├── study_interpretation: str
-├── key_assumptions: List[str]
-├── parameters: List[str]             # Full model parameter names
-├── submodel
-│   ├── code: str                    # Python ODE code
-│   ├── inputs: List[SubmodelInput]
-│   ├── state_variables: List[SubmodelStateVariable]
-│   ├── t_span: [t_start, t_end]
-│   └── observable: SubmodelObservable
-├── experimental_context
-├── empirical_data
-│   ├── median, ci95, units
-│   ├── inputs: List[EstimateInput]
-│   └── distribution_code: str       # Python distribution derivation
-└── primary_data_source, secondary_data_sources
-```
-
-### Legacy CLI Commands
-
-```bash
-# Parameter extraction (legacy)
-qsp-extract input.csv --type parameter --output-dir metadata-storage
-
-# Test statistics (legacy)
-qsp-extract test_stats.csv --type test_statistic --output-dir metadata-storage
-
-# IsolatedSystemTarget extraction (older)
-qsp-extract targets.csv --type isolated_system_target --output-dir metadata-storage
-```
-
-See [docs/](docs/) for additional documentation on these older workflows.
+- `qsp-extract` — Run extraction workflows (calibration_target or submodel_target)
+- `qsp-export-model` — Export SimBiology model structure to JSON
