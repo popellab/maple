@@ -441,12 +441,6 @@ class PriorScaleError(CalibrationTargetValidationError):
 # ============================================================================
 
 
-class SourceQualityError(CalibrationTargetValidationError):
-    """Source doesn't meet quality requirements."""
-
-    category = "source_quality"
-
-
 class TranslationUncertaintyError(CalibrationTargetValidationError):
     """Translation uncertainty not properly documented."""
 
@@ -503,7 +497,6 @@ EXCEPTION_CATEGORIES = {
     "PriorParameterError": "prior",
     "PriorScaleError": "prior",
     # Source quality
-    "SourceQualityError": "source_quality",
     "TranslationUncertaintyError": "translation",
     # Encoding
     "ControlCharacterError": "encoding",
