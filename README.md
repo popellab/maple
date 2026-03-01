@@ -191,6 +191,7 @@ src/maple/
 ## Documentation
 
 - [CLAUDE.md](CLAUDE.md) - Developer guide and schema details
+- [maple-paper](https://github.com/popellab/maple-paper) - Manuscript, PDAC calibration targets, and reproducibility scripts
 
 ## License
 
