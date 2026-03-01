@@ -21,11 +21,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 
-[project.urls]
-Homepage = "https://github.com/popellab/maple"
-Repository = "https://github.com/popellab/maple"
-"Bug Tracker" = "https://github.com/popellab/maple/issues"
-
 dependencies = [
     "openai>=2.0.0",
     "python-dotenv>=1.0.0",
@@ -36,9 +31,9 @@ dependencies = [
     "pydantic-ai>=0.0.14",  # For structured outputs with discriminated unions
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
-    "pint>=0.25",  # For unit-aware test statistic calculations
+    "pint>=0.25",  # For unit-aware calculations
     "ruamel.yaml>=0.18",  # Better YAML formatting with block scalars
-    "scipy>=1.11.0",  # For ODE integration in IsolatedSystemTarget validation
+    "scipy>=1.11.0",  # For ODE integration in SubmodelTarget validation
 ]
 
 [project.optional-dependencies]
@@ -49,14 +44,13 @@ dev = [
     "freezegun>=1.2.0",
 ]
 
-[project.scripts]
-# Main workflow commands
-qsp-extract = "maple.cli.extract:main"
-qsp-validate = "maple.cli.validate:main"
-qsp-review = "maple.cli.review:main"
+[project.urls]
+Homepage = "https://github.com/popellab/maple"
+Repository = "https://github.com/popellab/maple"
+"Bug Tracker" = "https://github.com/popellab/maple/issues"
 
-# Individual tools
-qsp-enrich-csv = "maple.cli.enrich:main"
+[project.scripts]
+qsp-extract = "maple.cli.extract:main"
 qsp-export-model = "maple.cli.export_model:main"
 
 [tool.setuptools.packages.find]
@@ -91,5 +85,5 @@ markers = [
 ]
 # Ignore Pydantic models that start with "Test" (not test classes)
 filterwarnings = [
-    "ignore::pytest.PytestCollectionWarning:maple.core.pydantic_models",
+    "ignore::pytest.PytestCollectionWarning",
 ]

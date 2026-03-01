@@ -1,53 +1,9 @@
 """
-Calibration target models for QSP LLM Workflows.
-
-This module provides Pydantic models for calibration targets extracted from
-scientific literature, used to calibrate QSP model parameters via Bayesian inference.
+Calibration target models for maple.
 
 Main classes:
 - CalibrationTarget: For clinical/in vivo data (full model context)
-  - Uses `observable` field to define how to compute measurement from full model species
-- IsolatedSystemTarget: For in vitro/preclinical data with Python submodels
-  - Uses `submodel` field with nested ODE code, state variables, parameters, and observable
-- IndexType: Enum for vector-valued data index dimension (time, dose, ratio, etc.)
-
-Input Architecture:
-Inputs are co-located with the code blocks that use them for clarity:
-
-- `submodel.inputs` (SubmodelInput): Experimental conditions for ODE code (E:T ratio, dose, etc.)
-- `submodel.state_variables` (SubmodelStateVariable): Self-contained with initial values + provenance
-- `observable.inputs` (SubmodelInput): Literature inputs for observable code
-- `observable.constants` (ObservableConstant): Geometric/modeling constants
-- `empirical_data.inputs` (EstimateInput): Inputs for distribution_code derivation
-- `empirical_data.assumptions` (ModelingAssumption): Computational assumptions
-
-CalibrationTarget:
-Uses the full QSP model. The `observable` field defines Python code to compute the
-experimental measurement from model species (e.g., ratio of CD8 cells to tumor cells).
-
-IsolatedSystemTarget:
-For isolated systems (in vitro, preclinical), the LLM builds a Python submodel that
-approximates the relevant dynamics from the full QSP model. The `submodel` field includes:
-- `code`: ODE function using parameter names from full model (for joint inference)
-- `inputs`: Experimental conditions with full provenance
-- `state_variables`: Self-contained with initial values, units, and provenance
-- `parameters`: List of parameter names from the full model
-- `observable`: How to compute the measurement from submodel state
-
-Supporting modules:
-- enums: Species, Indication, System enums (Compartment kept for backward compatibility)
-- scenario: Intervention, Scenario models
-- observable: Observable, Submodel, ObservableConstant models
-- experimental_context: Stage, TreatmentContext, ExperimentalContext
-- shared_models: EstimateInput, SubmodelInput, ModelingAssumption, Source, Snippet
-- validators: Validation helper functions (resolve_doi, fuzzy_match, etc.)
-- exceptions: Custom exception classes for validation errors
-
-Vector-valued data:
-Calibration targets support both scalar and vector-valued data through a unified pathway:
-- Scalar: median=[42.0], ci95=[[37.0, 47.0]] (length-1 lists)
-- Vector: index_values=[0, 24, 48, 72], median=[10, 15, 20, 18] (matching lengths)
-- Input.value can be float (broadcast) or List[float] (per-index-point)
+- SubmodelTarget: For in vitro/preclinical data with typed forward models and Julia translation
 """
 
 # Main calibration target classes
@@ -56,9 +12,6 @@ from maple.core.calibration.calibration_target_models import (
     CalibrationTargetEstimates,
     CalibrationTargetFooters,
     IndexType,
-)
-from maple.core.calibration.isolated_system_target import (
-    IsolatedSystemTarget,
 )
 from maple.core.calibration.submodel_target import (
     SubmodelTarget,
@@ -119,8 +72,7 @@ from maple.core.calibration.shared_models import (
     DoseResponseData,
     EstimateInput,
     InputType,
-    KeyAssumption,  # Kept for backward compatibility with ParameterMetadata/TestStatistic
-    LiteratureInput,  # Backwards compatibility alias for EstimateInput
+    KeyAssumption,
     ModelingAssumption,
     SecondarySource,
     Snippet,
@@ -185,7 +137,6 @@ __all__ = [
     "CalibrationTargetEstimates",
     "CalibrationTargetFooters",
     "IndexType",
-    "IsolatedSystemTarget",
     "SubmodelTarget",
     # Enums
     "Species",
@@ -225,7 +176,6 @@ __all__ = [
     # Shared models
     "EstimateInput",
     "SubmodelInput",
-    "LiteratureInput",  # Backwards compatibility alias
     "ModelingAssumption",
     "InputType",
     "KeyAssumption",

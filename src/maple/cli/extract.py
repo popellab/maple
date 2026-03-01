@@ -22,9 +22,8 @@ def main():
         description="Run automated extraction workflow using Pydantic AI",
         epilog="""
 Examples:
-    qsp-extract input.csv --type parameter --output-dir metadata-storage
-    qsp-extract input.csv --type test_statistic --output-dir metadata-storage
-    qsp-extract input.csv --type parameter --output-dir metadata-storage --preview-prompts
+    qsp-extract input.csv --type submodel_target --model-structure model.json --model-context ctx.txt --output-dir metadata-storage
+    qsp-extract input.csv --type calibration_target --output-dir metadata-storage
         """,
     )
 
@@ -34,10 +33,7 @@ Examples:
         "--type",
         required=True,
         choices=[
-            "parameter",
-            "test_statistic",
             "calibration_target",
-            "isolated_system_target",
             "submodel_target",
         ],
         help="Type of extraction workflow",
@@ -79,13 +75,13 @@ Examples:
     parser.add_argument(
         "--model-structure",
         type=Path,
-        help="Path to model_structure.json for parameter context and validation (isolated_system_target)",
+        help="Path to model_structure.json for parameter context and validation (submodel_target)",
     )
 
     parser.add_argument(
         "--model-context",
         type=Path,
-        help="Path to model_context.txt with high-level model description (isolated_system_target)",
+        help="Path to model_context.txt with high-level model description (submodel_target)",
     )
 
     parser.add_argument(
@@ -132,7 +128,7 @@ Examples:
         sys.exit(1)
 
     # Validate required options for specific workflow types
-    if args.type in ("isolated_system_target", "submodel_target"):
+    if args.type == "submodel_target":
         if not args.model_structure:
             print(
                 f"Error: --model-structure is required for {args.type} workflow",
@@ -261,9 +257,7 @@ Examples:
             if result.status == "success":
                 print("Next steps:")
                 print(f"  1. Review files in: {result.output_directory}")
-                print(
-                    f"  2. Run validation: qsp-validate {args.type} --dir {result.output_directory}"
-                )
+                print("  2. Review and validate files")
         print()
 
         sys.exit(0)

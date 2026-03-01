@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CLI wrapper for model definition export.
+CLI wrapper for model structure export.
 
 Entry point: qsp-export-model
 """
@@ -8,23 +8,19 @@ import argparse
 import sys
 from pathlib import Path
 
-from maple.core.model_definition_exporter import ModelDefinitionExporter
 from maple.core.model_structure_exporter import ModelStructureExporter
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Export model definitions from SimBiology model",
+        description="Export model structure from SimBiology model",
         epilog="""
 Examples:
-    # Export parameter definitions (for LLM extraction workflow)
-    qsp-export-model --matlab-model model.m --output model_defs.json
-
-    # Export model structure (for LLM query tools)
-    qsp-export-model --matlab-model model.m --output model_defs.json --structure
+    # Export model structure (for LLM query tools and validation)
+    qsp-export-model --matlab-model model.m --output model_structure.json
 
     # Export from SimBiology project
-    qsp-export-model --simbiology-project model.sbproj --output model_defs.json --structure
+    qsp-export-model --simbiology-project model.sbproj --output model_structure.json
         """,
     )
 
@@ -44,13 +40,7 @@ Examples:
     )
 
     parser.add_argument(
-        "--output", required=True, type=Path, help="Output JSON file for model definitions"
-    )
-
-    parser.add_argument(
-        "--structure",
-        action="store_true",
-        help="Also export model_structure.json (species, compartments, parameters, reactions)",
+        "--output", required=True, type=Path, help="Output JSON file for model structure"
     )
 
     args = parser.parse_args()
@@ -69,22 +59,12 @@ Examples:
         sys.exit(1)
 
     try:
-        print(f"Exporting model definitions from {model_file}...")
+        print(f"Exporting model structure from {model_file}...")
 
-        exporter = ModelDefinitionExporter(str(model_file), model_type=model_type)
+        exporter = ModelStructureExporter(str(model_file), model_type=model_type)
         exporter.export_to_json(str(args.output))
 
-        print(f"✓ Model definitions exported to {args.output}")
-
-        # Export model structure if requested
-        if args.structure:
-            structure_output = args.output.parent / "model_structure.json"
-            print("Exporting model structure...")
-
-            structure_exporter = ModelStructureExporter(str(model_file), model_type=model_type)
-            structure_exporter.export_to_json(str(structure_output))
-
-            print(f"✓ Model structure exported to {structure_output}")
+        print(f"✓ Model structure exported to {args.output}")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

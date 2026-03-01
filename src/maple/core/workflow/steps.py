@@ -11,10 +11,7 @@ from datetime import datetime
 from maple.core.workflow.step import WorkflowStep
 from maple.core.workflow.context import WorkflowContext
 from maple.core.prompt_builder import (
-    ParameterPromptBuilder,
-    TestStatisticPromptBuilder,
     CalibrationTargetPromptBuilder,
-    IsolatedSystemTargetPromptBuilder,
     SubmodelTargetPromptBuilder,
 )
 from maple.core.immediate_processor import ImmediateRequestProcessor
@@ -44,14 +41,8 @@ class CreatePreviewStep(WorkflowStep):
         context.report_progress(f"Creating {context.workflow_type} prompt preview...")
 
         # Select appropriate prompt builder
-        if context.workflow_type == "parameter":
-            builder = ParameterPromptBuilder(context.config.base_dir)
-        elif context.workflow_type == "test_statistic":
-            builder = TestStatisticPromptBuilder(context.config.base_dir)
-        elif context.workflow_type == "calibration_target":
+        if context.workflow_type == "calibration_target":
             builder = CalibrationTargetPromptBuilder(context.config.base_dir)
-        elif context.workflow_type == "isolated_system_target":
-            builder = IsolatedSystemTargetPromptBuilder(context.config.base_dir)
         elif context.workflow_type == "submodel_target":
             builder = SubmodelTargetPromptBuilder(context.config.base_dir)
         else:
@@ -59,12 +50,7 @@ class CreatePreviewStep(WorkflowStep):
 
         # Generate prompts
         try:
-            if context.workflow_type == "parameter":
-                parameter_storage_dir = context.config.storage_dir / "parameter_estimates"
-                prompts = builder.process(
-                    context.input_csv, parameter_storage_dir, context.config.reasoning_effort
-                )
-            elif context.workflow_type == "calibration_target":
+            if context.workflow_type == "calibration_target":
                 species_units_file = context.config.jobs_dir / "input_data" / "species_units.json"
                 prompts = builder.process(
                     context.input_csv,
@@ -72,30 +58,7 @@ class CreatePreviewStep(WorkflowStep):
                     context.config.reasoning_effort,
                     reference_values_file=context.config.reference_values_file,
                 )
-            elif context.workflow_type == "isolated_system_target":
-                # Requires model_structure_file and model_context_file
-                model_structure_file = context.config.model_structure_file
-                if not model_structure_file:
-                    raise ValueError(
-                        "model_structure_file is required for isolated_system_target workflow. "
-                        "Use --model-structure option."
-                    )
-                model_context_file = context.config.model_context_file
-                if not model_context_file:
-                    raise ValueError(
-                        "model_context_file is required for isolated_system_target workflow. "
-                        "Use --model-context option."
-                    )
-                species_units_file = context.config.jobs_dir / "input_data" / "species_units.json"
-                prompts = builder.process(
-                    context.input_csv,
-                    model_structure_file,
-                    model_context_file,
-                    species_units_file if species_units_file.exists() else None,
-                    context.config.reasoning_effort,
-                )
             elif context.workflow_type == "submodel_target":
-                # Requires model_structure_file and model_context_file
                 model_structure_file = context.config.model_structure_file
                 if not model_structure_file:
                     raise ValueError(
@@ -118,7 +81,7 @@ class CreatePreviewStep(WorkflowStep):
                     previous_extractions_dir=context.config.previous_extractions_dir,
                 )
             else:
-                prompts = builder.process(context.input_csv, None, context.config.reasoning_effort)
+                prompts = []
         except Exception as e:
             raise ImmediateProcessingError(
                 f"Failed to generate prompts: {e}",

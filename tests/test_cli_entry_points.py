@@ -12,20 +12,6 @@ def test_qsp_extract_help():
     assert "qsp-extract" in result.stdout or "extract" in result.stdout.lower()
 
 
-def test_qsp_validate_help():
-    """Test that qsp-validate command is available and shows help."""
-    result = subprocess.run(["qsp-validate", "--help"], capture_output=True, text=True)
-    assert result.returncode == 0
-    assert "validate" in result.stdout.lower()
-
-
-def test_qsp_enrich_csv_help():
-    """Test that qsp-enrich-csv command is available and shows help."""
-    result = subprocess.run(["qsp-enrich-csv", "--help"], capture_output=True, text=True)
-    assert result.returncode == 0
-    assert "enrich" in result.stdout.lower()
-
-
 def test_qsp_export_model_help():
     """Test that qsp-export-model command is available and shows help."""
     result = subprocess.run(["qsp-export-model", "--help"], capture_output=True, text=True)

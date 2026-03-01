@@ -4,81 +4,7 @@ Simple prompt building functions.
 Replaces complex YAML-based prompt assembly with straightforward string substitution.
 """
 
-from maple.core.resource_utils import read_prompt, read_shared_prompt
-
-
-def build_parameter_extraction_prompt(
-    parameter_info: str,
-    model_context: str,
-    cancer_type: str,
-    used_primary_studies: str = "",
-) -> str:
-    """
-    Build parameter extraction prompt with substitutions.
-
-    Args:
-        parameter_info: Formatted parameter information (name, units, description)
-        model_context: Mathematical role and biological context
-        cancer_type: Cancer type/indication (e.g., "PDAC", "melanoma")
-        used_primary_studies: List of already-used studies (optional)
-
-    Returns:
-        Complete prompt with all placeholders replaced
-    """
-    # Load base prompt
-    prompt = read_prompt("qsp_parameter_extraction_prompt.md")
-
-    # Load shared rubrics
-    rubrics = read_shared_prompt("source_and_validation_rubrics.md")
-
-    # Substitute placeholders
-    prompt = prompt.replace("{{PARAMETER_INFO}}", parameter_info)
-    prompt = prompt.replace("{{MODEL_CONTEXT}}", model_context)
-    prompt = prompt.replace("{{CANCER_TYPE}}", cancer_type)
-    prompt = prompt.replace("{{SOURCE_AND_VALIDATION_RUBRICS}}", rubrics)
-    prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
-
-    return prompt
-
-
-def build_test_statistic_prompt(
-    model_context: str,
-    scenario_context: str,
-    required_species_with_units: str,
-    derived_species_description: str,
-    cancer_type: str,
-    used_primary_studies: str = "",
-) -> str:
-    """
-    Build test statistic prompt with substitutions.
-
-    Args:
-        model_context: Model structure and relevant variables
-        scenario_context: Experimental scenario and dosing context
-        required_species_with_units: Required species with units
-        derived_species_description: Description of derived species/test statistic
-        cancer_type: Cancer type/indication (e.g., "PDAC", "melanoma")
-        used_primary_studies: List of already-used studies (optional)
-
-    Returns:
-        Complete prompt with all placeholders replaced
-    """
-    # Load base prompt
-    prompt = read_prompt("test_statistic_prompt.md")
-
-    # Load shared rubrics
-    rubrics = read_shared_prompt("source_and_validation_rubrics.md")
-
-    # Substitute placeholders
-    prompt = prompt.replace("{{MODEL_CONTEXT}}", model_context)
-    prompt = prompt.replace("{{SCENARIO_CONTEXT}}", scenario_context)
-    prompt = prompt.replace("{{REQUIRED_SPECIES_WITH_UNITS}}", required_species_with_units)
-    prompt = prompt.replace("{{DERIVED_SPECIES_DESCRIPTION}}", derived_species_description)
-    prompt = prompt.replace("{{CANCER_TYPE}}", cancer_type)
-    prompt = prompt.replace("{{SOURCE_AND_VALIDATION_RUBRICS}}", rubrics)
-    prompt = prompt.replace("{{USED_PRIMARY_STUDIES}}", used_primary_studies)
-
-    return prompt
+from maple.core.resource_utils import read_prompt
 
 
 def build_calibration_target_prompt(
@@ -155,46 +81,6 @@ def build_calibration_target_prompt(
         prompt = prompt.replace("{{REFERENCE_DATABASE}}", "\n".join(lines))
     else:
         prompt = prompt.replace("{{REFERENCE_DATABASE}}", "No reference database available.")
-
-    return prompt
-
-
-def build_isolated_system_target_prompt(
-    parameters: str,
-    model_context: str,
-    parameter_context: str = "",
-    notes: str = "",
-) -> str:
-    """
-    Build isolated system target extraction prompt.
-
-    Args:
-        parameters: Comma-separated parameter names to calibrate (e.g., "k_CD8_pro,k_CD8_death")
-        model_context: High-level model description (from model_context.txt)
-        parameter_context: Rich context for each parameter (reactions, species, etc.)
-        notes: Optional notes/guidance for the extraction
-
-    Returns:
-        Complete prompt with placeholders replaced
-    """
-    prompt = read_prompt("isolated_system_target_prompt.md")
-
-    prompt = prompt.replace("{{PARAMETERS}}", parameters)
-    prompt = prompt.replace("{{MODEL_CONTEXT}}", model_context)
-    prompt = prompt.replace(
-        "{{PARAMETER_CONTEXT}}", parameter_context or "No parameter context available."
-    )
-
-    # Handle optional notes with mustache-style conditional
-    if notes and notes.strip():
-        prompt = prompt.replace("{{#NOTES}}", "")
-        prompt = prompt.replace("{{/NOTES}}", "")
-        prompt = prompt.replace("{{NOTES}}", notes)
-    else:
-        # Remove the entire notes line if empty
-        import re
-
-        prompt = re.sub(r"\{\{#NOTES\}\}.*?\{\{/NOTES\}\}\n?", "", prompt, flags=re.DOTALL)
 
     return prompt
 

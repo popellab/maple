@@ -15,10 +15,7 @@ from pydantic_ai import Agent, WebSearchTool, CodeExecutionTool
 from maple.core.tools.view_figure import view_figure
 
 from maple.core.prompt_builder import (
-    ParameterPromptBuilder,
-    TestStatisticPromptBuilder,
     CalibrationTargetPromptBuilder,
-    IsolatedSystemTargetPromptBuilder,
     SubmodelTargetPromptBuilder,
 )
 
@@ -69,10 +66,7 @@ class ImmediateRequestProcessor:
             logfire.instrument_pydantic_ai()
 
         # Initialize prompt builders for prompt building (DRY principle)
-        self.parameter_creator = ParameterPromptBuilder(base_dir)
-        self.test_statistic_creator = TestStatisticPromptBuilder(base_dir)
         self.calibration_target_creator = CalibrationTargetPromptBuilder(base_dir)
-        self.isolated_system_target_creator = IsolatedSystemTargetPromptBuilder(base_dir)
         self.submodel_target_creator = SubmodelTargetPromptBuilder(base_dir)
 
     def get_prompts(
@@ -96,32 +90,12 @@ class ImmediateRequestProcessor:
         Returns:
             List of prompt dictionaries
         """
-        if workflow_type == "parameter":
-            # For parameters, pass storage_dir (though not used in immediate mode)
-            return self.parameter_creator.process(input_csv, None, reasoning_effort)
-        elif workflow_type == "test_statistic":
-            return self.test_statistic_creator.process(input_csv, None, reasoning_effort)
-        elif workflow_type == "calibration_target":
+        if workflow_type == "calibration_target":
             return self.calibration_target_creator.process(
                 input_csv,
                 species_units_file,
                 reasoning_effort,
                 reference_values_file=self.reference_values_file,
-            )
-        elif workflow_type == "isolated_system_target":
-            # Requires model_structure_file and model_context_file
-            if not self.model_structure_file:
-                raise ValueError(
-                    "model_structure_file required for isolated_system_target workflow"
-                )
-            if not self.model_context_file:
-                raise ValueError("model_context_file required for isolated_system_target workflow")
-            return self.isolated_system_target_creator.process(
-                input_csv,
-                self.model_structure_file,
-                self.model_context_file,
-                species_units_file,
-                reasoning_effort,
             )
         elif workflow_type == "submodel_target":
             # Requires model_structure_file and model_context_file

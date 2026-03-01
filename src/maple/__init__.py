@@ -1,11 +1,8 @@
 """
-QSP LLM Workflows - Automated extraction of QSP metadata from scientific literature.
+Maple - Tools for extracting QSP calibration targets from scientific literature.
 
-This package provides tools for:
-- Parameter extraction from literature
-- Test statistic extraction and validation
-- Automated extraction processing via Pydantic AI
-- Validation and quality control
+Provides structured YAML schemas with Pydantic validation and Julia/Turing.jl
+translation for Bayesian inference.
 """
 
 __version__ = "0.1.0"
@@ -13,8 +10,8 @@ __version__ = "0.1.0"
 # Public API
 from maple.core.prompt_builder import (
     PromptBuilder,
-    ParameterPromptBuilder,
-    TestStatisticPromptBuilder,
+    CalibrationTargetPromptBuilder,
+    SubmodelTargetPromptBuilder,
 )
 from maple.core.workflow_orchestrator import WorkflowOrchestrator
 
@@ -48,8 +45,8 @@ from maple.core.calibration.exceptions import (
 __all__ = [
     "__version__",
     "PromptBuilder",
-    "ParameterPromptBuilder",
-    "TestStatisticPromptBuilder",
+    "CalibrationTargetPromptBuilder",
+    "SubmodelTargetPromptBuilder",
     "WorkflowOrchestrator",
     # Exception classes
     "CalibrationTargetValidationError",

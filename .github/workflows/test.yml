@@ -34,8 +34,6 @@ jobs:
     - name: Test CLI commands are available
       run: |
         qsp-extract --help
-        qsp-validate --help
-        qsp-enrich-csv --help
         qsp-export-model --help
 
   lint:
