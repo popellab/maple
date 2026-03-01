@@ -77,7 +77,7 @@ class AutomatedSnippetVerifier(Validator):
     )
 
     # Email for Unpaywall API (required, but can be generic for research tools)
-    UNPAYWALL_EMAIL = "qsp-llm-workflows@research.edu"
+    UNPAYWALL_EMAIL = "maple@research.edu"
 
     def __init__(
         self,

@@ -8,7 +8,7 @@ Extract calibration targets from scientific literature for quantitative systems 
 
 ```bash
 git clone https://github.com/popellab/maple.git
-cd qsp-llm-workflows
+cd maple
 python -m venv venv
 source venv/bin/activate
 pip install -e .

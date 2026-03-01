@@ -1,5 +1,5 @@
 """
-Configuration management for QSP LLM workflows.
+Configuration management for maple.
 
 Provides centralized configuration with validation and environment loading.
 """
@@ -24,7 +24,7 @@ class WorkflowConfig(BaseModel):
     # Required fields
     base_dir: Path = Field(
         ...,
-        description="Base directory of qsp-llm-workflows repository",
+        description="Base directory of maple repository",
     )
     storage_dir: Path = Field(
         ...,

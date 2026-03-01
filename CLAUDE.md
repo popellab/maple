@@ -21,7 +21,7 @@ This repository provides tools for extracting QSP calibration targets from scien
 
 ```bash
 git clone https://github.com/popellab/maple.git
-cd qsp-llm-workflows
+cd maple
 pip install -e .
 ```
 
