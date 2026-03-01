@@ -8,10 +8,9 @@ Developer guide for Claude Code when working with this repository.
 
 This repository provides tools for extracting QSP calibration targets from scientific literature and translating them to Julia/Turing.jl for Bayesian inference.
 
-**Workflows:**
-- **SubmodelTarget** schema: Structured YAML format separating data extraction from model specification
-- **CalibrationTarget** schema: Base class for full-model clinical/in vivo observables
-- **Julia Translator**: Converts validated YAML to executable Turing.jl inference scripts
+**Two extraction workflows:**
+- **SubmodelTarget**: In vitro / preclinical data with self-contained forward models (ODE or algebraic) and Julia/Turing.jl translation
+- **CalibrationTarget**: Clinical / in vivo observables requiring full model simulation context, with Monte Carlo distribution derivation
 
 ## Installation
 
@@ -23,7 +22,7 @@ pip install -e .
 
 ## SubmodelTarget Schema
 
-The primary schema for calibration targets. Located in `submodel_target.py`.
+For in vitro and preclinical data with self-contained forward models. Located in `submodel_target.py`.
 
 ### Key Design
 
@@ -238,6 +237,89 @@ qsp-extract targets.csv \
 target_id,parameters,notes
 psc_proliferation,k_apsc_prolif,Focus on activated PSCs
 psc_death,k_apsc_death,
+```
+
+## CalibrationTarget Schema
+
+For clinical/in vivo observables (biopsies, blood draws, resections). Located in `calibration_target_models.py`.
+
+### Key Design
+
+**Experimental context vs model context:** Each observable has an experimental context (species, indication, compartment, treatment) that may differ from the QSP model context. Mismatches are documented and quantified via `source_relevance`.
+
+**Core structure:**
+- `observable` — What is being measured (species name from model, units, compartment, support type, aggregation)
+- `scenarios` — Experimental conditions with interventions
+- `empirical_data` — Literature values + Monte Carlo `distribution_code` that derives median/CI95
+- `experimental_context` — Species, indication, stage, treatment history
+- `source_relevance` — Indication match, species translation, TME compatibility
+
+**Strict matching requirements** (enforced in extraction prompts):
+- Species must match exactly (no cross-species substitution)
+- Indication must match exactly (no related cancer substitution)
+- Compartment must match exactly (no serum-for-tissue substitution)
+- Source must be in vivo patient data (no cell culture/organoids)
+
+**distribution_code** derives calibration statistics from extracted inputs:
+```python
+def derive_distribution(inputs, ureg):
+    import numpy as np
+    rng = np.random.default_rng(42)
+    mean = inputs['cd8_density_mean']
+    sd = inputs['cd8_density_sd']
+    samples = rng.normal(mean.magnitude, sd.magnitude, 10000) * mean.units
+    return {
+        'median_obs': np.median(samples),
+        'ci95_lower': np.percentile(samples, 2.5),
+        'ci95_upper': np.percentile(samples, 97.5),
+    }
+```
+
+**Vector-valued targets** supported via `index_values`, `index_unit`, `index_type` for time-course or dose-response data.
+
+### Validation
+
+```bash
+# Validate (requires species_units.json for unit checking)
+python scripts/validate_calibration_target.py \
+  --species-units path/to/species_units.json target.yaml
+
+# Validate directory of targets
+python scripts/validate_calibration_target.py \
+  --species-units path/to/species_units.json calibration_targets/
+
+# Skip DOI checks (faster, offline)
+python scripts/validate_calibration_target.py --skip-doi \
+  --species-units path/to/species_units.json target.yaml
+```
+
+**CalibrationTarget validators** (run on `model_validate`):
+- DOI resolution and title matching (CrossRef API)
+- `distribution_code` execution — computed median/CI95 must match reported values within 1%
+- `measurement_code` unit dimensionality check (Pint)
+- `value_snippet` contains declared numeric values (anti-hallucination)
+- Source reference consistency (`source_ref` → `source_tag`)
+- No invisible/control characters
+- Species existence in model (via `species_units` context)
+
+### LLM Extraction
+
+```bash
+qsp-extract targets.csv \
+  --type calibration_target \
+  --output-dir metadata-storage
+
+# Preview prompts without API call
+qsp-extract targets.csv \
+  --type calibration_target \
+  --output-dir metadata-storage \
+  --preview-prompts
+```
+
+**Input CSV format:**
+```csv
+observable_name,description,species,compartment,notes
+cd8_tumor_density,CD8+ T cell density in primary tumor,CD8_T,tumor.primary,Treatment-naive PDAC
 ```
 
 ## Julia Translator
