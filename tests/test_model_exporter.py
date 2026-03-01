@@ -9,7 +9,7 @@ import pytest
 import tempfile
 from pathlib import Path
 
-from qsp_llm_workflows.core.model_definition_exporter import ModelDefinitionExporter
+from maple.core.model_definition_exporter import ModelDefinitionExporter
 
 
 def test_model_exporter_has_export_to_json_method():
@@ -90,8 +90,8 @@ def test_model_exporter_finds_matlab_export_script():
 
     try:
         # Check that the MATLAB script path is constructed correctly
-        # The script should look for src/qsp_llm_workflows/matlab/export_model_definitions.m
-        from qsp_llm_workflows.core.resource_utils import get_package_root
+        # The script should look for src/maple/matlab/export_model_definitions.m
+        from maple.core.resource_utils import get_package_root
 
         package_root = get_package_root()
         expected_script = package_root / "matlab" / "export_model_definitions.m"
@@ -151,7 +151,7 @@ def test_matlab_script_handles_sbioloadproject_struct():
     Rather than the incorrect:
         proj.Models  % This field doesn't exist!
     """
-    from qsp_llm_workflows.core.resource_utils import get_package_root
+    from maple.core.resource_utils import get_package_root
 
     # Read the MATLAB export script
     package_root = get_package_root()

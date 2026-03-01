@@ -4,7 +4,7 @@ Unit tests for simple prompt building functions.
 Tests that prompts are correctly assembled with placeholder substitutions.
 """
 
-from qsp_llm_workflows.core.prompts import (
+from maple.core.prompts import (
     build_parameter_extraction_prompt,
     build_test_statistic_prompt,
 )

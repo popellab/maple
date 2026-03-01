@@ -73,7 +73,7 @@ The rubric covers 3 deep dimensions requiring scientific judgment, scored as PAS
 ## File Structure
 
 ```
-src/qsp_llm_workflows/
+src/maple/
 ├── cli/
 │   └── review.py              # New CLI entry point
 ├── core/
@@ -84,7 +84,7 @@ src/qsp_llm_workflows/
 
 Add to `pyproject.toml`:
 ```toml
-qsp-review = "qsp_llm_workflows.cli.review:main"
+qsp-review = "maple.cli.review:main"
 ```
 
 ## Implementation Details

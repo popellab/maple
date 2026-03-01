@@ -6,7 +6,7 @@ Tests HTML parsing, figure extraction, and fuzzy label matching.
 """
 
 
-from qsp_llm_workflows.core.tools.view_figure import (
+from maple.core.tools.view_figure import (
     _normalize_label,
     _label_matches,
     extract_figures_from_html,

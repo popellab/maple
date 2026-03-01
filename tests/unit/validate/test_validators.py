@@ -8,16 +8,16 @@ import tempfile
 from pathlib import Path
 import yaml
 
-from qsp_llm_workflows.validate.check_schema_compliance import SchemaValidator
-from qsp_llm_workflows.validate.test_code_execution import CodeExecutionValidator
-from qsp_llm_workflows.validate.check_text_snippets import TextSnippetValidator
-from qsp_llm_workflows.validate.check_source_references import SourceReferenceValidator
-from qsp_llm_workflows.validate.check_doi_validity import DOIValidator
-from qsp_llm_workflows.validate.check_value_consistency import ValueConsistencyChecker
-from qsp_llm_workflows.validate.check_duplicate_primary_sources import (
+from maple.validate.check_schema_compliance import SchemaValidator
+from maple.validate.test_code_execution import CodeExecutionValidator
+from maple.validate.check_text_snippets import TextSnippetValidator
+from maple.validate.check_source_references import SourceReferenceValidator
+from maple.validate.check_doi_validity import DOIValidator
+from maple.validate.check_value_consistency import ValueConsistencyChecker
+from maple.validate.check_duplicate_primary_sources import (
     DuplicatePrimarySourceChecker,
 )
-from qsp_llm_workflows.core.pydantic_models import ParameterMetadata
+from maple.core.pydantic_models import ParameterMetadata
 
 
 class TestSchemaValidator:

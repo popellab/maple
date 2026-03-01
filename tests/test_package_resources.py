@@ -5,7 +5,7 @@ These tests catch issues like missing MATLAB scripts, templates, or prompts
 that would cause runtime errors.
 """
 
-from qsp_llm_workflows.core.resource_utils import get_package_root
+from maple.core.resource_utils import get_package_root
 
 
 def test_matlab_export_script_exists():

@@ -8,7 +8,7 @@ from pathlib import Path
 from freezegun import freeze_time
 import time
 
-from qsp_llm_workflows.core.output_directory import (
+from maple.core.output_directory import (
     generate_output_directory_name,
     create_unique_output_directory,
 )

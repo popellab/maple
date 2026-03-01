@@ -8,8 +8,8 @@ import pytest
 from pathlib import Path
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.config import WorkflowConfig
-from qsp_llm_workflows.core.exceptions import ConfigurationError
+from maple.core.config import WorkflowConfig
+from maple.core.exceptions import ConfigurationError
 
 
 class TestWorkflowConfig:

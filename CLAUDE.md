@@ -20,7 +20,7 @@ This repository provides tools for extracting QSP calibration targets from scien
 ## Installation
 
 ```bash
-git clone https://github.com/popellab/qsp-llm-workflows.git
+git clone https://github.com/popellab/maple.git
 cd qsp-llm-workflows
 pip install -e .
 ```
@@ -251,7 +251,7 @@ Translates SubmodelTarget YAMLs to Julia Turing.jl inference scripts. Located in
 ### Single Target
 
 ```python
-from qsp_llm_workflows.core.calibration.julia_translator import JuliaTranslator
+from maple.core.calibration.julia_translator import JuliaTranslator
 
 translator = JuliaTranslator()
 julia_code = translator.generate_script("target.yaml")
@@ -260,7 +260,7 @@ julia_code = translator.generate_script("target.yaml")
 ### Joint Inference (Multiple Targets)
 
 ```python
-from qsp_llm_workflows.core.calibration.julia_translator import JointInferenceBuilder
+from maple.core.calibration.julia_translator import JointInferenceBuilder
 
 builder = JointInferenceBuilder()
 julia_code = builder.build_from_files([
@@ -276,18 +276,18 @@ julia_code = builder.build_from_files([
 
 ```bash
 # Single target (--model-structure required)
-python -m qsp_llm_workflows.core.calibration.julia_translator \
+python -m maple.core.calibration.julia_translator \
     --model-structure model_structure.json \
     target.yaml
 
 # Joint inference
-python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+python -m maple.core.calibration.julia_translator --joint \
     --model-structure model_structure.json \
     target1.yaml target2.yaml target3.yaml \
     --output joint_calibration.jl
 
 # Joint inference with fixed sigmas (faster sampling)
-python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+python -m maple.core.calibration.julia_translator --joint \
     --model-structure model_structure.json \
     --fixed-sigma \
     target1.yaml target2.yaml target3.yaml
@@ -307,7 +307,7 @@ The translator produces complete Julia scripts with:
 ## Package Structure
 
 ```
-src/qsp_llm_workflows/
+src/maple/
 ├── core/
 │   ├── calibration/
 │   │   ├── submodel_target.py      # SubmodelTarget schema (primary)
@@ -325,7 +325,7 @@ src/qsp_llm_workflows/
 All code that handles units must use the shared Pint UnitRegistry:
 
 ```python
-from qsp_llm_workflows.core.unit_registry import ureg
+from maple.core.unit_registry import ureg
 
 time = np.linspace(0, 14, 100) * ureg.day
 concentration = 5.0 * ureg.nanomolarity
@@ -350,7 +350,7 @@ git add .
 ### Running Tests
 
 ```bash
-python -c "from qsp_llm_workflows import PromptAssembler; print('Import works')"
+python -c "from maple import PromptAssembler; print('Import works')"
 ```
 
 ---

@@ -15,7 +15,7 @@ import warnings
 from unittest.mock import patch
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.calibration.submodel_target import (
+from maple.core.calibration.submodel_target import (
     SubmodelTarget,
     Input,
     InputType,
@@ -28,7 +28,7 @@ from qsp_llm_workflows.core.calibration.submodel_target import (
     Likelihood,
     PrimaryDataSource,
 )
-from qsp_llm_workflows.core.model_structure import ModelStructure, ModelParameter
+from maple.core.model_structure import ModelStructure, ModelParameter
 
 
 # ============================================================================
@@ -49,7 +49,7 @@ def mock_doi_resolution():
         }
 
     with patch(
-        "qsp_llm_workflows.core.calibration.validators.resolve_doi",
+        "maple.core.calibration.validators.resolve_doi",
         side_effect=mock_resolve,
     ):
         yield
@@ -669,7 +669,9 @@ def derive_observation(inputs, sample_size):
         data["calibration"]["parameters"][0]["units"] = "nanomolar/cell/day"
         data["calibration"]["error_model"][0]["units"] = "nanomolar/cell/day"
         # Update forward model code to access the renamed parameter
-        data["calibration"]["forward_model"]["code"] = """
+        data["calibration"]["forward_model"][
+            "code"
+        ] = """
 def compute(params, inputs):
     return params['k_CCL2_sec']
 """
@@ -697,7 +699,9 @@ def derive_observation(inputs, sample_size):
         data["calibration"]["parameters"][0]["units"] = "nanomole/cell/day"
         data["calibration"]["error_model"][0]["units"] = "nanomole/cell/day"
         # Update forward model code to access the renamed parameter
-        data["calibration"]["forward_model"]["code"] = """
+        data["calibration"]["forward_model"][
+            "code"
+        ] = """
 def compute(params, inputs):
     return params['k_CCL2_sec']
 """
@@ -1046,7 +1050,9 @@ def derive_observation(inputs, sample_size):
 """,
         )
         # Introduce syntax error in model code
-        data["calibration"]["forward_model"]["code"] = """
+        data["calibration"]["forward_model"][
+            "code"
+        ] = """
 def compute(params, inputs):
     return params['k_test'  # Missing closing bracket - syntax error
 """
@@ -1067,7 +1073,9 @@ def derive_observation(inputs, sample_size):
 """,
         )
         # Wrong function name (should be 'compute')
-        data["calibration"]["forward_model"]["code"] = """
+        data["calibration"]["forward_model"][
+            "code"
+        ] = """
 def wrong_name(params, inputs, ureg):
     return params['k_test']
 """
@@ -1547,7 +1555,9 @@ def derive_observation(inputs, sample_size):
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "invisible" in str(exc_info.value).lower() or "character" in str(exc_info.value).lower()
+        assert (
+            "invisible" in str(exc_info.value).lower() or "character" in str(exc_info.value).lower()
+        )
 
     def test_normal_text_passes(self):
         """Normal text without invisible characters should pass."""
@@ -1595,7 +1605,11 @@ def derive_observation(inputs, sample_size):
             SubmodelTarget(**data)
 
         error_str = str(exc_info.value).lower()
-        assert "invalid_unit_xyz" in error_str or "not defined" in error_str or "not a valid" in error_str
+        assert (
+            "invalid_unit_xyz" in error_str
+            or "not defined" in error_str
+            or "not a valid" in error_str
+        )
 
     def test_valid_pint_units_passes(self):
         """Valid Pint unit strings should pass."""
@@ -1992,7 +2006,9 @@ def derive_observation(inputs, sample_size):
         )
         # Set proxy indication with low uncertainty
         data["source_relevance"]["indication_match"] = "proxy"
-        data["source_relevance"]["estimated_translation_uncertainty_fold"] = 2.0  # Too low for proxy
+        data["source_relevance"][
+            "estimated_translation_uncertainty_fold"
+        ] = 2.0  # Too low for proxy
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
@@ -2013,10 +2029,12 @@ def derive_observation(inputs, sample_size):
         )
         # Set proxy indication with adequate uncertainty
         data["source_relevance"]["indication_match"] = "proxy"
-        data["source_relevance"]["indication_match_justification"] = (
-            "This is a proxy indication that requires adequate justification text for testing purposes."
-        )
-        data["source_relevance"]["estimated_translation_uncertainty_fold"] = 5.0  # Adequate for proxy
+        data["source_relevance"][
+            "indication_match_justification"
+        ] = "This is a proxy indication that requires adequate justification text for testing purposes."
+        data["source_relevance"][
+            "estimated_translation_uncertainty_fold"
+        ] = 5.0  # Adequate for proxy
 
         # Should pass
         try:

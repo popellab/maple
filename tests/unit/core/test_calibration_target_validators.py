@@ -34,7 +34,7 @@ import pytest
 from unittest.mock import Mock, patch
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.calibration import CalibrationTarget, Observable
+from maple.core.calibration import CalibrationTarget, Observable
 
 
 # ============================================================================
@@ -956,7 +956,7 @@ class TestVectorValuedCalibrationTarget:
         self, species_units, golden_calibration_target_data, mock_crossref_success
     ):
         """Test that vector-valued calibration target passes all validators."""
-        from qsp_llm_workflows.core.calibration import IndexType
+        from maple.core.calibration import IndexType
 
         data = copy.deepcopy(golden_calibration_target_data)
 
@@ -1170,7 +1170,7 @@ class TestRegressionBugsFromLogfire:
 
         Fix: Added input_type='inferred_estimate' that skips snippet validation.
         """
-        from qsp_llm_workflows.core.calibration.shared_models import InputType
+        from maple.core.calibration.shared_models import InputType
 
         data = copy.deepcopy(golden_calibration_target_data)
 
@@ -1261,7 +1261,7 @@ class TestRegressionBugsFromLogfire:
         When source_type='figure', the numeric value is read from a plot and
         won't appear literally in the text snippet (which contains the caption).
         """
-        from qsp_llm_workflows.core.calibration.enums import SourceType
+        from maple.core.calibration.enums import SourceType
 
         data = copy.deepcopy(golden_calibration_target_data)
 

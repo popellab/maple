@@ -20,7 +20,7 @@ You'll need Python 3.9+, Git with SSH keys configured for GitHub, and an OpenAI 
 
 ```bash
 cd ~/Projects  # or wherever you keep code
-git clone git@github.com:popellab/qsp-llm-workflows.git
+git clone git@github.com:popellab/maple.git
 cd qsp-llm-workflows
 
 python3 -m venv venv

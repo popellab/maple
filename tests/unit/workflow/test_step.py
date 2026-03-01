@@ -7,8 +7,8 @@ Tests the abstract base class for workflow steps.
 import pytest
 from unittest.mock import Mock
 
-from qsp_llm_workflows.core.workflow.step import WorkflowStep
-from qsp_llm_workflows.core.workflow.context import WorkflowContext
+from maple.core.workflow.step import WorkflowStep
+from maple.core.workflow.context import WorkflowContext
 
 
 class ConcreteStep(WorkflowStep):

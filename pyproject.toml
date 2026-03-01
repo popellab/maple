@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "qsp-llm-workflows"
+name = "maple"
 version = "0.1.0"
 description = "LLM workflow automation tools for extracting QSP metadata from scientific literature"
 readme = "README.md"
@@ -47,20 +47,20 @@ dev = [
 
 [project.scripts]
 # Main workflow commands
-qsp-extract = "qsp_llm_workflows.cli.extract:main"
-qsp-validate = "qsp_llm_workflows.cli.validate:main"
-qsp-review = "qsp_llm_workflows.cli.review:main"
+qsp-extract = "maple.cli.extract:main"
+qsp-validate = "maple.cli.validate:main"
+qsp-review = "maple.cli.review:main"
 
 # Individual tools
-qsp-enrich-csv = "qsp_llm_workflows.cli.enrich:main"
-qsp-export-model = "qsp_llm_workflows.cli.export_model:main"
+qsp-enrich-csv = "maple.cli.enrich:main"
+qsp-export-model = "maple.cli.export_model:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["qsp_llm_workflows*"]
+include = ["maple*"]
 
 [tool.setuptools.package-data]
-"qsp_llm_workflows" = [
+"maple" = [
     "templates/**/*",
     "prompts/**/*",
 ]
@@ -87,5 +87,5 @@ markers = [
 ]
 # Ignore Pydantic models that start with "Test" (not test classes)
 filterwarnings = [
-    "ignore::pytest.PytestCollectionWarning:qsp_llm_workflows.core.pydantic_models",
+    "ignore::pytest.PytestCollectionWarning:maple.core.pydantic_models",
 ]

@@ -13,7 +13,7 @@ import yaml
 from pathlib import Path
 import pytest
 
-from qsp_llm_workflows.core.pydantic_models import (
+from maple.core.pydantic_models import (
     ParameterMetadata,
     ParameterFooters,
     TestStatistic,
@@ -26,7 +26,7 @@ from qsp_llm_workflows.core.pydantic_models import (
     WeightScore,
     Source,
 )
-from qsp_llm_workflows.core.header_utils import HeaderManager
+from maple.core.header_utils import HeaderManager
 
 
 class TestParameterFooters:

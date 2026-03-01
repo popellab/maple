@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+from maple.validate.check_snippet_sources_automated import (
     AutomatedSnippetVerifier,
 )
 
@@ -890,7 +890,7 @@ class TestValidatorInterface:
             report = verifier.validate()
 
             # Import from core where the actual class is defined
-            from qsp_llm_workflows.core.validation_utils import ValidationReport
+            from maple.core.validation_utils import ValidationReport
 
             assert isinstance(report, ValidationReport)
 
@@ -1135,7 +1135,7 @@ class TestAbstractOnlyFailures:
 
         # Mock get_paper_text to return abstract only
         def mock_get_paper_text(doi):
-            from qsp_llm_workflows.validate.check_snippet_sources_automated import PaperInfo
+            from maple.validate.check_snippet_sources_automated import PaperInfo
 
             paper_info = PaperInfo(
                 pmcid=None,
@@ -1186,7 +1186,7 @@ class TestAbstractOnlyFailures:
         verifier = AutomatedSnippetVerifier(str(tmp_path))
 
         def mock_get_paper_text(doi):
-            from qsp_llm_workflows.validate.check_snippet_sources_automated import PaperInfo
+            from maple.validate.check_snippet_sources_automated import PaperInfo
 
             return (
                 "Short abstract text",
@@ -1242,7 +1242,7 @@ class TestFullTextFailures:
         verifier = AutomatedSnippetVerifier(str(tmp_path))
 
         def mock_get_paper_text(_):
-            from qsp_llm_workflows.validate.check_snippet_sources_automated import PaperInfo
+            from maple.validate.check_snippet_sources_automated import PaperInfo
 
             # Return full text that contains snippet but NOT the value 999
             full_text = "The tumor count was measured to be 17 cells per field in the study."
@@ -1296,7 +1296,7 @@ class TestFullTextFailures:
         verifier = AutomatedSnippetVerifier(str(tmp_path))
 
         def mock_get_paper_text(_):
-            from qsp_llm_workflows.validate.check_snippet_sources_automated import PaperInfo
+            from maple.validate.check_snippet_sources_automated import PaperInfo
 
             # Return full text with both snippet AND value
             full_text = "The count was 17 cells per field."
@@ -1469,7 +1469,7 @@ class TestUnpaywallIntegration:
             + "</article></body></html>"
         )
 
-        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+        from maple.validate.check_snippet_sources_automated import (
             PaperInfo,
         )
 
@@ -1495,7 +1495,7 @@ class TestUnpaywallIntegration:
         """Test that get_paper_text returns abstract (Unpaywall called separately)."""
         verifier = AutomatedSnippetVerifier("/tmp")
 
-        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+        from maple.validate.check_snippet_sources_automated import (
             PaperInfo,
         )
 
@@ -1545,7 +1545,7 @@ class TestUnpaywallIntegration:
 
         verifier = AutomatedSnippetVerifier(str(tmp_path))
 
-        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+        from maple.validate.check_snippet_sources_automated import (
             PaperInfo,
         )
 
@@ -1579,7 +1579,7 @@ class TestUnpaywallIntegration:
         """Test that try_unpaywall_fallback returns failed status for non-OA papers."""
         verifier = AutomatedSnippetVerifier("/tmp")
 
-        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+        from maple.validate.check_snippet_sources_automated import (
             PaperInfo,
         )
 
@@ -1596,7 +1596,7 @@ class TestUnpaywallIntegration:
         """Test that PDF URLs are converted to HTML URLs."""
         verifier = AutomatedSnippetVerifier("/tmp")
 
-        from qsp_llm_workflows.validate.check_snippet_sources_automated import (
+        from maple.validate.check_snippet_sources_automated import (
             PaperInfo,
         )
 

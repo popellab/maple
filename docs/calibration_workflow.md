@@ -28,7 +28,7 @@ Both types include:
 
 ```bash
 cd ~/Projects
-git clone git@github.com:popellab/qsp-llm-workflows.git
+git clone git@github.com:popellab/maple.git
 cd qsp-llm-workflows
 
 python3 -m venv venv

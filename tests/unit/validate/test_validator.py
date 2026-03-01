@@ -3,8 +3,8 @@ Tests for base Validator class.
 """
 
 import pytest
-from qsp_llm_workflows.validate.validator import Validator
-from qsp_llm_workflows.core.validation_utils import ValidationReport
+from maple.validate.validator import Validator
+from maple.core.validation_utils import ValidationReport
 
 
 class MockValidator(Validator):

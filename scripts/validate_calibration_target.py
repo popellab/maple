@@ -30,7 +30,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.calibration import CalibrationTarget
+from maple.core.calibration import CalibrationTarget
 
 
 def _load_species_units(json_path: str) -> dict:

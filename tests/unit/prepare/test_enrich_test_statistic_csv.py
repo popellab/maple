@@ -8,7 +8,7 @@ import pytest
 
 import yaml
 
-from qsp_llm_workflows.prepare.enrich_test_statistic_csv import (
+from maple.prepare.enrich_test_statistic_csv import (
     CodeUnitValidator,
     load_species_units,
     enrich_test_statistic_csv,

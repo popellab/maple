@@ -16,8 +16,8 @@ import pytest
 from unittest.mock import Mock
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.calibration import IsolatedSystemTarget
-from qsp_llm_workflows.core.model_structure import ModelStructure, ModelParameter
+from maple.core.calibration import IsolatedSystemTarget
+from maple.core.model_structure import ModelStructure, ModelParameter
 
 
 # ============================================================================
@@ -543,7 +543,7 @@ class TestDimensionalConsistencyValidation:
         - Warn about "Could not perform dimensional analysis" (if execution fails)
         - Raise DimensionalityMismatchError (if execution succeeds but dims mismatch)
         """
-        from qsp_llm_workflows.core.calibration.exceptions import DimensionalityMismatchError
+        from maple.core.calibration.exceptions import DimensionalityMismatchError
 
         # Model structure with wrong units for k_T_prolif
         bad_model_structure = ModelStructure(

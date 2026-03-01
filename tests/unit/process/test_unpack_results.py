@@ -8,7 +8,7 @@ import json
 import pytest
 import yaml
 
-from qsp_llm_workflows.process.unpack_results import process_results, add_footer_fields
+from maple.process.unpack_results import process_results, add_footer_fields
 
 
 class TestUnpackResults:

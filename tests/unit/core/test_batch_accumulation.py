@@ -5,12 +5,12 @@ import math
 import pytest
 from unittest.mock import Mock
 
-from qsp_llm_workflows.core.calibration.submodel_target import (
+from maple.core.calibration.submodel_target import (
     BatchAccumulationModel,
     InputRef,
     ReferenceRef,
 )
-from qsp_llm_workflows.core.calibration.submodel_utils import (
+from maple.core.calibration.submodel_utils import (
     _evaluate_structured_model,
     run_prior_predictive,
     STRUCTURED_ALGEBRAIC_TYPES,
@@ -164,7 +164,7 @@ class TestBatchAccumulationJuliaCodegen:
 
     def test_generates_julia_code(self):
         """_generate_steady_state_compute produces valid Julia for batch_accumulation."""
-        from qsp_llm_workflows.core.calibration.julia_translator import (
+        from maple.core.calibration.julia_translator import (
             _generate_steady_state_compute,
         )
 

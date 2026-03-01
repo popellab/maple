@@ -18,10 +18,10 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from qsp_llm_workflows.core.calibration.submodel_target import (
+from maple.core.calibration.submodel_target import (
     SubmodelTarget,
 )
-from qsp_llm_workflows.core.model_structure import ModelStructure
+from maple.core.model_structure import ModelStructure
 
 
 def _load_reference_db(yaml_path: str) -> dict:

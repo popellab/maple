@@ -6,7 +6,7 @@ Tests the context object that holds workflow state between steps.
 
 from unittest.mock import Mock
 
-from qsp_llm_workflows.core.workflow.context import WorkflowContext
+from maple.core.workflow.context import WorkflowContext
 
 
 class TestWorkflowContext:

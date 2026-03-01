@@ -4,7 +4,7 @@ Tests for ModelOutputCodeValidator.
 
 import yaml
 
-from qsp_llm_workflows.validate.check_model_output_code import ModelOutputCodeValidator
+from maple.validate.check_model_output_code import ModelOutputCodeValidator
 
 
 class TestModelOutputCodeValidator:

@@ -1,13 +1,13 @@
-# QSP LLM Workflows
+# MAPLE
 
-[![Tests](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/qsp-llm-workflows/actions/workflows/test.yml)
+[![Tests](https://github.com/popellab/maple/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/maple/actions/workflows/test.yml)
 
 Extract calibration targets from scientific literature for quantitative systems pharmacology (QSP) model calibration. Uses structured YAML schemas with Pydantic validation, then translates to Julia/Turing.jl for Bayesian inference.
 
 ## Installation
 
 ```bash
-git clone https://github.com/popellab/qsp-llm-workflows.git
+git clone https://github.com/popellab/maple.git
 cd qsp-llm-workflows
 python -m venv venv
 source venv/bin/activate
@@ -97,18 +97,18 @@ Translate validated YAML targets to Julia/Turing.jl for Bayesian inference:
 
 ```bash
 # Single target (--model-structure required)
-python -m qsp_llm_workflows.core.calibration.julia_translator \
+python -m maple.core.calibration.julia_translator \
     --model-structure model_structure.json \
     target.yaml
 
 # Joint inference (parameters with same name are shared)
-python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+python -m maple.core.calibration.julia_translator --joint \
     --model-structure model_structure.json \
     target1.yaml target2.yaml target3.yaml \
     --output joint_calibration.jl
 
 # Use --fixed-sigma to treat all sigmas as fixed (faster sampling)
-python -m qsp_llm_workflows.core.calibration.julia_translator --joint \
+python -m maple.core.calibration.julia_translator --joint \
     --model-structure model_structure.json \
     --fixed-sigma \
     target1.yaml target2.yaml target3.yaml
@@ -124,7 +124,7 @@ The translator generates complete Julia scripts with:
 ## Project Structure
 
 ```
-src/qsp_llm_workflows/
+src/maple/
 ├── core/
 │   └── calibration/
 │       ├── submodel_target.py      # SubmodelTarget schema (primary)

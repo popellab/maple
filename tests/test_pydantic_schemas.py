@@ -8,7 +8,7 @@ which breaks OpenAI's strict JSON schema mode.
 import pytest
 from openai.lib._pydantic import to_strict_json_schema
 
-from qsp_llm_workflows.core.pydantic_models import (
+from maple.core.pydantic_models import (
     ParameterMetadata,
     TestStatistic,
     ParameterEstimates,
