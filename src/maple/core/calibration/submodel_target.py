@@ -33,43 +33,15 @@ from maple.core.calibration.shared_models import SourceRelevanceAssessment
 class InputType(str, Enum):
     """Type of input extracted from literature."""
 
-    DIRECT_MEASUREMENT = "direct_measurement"  # Value reported directly in source
-    PROXY_MEASUREMENT = "proxy_measurement"  # Requires conversion (e.g., doubling time → rate)
-    EXPERIMENTAL_CONDITION = "experimental_condition"  # Protocol choice from source
-    INFERRED_ESTIMATE = "inferred_estimate"  # Value interpreted from qualitative text in source
-    ASSUMED_VALUE = "assumed_value"  # Value assumed from domain knowledge, not in source
-
-
-class InputRole(str, Enum):
-    """Role of input in calibration - clarifies how each input is used."""
-
-    INITIAL_CONDITION = "initial_condition"  # Used as IC for ODE integration
-    TARGET = "target"  # Used as calibration target (likelihood term)
-    FIXED_PARAMETER = "fixed_parameter"  # Fixed value in model (not estimated)
-    AUXILIARY = "auxiliary"  # Contextual/supporting data, not directly used in inference
-
-
-class ExtractionMethod(str, Enum):
-    """Method used to extract the value."""
-
-    MANUAL = "manual"
-    WEBPLOTDIGITIZER = "webplotdigitizer"
-    DIGITIZER = "digitizer"
-    OTHER = "other"
-
-
-class SourceAccess(str, Enum):
-    """Accessibility of the source for automated snippet validation."""
-
-    OPEN_ACCESS = "open_access"  # Full text available, can auto-validate
-    RESTRICTED = "restricted"  # Can't access full text, requires manual verification
-
-
-class ObservableType(str, Enum):
-    """Type of observable transformation."""
-
-    IDENTITY = "identity"  # Return first state variable directly
-    CUSTOM = "custom"  # User-provided code for any other transformation
+    DIRECT_MEASUREMENT = (
+        "direct_measurement"  # Value traceable to paper text (requires snippet/table_excerpt)
+    )
+    UNIT_CONVERSION = (
+        "unit_conversion"  # Dimensionless conversion factor (e.g., IQR-to-SD, pM-per-nM)
+    )
+    REFERENCE_VALUE = (
+        "reference_value"  # Normalization/reference constant (e.g., V_T_ref, tumor_cell_density)
+    )
 
 
 class CurveType(str, Enum):
@@ -80,41 +52,41 @@ class CurveType(str, Enum):
     EXPONENTIAL = "exponential"
 
 
-# =============================================================================
-# UNCERTAINTY
-# =============================================================================
+class ObservableType(str, Enum):
+    """Type of observable transformation."""
 
-
-class Uncertainty(BaseModel):
-    """Uncertainty specification - either CI95 or SD."""
-
-    ci95: Optional[List[float]] = Field(
-        default=None,
-        description="95% confidence interval [lower, upper]",
-    )
-    sd: Optional[float] = Field(
-        default=None,
-        description="Standard deviation",
-    )
-
-    @model_validator(mode="after")
-    def validate_ci95_ordering(self) -> "Uncertainty":
-        """Validate that ci95[0] < ci95[1]."""
-        if self.ci95 is not None:
-            if len(self.ci95) != 2:
-                from maple.core.calibration.exceptions import DataConsistencyError
-
-                raise DataConsistencyError(f"ci95 must have exactly 2 values, got {len(self.ci95)}")
-            if self.ci95[0] >= self.ci95[1]:
-                from maple.core.calibration.exceptions import DataConsistencyError
-
-                raise DataConsistencyError(f"ci95[0] must be < ci95[1], got {self.ci95}")
-        return self
+    IDENTITY = "identity"  # Return first state variable directly
+    CUSTOM = "custom"  # User-provided code for any other transformation
 
 
 # =============================================================================
 # INPUTS
 # =============================================================================
+
+
+class TableExcerpt(BaseModel):
+    """
+    Structured excerpt from a table in a paper.
+
+    Use this instead of value_snippet when the value comes from a table,
+    where PDF text extraction produces unreadable concatenated rows.
+    External validators check that table_id, column, row, and value all
+    appear somewhere in the extracted paper text.
+    """
+
+    table_id: str = Field(
+        description="Table identifier (e.g., 'Table 2', 'Supplementary Table S1')"
+    )
+    column: str = Field(description="Column header the value falls under")
+    row: str = Field(description="Row label/identifier")
+    value: str = Field(
+        description="Value as it appears in the table cell (e.g., '29 ± 10'). "
+        "Used for validation against extracted paper text."
+    )
+    context: str = Field(
+        description="Additional context (e.g., units in column header, table caption, "
+        "or surrounding text that clarifies the value)",
+    )
 
 
 class Input(BaseModel):
@@ -128,21 +100,12 @@ class Input(BaseModel):
     name: str = Field(description="Unique identifier for this input (used in references)")
     value: float = Field(description="Extracted numeric value")
     units: str = Field(description="Units of the value")
-    uncertainty: Optional[Uncertainty] = Field(
-        default=None,
-        description="Uncertainty in the measurement",
-    )
-    n: Optional[int] = Field(
-        default=None,
-        description="Sample size",
-    )
     input_type: InputType = Field(
-        description="Type of input: direct_measurement, proxy_measurement, or experimental_condition"
+        description="Type of input: direct_measurement, unit_conversion, or reference_value"
     )
-    role: Optional[InputRole] = Field(
+    rationale: Optional[str] = Field(
         default=None,
-        description="Role in calibration: initial_condition, target, fixed_parameter, or auxiliary. "
-        "Clarifies how this input is used in inference.",
+        description="Why this value was chosen. Required for unit_conversion and reference_value inputs.",
     )
     source_ref: str = Field(
         description="Reference to source_tag in primary_data_source or secondary_data_sources"
@@ -150,104 +113,16 @@ class Input(BaseModel):
     source_location: str = Field(
         description="Location within the source (e.g., 'Figure 3B, day 28')"
     )
-    extraction_method: Optional[ExtractionMethod] = Field(
-        default=None,
-        description="Method used to extract the value",
-    )
     value_snippet: Optional[str] = Field(
         default=None,
-        description="Exact text from paper containing the value (for validation)",
+        description="Exact text from paper containing the value (for validation). "
+        "Use table_excerpt instead when the value comes from a table.",
     )
-    source_access: Optional[SourceAccess] = Field(
+    table_excerpt: Optional[TableExcerpt] = Field(
         default=None,
-        description="Accessibility of source for auto-validation. "
-        "Set to 'restricted' to skip automated snippet validation.",
+        description="Structured table excerpt when value comes from a table. "
+        "Preferred over value_snippet for table-sourced data.",
     )
-
-
-# =============================================================================
-# CALIBRATION - PRIORS
-# =============================================================================
-
-
-class PriorDistribution(str, Enum):
-    """Supported prior distribution types for Bayesian inference."""
-
-    LOGNORMAL = "lognormal"  # For positive parameters (rates, densities)
-    NORMAL = "normal"  # For unconstrained parameters
-    UNIFORM = "uniform"  # For bounded parameters
-    HALF_NORMAL = "half_normal"  # For positive parameters with mode at 0
-
-
-class Prior(BaseModel):
-    """
-    Prior distribution specification for Bayesian inference.
-
-    For lognormal: parameter ~ LogNormal(mu, sigma) where mu = log(median)
-    For normal: parameter ~ Normal(mu, sigma)
-    For uniform: parameter ~ Uniform(lower, upper)
-    For half_normal: parameter ~ HalfNormal(sigma)
-    """
-
-    distribution: PriorDistribution = Field(description="Prior distribution type")
-    mu: Optional[float] = Field(
-        default=None,
-        description="Location parameter (log-scale for lognormal, mean for normal)",
-    )
-    sigma: Optional[float] = Field(
-        default=None,
-        description="Scale parameter (log-scale SD for lognormal, SD for normal/half_normal)",
-    )
-    lower: Optional[float] = Field(
-        default=None,
-        description="Lower bound (for uniform)",
-    )
-    upper: Optional[float] = Field(
-        default=None,
-        description="Upper bound (for uniform)",
-    )
-    rationale: Optional[str] = Field(
-        default=None,
-        description="Justification for prior choice",
-    )
-
-    @model_validator(mode="after")
-    def validate_prior_params(self) -> "Prior":
-        """Validate that required parameters are provided for each distribution type."""
-        dist = self.distribution
-        errors = []
-
-        if dist == PriorDistribution.LOGNORMAL:
-            if self.mu is None:
-                errors.append("lognormal prior requires mu (log-scale location)")
-            if self.sigma is None:
-                errors.append("lognormal prior requires sigma (log-scale SD)")
-        elif dist == PriorDistribution.NORMAL:
-            if self.mu is None:
-                errors.append("normal prior requires mu (mean)")
-            if self.sigma is None:
-                errors.append("normal prior requires sigma (SD)")
-        elif dist == PriorDistribution.UNIFORM:
-            if self.lower is None:
-                errors.append("uniform prior requires lower bound")
-            if self.upper is None:
-                errors.append("uniform prior requires upper bound")
-            if self.lower is not None and self.upper is not None:
-                if self.lower >= self.upper:
-                    errors.append(f"uniform lower ({self.lower}) must be < upper ({self.upper})")
-        elif dist == PriorDistribution.HALF_NORMAL:
-            if self.sigma is None:
-                errors.append("half_normal prior requires sigma")
-
-        if errors:
-            from maple.core.calibration.exceptions import PriorParameterError
-
-            raise PriorParameterError(
-                distribution=self.distribution.value,
-                error_msg="; ".join(errors),
-            )
-
-        return self
 
 
 # =============================================================================
@@ -260,7 +135,6 @@ class Parameter(BaseModel):
 
     name: str = Field(description="Parameter name from the full QSP model")
     units: str = Field(description="Parameter units")
-    prior: Prior = Field(description="Prior distribution for Bayesian inference")
 
 
 # =============================================================================
@@ -650,9 +524,10 @@ class AlgebraicModel(BaseForwardModelSpec):
         "Signature: def compute(params: dict, inputs: dict, ureg) -> Quantity. "
         "Example: return np.log(2) / params['k'] for predicting t_half from k."
     )
-    code_julia: str = Field(
+    code_julia: Optional[str] = Field(
+        default=None,
         description="Julia FORWARD model for inference. "
-        "Signature: function compute(params::Dict, inputs::Dict) -> value"
+        "Signature: function compute(params::Dict, inputs::Dict) -> value",
     )
 
 
@@ -670,9 +545,10 @@ class CustomODEModel(BaseForwardModelSpec):
     code: str = Field(
         description="Python ODE function. Signature: def ode(t, y, params, inputs) -> dict"
     )
-    code_julia: str = Field(
+    code_julia: Optional[str] = Field(
+        default=None,
         description="Julia ODE function for inference. "
-        "Signature: function ode!(du, u, p, t) where du is modified in-place."
+        "Signature: function ode!(du, u, p, t) where du is modified in-place.",
     )
 
 
@@ -723,33 +599,6 @@ class IndependentVariable(BaseModel):
 
 
 # =============================================================================
-# CALIBRATION - OBSERVABLE
-# =============================================================================
-
-
-class Observable(BaseModel):
-    """
-    Transform ODE state variable(s) into the measured quantity.
-
-    For type-based observables, the transformation is implicit.
-    For custom observables, code provides the transformation function.
-    """
-
-    type: ObservableType = Field(description="Observable type")
-    state_variables: List[str] = Field(description="State variable(s) used in the observable")
-    rationale: Optional[str] = Field(
-        default=None,
-        description="Why this observable type was chosen",
-    )
-
-    # For custom
-    code: Optional[str] = Field(
-        default=None,
-        description="Python function for custom observables. Signature: def compute(t, y, y_start) -> float",
-    )
-
-
-# =============================================================================
 # CALIBRATION - LIKELIHOOD
 # =============================================================================
 
@@ -767,6 +616,26 @@ class Likelihood(BaseModel):
 # =============================================================================
 # CALIBRATION - ERROR MODEL
 # =============================================================================
+
+
+class Observable(BaseModel):
+    """
+    Transform ODE state variable(s) into the measured quantity.
+
+    For type-based observables, the transformation is implicit.
+    For custom observables, code provides the transformation function.
+    """
+
+    type: ObservableType = Field(description="Observable type")
+    state_variables: List[str] = Field(description="State variable(s) used in the observable")
+    rationale: Optional[str] = Field(
+        default=None,
+        description="Why this observable type was chosen",
+    )
+    code: Optional[str] = Field(
+        default=None,
+        description="Python code for custom observable transformation",
+    )
 
 
 class ErrorModel(BaseModel):
@@ -788,23 +657,22 @@ class ErrorModel(BaseModel):
         description="How to compute the observable from state variables (for ODE models)",
     )
     units: str = Field(description="Units of the measurement")
-    uses_inputs: List[str] = Field(description="Names of inputs that feed this measurement")
+    uses_inputs: Optional[List[str]] = Field(
+        default=None,
+        description="Names of inputs that feed this measurement",
+    )
     evaluation_points: Optional[List[float]] = Field(
         default=None,
         description="Points at which to evaluate the model (only for ODE models; "
         "units from forward_model.independent_variable)",
     )
-    sample_size: Optional[Union[int, List[int]]] = Field(
-        default=None,
-        description="Sample size (single int or list matching evaluation_points)",
-    )
-    sample_size_rationale: Optional[str] = Field(
-        default=None,
-        description="Rationale for sample size, especially if assumed or uncertain",
+    sample_size_input: str = Field(
+        description="Name of input providing sample size",
     )
     observation_code: str = Field(
         description="Python code to derive the observation (point estimate + uncertainty) from inputs. "
-        "Signature: def derive_observation(inputs, sample_size) -> dict. "
+        "Signature: def derive_observation(inputs) -> dict. "
+        "Sample size is available via inputs dict (keyed by sample_size_input name). "
         "Required return keys: "
         "'value' (plain float), "
         "'sd' (plain float - dimensionless CV for lognormal, absolute for normal). "
@@ -1110,13 +978,19 @@ class SubmodelTarget(BaseModel):
         input_names = {inp.name for inp in self.inputs}
         errors = []
 
-        # Check uses_inputs in measurements
+        # Check uses_inputs and sample_size_input in measurements
         for measurement in self.calibration.measurements:
-            for input_name in measurement.uses_inputs:
-                if input_name not in input_names:
-                    errors.append(
-                        f"Measurement '{measurement.name}' references unknown input '{input_name}'"
-                    )
+            if measurement.uses_inputs:
+                for input_name in measurement.uses_inputs:
+                    if input_name not in input_names:
+                        errors.append(
+                            f"Measurement '{measurement.name}' references unknown input '{input_name}'"
+                        )
+            if measurement.sample_size_input and measurement.sample_size_input not in input_names:
+                errors.append(
+                    f"Measurement '{measurement.name}' sample_size_input references "
+                    f"unknown input '{measurement.sample_size_input}'"
+                )
 
         # Check input_ref in initial_conditions
         if self.calibration.state_variables:
@@ -1554,7 +1428,8 @@ class SubmodelTarget(BaseModel):
                 if derive_observation is None:
                     continue
 
-                result = derive_observation(inputs_dict, entry.sample_size)
+                sample_size = int(inputs_dict.get(entry.sample_size_input, 1))
+                result = derive_observation(inputs_dict, sample_size)
                 if not isinstance(result, dict) or "sd" not in result:
                     continue
 
@@ -1819,7 +1694,8 @@ class SubmodelTarget(BaseModel):
                     continue
 
                 # Execute with inputs and sample_size
-                result = derive_observation(inputs_dict, entry.sample_size)
+                sample_size = int(inputs_dict.get(entry.sample_size_input, 1))
+                result = derive_observation(inputs_dict, sample_size)
 
                 # Validate return structure is dict
                 if not isinstance(result, dict):
@@ -2012,7 +1888,8 @@ class SubmodelTarget(BaseModel):
                 if derive_observation is None:
                     continue
 
-                result = derive_observation(inputs_dict, entry.sample_size)
+                sample_size = int(inputs_dict.get(entry.sample_size_input, 1))
+                result = derive_observation(inputs_dict, sample_size)
                 if not isinstance(result, dict) or "sd" not in result or "value" not in result:
                     continue
 
@@ -2063,39 +1940,131 @@ class SubmodelTarget(BaseModel):
     @model_validator(mode="after")
     def validate_input_values_in_snippets(self) -> "SubmodelTarget":
         """
-        Validate that extracted values appear in their value_snippet.
+        Validate that extracted values appear in their value_snippet or table_excerpt.
 
         Catches hallucinations where the LLM extracts a value that doesn't
-        appear in the cited text. Skips inputs without snippets or with
-        input_type='experimental_condition' (protocol choices may not have
-        explicit numeric values in text).
+        appear in the cited text. Skips unit_conversion and reference_value
+        inputs (these don't come from paper text).
         """
         from maple.core.calibration.validators import check_value_in_text
 
         errors = []
         for inp in self.inputs:
-            # Skip if no snippet provided
-            if not inp.value_snippet:
-                continue
-
-            # Skip types that may not have explicit numeric values in text
+            # Skip types that don't come from paper text
             if inp.input_type in (
-                InputType.EXPERIMENTAL_CONDITION,
-                InputType.INFERRED_ESTIMATE,
-                InputType.ASSUMED_VALUE,
+                InputType.UNIT_CONVERSION,
+                InputType.REFERENCE_VALUE,
             ):
                 continue
 
-            if not check_value_in_text(inp.value_snippet, inp.value):
+            has_snippet = bool(inp.value_snippet)
+            has_table = bool(inp.table_excerpt)
+
+            # Require at least one provenance source for measurable inputs
+            if not has_snippet and not has_table:
                 errors.append(
-                    f"Input '{inp.name}': value {inp.value} not found in snippet "
-                    f"'{inp.value_snippet[:80]}{'...' if len(inp.value_snippet) > 80 else ''}'"
+                    f"Input '{inp.name}': neither value_snippet nor table_excerpt provided. "
+                    f"At least one is required for {inp.input_type.value} inputs."
                 )
+                continue
+
+            # Check table_excerpt if present
+            if has_table:
+                if not check_value_in_text(inp.table_excerpt.value, inp.value):
+                    errors.append(
+                        f"Input '{inp.name}': value {inp.value} not found in "
+                        f"table_excerpt.value '{inp.table_excerpt.value}'"
+                    )
+
+            # Check value_snippet if present
+            if has_snippet:
+                if not check_value_in_text(inp.value_snippet, inp.value):
+                    errors.append(
+                        f"Input '{inp.name}': value {inp.value} not found in snippet "
+                        f"'{inp.value_snippet[:80]}{'...' if len(inp.value_snippet) > 80 else ''}'"
+                    )
 
         if errors:
             from maple.core.calibration.exceptions import SnippetValueMismatchError
 
             raise SnippetValueMismatchError.from_errors(errors)
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_non_measurement_inputs_have_rationale(self) -> "SubmodelTarget":
+        """
+        Require rationale for unit_conversion and reference_value inputs.
+
+        These input types don't come from paper text, so they need an explicit
+        rationale explaining why this value was chosen.
+        """
+        errors = []
+        for inp in self.inputs:
+            if inp.input_type in (InputType.UNIT_CONVERSION, InputType.REFERENCE_VALUE):
+                if not inp.rationale:
+                    errors.append(
+                        f"Input '{inp.name}' has input_type='{inp.input_type.value}' "
+                        f"but no rationale provided. Non-measurement inputs require "
+                        f"a rationale explaining why this value was chosen."
+                    )
+
+        if errors:
+            raise ValueError("\n".join(errors))
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_no_assumed_or_uncertainty_inputs(self) -> "SubmodelTarget":
+        """
+        Reject inputs that look like modeling assumptions rather than data.
+
+        Two checks:
+        1. Any input with 'assumed' in the name is rejected — naming something
+           'assumed_*' signals it's a modeling choice, not paper data.
+        2. Uncertainty-smelling names (cv, sigma, etc.) on unit_conversion or
+           reference_value inputs are rejected — these don't belong in the
+           data model at all.
+        """
+        # Patterns that suggest uncertainty factors (only checked on non-measurement types)
+        UNCERTAINTY_PATTERNS = [
+            "cv",
+            "sigma",
+            "uncertainty",
+            "fold_uncertainty",
+            "translation_sd",
+            "translation_uncertainty",
+        ]
+
+        errors = []
+        for inp in self.inputs:
+            name_lower = inp.name.lower()
+
+            # "assumed" in any input name is a red flag regardless of type
+            if "assumed" in name_lower:
+                errors.append(
+                    f"Input '{inp.name}' contains 'assumed' in its name, "
+                    f"indicating a modeling choice rather than extracted data. "
+                    f"Modeling assumptions (uncertainty factors, CVs, fractions) "
+                    f"should not be stored as inputs. Derive them in "
+                    f"observation_code or handle downstream in inference."
+                )
+                continue
+
+            # Uncertainty patterns on non-measurement types
+            if inp.input_type in (InputType.UNIT_CONVERSION, InputType.REFERENCE_VALUE):
+                for pattern in UNCERTAINTY_PATTERNS:
+                    if pattern in name_lower:
+                        errors.append(
+                            f"Input '{inp.name}' looks like an uncertainty factor "
+                            f"(matches pattern '{pattern}') but has "
+                            f"input_type='{inp.input_type.value}'. "
+                            f"Uncertainty factors should not be stored as inputs."
+                        )
+                        break
+
+        if errors:
+            raise ValueError("\n".join(errors))
 
         return self
 
@@ -2117,8 +2086,21 @@ class SubmodelTarget(BaseModel):
 
         errors = []
 
+        def _extract_family_name(full_name: str) -> str:
+            """Extract likely family name from 'Given Family' or 'Family, Given' format."""
+            full_name = full_name.strip()
+            if "," in full_name:
+                return full_name.split(",")[0].strip()
+            parts = full_name.split()
+            return parts[-1] if parts else full_name
+
         def check_doi_source(
-            doi: str, source_tag: str, title: Optional[str], year: Optional[int], prefix: str
+            doi: str,
+            source_tag: str,
+            title: Optional[str],
+            year: Optional[int],
+            authors: Optional[List[str]],
+            prefix: str,
         ):
             """Validate a DOI and check metadata matches."""
             metadata = resolve_doi(doi)
@@ -2137,6 +2119,16 @@ class SubmodelTarget(BaseModel):
                         f"    CrossRef: '{metadata['title'][:60]}...'"
                     )
 
+            # Check first author match
+            crossref_author = metadata.get("first_author")
+            if crossref_author and authors and len(authors) > 0:
+                recorded_family = _extract_family_name(authors[0])
+                if not fuzzy_match(recorded_family, crossref_author, threshold=0.8):
+                    errors.append(
+                        f"{prefix} first author mismatch: "
+                        f"recorded '{authors[0]}', CrossRef says '{crossref_author}'"
+                    )
+
             # Check year match
             if year and metadata.get("year"):
                 if year != metadata["year"]:
@@ -2151,6 +2143,7 @@ class SubmodelTarget(BaseModel):
             self.primary_data_source.source_tag,
             self.primary_data_source.title,
             self.primary_data_source.year,
+            self.primary_data_source.authors,
             "Primary source",
         )
 
@@ -2163,6 +2156,7 @@ class SubmodelTarget(BaseModel):
                         source.source_tag,
                         source.title,
                         source.year,
+                        source.authors,
                         f"Secondary source [{i}]",
                     )
                 # URL-only sources don't get DOI validation
@@ -2285,67 +2279,9 @@ class SubmodelTarget(BaseModel):
 
         return self
 
-    @model_validator(mode="after")
-    def validate_algebraic_model_output_units(self) -> "SubmodelTarget":
-        """
-        Validate that AlgebraicModel.code executes successfully and returns a number.
-
-        Executes the forward model with sample parameter values and checks
-        that the returned value is numeric.
-        """
-        model = self.calibration.model
-        if model.type != "algebraic":
-            return self
-
-        if not hasattr(model, "code") or not model.code:
-            return self
-
-        from maple.core.calibration.submodel_utils import get_prior_median
-        import numpy as np
-
-        # Build params dict with prior medians
-        params = {}
-        for param in self.calibration.parameters:
-            median = get_prior_median(param.prior)
-            if median is not None:
-                params[param.name] = median
-
-        if not params:
-            return self  # Can't test without parameter values
-
-        # Build inputs dict (plain floats)
-        inputs_dict = {}
-        for inp in self.inputs:
-            inputs_dict[inp.name] = inp.value
-
-        # Execute forward model
-        try:
-            local_scope = {"np": np, "numpy": np}
-            exec(model.code, local_scope)
-            compute_fn = local_scope.get("compute")
-
-            if compute_fn is None:
-                return self  # Syntax validator handles this
-
-            result = compute_fn(params, inputs_dict)
-
-            # Check if result is numeric
-            if not isinstance(result, (int, float)):
-                warnings.warn(
-                    f"AlgebraicModel.code returned {type(result).__name__}, expected a number.",
-                    UserWarning,
-                )
-
-        except ValueError:
-            raise
-        except Exception as e:
-            # Execution errors - don't fail validation, other validators handle this
-            warnings.warn(
-                f"Could not validate AlgebraicModel.code output: {e}",
-                UserWarning,
-            )
-
-        return self
+    # NOTE: validate_algebraic_model_output_units was removed — its coverage is
+    # redundant with validate_observation_code_execution, and it depended on
+    # param.prior (removed from schema).
 
     # NOTE: validate_measurement_error_sd_units was removed and replaced by
     # validate_measurement_error_sd_units_for_likelihood which properly considers
@@ -2410,135 +2346,6 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_prior_predictive_scale(self, info: ValidationInfo) -> "SubmodelTarget":
-        """
-        Validate that prior predictive is on same scale as observation.
-
-        For all model types:
-        1. Sample parameter values from the prior (using median)
-        2. Run the model forward (ODE integration or direct conversion)
-        3. Compute the observable
-        4. Compare to the observation
-
-        Raises error if they differ by more than 3 orders of magnitude.
-
-        This catches unit conversion errors like k_CCL2_sec where:
-        - Prior: LogNormal(-20.8, 1.0) -> median ~ 9e-10
-        - Observation: 8.5 (raw input, not converted)
-        - Mismatch: ~10 orders of magnitude
-        """
-        import math
-        import numpy as np
-        from maple.core.calibration.submodel_utils import (
-            get_prior_median,
-            run_prior_predictive,
-            PriorPredictiveError,
-        )
-
-        # Extract reference database from validation context (if provided)
-        reference_db = None
-        if info.context and "reference_db" in info.context:
-            reference_db = info.context["reference_db"]
-
-        # Get all parameters and their prior medians
-        if not self.calibration.parameters:
-            return self
-
-        # Build dict of all parameter medians (for multi-param models)
-        all_param_medians = {}
-        for param in self.calibration.parameters:
-            median = get_prior_median(param.prior)
-            if median is not None:
-                all_param_medians[param.name] = median
-
-        if not all_param_medians:
-            return self  # No valid priors to check
-
-        # Use first parameter for error messages (backwards compatible)
-        param = self.calibration.parameters[0]
-
-        # Build inputs dict (plain floats)
-        input_values = {inp.name: inp.value for inp in self.inputs}
-
-        # Validate each error model entry (check at least the first one)
-        for entry in self.calibration.error_model[:1]:  # Just first entry for now
-            obs_median = None
-
-            if entry and entry.observation_code:
-                try:
-                    local_scope = {"np": np, "numpy": np}
-                    exec(entry.observation_code, local_scope)
-                    derive_observation = local_scope.get("derive_observation")
-                    if derive_observation:
-                        result = derive_observation(input_values, entry.sample_size)
-                        if isinstance(result, dict) and "value" in result:
-                            obs_median = result["value"]
-                except Exception:
-                    pass  # Fall through to error below
-
-            if obs_median is None:
-                from maple.core.calibration.exceptions import CodeExecutionError
-
-                raise CodeExecutionError(
-                    code_type="observation_code",
-                    error_msg=f"Prior predictive check failed: could not extract observation value.\n"
-                    f"  Error model: {entry.name if entry else 'None'}\n\n"
-                    f"Check that observation_code returns {{'value': <float>, 'sd': ...}}",
-                )
-
-            if obs_median == 0:
-                continue  # Zero observation is valid, just can't do log comparison
-
-            # Run prior predictive to get model prediction
-            try:
-                predicted = run_prior_predictive(
-                    model=self.calibration.model,
-                    prior=param.prior,
-                    param_name=param.name,
-                    state_variables=self.calibration.state_variables,
-                    independent_variable=self.calibration.independent_variable,
-                    measurement=entry,
-                    input_values=input_values,
-                    all_param_medians=all_param_medians,
-                    reference_db=reference_db,
-                )
-            except PriorPredictiveError as e:
-                from maple.core.calibration.exceptions import PriorScaleError
-
-                raise PriorScaleError(
-                    f"Prior predictive check failed:\n  {e}\n\n"
-                    f"  Model type: {self.calibration.model.type}\n"
-                    f"  Parameters: {list(all_param_medians.keys())}"
-                ) from e
-
-            if predicted == 0:
-                continue  # Zero prediction is valid, just can't do log comparison
-
-            # Compare prediction to observation
-            try:
-                log_diff = abs(math.log10(abs(predicted)) - math.log10(abs(obs_median)))
-            except (ValueError, ZeroDivisionError):
-                continue
-
-            if log_diff > 3:
-                from maple.core.calibration.exceptions import ScaleMismatchError
-
-                raise ScaleMismatchError(
-                    f"Prior predictive check failed for error model '{entry.name}':\n"
-                    f"  Parameters: {all_param_medians}\n"
-                    f"  Model prediction: {predicted:.2e}\n"
-                    f"  Observation: {obs_median:.2e}\n"
-                    f"  Difference: ~{10**log_diff:.0e}x ({log_diff:.1f} orders of magnitude)\n\n"
-                    f"This indicates a unit conversion error. Check:\n"
-                    f"  1. Prior parameters (mu, sigma) match the parameter units\n"
-                    f"  2. observation_code correctly converts input units to parameter units\n"
-                    f"  3. Input values and units are correct\n"
-                    f"  4. observable.state_variables or observable.code correctly extracts the prediction"
-                )
-
-        return self
-
-    @model_validator(mode="after")
     def validate_clipping_suggests_lognormal(self) -> "SubmodelTarget":
         """
         Warn if observation_code uses clipping to avoid negative values.
@@ -2584,10 +2391,10 @@ class SubmodelTarget(BaseModel):
         - 1.96 (95% CI convention)
 
         NOT allowed (should be inputs):
-        - Time conversions like 24.0, 60.0 (add as assumed_value input)
-        - Percentage conversions like 100.0 (add as assumed_value input)
-        - Assumed fractions like 0.5, 0.25 (add as assumed_value input)
-        - Fold uncertainties like 3.0, 5.0, 10.0 (add as assumed_value input)
+        - Time conversions like 24.0, 60.0 (add as unit_conversion input)
+        - Percentage conversions like 100.0 (add as unit_conversion input)
+        - Reference values like tissue density (add as reference_value input)
+        - Any other numeric literal (add as direct_measurement with snippet)
         """
         import ast
 
@@ -2625,8 +2432,9 @@ class SubmodelTarget(BaseModel):
                     f"Error model '{entry.name}' observation_code contains hardcoded "
                     f"numeric values: {unique_values}\n"
                     f"  All numerical parameters must be defined as inputs, not hardcoded.\n"
-                    f"  Add these as inputs with input_type='assumed_value' and document in value_snippet.\n"
-                    f"  For unit conversions, add conversion factors as assumed_value inputs."
+                    f"  Add these as inputs with input_type='unit_conversion' (for conversion factors)\n"
+                    f"  or 'reference_value' (for normalization constants), with a rationale.\n"
+                    f"  For measured values, use input_type='direct_measurement' with value_snippet."
                 )
 
         if errors:
@@ -3015,207 +2823,16 @@ class SubmodelTarget(BaseModel):
                 )
         return self
 
-    @model_validator(mode="after")
-    def validate_prior_reflects_translation_uncertainty(self) -> "SubmodelTarget":
-        """
-        Warn if prior σ doesn't reflect the estimated translation uncertainty.
+    # NOTE: validate_prior_reflects_translation_uncertainty was removed —
+    # priors are no longer part of the SubmodelTarget schema.
 
-        For lognormal priors, σ on the log scale corresponds to multiplicative uncertainty:
-        - σ = 0.69 → ~2x uncertainty (e^0.69 ≈ 2)
-        - σ = 1.10 → ~3x uncertainty (e^1.10 ≈ 3)
-        - σ = 2.30 → ~10x uncertainty (e^2.30 ≈ 10)
-        - σ = 3.00 → ~20x uncertainty (e^3.00 ≈ 20)
+    # NOTE: validate_algebraic_prior_predictive was removed —
+    # priors are no longer part of the SubmodelTarget schema.
+    # Coverage is provided by validate_observation_code_execution.
 
-        The prior σ should be at least ln(estimated_translation_uncertainty_fold) to
-        properly capture source-to-target translation uncertainty.
-        """
-        import math
-
-        sr = self.source_relevance
-        translation_fold = sr.estimated_translation_uncertainty_fold
-
-        # Only check if translation uncertainty is significant (>1.5x)
-        if translation_fold <= 1.5:
-            return self
-
-        # Compute minimum recommended σ for lognormal prior
-        min_recommended_sigma = math.log(translation_fold)
-
-        for param in self.calibration.parameters:
-            if param.prior is None:
-                continue
-
-            # Only applies to lognormal priors (most common for rate constants)
-            if param.prior.distribution != "lognormal":
-                continue
-
-            actual_sigma = param.prior.sigma
-            if actual_sigma is None:
-                continue
-
-            # Check if prior σ is at least 70% of recommended (allow some flexibility)
-            if actual_sigma < 0.7 * min_recommended_sigma:
-                warnings.warn(
-                    f"Parameter '{param.name}' has lognormal prior σ={actual_sigma:.2f}, "
-                    f"but estimated_translation_uncertainty_fold={translation_fold}x "
-                    f"suggests σ should be at least {min_recommended_sigma:.2f}.\n\n"
-                    f"The prior may be too narrow to capture source-to-target translation "
-                    f"uncertainty. Consider:\n"
-                    f"  - Increasing prior σ to ~{min_recommended_sigma:.1f}\n"
-                    f"  - Or reducing estimated_translation_uncertainty_fold if justified\n\n"
-                    f"Reference: σ=ln(fold) for lognormal → "
-                    f"σ={math.log(3):.2f} for 3x, σ={math.log(10):.2f} for 10x",
-                    UserWarning,
-                )
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_algebraic_prior_predictive(self) -> "SubmodelTarget":
-        """
-        For algebraic models, validate that the forward model prediction
-        is consistent with measured data.
-
-        Uses the prior median for parameters, runs the forward model,
-        and compares predicted observable to measured data. If they differ
-        by more than 10x, there's likely a unit error in the model code.
-
-        This is a prior predictive check: does the model (with reasonable
-        parameter values) predict observables on the same scale as the data?
-        """
-        import math
-
-        # Only applies to algebraic models
-        if self.calibration.model.type != "algebraic":
-            return self
-
-        model = self.calibration.model
-        if not hasattr(model, "code") or not model.code:
-            return self
-
-        # Build inputs dict with pint quantities
-        from maple.core.unit_registry import create_unit_registry, make_quantity as _mq
-
-        ureg = create_unit_registry()
-        inputs = {}
-        for inp in self.inputs:
-            try:
-                inputs[inp.name] = (
-                    _mq(inp.value, inp.units) if inp.units else inp.value * ureg.dimensionless
-                )
-            except Exception:
-                inputs[inp.name] = inp.value * ureg.dimensionless
-
-        # Build params dict from prior medians
-        params = {}
-        for param in self.calibration.parameters:
-            if param.prior is None:
-                continue
-            if param.prior.distribution == "lognormal":
-                params[param.name] = math.exp(param.prior.mu)
-            elif param.prior.distribution == "normal":
-                params[param.name] = param.prior.mu
-            elif param.prior.distribution == "uniform":
-                params[param.name] = (param.prior.lower + param.prior.upper) / 2
-
-        if not params:
-            return self
-
-        # Execute the forward model
-        local_ns: dict = {}
-        try:
-            exec(model.code, {"__builtins__": __builtins__}, local_ns)
-        except Exception:
-            # Syntax errors caught by other validators
-            return self
-
-        if "compute" not in local_ns:
-            return self
-
-        try:
-            predicted = local_ns["compute"](params, inputs, ureg)
-        except Exception:
-            # Execution errors caught by other validators
-            return self
-
-        # Handle multi-output forward models (dict return type)
-        if isinstance(predicted, dict):
-            # For multi-output models, we skip this simple check and rely on
-            # validate_prior_predictive_scale which handles dict outputs properly
-            # via the error_model's observable specification
-            return self
-
-        # Get magnitude for comparison
-        if hasattr(predicted, "magnitude"):
-            predicted_value = float(predicted.magnitude)
-        else:
-            predicted_value = float(predicted)
-
-        if predicted_value <= 0:
-            return self
-
-        # Compare to measured data (inputs with role=target)
-        threshold_fold = 10.0
-        for inp in self.inputs:
-            if inp.role != InputRole.TARGET:
-                continue
-
-            measured_value = inp.value
-            if measured_value <= 0:
-                continue
-
-            ratio = predicted_value / measured_value
-
-            if ratio > threshold_fold or ratio < 1.0 / threshold_fold:
-                from maple.core.calibration.exceptions import ScaleMismatchError
-
-                raise ScaleMismatchError(
-                    f"Prior predictive check failed for algebraic model:\n"
-                    f"  Predicted observable (from model.code): {predicted_value:.2e}\n"
-                    f"  Measured data ('{inp.name}'): {measured_value:.2e}\n"
-                    f"  Ratio: {ratio:.1f}x\n\n"
-                    f"The forward model prediction differs from measured data by {abs(ratio):.0f}x.\n"
-                    f"This likely indicates a unit error in AlgebraicModel.code.\n\n"
-                    f"Check that model.code correctly computes the observable from parameters."
-                )
-
-        return self
-
-    # -------------------------------------------------------------------------
-    # ADDITIONAL VALIDATORS (from validator_ideas.md)
-    # -------------------------------------------------------------------------
-
-    @model_validator(mode="after")
-    def validate_sample_size_list_length(self) -> "SubmodelTarget":
-        """
-        Validate sample_size list length matches evaluation_points.
-
-        If sample_size is a list, it must have the same length as evaluation_points.
-        This catches common mistakes like providing sample sizes for only some time points.
-
-        Example of bug this catches:
-            evaluation_points: [7, 14, 21]  # 3 time points
-            sample_size: [10, 12]           # Only 2 sample sizes - mismatch!
-        """
-        errors = []
-
-        for entry in self.calibration.error_model:
-            if entry.evaluation_points and isinstance(entry.sample_size, list):
-                if len(entry.sample_size) != len(entry.evaluation_points):
-                    errors.append(
-                        f"Error model '{entry.name}': sample_size has {len(entry.sample_size)} "
-                        f"elements but evaluation_points has {len(entry.evaluation_points)}. "
-                        f"They must match when sample_size is a list."
-                    )
-
-        if errors:
-            from maple.core.calibration.exceptions import SampleSizeError
-
-            raise SampleSizeError(
-                "Sample size / evaluation points length mismatch:\n  - " + "\n  - ".join(errors)
-            )
-
-        return self
+    # NOTE: validate_sample_size_list_length was removed —
+    # sample_size is now a single input reference (sample_size_input),
+    # not an inline int/list field.
 
     @model_validator(mode="after")
     def validate_ode_requires_observable(self) -> "SubmodelTarget":
@@ -3358,21 +2975,16 @@ class SubmodelTarget(BaseModel):
 __all__ = [
     # Enums
     "InputType",
-    "InputRole",
-    "ExtractionMethod",
     "ObservableType",
     "CurveType",
-    "PriorDistribution",
     # Source relevance enums
     "IndicationMatch",
     "SourceQuality",
     "PerturbationType",
     "TMECompatibility",
     # Input models
-    "Uncertainty",
     "Input",
-    # Prior models
-    "Prior",
+    "TableExcerpt",
     # Calibration models
     "Parameter",
     "FixedInitialCondition",

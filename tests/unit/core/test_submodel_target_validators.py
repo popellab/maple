@@ -9,7 +9,6 @@ Tests the validators added to SubmodelTarget:
 - validate_large_variance_documented
 """
 
-import math
 import pytest
 import warnings
 from unittest.mock import patch
@@ -19,11 +18,7 @@ from maple.core.calibration.submodel_target import (
     SubmodelTarget,
     Input,
     InputType,
-    InputRole,
-    ExtractionMethod,
     Parameter,
-    Prior,
-    PriorDistribution,
     Measurement,
     Likelihood,
     PrimaryDataSource,
@@ -101,31 +96,17 @@ def minimal_input():
         value=10.0,
         units="1/day",
         input_type=InputType.DIRECT_MEASUREMENT,
-        role=InputRole.TARGET,
         source_ref="TestSource2023",
         source_location="Table 1",
-        extraction_method=ExtractionMethod.MANUAL,
     )
 
 
 @pytest.fixture
-def minimal_prior():
-    """Minimal valid prior."""
-    return Prior(
-        distribution=PriorDistribution.LOGNORMAL,
-        mu=math.log(10.0),  # median = 10
-        sigma=0.5,
-        rationale="Test prior",
-    )
-
-
-@pytest.fixture
-def minimal_parameter(minimal_prior):
+def minimal_parameter():
     """Minimal valid parameter."""
     return Parameter(
         name="k_test",
         units="1/day",
-        prior=minimal_prior,
     )
 
 
@@ -137,6 +118,7 @@ def minimal_measurement():
         units="1/day",
         uses_inputs=["test_value"],
         evaluation_points=[0.0],
+        sample_size_input="test_n",
         observation_code="""
 def derive_observation(inputs, sample_size):
     return {'value': inputs['test_value'], 'sd': 1.0}
@@ -157,7 +139,6 @@ def minimal_primary_source():
 
 def make_algebraic_target(
     input_value: float,
-    prior_mu: float,
     formula: str = "k = value",
     measurement_error_code: str = None,
 ):
@@ -170,23 +151,25 @@ def make_algebraic_target(
                 "value": input_value,
                 "units": "1/day",
                 "input_type": "direct_measurement",
-                "role": "target",
                 "source_ref": "Test2023",
                 "source_location": "Table 1",
-                "extraction_method": "manual",
-            }
+                "value_snippet": f"The rate was {input_value} per day",
+            },
+            {
+                "name": "test_n",
+                "value": 10,
+                "units": "dimensionless",
+                "input_type": "direct_measurement",
+                "source_ref": "Test2023",
+                "source_location": "Table 1",
+                "value_snippet": "n = 10 patients",
+            },
         ],
         "calibration": {
             "parameters": [
                 {
                     "name": "k_test",
                     "units": "1/day",
-                    "prior": {
-                        "distribution": "lognormal",
-                        "mu": prior_mu,
-                        "sigma": 0.5,
-                        "rationale": "Test",
-                    },
                 }
             ],
             "forward_model": {
@@ -210,6 +193,7 @@ end
                     "units": "1/day",
                     "uses_inputs": ["test_value"],
                     "evaluation_points": [0.0],
+                    "sample_size_input": "test_n",
                     "observation_code": measurement_error_code,
                     "likelihood": {"distribution": "lognormal"},
                 }
@@ -253,7 +237,6 @@ class TestObservationCodeRequired:
         """Algebraic model without observation_code should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             formula="k = value / 2",
             measurement_error_code=None,
         )
@@ -272,7 +255,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             formula="k = value",
             measurement_error_code=measurement_error_code,
         )
@@ -284,80 +266,6 @@ def derive_observation(inputs, sample_size):
             # Check it's not failing on observation_code
             errors = str(e)
             assert "observation_code" not in errors.lower()
-
-
-# ============================================================================
-# Tests for validate_prior_predictive_scale
-# ============================================================================
-
-
-class TestPriorPredictiveScale:
-    """Tests for validate_prior_predictive_scale."""
-
-    def test_scale_mismatch_raises_error(self):
-        """Prior and observation differing by >3 orders of magnitude should fail."""
-        # Prior median = exp(-20) ≈ 2e-9
-        # Observation = 10
-        # Difference = ~10 orders of magnitude
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    value = inputs['test_value']
-    return {'value': value, 'sd': value}
-"""
-        data = make_algebraic_target(
-            input_value=10.0,
-            prior_mu=-20.0,  # exp(-20) ≈ 2e-9
-            formula="k = value",
-            measurement_error_code=measurement_error_code,
-        )
-
-        with pytest.raises(ValidationError) as exc_info:
-            SubmodelTarget(**data)
-
-        error_str = str(exc_info.value)
-        assert "Prior predictive check failed" in error_str or "orders of magnitude" in error_str
-
-    def test_matching_scale_passes(self):
-        """Prior and observation on same scale should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    value = inputs['test_value']
-    return {'value': value, 'sd': value}
-"""
-        data = make_algebraic_target(
-            input_value=10.0,
-            prior_mu=math.log(10.0),  # median = 10
-            formula="k = value",
-            measurement_error_code=measurement_error_code,
-        )
-
-        # Should pass - prior median ≈ observation
-        try:
-            target = SubmodelTarget(**data)
-            assert target is not None
-        except ValidationError as e:
-            # If it fails, should not be due to scale mismatch
-            assert "orders of magnitude" not in str(e)
-
-    def test_observation_code_error_raises(self):
-        """Error in observation_code execution should raise."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    # This will raise KeyError
-    value = inputs['nonexistent_input']
-    return {'value': value, 'sd': value}
-"""
-        data = make_algebraic_target(
-            input_value=10.0,
-            prior_mu=math.log(10.0),
-            formula="k = value",
-            measurement_error_code=measurement_error_code,
-        )
-
-        with pytest.raises(ValidationError) as exc_info:
-            SubmodelTarget(**data)
-
-        assert "observation_code" in str(exc_info.value).lower()
 
 
 # ============================================================================
@@ -380,7 +288,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             formula="k = value",
             measurement_error_code=measurement_error_code,
         )
@@ -407,7 +314,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             formula="k = value",
             measurement_error_code=measurement_error_code,
         )
@@ -446,20 +352,27 @@ def derive_observation(inputs, sample_size):
                     "value": 10.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "target",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
+                    "value_snippet": "mean rate 10.0 per day",
                 },
                 {
                     "name": "sd_value",
                     "value": 8.0,  # CV = 8/10 = 80%
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "auxiliary",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
+                    "value_snippet": "SD 8.0 per day",
+                },
+                {
+                    "name": "test_n",
+                    "value": 10,
+                    "units": "dimensionless",
+                    "input_type": "direct_measurement",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "value_snippet": "n = 10 patients",
                 },
             ],
             "calibration": {
@@ -467,11 +380,6 @@ def derive_observation(inputs, sample_size):
                     {
                         "name": "k_test",
                         "units": "1/day",
-                        "prior": {
-                            "distribution": "lognormal",
-                            "mu": math.log(10.0),
-                            "sigma": 0.5,
-                        },
                     }
                 ],
                 "forward_model": {
@@ -495,6 +403,7 @@ end
                         "units": "1/day",
                         "uses_inputs": ["mean_value", "sd_value"],
                         "evaluation_points": [0.0],
+                        "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
@@ -550,20 +459,17 @@ def derive_observation(inputs, sample_size):
                     "value": 10.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "target",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
+                    "value_snippet": "mean rate 10.0 per day",
                 },
                 {
                     "name": "sd_value",
                     "value": 8.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "auxiliary",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
                 },
             ],
             "calibration": {
@@ -571,11 +477,6 @@ def derive_observation(inputs, sample_size):
                     {
                         "name": "k_test",
                         "units": "1/day",
-                        "prior": {
-                            "distribution": "lognormal",
-                            "mu": math.log(10.0),
-                            "sigma": 0.5,
-                        },
                     }
                 ],
                 "forward_model": {
@@ -599,6 +500,7 @@ end
                         "units": "1/day",
                         "uses_inputs": ["mean_value", "sd_value"],
                         "evaluation_points": [0.0],
+                        "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
@@ -659,7 +561,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=1e-9,
-            prior_mu=-20.0,
             formula="k = value",
             measurement_error_code=measurement_error_code,
         )
@@ -690,7 +591,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=1e-9,
-            prior_mu=-20.0,
             formula="k = value",
             measurement_error_code=measurement_error_code,
         )
@@ -723,7 +623,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             formula="k = value",
             measurement_error_code=measurement_error_code,
         )
@@ -756,7 +655,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Change uses_inputs to reference a non-existent input
@@ -776,7 +674,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # uses_inputs already references "test_value" which exists
@@ -803,7 +700,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Change source_ref to a non-existent source tag
@@ -822,7 +718,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # source_ref already matches primary_data_source.source_tag ("Test2023")
@@ -855,22 +750,25 @@ def derive_observation(inputs, sample_size):
                     "value": 10.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "target",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
-                }
+                    "value_snippet": "The rate was 10.0 per day",
+                },
+                {
+                    "name": "test_n",
+                    "value": 10,
+                    "units": "dimensionless",
+                    "input_type": "direct_measurement",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "value_snippet": "n = 10 patients",
+                },
             ],
             "calibration": {
                 "parameters": [
                     {
                         "name": "k_test",
                         "units": "1/day",
-                        "prior": {
-                            "distribution": "lognormal",
-                            "mu": math.log(10.0),
-                            "sigma": 0.5,
-                        },
                     }
                 ],
                 "forward_model": {
@@ -901,6 +799,7 @@ def derive_observation(inputs, sample_size):
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
+                        "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
@@ -950,22 +849,25 @@ def derive_observation(inputs, sample_size):
                     "value": 10.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "target",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
-                }
+                    "value_snippet": "The rate was 10.0 per day",
+                },
+                {
+                    "name": "test_n",
+                    "value": 10,
+                    "units": "dimensionless",
+                    "input_type": "direct_measurement",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "value_snippet": "n = 10 patients",
+                },
             ],
             "calibration": {
                 "parameters": [
                     {
                         "name": "k_decay",
                         "units": "1/day",
-                        "prior": {
-                            "distribution": "lognormal",
-                            "mu": math.log(0.1),
-                            "sigma": 0.5,
-                        },
                     }
                 ],
                 "forward_model": {
@@ -995,6 +897,7 @@ def derive_observation(inputs, sample_size):
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
+                        "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
@@ -1043,7 +946,6 @@ class TestValidateCustomCodeSyntax:
         """Syntax error in AlgebraicModel.code should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def derive_observation(inputs, sample_size):
     return {'value': inputs['test_value'], 'sd': 1.0}
@@ -1066,7 +968,6 @@ def compute(params, inputs):
         """AlgebraicModel.code with wrong function name should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def derive_observation(inputs, sample_size):
     return {'value': inputs['test_value'], 'sd': 1.0}
@@ -1089,7 +990,6 @@ def wrong_name(params, inputs, ureg):
         """Syntax error in observation_code should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def derive_observation(inputs, sample_size):
     return {'sd': 1.0  # Missing closing brace - syntax error
@@ -1105,7 +1005,6 @@ def derive_observation(inputs, sample_size):
         """observation_code with wrong function name should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def wrong_name(inputs, ureg):
     return {'value': inputs['test_value'], 'sd': 1.0}
@@ -1121,7 +1020,6 @@ def wrong_name(inputs, ureg):
         """Valid code should pass syntax validation."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def derive_observation(inputs, sample_size):
     return {'value': inputs['test_value'], 'sd': 1.0}
@@ -1147,7 +1045,6 @@ class TestValidateObservationCodeExecution:
         """observation_code without derive_observation function should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def some_other_function(inputs, ureg):
     return {'value': inputs['test_value'], 'sd': 1.0}
@@ -1165,7 +1062,6 @@ def some_other_function(inputs, ureg):
         """derive_observation returning non-dict should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def derive_observation(inputs, sample_size):
     return 1.0  # Should return dict
@@ -1181,7 +1077,6 @@ def derive_observation(inputs, sample_size):
         """derive_observation returning dict without 'sd' key should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def derive_observation(inputs, sample_size):
     return {'wrong_key': 1.0}
@@ -1197,7 +1092,6 @@ def derive_observation(inputs, sample_size):
         """derive_observation returning negative sd should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def derive_observation(inputs, sample_size):
     return {'value': inputs['test_value'], 'sd': -1.0}  # Negative SD invalid
@@ -1213,7 +1107,6 @@ def derive_observation(inputs, sample_size):
         """Runtime error in derive_observation should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def derive_observation(inputs, sample_size):
     # This will raise KeyError at runtime
@@ -1230,7 +1123,6 @@ def derive_observation(inputs, sample_size):
         """Valid observation_code should pass execution validation."""
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code="""
 def derive_observation(inputs, sample_size):
     value = inputs['test_value']
@@ -1261,7 +1153,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Add a snippet that doesn't contain the value
@@ -1280,7 +1171,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Add a snippet that contains the value
@@ -1300,7 +1190,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=1e-9,
-            prior_mu=math.log(1e-9),
             measurement_error_code=measurement_error_code,
         )
         # Value in different scientific notation format
@@ -1312,22 +1201,22 @@ def derive_observation(inputs, sample_size):
         except ValidationError as e:
             assert "not found in snippet" not in str(e).lower()
 
-    def test_skips_experimental_condition(self):
-        """Experimental condition inputs should skip snippet validation."""
+    def test_skips_unit_conversion(self):
+        """Unit conversion inputs should skip snippet validation."""
         measurement_error_code = """
 def derive_observation(inputs, sample_size):
     return {'value': inputs['test_value'], 'sd': 1.0}
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
-        # Change input type to experimental_condition with non-matching snippet
-        data["inputs"][0]["input_type"] = "experimental_condition"
-        data["inputs"][0]["value_snippet"] = "Cells were treated with drug"
+        # Change input type to unit_conversion (no snippet needed)
+        data["inputs"][0]["input_type"] = "unit_conversion"
+        data["inputs"][0]["value_snippet"] = None
+        data["inputs"][0]["rationale"] = "pM to nM conversion factor"
 
-        # Should pass - experimental conditions skip snippet validation
+        # Should pass - unit conversions skip snippet validation
         try:
             SubmodelTarget(**data)
         except ValidationError as e:
@@ -1356,22 +1245,25 @@ def derive_observation(inputs, sample_size):
                     "value": 10.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "target",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
-                }
+                    "value_snippet": "The rate was 10.0 per day",
+                },
+                {
+                    "name": "test_n",
+                    "value": 10,
+                    "units": "dimensionless",
+                    "input_type": "direct_measurement",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "value_snippet": "n = 10 patients",
+                },
             ],
             "calibration": {
                 "parameters": [
                     {
                         "name": "k_decay",
                         "units": "1/day",
-                        "prior": {
-                            "distribution": "lognormal",
-                            "mu": math.log(0.1),
-                            "sigma": 0.5,
-                        },
                     }
                 ],
                 "forward_model": {
@@ -1401,6 +1293,7 @@ def derive_observation(inputs, sample_size):
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
+                        "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
@@ -1449,22 +1342,25 @@ def derive_observation(inputs, sample_size):
                     "value": 10.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "target",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
-                }
+                    "value_snippet": "The rate was 10.0 per day",
+                },
+                {
+                    "name": "test_n",
+                    "value": 10,
+                    "units": "dimensionless",
+                    "input_type": "direct_measurement",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "value_snippet": "n = 10 patients",
+                },
             ],
             "calibration": {
                 "parameters": [
                     {
                         "name": "k_decay",
                         "units": "1/day",
-                        "prior": {
-                            "distribution": "lognormal",
-                            "mu": math.log(0.1),
-                            "sigma": 0.5,
-                        },
                     }
                 ],
                 "forward_model": {
@@ -1494,6 +1390,7 @@ def derive_observation(inputs, sample_size):
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
+                        "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
@@ -1546,7 +1443,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Add zero-width space in a text field
@@ -1567,7 +1463,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
 
@@ -1594,7 +1489,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Use an invalid unit string
@@ -1619,7 +1513,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Default units are "1/day" which is valid
@@ -1653,22 +1546,25 @@ def derive_observation(inputs, sample_size):
                     "value": 10.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "target",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
-                }
+                    "value_snippet": "The rate was 10.0 per day",
+                },
+                {
+                    "name": "test_n",
+                    "value": 10,
+                    "units": "dimensionless",
+                    "input_type": "direct_measurement",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "value_snippet": "n = 10 patients",
+                },
             ],
             "calibration": {
                 "parameters": [
                     {
                         "name": "k_decay",
                         "units": "1/day",
-                        "prior": {
-                            "distribution": "lognormal",
-                            "mu": math.log(0.1),
-                            "sigma": 0.5,
-                        },
                     }
                 ],
                 "forward_model": {
@@ -1689,6 +1585,7 @@ def derive_observation(inputs, sample_size):
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
+                        "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
@@ -1737,22 +1634,25 @@ def derive_observation(inputs, sample_size):
                     "value": 10.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "target",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
-                }
+                    "value_snippet": "The rate was 10.0 per day",
+                },
+                {
+                    "name": "test_n",
+                    "value": 10,
+                    "units": "dimensionless",
+                    "input_type": "direct_measurement",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "value_snippet": "n = 10 patients",
+                },
             ],
             "calibration": {
                 "parameters": [
                     {
                         "name": "k_decay",
                         "units": "1/day",
-                        "prior": {
-                            "distribution": "lognormal",
-                            "mu": math.log(0.1),
-                            "sigma": 0.5,
-                        },
                     }
                 ],
                 "forward_model": {
@@ -1782,6 +1682,7 @@ def derive_observation(inputs, sample_size):
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
+                        "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
@@ -1824,7 +1725,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Algebraic models don't require state_variables
@@ -1849,22 +1749,25 @@ def derive_observation(inputs, sample_size):
                     "value": 10.0,
                     "units": "1/day",
                     "input_type": "direct_measurement",
-                    "role": "target",
                     "source_ref": "Test2023",
                     "source_location": "Table 1",
-                    "extraction_method": "manual",
-                }
+                    "value_snippet": "The rate was 10.0 per day",
+                },
+                {
+                    "name": "test_n",
+                    "value": 10,
+                    "units": "dimensionless",
+                    "input_type": "direct_measurement",
+                    "source_ref": "Test2023",
+                    "source_location": "Table 1",
+                    "value_snippet": "n = 10 patients",
+                },
             ],
             "calibration": {
                 "parameters": [
                     {
                         "name": "k_decay",
                         "units": "1/day",
-                        "prior": {
-                            "distribution": "lognormal",
-                            "mu": math.log(0.1),
-                            "sigma": 0.5,
-                        },
                     }
                 ],
                 "forward_model": {
@@ -1894,6 +1797,7 @@ def derive_observation(inputs, sample_size):
                         "units": "1/day",
                         "uses_inputs": ["test_value"],
                         "evaluation_points": [10.0],
+                        "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
                         "likelihood": {"distribution": "lognormal"},
                     }
@@ -1948,7 +1852,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Set cross-species with low uncertainty
@@ -1970,7 +1873,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Set cross-species with adequate uncertainty
@@ -2001,7 +1903,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Set proxy indication with low uncertainty
@@ -2024,7 +1925,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Set proxy indication with adequate uncertainty
@@ -2059,7 +1959,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Set pharmacological perturbation without justification
@@ -2080,7 +1979,6 @@ def derive_observation(inputs, sample_size):
 """
         data = make_algebraic_target(
             input_value=10.0,
-            prior_mu=math.log(10.0),
             measurement_error_code=measurement_error_code,
         )
         # Set pharmacological perturbation with justification
