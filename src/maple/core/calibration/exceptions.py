@@ -408,34 +408,6 @@ class EvaluationPointsError(CalibrationTargetValidationError):
     category = "structural"
 
 
-class SampleSizeError(CalibrationTargetValidationError):
-    """Sample size specification is inconsistent with evaluation points."""
-
-    category = "structural"
-
-
-# ============================================================================
-# Prior validation errors
-# ============================================================================
-
-
-class PriorParameterError(CalibrationTargetValidationError):
-    """Prior distribution parameters are invalid or missing."""
-
-    category = "prior"
-
-    def __init__(self, distribution: str, error_msg: str):
-        self.distribution = distribution
-        message = f"Invalid {distribution} prior: {error_msg}"
-        super().__init__(message, details=[message])
-
-
-class PriorScaleError(CalibrationTargetValidationError):
-    """Prior scale doesn't match documented translation uncertainty."""
-
-    category = "prior"
-
-
 # ============================================================================
 # Source quality validation errors
 # ============================================================================
@@ -487,15 +459,11 @@ EXCEPTION_CATEGORIES = {
     "MissingFieldError": "structural",
     "ObservableConfigError": "structural",
     "EvaluationPointsError": "structural",
-    "SampleSizeError": "structural",
     "DataConsistencyError": "structural",
     "ComputedValueMismatchError": "structural",
     "ScaleMismatchError": "structural",
     "ContentValidationError": "structural",
     "EmptyScenarioError": "structural",
-    # Prior validation
-    "PriorParameterError": "prior",
-    "PriorScaleError": "prior",
     # Source quality
     "TranslationUncertaintyError": "translation",
     # Encoding
