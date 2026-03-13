@@ -27,6 +27,51 @@ from maple.core.model_structure import ModelStructure, ModelParameter
 
 
 # ============================================================================
+# Default observation code — single source of truth for the current signature.
+# Tests that don't specifically test observation_code behavior should use this.
+# Only override in tests that are explicitly testing observation_code validation.
+# ============================================================================
+
+VALID_OBSERVATION_CODE = """
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    return rng.normal(loc=inputs['test_value'], scale=1.0, size=n_bootstrap)
+"""
+
+VALID_OBSERVATION_CODE_MEAN_SD = """
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    return rng.normal(loc=inputs['mean_value'], scale=inputs['sd_value'], size=n_bootstrap)
+"""
+
+
+# ============================================================================
+# Default source_relevance — single source of truth for required fields.
+# Tests that need specific overrides should call make_source_relevance().
+# ============================================================================
+
+DEFAULT_SOURCE_RELEVANCE = {
+    "indication_match": "exact",
+    "indication_match_justification": "Test justification for source relevance with exact indication match.",
+    "species_source": "human",
+    "species_target": "human",
+    "source_quality": "primary_human_in_vitro",
+    "perturbation_type": "physiological_baseline",
+    "perturbation_relevance": "Baseline measurement under physiological conditions, directly applicable to model parameter.",
+    "tme_compatibility": "high",
+    "tme_compatibility_notes": "In vitro system closely recapitulates the target biology for this parameter.",
+    "measurement_directness": "direct",
+    "temporal_resolution": "endpoint_pair",
+    "experimental_system": "in_vitro_primary",
+}
+
+
+def make_source_relevance(**overrides) -> dict:
+    """Create a source_relevance dict with defaults, applying any overrides."""
+    return {**DEFAULT_SOURCE_RELEVANCE, **overrides}
+
+
+# ============================================================================
 # Mock DOI resolution for all tests
 # ============================================================================
 
@@ -119,10 +164,7 @@ def minimal_measurement():
         uses_inputs=["test_value"],
         evaluation_points=[0.0],
         sample_size_input="test_n",
-        observation_code="""
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-""",
+        observation_code=VALID_OBSERVATION_CODE,
         likelihood=Likelihood(distribution="lognormal"),
     )
 
@@ -140,7 +182,7 @@ def minimal_primary_source():
 def make_algebraic_target(
     input_value: float,
     formula: str = "k = value",
-    measurement_error_code: str = None,
+    measurement_error_code: str = VALID_OBSERVATION_CODE,
 ):
     """Helper to create an algebraic SubmodelTarget for testing."""
     data = {
@@ -204,15 +246,7 @@ end
             "species": "human",
             "system": "in_vitro",
         },
-        "source_relevance": {
-            "indication_match": "exact",
-            "indication_match_justification": "Test justification for source relevance with exact indication match.",
-            "species_source": "human",
-            "species_target": "human",
-            "source_quality": "primary_human_in_vitro",
-            "perturbation_type": "physiological_baseline",
-            "estimated_translation_uncertainty_fold": 1.0,
-        },
+        "source_relevance": make_source_relevance(),
         "study_interpretation": "Test interpretation of the study data",
         "key_assumptions": ["Assumption 1 for testing"],
         "primary_data_source": {
@@ -249,9 +283,10 @@ class TestObservationCodeRequired:
     def test_algebraic_with_observation_code_passes(self):
         """Algebraic model with observation_code should pass."""
         measurement_error_code = """
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
     value = inputs['test_value']
-    return {'value': value, 'sd': value}  # 100% CV
+    import numpy as np
+    return rng.normal(loc=value, scale=value, size=n_bootstrap)  # 100% CV
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -279,12 +314,12 @@ class TestClippingSuggestsLognormal:
     def test_clipping_in_observation_code_warns(self):
         """Using np.clip in observation_code should warn."""
         measurement_error_code = """
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
     import numpy as np
     value = inputs['test_value']
     # Clipping to avoid negatives
     sd = np.clip(value, 0, None)
-    return {'value': value, 'sd': float(sd)}
+    return rng.normal(loc=value, scale=float(sd), size=n_bootstrap)
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -306,11 +341,11 @@ def derive_observation(inputs, sample_size):
     def test_np_maximum_warns(self):
         """Using np.maximum in observation_code should warn."""
         measurement_error_code = """
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
     import numpy as np
     value = inputs['test_value']
     sd = np.maximum(value, 0)
-    return {'value': value, 'sd': float(sd)}
+    return rng.normal(loc=value, scale=float(sd), size=n_bootstrap)
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -340,9 +375,10 @@ class TestLargeVarianceDocumented:
     def test_high_cv_without_documentation_warns(self):
         """CV > 50% without mention in identifiability_notes should warn."""
         measurement_error_code = """
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
     # SD = 8, mean = 10, CV = 80%
-    return {'value': inputs['mean_value'], 'sd': inputs['sd_value']}
+    import numpy as np
+    return rng.normal(loc=inputs['mean_value'], scale=inputs['sd_value'], size=n_bootstrap)
 """
         data = {
             "target_id": "test_high_cv_001",
@@ -414,15 +450,7 @@ end
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": {
-                "indication_match": "exact",
-                "indication_match_justification": "Test justification for source relevance with exact indication match.",
-                "species_source": "human",
-                "species_target": "human",
-                "source_quality": "primary_human_in_vitro",
-                "perturbation_type": "physiological_baseline",
-                "estimated_translation_uncertainty_fold": 1.0,
-            },
+            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -447,10 +475,7 @@ end
 
     def test_high_cv_with_documentation_no_warning(self):
         """CV > 50% with variance mentioned should not warn."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['mean_value'], 'sd': inputs['sd_value']}
-"""
+        measurement_error_code = VALID_OBSERVATION_CODE_MEAN_SD
         data = {
             "target_id": "test_high_cv_documented_001",
             "inputs": [
@@ -512,15 +537,7 @@ end
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": {
-                "indication_match": "exact",
-                "indication_match_justification": "Test justification for source relevance with exact indication match.",
-                "species_source": "human",
-                "species_target": "human",
-                "source_quality": "primary_human_in_vitro",
-                "perturbation_type": "physiological_baseline",
-                "estimated_translation_uncertainty_fold": 1.0,
-            },
+            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -555,9 +572,10 @@ class TestParameterUnitsMatchModel:
     def test_unit_dimensionality_mismatch_fails(self, mock_model_structure):
         """Parameter with wrong dimensionality should fail when context provided."""
         measurement_error_code = """
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
     value = inputs['test_value']
-    return {'value': value, 'sd': value}
+    import numpy as np
+    return rng.normal(loc=value, scale=value, size=n_bootstrap)
 """
         data = make_algebraic_target(
             input_value=1e-9,
@@ -585,9 +603,10 @@ def compute(params, inputs):
     def test_correct_units_passes(self, mock_model_structure):
         """Parameter with correct dimensionality should pass."""
         measurement_error_code = """
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
     value = inputs['test_value']
-    return {'value': value, 'sd': value}
+    import numpy as np
+    return rng.normal(loc=value, scale=value, size=n_bootstrap)
 """
         data = make_algebraic_target(
             input_value=1e-9,
@@ -617,9 +636,10 @@ def compute(params, inputs):
     def test_missing_context_warns(self):
         """Missing model_structure context should warn, not error."""
         measurement_error_code = """
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
     value = inputs['test_value']
-    return {'value': value, 'sd': value}
+    import numpy as np
+    return rng.normal(loc=value, scale=value, size=n_bootstrap)
 """
         data = make_algebraic_target(
             input_value=10.0,
@@ -649,13 +669,8 @@ class TestValidateInputRefs:
 
     def test_measurement_references_unknown_input_fails(self):
         """Measurement uses_inputs referencing unknown input should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Change uses_inputs to reference a non-existent input
         data["calibration"]["error_model"][0]["uses_inputs"] = ["nonexistent_input"]
@@ -668,13 +683,8 @@ def derive_observation(inputs, sample_size):
 
     def test_valid_input_refs_passes(self):
         """Valid input references should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # uses_inputs already references "test_value" which exists
         try:
@@ -694,13 +704,8 @@ class TestValidateSourceRefs:
 
     def test_input_references_unknown_source_fails(self):
         """Input with source_ref not matching any source_tag should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Change source_ref to a non-existent source tag
         data["inputs"][0]["source_ref"] = "NonexistentSource2099"
@@ -712,13 +717,8 @@ def derive_observation(inputs, sample_size):
 
     def test_valid_source_refs_passes(self):
         """Valid source references should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # source_ref already matches primary_data_source.source_tag ("Test2023")
         try:
@@ -738,10 +738,7 @@ class TestValidateParameterRoles:
 
     def test_model_references_undefined_parameter_fails(self):
         """Model parameter_role referencing undefined parameter should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+        measurement_error_code = VALID_OBSERVATION_CODE
         data = {
             "target_id": "test_param_role_001",
             "inputs": [
@@ -810,15 +807,7 @@ def derive_observation(inputs, sample_size):
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": {
-                "indication_match": "exact",
-                "indication_match_justification": "Test justification for source relevance with exact indication match.",
-                "species_source": "human",
-                "species_target": "human",
-                "source_quality": "primary_human_in_vitro",
-                "perturbation_type": "physiological_baseline",
-                "estimated_translation_uncertainty_fold": 1.0,
-            },
+            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -837,10 +826,7 @@ def derive_observation(inputs, sample_size):
 
     def test_valid_parameter_roles_passes(self):
         """Valid parameter role references should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+        measurement_error_code = VALID_OBSERVATION_CODE
         data = {
             "target_id": "test_param_role_002",
             "inputs": [
@@ -908,15 +894,7 @@ def derive_observation(inputs, sample_size):
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": {
-                "indication_match": "exact",
-                "indication_match_justification": "Test justification for source relevance with exact indication match.",
-                "species_source": "human",
-                "species_target": "human",
-                "source_quality": "primary_human_in_vitro",
-                "perturbation_type": "physiological_baseline",
-                "estimated_translation_uncertainty_fold": 1.0,
-            },
+            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -946,10 +924,6 @@ class TestValidateCustomCodeSyntax:
         """Syntax error in AlgebraicModel.code should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code="""
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-""",
         )
         # Introduce syntax error in model code
         data["calibration"]["forward_model"][
@@ -968,10 +942,6 @@ def compute(params, inputs):
         """AlgebraicModel.code with wrong function name should fail."""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code="""
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-""",
         )
         # Wrong function name (should be 'compute')
         data["calibration"]["forward_model"][
@@ -991,7 +961,7 @@ def wrong_name(params, inputs, ureg):
         data = make_algebraic_target(
             input_value=10.0,
             measurement_error_code="""
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
     return {'sd': 1.0  # Missing closing brace - syntax error
 """,
         )
@@ -1007,7 +977,8 @@ def derive_observation(inputs, sample_size):
             input_value=10.0,
             measurement_error_code="""
 def wrong_name(inputs, ureg):
-    return {'value': inputs['test_value'], 'sd': 1.0}
+    import numpy as np
+    return rng.normal(loc=inputs['test_value'], scale=1.0, size=n_bootstrap)
 """,
         )
 
@@ -1020,10 +991,6 @@ def wrong_name(inputs, ureg):
         """Valid code should pass syntax validation."""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code="""
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-""",
         )
 
         # Should pass syntax validation
@@ -1047,7 +1014,8 @@ class TestValidateObservationCodeExecution:
             input_value=10.0,
             measurement_error_code="""
 def some_other_function(inputs, ureg):
-    return {'value': inputs['test_value'], 'sd': 1.0}
+    import numpy as np
+    return rng.normal(loc=inputs['test_value'], scale=1.0, size=n_bootstrap)
 """,
         )
 
@@ -1058,59 +1026,61 @@ def some_other_function(inputs, ureg):
         error_str = str(exc_info.value).lower()
         assert "derive_observation" in error_str
 
-    def test_return_not_dict_fails(self):
-        """derive_observation returning non-dict should fail."""
+    def test_return_not_ndarray_fails(self):
+        """derive_observation returning non-ndarray should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             measurement_error_code="""
-def derive_observation(inputs, sample_size):
-    return 1.0  # Should return dict
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    return 1.0  # Should return ndarray
 """,
         )
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "dict" in str(exc_info.value).lower()
+        assert "ndarray" in str(exc_info.value).lower()
 
-    def test_missing_sd_key_fails(self):
-        """derive_observation returning dict without 'sd' key should fail."""
+    def test_return_dict_fails(self):
+        """derive_observation returning dict (old format) should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             measurement_error_code="""
-def derive_observation(inputs, sample_size):
-    return {'wrong_key': 1.0}
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    return {'value': 1.0, 'sd': 0.1}
 """,
         )
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "sd" in str(exc_info.value).lower()
+        assert "ndarray" in str(exc_info.value).lower()
 
-    def test_negative_sd_fails(self):
-        """derive_observation returning negative sd should fail."""
+    def test_zero_spread_fails(self):
+        """derive_observation returning constant samples should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             measurement_error_code="""
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': -1.0}  # Negative SD invalid
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    return np.full(n_bootstrap, inputs['test_value'])  # Zero spread
 """,
         )
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
 
-        assert "negative" in str(exc_info.value).lower() or "sd" in str(exc_info.value).lower()
+        assert "zero" in str(exc_info.value).lower() or "spread" in str(exc_info.value).lower()
 
     def test_execution_error_fails(self):
         """Runtime error in derive_observation should fail."""
         data = make_algebraic_target(
             input_value=10.0,
             measurement_error_code="""
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
     # This will raise KeyError at runtime
-    return {'value': inputs['test_value'], 'sd': inputs['nonexistent_input']}
+    return rng.normal(loc=inputs['nonexistent_input'], scale=1.0, size=n_bootstrap)
 """,
         )
 
@@ -1124,9 +1094,10 @@ def derive_observation(inputs, sample_size):
         data = make_algebraic_target(
             input_value=10.0,
             measurement_error_code="""
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
     value = inputs['test_value']
-    return {'value': value, 'sd': value}
+    import numpy as np
+    return rng.normal(loc=value, scale=value, size=n_bootstrap)
 """,
         )
 
@@ -1147,13 +1118,8 @@ class TestValidateInputValuesInSnippets:
 
     def test_value_not_in_snippet_fails(self):
         """Input value not appearing in value_snippet should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Add a snippet that doesn't contain the value
         data["inputs"][0]["value_snippet"] = "The rate was measured at 999 per day"
@@ -1165,13 +1131,8 @@ def derive_observation(inputs, sample_size):
 
     def test_value_in_snippet_passes(self):
         """Input value appearing in value_snippet should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Add a snippet that contains the value
         data["inputs"][0]["value_snippet"] = "The rate constant was 10.0 per day"
@@ -1185,8 +1146,9 @@ def derive_observation(inputs, sample_size):
     def test_scientific_notation_in_snippet_passes(self):
         """Value in scientific notation should match snippet."""
         measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': inputs['test_value']}
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    return rng.normal(loc=inputs['test_value'], scale=inputs['test_value'], size=n_bootstrap)
 """
         data = make_algebraic_target(
             input_value=1e-9,
@@ -1203,13 +1165,8 @@ def derive_observation(inputs, sample_size):
 
     def test_skips_unit_conversion(self):
         """Unit conversion inputs should skip snippet validation."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Change input type to unit_conversion (no snippet needed)
         data["inputs"][0]["input_type"] = "unit_conversion"
@@ -1233,10 +1190,7 @@ class TestValidateSpanOrdering:
 
     def test_span_start_greater_than_end_fails(self):
         """span[0] >= span[1] should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+        measurement_error_code = VALID_OBSERVATION_CODE
         data = {
             "target_id": "test_span_001",
             "inputs": [
@@ -1304,15 +1258,7 @@ def derive_observation(inputs, sample_size):
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": {
-                "indication_match": "exact",
-                "indication_match_justification": "Test justification for source relevance with exact indication match.",
-                "species_source": "human",
-                "species_target": "human",
-                "source_quality": "primary_human_in_vitro",
-                "perturbation_type": "physiological_baseline",
-                "estimated_translation_uncertainty_fold": 1.0,
-            },
+            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -1330,10 +1276,7 @@ def derive_observation(inputs, sample_size):
 
     def test_negative_span_fails(self):
         """Negative span start should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+        measurement_error_code = VALID_OBSERVATION_CODE
         data = {
             "target_id": "test_span_002",
             "inputs": [
@@ -1401,15 +1344,7 @@ def derive_observation(inputs, sample_size):
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": {
-                "indication_match": "exact",
-                "indication_match_justification": "Test justification for source relevance with exact indication match.",
-                "species_source": "human",
-                "species_target": "human",
-                "source_quality": "primary_human_in_vitro",
-                "perturbation_type": "physiological_baseline",
-                "estimated_translation_uncertainty_fold": 1.0,
-            },
+            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -1437,13 +1372,8 @@ class TestValidateNoInvisibleCharacters:
 
     def test_invisible_unicode_in_text_fails(self):
         """Invisible unicode characters in string fields should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Add zero-width space in a text field
         data["study_interpretation"] = "Test interpretation\u200Bwith invisible character"
@@ -1457,13 +1387,8 @@ def derive_observation(inputs, sample_size):
 
     def test_normal_text_passes(self):
         """Normal text without invisible characters should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
 
         # Should pass - no invisible characters
@@ -1483,13 +1408,8 @@ class TestValidateUnitsAreValidPint:
 
     def test_invalid_unit_string_fails(self):
         """Invalid Pint unit string should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Use an invalid unit string
         data["inputs"][0]["units"] = "invalid_unit_xyz"
@@ -1507,13 +1427,8 @@ def derive_observation(inputs, sample_size):
 
     def test_valid_pint_units_passes(self):
         """Valid Pint unit strings should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Default units are "1/day" which is valid
 
@@ -1534,10 +1449,7 @@ class TestValidateODEModelRequirements:
 
     def test_first_order_decay_without_state_variables_fails(self):
         """first_order_decay model without state_variables should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+        measurement_error_code = VALID_OBSERVATION_CODE
         data = {
             "target_id": "test_ode_001",
             "inputs": [
@@ -1596,15 +1508,7 @@ def derive_observation(inputs, sample_size):
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": {
-                "indication_match": "exact",
-                "indication_match_justification": "Test justification for source relevance with exact indication match.",
-                "species_source": "human",
-                "species_target": "human",
-                "source_quality": "primary_human_in_vitro",
-                "perturbation_type": "physiological_baseline",
-                "estimated_translation_uncertainty_fold": 1.0,
-            },
+            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -1622,10 +1526,7 @@ def derive_observation(inputs, sample_size):
 
     def test_first_order_decay_without_span_fails(self):
         """first_order_decay model without independent_variable span should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+        measurement_error_code = VALID_OBSERVATION_CODE
         data = {
             "target_id": "test_ode_002",
             "inputs": [
@@ -1693,15 +1594,7 @@ def derive_observation(inputs, sample_size):
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": {
-                "indication_match": "exact",
-                "indication_match_justification": "Test justification for source relevance with exact indication match.",
-                "species_source": "human",
-                "species_target": "human",
-                "source_quality": "primary_human_in_vitro",
-                "perturbation_type": "physiological_baseline",
-                "estimated_translation_uncertainty_fold": 1.0,
-            },
+            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -1719,13 +1612,8 @@ def derive_observation(inputs, sample_size):
 
     def test_algebraic_without_state_variables_passes(self):
         """algebraic model without state_variables should pass (non-ODE)."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Algebraic models don't require state_variables
 
@@ -1737,10 +1625,7 @@ def derive_observation(inputs, sample_size):
 
     def test_valid_ode_model_passes(self):
         """Valid ODE model with state_variables and span should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+        measurement_error_code = VALID_OBSERVATION_CODE
         data = {
             "target_id": "test_ode_003",
             "inputs": [
@@ -1808,15 +1693,7 @@ def derive_observation(inputs, sample_size):
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": {
-                "indication_match": "exact",
-                "indication_match_justification": "Test justification for source relevance with exact indication match.",
-                "species_source": "human",
-                "species_target": "human",
-                "source_quality": "primary_human_in_vitro",
-                "perturbation_type": "physiological_baseline",
-                "estimated_translation_uncertainty_fold": 1.0,
-            },
+            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
@@ -1841,50 +1718,42 @@ def derive_observation(inputs, sample_size):
 # ============================================================================
 
 
-class TestValidateCrossSpeciesUncertainty:
-    """Tests for validate_cross_species_uncertainty validator."""
+class TestWarnCrossSpeciesExtrapolation:
+    """Tests for warn_cross_species_extrapolation validator."""
 
-    def test_cross_species_without_sufficient_uncertainty_fails(self):
-        """Cross-species extrapolation with low uncertainty should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+    def test_cross_species_emits_warning(self):
+        """Cross-species extrapolation should emit a warning."""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
-        # Set cross-species with low uncertainty
         data["source_relevance"]["species_source"] = "mouse"
         data["source_relevance"]["species_target"] = "human"
-        data["source_relevance"]["estimated_translation_uncertainty_fold"] = 1.5  # Too low
 
-        with pytest.raises(ValidationError) as exc_info:
-            SubmodelTarget(**data)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                SubmodelTarget(**data)
+            except ValidationError:
+                pass
+            species_warnings = [x for x in w if "cross-species" in str(x.message).lower()]
+            assert len(species_warnings) > 0
 
-        error_str = str(exc_info.value).lower()
-        assert "cross-species" in error_str or "uncertainty" in error_str
-
-    def test_cross_species_with_sufficient_uncertainty_passes(self):
-        """Cross-species extrapolation with adequate uncertainty should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+    def test_same_species_no_warning(self):
+        """Same species should not emit cross-species warning."""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
-        # Set cross-species with adequate uncertainty
-        data["source_relevance"]["species_source"] = "mouse"
+        data["source_relevance"]["species_source"] = "human"
         data["source_relevance"]["species_target"] = "human"
-        data["source_relevance"]["estimated_translation_uncertainty_fold"] = 3.0  # Adequate
 
-        # Should pass
-        try:
-            SubmodelTarget(**data)
-        except ValidationError as e:
-            assert "cross-species" not in str(e).lower()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                SubmodelTarget(**data)
+            except ValidationError:
+                pass
+            species_warnings = [x for x in w if "cross-species" in str(x.message).lower()]
+            assert len(species_warnings) == 0
 
 
 # ============================================================================
@@ -1892,55 +1761,43 @@ def derive_observation(inputs, sample_size):
 # ============================================================================
 
 
-class TestValidateCrossIndicationUncertainty:
-    """Tests for validate_cross_indication_uncertainty validator."""
+class TestWarnCrossIndicationExtrapolation:
+    """Tests for warn_cross_indication_extrapolation validator."""
 
-    def test_cross_indication_proxy_without_sufficient_uncertainty_fails(self):
-        """Cross-indication proxy with low uncertainty should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
+    def test_proxy_indication_emits_warning(self):
+        """Proxy indication should emit a warning."""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
-        # Set proxy indication with low uncertainty
-        data["source_relevance"]["indication_match"] = "proxy"
-        data["source_relevance"][
-            "estimated_translation_uncertainty_fold"
-        ] = 2.0  # Too low for proxy
-
-        with pytest.raises(ValidationError) as exc_info:
-            SubmodelTarget(**data)
-
-        error_str = str(exc_info.value).lower()
-        assert "cross-indication" in error_str or "proxy" in error_str
-
-    def test_cross_indication_with_sufficient_uncertainty_passes(self):
-        """Cross-indication extrapolation with adequate uncertainty should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
-        data = make_algebraic_target(
-            input_value=10.0,
-            measurement_error_code=measurement_error_code,
-        )
-        # Set proxy indication with adequate uncertainty
         data["source_relevance"]["indication_match"] = "proxy"
         data["source_relevance"][
             "indication_match_justification"
         ] = "This is a proxy indication that requires adequate justification text for testing purposes."
-        data["source_relevance"][
-            "estimated_translation_uncertainty_fold"
-        ] = 5.0  # Adequate for proxy
 
-        # Should pass
-        try:
-            SubmodelTarget(**data)
-        except ValidationError as e:
-            assert "cross-indication" not in str(e).lower()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                SubmodelTarget(**data)
+            except ValidationError:
+                pass
+            indication_warnings = [x for x in w if "cross-indication" in str(x.message).lower()]
+            assert len(indication_warnings) > 0
+
+    def test_exact_indication_no_warning(self):
+        """Exact indication should not emit cross-indication warning."""
+        data = make_algebraic_target(
+            input_value=10.0,
+        )
+        data["source_relevance"]["indication_match"] = "exact"
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                SubmodelTarget(**data)
+            except ValidationError:
+                pass
+            indication_warnings = [x for x in w if "cross-indication" in str(x.message).lower()]
+            assert len(indication_warnings) == 0
 
 
 # ============================================================================
@@ -1953,17 +1810,12 @@ class TestValidatePerturbationJustification:
 
     def test_pharmacological_perturbation_without_justification_fails(self):
         """Pharmacological perturbation without perturbation_relevance should fail."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Set pharmacological perturbation without justification
         data["source_relevance"]["perturbation_type"] = "pharmacological"
-        # perturbation_relevance not provided
+        del data["source_relevance"]["perturbation_relevance"]
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
@@ -1973,13 +1825,8 @@ def derive_observation(inputs, sample_size):
 
     def test_pharmacological_perturbation_with_justification_passes(self):
         """Pharmacological perturbation with perturbation_relevance should pass."""
-        measurement_error_code = """
-def derive_observation(inputs, sample_size):
-    return {'value': inputs['test_value'], 'sd': 1.0}
-"""
         data = make_algebraic_target(
             input_value=10.0,
-            measurement_error_code=measurement_error_code,
         )
         # Set pharmacological perturbation with justification
         data["source_relevance"]["perturbation_type"] = "pharmacological"

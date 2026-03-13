@@ -35,6 +35,9 @@ dependencies = [
     "pint>=0.25",  # For unit-aware calculations
     "ruamel.yaml>=0.18",  # Better YAML formatting with block scalars
     "scipy>=1.11.0",  # For ODE integration in SubmodelTarget validation
+    "fastmcp>=2.0.0",  # MCP server for extraction guidance
+    "pypdf>=4.0.0",  # PDF text extraction for snippet validation
+    "numpy>=1.24.0",  # Bootstrap sampling and distribution fitting
 ]
 
 [project.optional-dependencies]
@@ -53,6 +56,7 @@ Repository = "https://github.com/popellab/maple"
 [project.scripts]
 qsp-extract = "maple.cli.extract:main"
 qsp-export-model = "maple.cli.export_model:main"
+maple-mcp = "maple.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

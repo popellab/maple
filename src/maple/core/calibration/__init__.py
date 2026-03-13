@@ -93,6 +93,22 @@ from maple.core.calibration.validators import (
     resolve_doi,
 )
 
+# Snippet validation
+from maple.core.calibration.snippet_validator import (
+    validate_snippets_in_file,
+    validate_snippets_in_dir,
+)
+
+# YAML to prior
+from maple.core.calibration.yaml_to_prior import (
+    compute_translation_sigma,
+    fit_distributions,
+    process_yaml,
+    solve_parameter_samples,
+    format_report,
+    DistFit,
+)
+
 # Code validation
 from maple.core.calibration.code_validator import (
     EXPECTED_SIGNATURES,
@@ -204,6 +220,16 @@ __all__ = [
     "validate_code_block",
     "find_hardcoded_constants",
     "EXPECTED_SIGNATURES",
+    # Snippet validation
+    "validate_snippets_in_file",
+    "validate_snippets_in_dir",
+    # YAML to prior
+    "compute_translation_sigma",
+    "fit_distributions",
+    "process_yaml",
+    "solve_parameter_samples",
+    "format_report",
+    "DistFit",
     # Exceptions
     "CalibrationTargetValidationError",
     "CodeSyntaxError",

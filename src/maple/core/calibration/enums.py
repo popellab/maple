@@ -365,3 +365,145 @@ class TMECompatibility(str, Enum):
     - Well-vascularized subcutaneous tumors -> hypoxic PDAC
     Requires 10-100x translation uncertainty for trafficking parameters.
     """
+
+
+class MeasurementDirectness(str, Enum):
+    """How many inferential steps between the raw measurement and the model parameter.
+
+    Captures structural uncertainty from model assumptions needed to extract
+    the parameter from observed data. Distinct from statistical uncertainty
+    (captured by bootstrap) and translational uncertainty (captured by other
+    source_relevance fields).
+    """
+
+    DIRECT = "direct"
+    """Parameter is the measured quantity or a trivial transform (unit conversion, ln2/x).
+    Examples:
+    - EC50 from dose-response curve -> EC50_GMCSF
+    - Tumor doubling time from CT -> k_C1_growth = ln(2)/VDT
+    - Half-life from decay curve -> k_death = ln(2)/t_half
+    - TCR clonotype count -> n_CD8_clones
+    """
+
+    SINGLE_INVERSION = "single_inversion"
+    """One kinetic/mechanistic model assumption needed to extract parameter.
+    Examples:
+    - CD80% at 0h and 24h + first-order kinetics -> k_APC_mature_ID
+    - Serial killing count + mass-action assumption -> k_NK_kill
+    - Secretion rate from accumulation assay + linear model -> k_CCL2_sec
+    - Serum PK half-life mapped to tissue degradation rate -> k_IL2_deg
+    """
+
+    STEADY_STATE_INVERSION = "steady_state_inversion"
+    """Parameter inferred from steady-state observables via balance equations.
+    Depends on assumed values of other rate constants in the submodel.
+    Examples:
+    - Macrophage density at diagnosis + assumed death rate -> k_Mac_rec
+    - M1/M2 ratio + assumed polarization/death rates -> k_M1_pol
+    - MDSC fraction at diagnosis + assumed clearance -> k_MDSC_rec
+    - CD8 density + assumed death/proliferation -> q_CD8_T_in
+    """
+
+    PROXY_OBSERVABLE = "proxy_observable"
+    """Measured quantity is a surrogate for the parameter, not mechanistically linked.
+    Examples:
+    - RNA expression as proxy for protein secretion rate
+    - IHC score as proxy for absolute concentration
+    - Proliferation marker (Ki67) as proxy for net growth rate
+    """
+
+
+class TemporalResolution(str, Enum):
+    """How well the temporal or dose structure of the data constrains the parameter.
+
+    More timepoints/conditions reduce model-form uncertainty by constraining
+    the shape of the kinetic response, not just its endpoint.
+    """
+
+    TIMECOURSE = "timecourse"
+    """>=3 timepoints or doses spanning the relevant dynamic range.
+    Examples:
+    - PK curve with multiple blood draws
+    - Dose-response with 5+ concentrations
+    - Tumor growth measured at monthly CT intervals
+    - Time-lapse microscopy with continuous observation
+    """
+
+    ENDPOINT_PAIR = "endpoint_pair"
+    """Two timepoints (baseline + endpoint) or two conditions.
+    Constrains a rate but cannot distinguish kinetic model forms.
+    Examples:
+    - CD80% at 0h and 24h -> k_APC_mature_ID
+    - Kill count at 4h and 16h -> k_NK_kill
+    - EC50 from two functional assays -> EC50_GMCSF
+    """
+
+    SNAPSHOT_OR_EQUILIBRIUM = "snapshot_or_equilibrium"
+    """Single timepoint, cross-sectional data, or assumed steady state.
+    Parameter must be inferred from a single observation, possibly
+    via balance equations assuming equilibrium.
+    Examples:
+    - Tumor biopsy cell densities at diagnosis
+    - M1/M2 ratio from single resection
+    - Macrophage density assumed at recruitment-death balance
+    - Steady-state cytokine concentration
+    """
+
+
+class ExperimentalSystem(str, Enum):
+    """Biological fidelity of the experimental system to the in vivo tumor context.
+
+    Distinct from source_quality (evidence reliability / peer review status).
+    This captures the system gap: how well the experimental conditions recapitulate
+    the biology being modeled.
+    """
+
+    CLINICAL_IN_VIVO = "clinical_in_vivo"
+    """Direct patient measurements (imaging, biopsies, blood draws).
+    Minimal system gap -- this IS the target biology.
+    Examples:
+    - CT-measured tumor growth rates
+    - IHC on resected PDAC tissue
+    - Serum PK from clinical trials
+    """
+
+    ANIMAL_IN_VIVO = "animal_in_vivo"
+    """Animal model measurements. Species gap but intact system.
+    Examples:
+    - KPC mouse tumor growth
+    - Syngeneic tumor model immune infiltrates
+    - Mouse PK studies
+    """
+
+    EX_VIVO = "ex_vivo"
+    """Freshly isolated tissue/cells measured without extended culture.
+    Preserves in vivo phenotype but loses systemic context.
+    Examples:
+    - Flow cytometry on freshly dissociated tumor
+    - Tissue explant secretion measurements (< 24h)
+    - Fresh TAM polarization assessment
+    """
+
+    IN_VITRO_COCULTURE = "in_vitro_coculture"
+    """Multi-cell-type culture systems that partially recapitulate TME.
+    Examples:
+    - Organoid + CAF co-cultures
+    - Transwell migration assays with conditioned media
+    - Tumor spheroid killing assays
+    """
+
+    IN_VITRO_PRIMARY = "in_vitro_primary"
+    """Primary cells in standard 2D/suspension culture.
+    Examples:
+    - Monocyte-derived DC maturation kinetics
+    - Primary NK cell killing assays
+    - PBMC stimulation assays
+    """
+
+    IN_VITRO_CELL_LINE = "in_vitro_cell_line"
+    """Immortalized cell lines. Biological drift from in vivo phenotype.
+    Examples:
+    - TF-1 proliferation for GM-CSF EC50
+    - 721.221 as NK killing target
+    - Cancer cell line growth rates
+    """

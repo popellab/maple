@@ -89,6 +89,32 @@ class TableExcerpt(BaseModel):
     )
 
 
+class FigureExcerpt(BaseModel):
+    """
+    Structured excerpt from a figure in a paper.
+
+    Use this instead of value_snippet when the value is read from a figure
+    (e.g., scatter plots, bar charts, dose-response curves). Figure-derived
+    values cannot be validated by text matching, so inputs with figure_excerpt
+    are flagged for manual review instead of failing snippet validation.
+    """
+
+    figure_id: str = Field(
+        description="Figure identifier (e.g., 'Figure 1C', 'Supplementary Figure S2A')"
+    )
+    value: str = Field(
+        description="Value as read from the figure (e.g., '~5', '2-5 range'). "
+        "Used for documentation; not validated by text matching."
+    )
+    description: str = Field(
+        description="What was read from the figure (e.g., 'highest data point in scatter plot at 16h')"
+    )
+    context: str = Field(
+        description="Additional context (e.g., figure caption text, axis labels, "
+        "or experimental conditions shown in the panel)",
+    )
+
+
 class Input(BaseModel):
     """
     A value extracted from literature with full provenance.
@@ -122,6 +148,12 @@ class Input(BaseModel):
         default=None,
         description="Structured table excerpt when value comes from a table. "
         "Preferred over value_snippet for table-sourced data.",
+    )
+    figure_excerpt: Optional[FigureExcerpt] = Field(
+        default=None,
+        description="Structured figure excerpt when value is read from a figure. "
+        "Figure-derived values are flagged for manual review instead of "
+        "failing snippet validation.",
     )
 
 
@@ -644,8 +676,8 @@ class ErrorModel(BaseModel):
 
     The error model describes:
     - Which inputs from the data are used
-    - How to compute measurement error/uncertainty
-    - What likelihood to use for inference
+    - How to generate bootstrap samples of the observation
+    - What likelihood to use for inference (optional; can be inferred from samples)
 
     For ODE models, evaluation_points specifies when to compare.
     For algebraic models, evaluation_points is not needed.
@@ -670,19 +702,27 @@ class ErrorModel(BaseModel):
         description="Name of input providing sample size",
     )
     observation_code: str = Field(
-        description="Python code to derive the observation (point estimate + uncertainty) from inputs. "
-        "Signature: def derive_observation(inputs) -> dict. "
-        "Sample size is available via inputs dict (keyed by sample_size_input name). "
-        "Required return keys: "
-        "'value' (plain float), "
-        "'sd' (plain float - dimensionless CV for lognormal, absolute for normal). "
-        "Optional return keys: "
-        "'sd_uncertain' (bool - if True, inference adds prior on SD), "
-        "'n' (int - sample size for reference). "
-        "Use to compile literature data (ranges, CIs, multiple values) into a point estimate "
-        "and characterize how uncertain that observation is."
+        description="Python code to generate bootstrap samples of the observation from inputs. "
+        "Signature: def derive_observation(inputs, sample_size, rng, n_bootstrap) -> np.ndarray. "
+        "The rng argument is a numpy Generator (np.random.default_rng) provided by the framework. "
+        "The n_bootstrap argument is the number of samples to generate (from the n_bootstrap field). "
+        "Must return a 1D numpy array of parametric bootstrap samples. "
+        "The framework derives value (median), SD, and CI95 from the samples. "
+        "Choose the bootstrap distribution to match the data-generating process: "
+        "normal for mean±SD data, lognormal for positive quantities with log-space spread, "
+        "poisson for count data, etc. "
+        "For multi-timepoint models, this is called once per evaluation_point.",
     )
-    likelihood: Likelihood = Field(description="Likelihood specification")
+    n_bootstrap: int = Field(
+        default=10000,
+        description="Number of parametric bootstrap samples to generate. "
+        "Default 10000 provides stable median/SD/CI95 estimates.",
+    )
+    likelihood: Optional[Likelihood] = Field(
+        default=None,
+        description="Likelihood specification. If omitted, the framework infers "
+        "the likelihood family from the bootstrap sample distribution.",
+    )
 
 
 # Backwards compatibility alias
@@ -1400,11 +1440,12 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_observation_sd_units_for_likelihood(self) -> "SubmodelTarget":
+    def validate_observation_bootstrap_samples(self) -> "SubmodelTarget":
         """
-        Validate that observation_code SD is a valid positive number.
+        Validate that observation_code bootstrap samples have positive spread.
 
-        Checks that derive_observation() returns a numeric SD value.
+        Checks that derive_observation() returns samples with std > 0,
+        indicating the bootstrap is producing meaningful variability.
         """
         import numpy as np
 
@@ -1429,18 +1470,18 @@ class SubmodelTarget(BaseModel):
                     continue
 
                 sample_size = int(inputs_dict.get(entry.sample_size_input, 1))
-                result = derive_observation(inputs_dict, sample_size)
-                if not isinstance(result, dict) or "sd" not in result:
-                    continue
+                rng = np.random.default_rng(42)
+                result = derive_observation(inputs_dict, sample_size, rng, entry.n_bootstrap)
 
-                sd = result["sd"]
-                if not isinstance(sd, (int, float)):
+                if not isinstance(result, np.ndarray):
+                    continue  # Type errors handled by validate_observation_code_execution
+
+                sd = np.std(result)
+                if sd <= 0:
                     errors.append(
-                        f"Error model '{entry.name}': derive_observation() returned "
-                        f"SD of type {type(sd).__name__}, expected a plain number."
+                        f"Error model '{entry.name}': bootstrap samples have zero spread "
+                        f"(std=0). The parametric bootstrap must produce variability."
                     )
-                elif sd <= 0:
-                    errors.append(f"Error model '{entry.name}': SD must be positive, got {sd}")
 
             except Exception:
                 # Execution errors handled by other validators
@@ -1449,7 +1490,7 @@ class SubmodelTarget(BaseModel):
         if errors:
             from maple.core.calibration.exceptions import UnitValidationError
 
-            raise UnitValidationError.from_errors(errors, prefix="Measurement error SD validation")
+            raise UnitValidationError.from_errors(errors, prefix="Bootstrap sample validation")
 
         return self
 
@@ -1630,13 +1671,13 @@ class SubmodelTarget(BaseModel):
                             f"must be named 'derive_observation', got '{func_defs[0].name}'"
                         )
                     else:
-                        # Check argument count: should be (inputs, sample_size)
+                        # Check argument count: should be (inputs, sample_size, rng, n_bootstrap)
                         n_args = len(func_defs[0].args.args)
-                        if n_args != 2:
+                        if n_args != 4:
                             errors.append(
                                 f"Error model '{measurement.name}' observation_code function "
-                                f"'derive_observation' must have 2 arguments (inputs, sample_size), "
-                                f"got {n_args}"
+                                f"'derive_observation' must have 4 arguments "
+                                f"(inputs, sample_size, rng, n_bootstrap), got {n_args}"
                             )
                 except SyntaxError as e:
                     errors.append(
@@ -1655,17 +1696,12 @@ class SubmodelTarget(BaseModel):
         """
         Execute observation_code and validate return value structure.
 
-        The observation_code compiles literature data into:
-        - A point estimate ('value') for comparison with forward model prediction
-        - Measurement uncertainty ('sd') for the likelihood
+        The observation_code generates parametric bootstrap samples from the
+        literature data. The framework derives point estimates (median, SD, CI95)
+        from the returned sample array.
 
-        Expected return structure:
-        - 'value': float (required) - the observed point estimate
-        - 'sd': float (required) - measurement uncertainty
-        - 'sd_uncertain': bool (optional) - if True, inference adds prior on SD
-        - 'n': int (optional) - sample size for reference
-
-        See: https://mc-stan.org/docs/stan-users-guide/measurement-error.html
+        Expected signature: def derive_observation(inputs, sample_size, rng, n_bootstrap) -> np.ndarray
+        Expected return: 1D numpy array of bootstrap samples (length >= 100)
         """
         import numpy as np
 
@@ -1675,6 +1711,9 @@ class SubmodelTarget(BaseModel):
         inputs_dict = {}
         for inp in self.inputs:
             inputs_dict[inp.name] = inp.value
+
+        # Framework-controlled RNG for reproducibility
+        rng = np.random.default_rng(42)
 
         for entry in self.calibration.error_model:
             if not entry.observation_code:
@@ -1693,67 +1732,47 @@ class SubmodelTarget(BaseModel):
                     )
                     continue
 
-                # Execute with inputs and sample_size
+                # Execute with inputs, sample_size, and rng
                 sample_size = int(inputs_dict.get(entry.sample_size_input, 1))
-                result = derive_observation(inputs_dict, sample_size)
+                result = derive_observation(inputs_dict, sample_size, rng, entry.n_bootstrap)
 
-                # Validate return structure is dict
-                if not isinstance(result, dict):
+                # Validate return type is ndarray
+                if not isinstance(result, np.ndarray):
                     errors.append(
-                        f"Error model '{entry.name}': derive_observation must return dict, "
-                        f"got {type(result).__name__}"
+                        f"Error model '{entry.name}': derive_observation must return "
+                        f"np.ndarray, got {type(result).__name__}"
                     )
                     continue
 
-                # Check required 'value' key
-                if "value" not in result:
+                # Validate 1D
+                if result.ndim != 1:
                     errors.append(
-                        f"Error model '{entry.name}': derive_observation must return dict "
-                        f"with 'value' key, got keys: {list(result.keys())}"
+                        f"Error model '{entry.name}': derive_observation must return "
+                        f"1D array, got {result.ndim}D with shape {result.shape}"
                     )
-                else:
-                    # Validate 'value' is numeric
-                    value = result["value"]
-                    if not isinstance(value, (int, float)):
-                        errors.append(
-                            f"Error model '{entry.name}': 'value' must be a number, "
-                            f"got {type(value).__name__}."
-                        )
+                    continue
 
-                # Check required 'sd' key
-                if "sd" not in result:
+                # Validate non-empty
+                if len(result) < 100:
                     errors.append(
-                        f"Error model '{entry.name}': derive_observation must return dict "
-                        f"with 'sd' key, got keys: {list(result.keys())}"
+                        f"Error model '{entry.name}': bootstrap samples too few "
+                        f"({len(result)}), need at least 100 for stable estimates"
                     )
-                else:
-                    # Validate sd is positive
-                    sd = result["sd"]
-                    if not isinstance(sd, (int, float)):
-                        errors.append(
-                            f"Error model '{entry.name}': 'sd' must be numeric, "
-                            f"got {type(sd).__name__}"
-                        )
-                    elif sd <= 0:
-                        errors.append(
-                            f"Error model '{entry.name}': 'sd' must be positive, got {sd}"
-                        )
 
-                # Validate optional 'sd_uncertain' is bool if present
-                if "sd_uncertain" in result:
-                    if not isinstance(result["sd_uncertain"], bool):
-                        errors.append(
-                            f"Error model '{entry.name}': 'sd_uncertain' must be bool, "
-                            f"got {type(result['sd_uncertain']).__name__}"
-                        )
+                # Validate no NaN/Inf
+                if np.any(~np.isfinite(result)):
+                    n_bad = np.sum(~np.isfinite(result))
+                    errors.append(
+                        f"Error model '{entry.name}': bootstrap samples contain "
+                        f"{n_bad} non-finite values (NaN or Inf)"
+                    )
 
-                # Validate optional 'n' is positive int if present
-                if "n" in result:
-                    n = result["n"]
-                    if not isinstance(n, int) or n <= 0:
-                        errors.append(
-                            f"Error model '{entry.name}': 'n' must be positive int, " f"got {n}"
-                        )
+                # Validate positive SD (non-degenerate)
+                if np.std(result) == 0:
+                    errors.append(
+                        f"Error model '{entry.name}': bootstrap samples have zero "
+                        f"variance (all identical values)"
+                    )
 
             except Exception as e:
                 errors.append(f"Error model '{entry.name}': observation_code execution error: {e}")
@@ -1855,13 +1874,13 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def warn_observation_sd_unreasonable(self) -> "SubmodelTarget":
+    def warn_observation_cv_unreasonable(self) -> "SubmodelTarget":
         """
-        Warn when observation SD is unreasonably large or small.
+        Warn when bootstrap sample CV is unreasonably large or small.
 
-        Compares the SD from observation_code to the magnitude of the
-        observed value. Warns if SD is >100x or <0.001x the observed value,
-        which often indicates a units mismatch or typo.
+        Computes coefficient of variation (SD/mean) from bootstrap samples.
+        Warns if CV > 100 or CV < 0.001, which often indicates a units
+        mismatch, typo, or degenerate bootstrap.
         """
         import numpy as np
 
@@ -1874,12 +1893,6 @@ class SubmodelTarget(BaseModel):
             if not entry.observation_code:
                 continue
 
-            # Skip this check for lognormal/beta likelihoods where SD is dimensionless
-            # and comparing to dimensional observed values doesn't make sense
-            likelihood_dist = entry.likelihood.distribution.lower()
-            if likelihood_dist in {"lognormal", "beta", "dirichlet"}:
-                continue
-
             try:
                 # Execute observation_code
                 local_scope = {"np": np, "numpy": np}
@@ -1889,30 +1902,32 @@ class SubmodelTarget(BaseModel):
                     continue
 
                 sample_size = int(inputs_dict.get(entry.sample_size_input, 1))
-                result = derive_observation(inputs_dict, sample_size)
-                if not isinstance(result, dict) or "sd" not in result or "value" not in result:
+                rng = np.random.default_rng(42)
+                result = derive_observation(inputs_dict, sample_size, rng, entry.n_bootstrap)
+
+                if not isinstance(result, np.ndarray):
                     continue
 
-                sd_value = result["sd"]
-                observed_value = result["value"]
+                mean_val = np.mean(result)
+                sd_val = np.std(result)
 
-                if observed_value == 0:
+                if mean_val == 0 or sd_val == 0:
                     continue
 
-                ratio = sd_value / abs(observed_value)
+                cv = sd_val / abs(mean_val)
 
-                if ratio > 100:
+                if cv > 100:
                     warnings.warn(
-                        f"Error model '{entry.name}': SD ({sd_value:.2e}) is {ratio:.0f}x "
-                        f"larger than observed value ({observed_value:.2e}).\n"
+                        f"Error model '{entry.name}': bootstrap CV ({cv:.1f}) is very large. "
+                        f"Mean={mean_val:.2e}, SD={sd_val:.2e}.\n"
                         f"This may indicate a units mismatch. Check observation_code.",
                         UserWarning,
                     )
-                elif ratio < 0.001:
+                elif cv < 0.001:
                     warnings.warn(
-                        f"Error model '{entry.name}': SD ({sd_value:.2e}) is {1/ratio:.0f}x "
-                        f"smaller than observed value ({observed_value:.2e}).\n"
-                        f"This may indicate a units mismatch or overly confident error estimate.",
+                        f"Error model '{entry.name}': bootstrap CV ({cv:.1e}) is very small. "
+                        f"Mean={mean_val:.2e}, SD={sd_val:.2e}.\n"
+                        f"This may indicate overly confident bootstrap parameters.",
                         UserWarning,
                     )
 
@@ -1945,7 +1960,13 @@ class SubmodelTarget(BaseModel):
         Catches hallucinations where the LLM extracts a value that doesn't
         appear in the cited text. Skips unit_conversion and reference_value
         inputs (these don't come from paper text).
+
+        Inputs with figure_excerpt are accepted as valid provenance but
+        emit a warning for manual review, since figure-derived values
+        cannot be validated by text matching.
         """
+        import warnings
+
         from maple.core.calibration.validators import check_value_in_text
 
         errors = []
@@ -1959,12 +1980,25 @@ class SubmodelTarget(BaseModel):
 
             has_snippet = bool(inp.value_snippet)
             has_table = bool(inp.table_excerpt)
+            has_figure = bool(inp.figure_excerpt)
 
             # Require at least one provenance source for measurable inputs
-            if not has_snippet and not has_table:
+            if not has_snippet and not has_table and not has_figure:
                 errors.append(
-                    f"Input '{inp.name}': neither value_snippet nor table_excerpt provided. "
+                    f"Input '{inp.name}': no provenance provided (value_snippet, "
+                    f"table_excerpt, or figure_excerpt). "
                     f"At least one is required for {inp.input_type.value} inputs."
+                )
+                continue
+
+            # Figure-derived values: accept as provenance but warn for manual review
+            if has_figure and not has_snippet and not has_table:
+                warnings.warn(
+                    f"Input '{inp.name}': value {inp.value} is read from "
+                    f"{inp.figure_excerpt.figure_id} — requires manual review "
+                    f"(figure-derived values cannot be text-validated).",
+                    UserWarning,
+                    stacklevel=2,
                 )
                 continue
 
@@ -2503,15 +2537,13 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_observation_code_return_signature(self) -> "SubmodelTarget":
+    def validate_observation_code_returns_array_not_dict(self) -> "SubmodelTarget":
         """
-        Validate that observation_code returns the required 'value' and 'sd' keys.
+        Warn if observation_code appears to return a dict (old format).
 
-        The derive_observation function MUST return a dict with:
-        - 'value': the observed point estimate (Pint Quantity)
-        - 'sd': standard deviation of the measurement error (float or Quantity)
-
-        This catches malformed observation_code that would fail at runtime.
+        The new format requires returning a 1D numpy array of bootstrap samples.
+        Returning a dict with 'value'/'sd' keys is the old format and will fail
+        at runtime. This static check catches it early.
         """
         import ast
 
@@ -2521,65 +2553,28 @@ class SubmodelTarget(BaseModel):
 
             code = entry.observation_code
 
-            # Parse the code
             try:
                 tree = ast.parse(code)
             except SyntaxError:
-                # Syntax errors are caught by validate_custom_code_syntax
                 continue
 
-            # Find all return statements in derive_observation function
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef) and node.name == "derive_observation":
-                    # Find return statements within this function
                     for child in ast.walk(node):
                         if isinstance(child, ast.Return) and child.value:
-                            # Check if return value is a dict
                             if isinstance(child.value, ast.Dict):
-                                # Extract key names from the dict literal
-                                keys = set()
-                                for key in child.value.keys:
-                                    if isinstance(key, ast.Constant):
-                                        keys.add(key.value)
-                                    elif isinstance(key, ast.Str):  # Python 3.7 compat
-                                        keys.add(key.s)
+                                from maple.core.calibration.exceptions import (
+                                    ReturnStructureError,
+                                )
 
-                                # Check for required keys
-                                missing_keys = {"value", "sd"} - keys
-                                if missing_keys:
-                                    from maple.core.calibration.exceptions import (
-                                        ReturnStructureError,
-                                    )
-
-                                    raise ReturnStructureError(
-                                        f"Error model '{entry.name}' observation_code "
-                                        f"return dict is missing required key(s): {missing_keys}\n\n"
-                                        f"Required return signature:\n"
-                                        f"  return {{'value': <observed_quantity>, 'sd': <uncertainty>}}"
-                                    )
-
-            # Also check via regex for return statements that build dict inline
-            # This catches cases where AST parsing might miss dynamic dict construction
-            if "return" in code and "derive_observation" in code:
-                import re
-
-                has_value = bool(re.search(r"['\"]value['\"]", code))
-                has_sd = bool(re.search(r"['\"]sd['\"]", code))
-
-                if not has_value or not has_sd:
-                    missing = []
-                    if not has_value:
-                        missing.append("'value'")
-                    if not has_sd:
-                        missing.append("'sd'")
-                    from maple.core.calibration.exceptions import ReturnStructureError
-
-                    raise ReturnStructureError(
-                        f"Error model '{entry.name}' observation_code "
-                        f"appears to be missing required return key(s): {', '.join(missing)}\n\n"
-                        f"Required return signature:\n"
-                        f"  return {{'value': <observed_quantity>, 'sd': <uncertainty>}}"
-                    )
+                                raise ReturnStructureError(
+                                    f"Error model '{entry.name}' observation_code "
+                                    f"returns a dict (old format).\n\n"
+                                    f"observation_code must return a 1D numpy array of "
+                                    f"parametric bootstrap samples.\n"
+                                    f"Example:\n"
+                                    f"  return rng.normal(loc=mean, scale=sd, size=n_bootstrap)"
+                                )
 
         return self
 
@@ -2680,8 +2675,7 @@ class SubmodelTarget(BaseModel):
                 "Recommended actions:\n"
                 "  1. Replace with peer-reviewed primary literature if possible\n"
                 "  2. Document rationale in key_study_limitations\n"
-                "  3. Increase estimated_translation_uncertainty_fold (recommend 3x minimum)\n"
-                "  4. Ensure prior σ reflects this additional uncertainty",
+                "  3. Translation sigma inflation will be applied automatically during prior construction",
                 UserWarning,
             )
         return self
@@ -2715,24 +2709,19 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_cross_indication_uncertainty(self) -> "SubmodelTarget":
-        """Flag cross-indication extrapolation with insufficient uncertainty."""
+    def warn_cross_indication_extrapolation(self) -> "SubmodelTarget":
+        """Warn about cross-indication extrapolation.
+
+        Translation uncertainty is computed deterministically downstream
+        from source_relevance fields, not specified manually.
+        """
         sr = self.source_relevance
         if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
-            if sr.estimated_translation_uncertainty_fold < 3.0:
-                from maple.core.calibration.exceptions import (
-                    TranslationUncertaintyError,
-                )
-
-                raise TranslationUncertaintyError(
-                    f"Cross-indication extrapolation ({sr.indication_match.value}) "
-                    f"with translation uncertainty of only {sr.estimated_translation_uncertainty_fold}x.\n\n"
-                    f"Recommended minimum uncertainty:\n"
-                    f"  - proxy: 3-10x\n"
-                    f"  - unrelated: 10-100x\n\n"
-                    f"Increase estimated_translation_uncertainty_fold to reflect "
-                    f"biological differences between source and target indications."
-                )
+            warnings.warn(
+                f"Cross-indication extrapolation: indication_match='{sr.indication_match.value}'. "
+                f"Translation sigma inflation will be applied automatically during prior construction.",
+                UserWarning,
+            )
         return self
 
     @model_validator(mode="after")
@@ -2774,23 +2763,10 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_low_tme_compatibility_uncertainty(self) -> "SubmodelTarget":
-        """Flag low TME compatibility with insufficient uncertainty."""
+    def validate_low_tme_compatibility_notes(self) -> "SubmodelTarget":
+        """Require documentation for low TME compatibility."""
         sr = self.source_relevance
         if sr.tme_compatibility == TMECompatibility.LOW:
-            if sr.estimated_translation_uncertainty_fold < 10.0:
-                from maple.core.calibration.exceptions import (
-                    TranslationUncertaintyError,
-                )
-
-                raise TranslationUncertaintyError(
-                    f"TME compatibility is 'low' but translation uncertainty is only "
-                    f"{sr.estimated_translation_uncertainty_fold}x.\n\n"
-                    f"Low TME compatibility (e.g., T cell-permissive model for T cell-excluded "
-                    f"tumor like PDAC) typically requires 10-100x uncertainty.\n\n"
-                    f"Increase estimated_translation_uncertainty_fold to reflect major "
-                    f"microenvironment differences."
-                )
             if not sr.tme_compatibility_notes:
                 from maple.core.calibration.exceptions import MissingFieldError
 
@@ -2805,22 +2781,19 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_cross_species_uncertainty(self) -> "SubmodelTarget":
-        """Flag cross-species extrapolation with insufficient uncertainty."""
+    def warn_cross_species_extrapolation(self) -> "SubmodelTarget":
+        """Warn about cross-species extrapolation.
+
+        Translation uncertainty is computed deterministically downstream
+        from source_relevance fields, not specified manually.
+        """
         sr = self.source_relevance
         if sr.species_source != sr.species_target:
-            if sr.estimated_translation_uncertainty_fold < 2.0:
-                from maple.core.calibration.exceptions import (
-                    TranslationUncertaintyError,
-                )
-
-                raise TranslationUncertaintyError(
-                    f"Cross-species extrapolation ({sr.species_source} -> {sr.species_target}) "
-                    f"with translation uncertainty of only {sr.estimated_translation_uncertainty_fold}x.\n\n"
-                    f"Cross-species extrapolation typically requires at least 2-3x uncertainty "
-                    f"to account for species-specific biology.\n\n"
-                    f"Increase estimated_translation_uncertainty_fold."
-                )
+            warnings.warn(
+                f"Cross-species extrapolation: {sr.species_source} → {sr.species_target}. "
+                f"Translation sigma inflation will be applied automatically during prior construction.",
+                UserWarning,
+            )
         return self
 
     # NOTE: validate_prior_reflects_translation_uncertainty was removed —
@@ -2899,6 +2872,8 @@ class SubmodelTarget(BaseModel):
         }
 
         for entry in self.calibration.error_model:
+            if entry.likelihood is None:
+                continue
             dist = entry.likelihood.distribution.lower()
             if dist not in KNOWN_LIKELIHOODS:
                 warnings.warn(
@@ -2985,6 +2960,7 @@ __all__ = [
     # Input models
     "Input",
     "TableExcerpt",
+    "FigureExcerpt",
     # Calibration models
     "Parameter",
     "FixedInitialCondition",

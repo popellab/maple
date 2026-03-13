@@ -912,8 +912,8 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_cross_indication_uncertainty(self) -> "CalibrationTarget":
-        """Validator (WARNING): Flag proxy/unrelated indication with insufficient uncertainty."""
+    def warn_cross_indication_extrapolation(self) -> "CalibrationTarget":
+        """Validator (WARNING): Flag proxy/unrelated indication extrapolation."""
         if self.source_relevance is None:
             return self
 
@@ -921,13 +921,11 @@ class CalibrationTarget(BaseModel):
 
         sr = self.source_relevance
         if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
-            if sr.estimated_translation_uncertainty_fold < 3.0:
-                warnings.warn(
-                    f"source_relevance.indication_match is '{sr.indication_match.value}' but "
-                    f"estimated_translation_uncertainty_fold is only {sr.estimated_translation_uncertainty_fold}x. "
-                    f"Proxy/unrelated indications typically require >= 3x translation uncertainty.",
-                    UserWarning,
-                )
+            warnings.warn(
+                f"Cross-indication extrapolation: indication_match='{sr.indication_match.value}'. "
+                f"Translation sigma inflation will be applied automatically during prior construction.",
+                UserWarning,
+            )
 
         return self
 
@@ -972,8 +970,8 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_low_tme_compatibility_uncertainty(self) -> "CalibrationTarget":
-        """Validator (WARNING): Flag low TME compatibility with insufficient uncertainty."""
+    def validate_low_tme_compatibility_notes(self) -> "CalibrationTarget":
+        """Validator (WARNING): Flag low TME compatibility without documentation."""
         if self.source_relevance is None:
             return self
 
@@ -981,13 +979,6 @@ class CalibrationTarget(BaseModel):
 
         sr = self.source_relevance
         if sr.tme_compatibility == TMECompatibility.LOW:
-            if sr.estimated_translation_uncertainty_fold < 10.0:
-                warnings.warn(
-                    f"source_relevance.tme_compatibility is 'low' but "
-                    f"estimated_translation_uncertainty_fold is only {sr.estimated_translation_uncertainty_fold}x. "
-                    f"Low TME compatibility typically requires >= 10x translation uncertainty.",
-                    UserWarning,
-                )
             if not sr.tme_compatibility_notes:
                 warnings.warn(
                     "source_relevance.tme_compatibility is 'low' but tme_compatibility_notes "
@@ -998,8 +989,8 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_cross_species_uncertainty(self) -> "CalibrationTarget":
-        """Validator (WARNING): Flag cross-species data with insufficient uncertainty."""
+    def warn_cross_species_extrapolation(self) -> "CalibrationTarget":
+        """Validator (WARNING): Flag cross-species extrapolation."""
         if self.source_relevance is None:
             return self
 
@@ -1007,13 +998,11 @@ class CalibrationTarget(BaseModel):
 
         sr = self.source_relevance
         if sr.species_source != sr.species_target:
-            if sr.estimated_translation_uncertainty_fold < 2.0:
-                warnings.warn(
-                    f"Cross-species data (source: {sr.species_source}, target: {sr.species_target}) "
-                    f"but estimated_translation_uncertainty_fold is only {sr.estimated_translation_uncertainty_fold}x. "
-                    f"Cross-species translation typically requires >= 2x uncertainty.",
-                    UserWarning,
-                )
+            warnings.warn(
+                f"Cross-species extrapolation: {sr.species_source} → {sr.species_target}. "
+                f"Translation sigma inflation will be applied automatically during prior construction.",
+                UserWarning,
+            )
 
         return self
 
