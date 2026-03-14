@@ -53,6 +53,87 @@ def _build_enum_reference() -> str:
     return "\n\n".join(sections)
 
 
+def _build_extraction_workflow() -> str:
+    """Standard workflow for multi-parameter extraction sessions."""
+    return """\
+## Extraction Session Workflow
+
+When the user asks you to extract submodel targets for a set of parameters,
+follow this sequence. Do NOT skip steps or reorder them.
+
+### Step 0: Call `get_extraction_guide`
+
+Load this guide before doing anything else. It contains the YAML schema,
+valid enum values, and hard rules that validators enforce.
+
+### Step 1: Investigate parameters in model code
+
+Before any literature search, look up each parameter in the model to understand:
+
+- **What it represents mechanistically** (not just its name)
+- **What units it uses** and whether they are standard (nM, cell/mL) or
+  model-internal (dimensionless fractions, ratios, rates)
+- **What the Hill function / equation input variable is** — e.g., DAMP_50
+  gates on tumor death rate (cell/day), not DAMP concentration (nM)
+- **How the parameter interacts with other parameters** — e.g.,
+  `ECM_50_APC_mig = f_ECM_50_APC_mig * ECM_max`
+
+Where to look:
+- `parameters/parameters_PDAC.m` — parameter definitions, default values,
+  units, and `.Notes` / `.derivedFrom` metadata
+- `core/modules/*.m` — module code where the parameter appears in reactions,
+  rules, or Hill functions
+- `parameters/pdac_priors.csv` — current prior (median, σ, bounds)
+- Existing submodel targets in `calibration_targets/submodel_targets/` for
+  similar parameters
+
+This step determines **what data you actually need** from the literature.
+A parameter that uses death rate as its Hill input needs death rate data,
+not concentration data. A dimensionless fraction needs different literature
+than an absolute concentration.
+
+### Step 2: Literature search
+
+Now that you know what each parameter means and what data would constrain it:
+
+1. **Check Zotero first** (via `mcp__zotero__*` tools) — the user may
+   already have relevant papers in their library
+2. **Web search** for papers with quantitative data that maps to the
+   parameter's actual model role (not just its name)
+3. **Write results** to a notes file (e.g.,
+   `notes/calibration/submodel_target_extraction_roundN.md`) with:
+   - Parameter name, current prior, model role summary
+   - For each paper: title, DOI, key quantitative data, whether it
+     maps cleanly to the model parameter
+
+Flag parameters where the literature data does not map to the model's
+parameterization — these need a different search strategy or may not
+be extractable as direct submodel targets.
+
+### Step 3: User obtains PDFs
+
+The user will get the PDFs into `to-review/papers/<source_tag>/` directories
+(one subfolder per source, named like `Smith2020`). Create the directory
+structure for them if needed.
+
+Wait for the user to confirm PDFs are in place before proceeding.
+
+### Step 4: Extract targets one by one
+
+For each parameter with good literature data:
+
+1. Call `get_extraction_guide` if not already loaded
+2. Read the PDF via the papers directory
+3. Write the SubmodelTarget YAML to `to-review/<parameter_name>.yaml`
+4. Call `validate_target` to check schema, prior derivation, and snippets
+5. Fix any validation errors
+6. Move to the next parameter
+
+Work through parameters one at a time — do not batch-write YAMLs without
+validating each one.
+"""
+
+
 def _build_extraction_rules() -> str:
     """Hard rules that LLMs frequently violate during extraction."""
     return """\
@@ -146,6 +227,12 @@ def schema_enums() -> str:
     return _build_enum_reference()
 
 
+@mcp.resource("maple://workflow/extraction")
+def extraction_workflow() -> str:
+    """Standard workflow for multi-parameter extraction sessions."""
+    return _build_extraction_workflow()
+
+
 @mcp.resource("maple://rules/extraction")
 def extraction_rules() -> str:
     """Hard rules for writing SubmodelTarget YAMLs that LLMs frequently violate."""
@@ -159,11 +246,14 @@ def extraction_rules() -> str:
 
 @mcp.tool()
 def get_extraction_guide(target_type: str = "submodel_target") -> str:
-    """Get the complete extraction guide: prompt + enum reference + rules.
+    """Get the complete extraction guide: workflow + prompt + enum reference + rules.
 
-    Call this BEFORE writing a CalibrationTarget or SubmodelTarget YAML.
-    Returns the full prompt template, all valid enum values, and hard
-    rules that validators enforce.
+    Call this as soon as the user asks to extract, calibrate, or constrain
+    model parameters from literature — BEFORE doing any literature search
+    or writing any YAML. The guide includes the full multi-step workflow
+    (model investigation → literature search → PDF collection → YAML
+    extraction → validation), the prompt template, valid enum values,
+    and hard rules that validators enforce.
 
     Args:
         target_type: "submodel_target" or "calibration_target"
@@ -178,6 +268,7 @@ def get_extraction_guide(target_type: str = "submodel_target") -> str:
     return "\n\n---\n\n".join(
         [
             f"# {target_type} Extraction Guide",
+            "# Workflow\n\n" + _build_extraction_workflow(),
             "# Extraction Prompt\n\n" + prompt,
             "# Valid Enum Values\n\n" + _build_enum_reference(),
             "# Hard Rules\n\n" + _build_extraction_rules(),
