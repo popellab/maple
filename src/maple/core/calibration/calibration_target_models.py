@@ -14,7 +14,7 @@ from enum import Enum
 from typing import List, Optional, Union
 
 import numpy as np
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 # Import from calibration submodules
 from maple.core.calibration.enums import (
@@ -83,6 +83,8 @@ class CalibrationTargetFooters(BaseModel):
     - When and how it was derived
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     calibration_target_id: str = Field(description="Unique calibration target identifier")
     cancer_type: str = Field(description="Cancer type (e.g., 'PDAC')")
     tags: List[str] = Field(default_factory=list, description="Metadata tags")
@@ -110,6 +112,8 @@ class CalibrationTargetEstimates(BaseModel):
 
     Vector-valued outputs are indexed by index_values (e.g., time points, doses).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     median: List[float] = Field(
         description=(
@@ -358,6 +362,8 @@ class CalibrationTarget(BaseModel):
     - calibration_target_id, cancer_type
     - tags, derivation_id, derivation_timestamp
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     # --- Observable fields (LLM-generated) ---
     empirical_data: CalibrationTargetEstimates = Field(

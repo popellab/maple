@@ -147,7 +147,7 @@ def build_ode_function(
         except Exception:
             return None
 
-    # direct_conversion and direct_fit don't have ODEs
+    # direct_fit, power_law, and direct_conversion don't have ODEs
     return None
 
 
@@ -548,6 +548,31 @@ def _evaluate_structured_model(
             * ucf
             / r(model.medium_volume)
         )
+    elif model_type == "direct_fit":
+        x = r(model.x_variable)
+        curve = model.curve.value if hasattr(model.curve, "value") else model.curve
+        if curve == "hill":
+            ec50 = r(model.ec50)
+            n = r(model.n_hill)
+            baseline = r(model.baseline)
+            maximum = r(model.maximum)
+            return baseline + (maximum - baseline) / (1 + (x / ec50) ** n)
+        elif curve == "linear":
+            slope = r(model.slope)
+            intercept = r(model.intercept)
+            return slope * x + intercept
+        elif curve == "exponential":
+            amplitude = r(model.amplitude)
+            rate = r(model.rate)
+            return amplitude * math.exp(rate * x)
+        else:
+            raise PriorPredictiveError(f"Unknown direct_fit curve type: {curve}")
+    elif model_type == "power_law":
+        coeff = r(model.coefficient)
+        x_ref = r(model.reference_x)
+        exp = r(model.exponent)
+        x = r(model.x_variable)
+        return coeff * (x / x_ref) ** exp
     else:
         raise PriorPredictiveError(f"Unknown structured model type: {model_type}")
 
@@ -559,6 +584,8 @@ STRUCTURED_ALGEBRAIC_TYPES = {
     "steady_state_ratio",
     "steady_state_proliferation_index",
     "batch_accumulation",
+    "direct_fit",
+    "power_law",
 }
 
 

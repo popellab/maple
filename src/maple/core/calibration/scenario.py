@@ -9,7 +9,7 @@ nested in submodel for IsolatedSystemTarget).
 
 from typing import List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Intervention(BaseModel):
@@ -19,6 +19,8 @@ class Intervention(BaseModel):
     For now, we capture the essential information in text form.
     Later, this can be converted to executable DrugDosing/SurgicalResection/etc.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     intervention_description: str = Field(
         description=(
@@ -49,6 +51,8 @@ class Scenario(BaseModel):
     Defines the experimental setup and any treatments applied.
     Observable computation is defined separately (not in Scenario).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     description: str = Field(
         description="Human-readable description of the scenario (e.g., 'Baseline PDAC tumor at resection, treatment-naive')"

@@ -61,10 +61,17 @@ def _build_extraction_workflow() -> str:
 When the user asks you to extract submodel targets for a set of parameters,
 follow this sequence. Do NOT skip steps or reorder them.
 
-### Step 0: Call `get_extraction_guide`
+### Step 0: Call `extract_target`
 
 Load this guide before doing anything else. It contains the YAML schema,
 valid enum values, and hard rules that validators enforce.
+
+**Important:** SubmodelTarget and CalibrationTarget are distinct schemas.
+SubmodelTargets constrain individual parameters via in vitro/ex vivo data
+and submodel equations (forward model + error model). CalibrationTargets
+are full-model observables (IHC densities, clinical outcomes) compared
+against simulation output. There is no "IsolatedSystemTarget" — that name
+is deprecated and should not be used.
 
 ### Step 1: Investigate parameters in model code
 
@@ -96,15 +103,22 @@ than an absolute concentration.
 
 Now that you know what each parameter means and what data would constrain it:
 
-1. **Check Zotero first** (via `mcp__zotero__*` tools) — the user may
-   already have relevant papers in their library
-2. **Web search** for papers with quantitative data that maps to the
-   parameter's actual model role (not just its name)
-3. **Write results** to a notes file (e.g.,
-   `notes/calibration/submodel_target_extraction_roundN.md`) with:
-   - Parameter name, current prior, model role summary
-   - For each paper: title, DOI, key quantitative data, whether it
-     maps cleanly to the model parameter
+**Launch one subagent per parameter** to search in parallel. Each subagent
+should receive the parameter's mechanistic context from Step 1 and search
+for papers with quantitative data that maps to the parameter's actual model
+role (not just its name). This prevents the main context window from being
+overwhelmed with search results and reduces the chance of missing important
+details.
+
+Each subagent should:
+1. **Web search** for papers with quantitative dose-response, density, or
+   measurement data that directly constrains the parameter
+2. **Return** a summary with: parameter name, current prior, model role,
+   and for each candidate paper: title, DOI, key quantitative data, and
+   whether it maps cleanly to the model parameter
+
+After all subagents return, **write consolidated results** to a notes file
+(e.g., `notes/calibration/submodel_target_extraction_roundN.md`).
 
 Flag parameters where the literature data does not map to the model's
 parameterization — these need a different search strategy or may not
@@ -122,7 +136,7 @@ Wait for the user to confirm PDFs are in place before proceeding.
 
 For each parameter with good literature data:
 
-1. Call `get_extraction_guide` if not already loaded
+1. Call `extract_target` if not already loaded
 2. Read the PDF via the papers directory
 3. Write the SubmodelTarget YAML to `to-review/<parameter_name>.yaml`
 4. Call `validate_target` to check schema, prior derivation, and snippets
@@ -245,7 +259,7 @@ def extraction_rules() -> str:
 
 
 @mcp.tool()
-def get_extraction_guide(target_type: str = "submodel_target") -> str:
+def extract_target(target_type: str = "submodel_target") -> str:
     """Get the complete extraction guide: workflow + prompt + enum reference + rules.
 
     Call this as soon as the user asks to extract, calibrate, or constrain

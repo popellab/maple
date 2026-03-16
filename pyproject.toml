@@ -57,6 +57,7 @@ Repository = "https://github.com/popellab/maple"
 qsp-extract = "maple.cli.extract:main"
 qsp-export-model = "maple.cli.export_model:main"
 maple-mcp = "maple.mcp_server:main"
+maple-yaml-to-prior = "maple.core.calibration.yaml_to_prior:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

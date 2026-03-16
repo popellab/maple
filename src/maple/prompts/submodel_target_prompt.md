@@ -77,6 +77,91 @@ SubmodelTarget
 
 ## Forward Model Types
 
+### How to choose a forward model
+
+Ask these questions IN ORDER. Use the FIRST match:
+
+1. Is the data a dose-response or titration curve?
+   (EC50, IC50, dose vs effect, concentration vs response)
+   --> `direct_fit`
+       curve: hill (sigmoidal), linear, or exponential
+
+2. Is the data a biophysical scaling relationship?
+   (stiffness vs density, pore size vs concentration, diffusion vs viscosity)
+   --> `power_law`
+
+3. Is the data a steady-state cell density from IHC/mIF?
+   (cells/mm^2, cells per field)
+   --> `steady_state_density`
+
+4. Is the data a % of a parent population from flow cytometry?
+   (CD8+/CD3+, Treg/CD4+, Ki67+/total)
+   --> `steady_state_fraction` (for Ki67/BrdU, use `steady_state_proliferation_index`)
+
+5. Is the data a concentration from ELISA/Luminex?
+   (cytokine pg/mL, chemokine nM in culture supernatant or tissue)
+   --> `steady_state_concentration`
+
+6. Is the data a ratio of two cell populations?
+   (M1/M2, CD4/CD8, CAF/cancer)
+   --> `steady_state_ratio`
+
+7. Is the data from an in vitro secretion/accumulation assay?
+   (pg/mL after N hours of culture with known cell count)
+   --> `batch_accumulation`
+
+8. Is the data a time course with simple dynamics?
+   - Unconstrained growth --> `exponential_growth`
+   - Decay/clearance --> `first_order_decay`
+   - Growth with plateau --> `logistic`
+   - Saturable consumption --> `michaelis_menten`
+   - State transition (A->B) --> `two_state`
+   - Approach to steady state --> `saturation`
+
+9. Is the data a time course with complex dynamics?
+   (multiple interacting species, feedback loops, non-standard kinetics)
+   --> `custom_ode`
+
+10. None of the above fit?
+    --> `algebraic` (last resort -- requires hand-written code + code_julia)
+
+---
+
+### direct_fit (Dose-Response Curves)
+
+**When to use:** Paper reports effect vs dose/concentration with a sigmoidal, linear, or exponential relationship. Typically constraining an EC50/IC50.
+
+**Example:** TGFb dose (0.02, 0.2, 2 ng/mL) vs DC maturation (IL-12p70 pg/mL). Forward model: IL12 = baseline + (max - baseline) / (1 + (TGFb/EC50)^n). Parameter to infer: TGFb_50_APC (the EC50).
+
+**Auto-generates:** Python + Julia forward model code. No hand-written code needed.
+
+**Required fields:**
+- `curve`: hill | linear | exponential
+- `x_variable`: input_ref to the dose/concentration input
+- For hill: `ec50` (required), `n_hill` (default "1.0"), `baseline` (default "0.0"), `maximum` (default "1.0")
+- For linear: `slope` (required), `intercept` (default "0.0")
+- For exponential: `amplitude` (required), `rate` (required)
+
+**Common pitfall:** Using `algebraic` with hand-written Hill code instead of `direct_fit`. The structured type enables automatic prior inversion and catches unit mismatches that `algebraic` silently ignores.
+
+### power_law (Biophysical Scaling)
+
+**When to use:** Paper reports a power-law relationship between a physical quantity and a composition variable. Formula: y = coefficient * (x / reference_x) ^ exponent.
+
+**Example:** Tissue stiffness vs collagen volume fraction: E = E_ref * (phi/phi_ref)^n_stiff.
+
+**Auto-generates:** Python + Julia forward model code. No hand-written code needed.
+
+**Required fields:**
+- `coefficient`: Reference value (e.g., E_ref)
+- `reference_x`: Reference x for normalization (e.g., phi_ref)
+- `exponent`: Power-law exponent (parameter to estimate or fixed literal)
+- `x_variable`: input_ref to the measured x values
+
+**Common pitfall:** Using `algebraic` when the relationship is a simple power law. The structured type is cleaner and auto-validates.
+
+---
+
 ### ODE-based (require state_variables, independent_variable with span)
 
 | Type | Equation | Use When |
@@ -89,12 +174,11 @@ SubmodelTarget
 | `saturation` | dy/dt = k * (1 - y) | Approach to saturation |
 | `custom_ode` | User-defined ODE | Complex dynamics |
 
-### Non-ODE (Algebraic)
+### Non-ODE (Manual)
 
 | Type | Use When |
 |------|----------|
-| `algebraic` | Custom forward model that does not fit any structured type below (e.g., t_half = ln(2) / k). **Requires code and code_julia.** Only use this as a last resort when no structured algebraic type applies. |
-| `direct_fit` | Curve fitting (Hill equation for IC50, etc.) |
+| `algebraic` | Custom forward model that does not fit any structured type (e.g., t_half = ln(2) / k). **Requires code and code_julia.** Only use this as a last resort when no structured type applies. |
 
 ### Structured Algebraic (preferred over `algebraic` -- no code needed)
 
@@ -106,6 +190,8 @@ SubmodelTarget
 | `steady_state_ratio` | ratio = rate_num * drive_num / (rate_den * drive_den) | Cell population ratios (M2:M1, CD4:CD8) |
 | `steady_state_proliferation_index` | f = prolif * dur / (prolif * dur + loss) | Ki-67+/BrdU+ fraction |
 | `batch_accumulation` | mass = sec_rate * cells * time * MW * ucf / vol | In vitro secretion assay (ELISA) |
+| `direct_fit` | hill: y = base + (max-base)/(1+(x/ec50)^n); linear: y = slope*x + intercept; exponential: y = amp*exp(rate*x) | Dose-response curves (EC50/IC50) |
+| `power_law` | y = coefficient * (x / reference_x) ^ exponent | Biophysical scaling (stiffness, pore size) |
 
 These models auto-generate code from their fields. Each field is a **ParameterRole**: either a parameter name (string to estimate), an `input_ref` (fixed from extracted input), a `reference_ref` (fixed from curated reference database), or a numeric literal string.
 

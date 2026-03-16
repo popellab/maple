@@ -8,7 +8,7 @@ Defines how to compute observables from model state (full model or submodel).
 from enum import Enum
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from maple.core.calibration.enums import ExtractionMethod, SourceType
 
@@ -55,6 +55,8 @@ class PopulationAggregation(BaseModel):
     statistic (ORR, median OS, 1-year OS, MPR rate) rather than a per-patient
     observable.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     type: AggregationType = Field(description="Type of population aggregation to apply.")
 
@@ -178,6 +180,8 @@ class ObservableConstant(BaseModel):
     a specific literature source. No ungrounded "modeling assumptions" allowed.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(
         description=(
             "Variable name used in observable code to access this constant.\n"
@@ -273,6 +277,8 @@ class Observable(BaseModel):
 
     Defines how to compute the experimental observable from full model species.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     code: str = Field(
         description=(
@@ -423,6 +429,8 @@ class SubmodelStateVariable(BaseModel):
     eliminating the need to reference inputs defined elsewhere.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(description="Name of the state variable in ODE (e.g., 'spheroid_cells')")
     units: str = Field(description="Pint-parseable units (e.g., 'cell', 'micrometer')")
     initial_value: float = Field(description="Initial condition value for this state variable")
@@ -503,6 +511,8 @@ class SubmodelObservable(BaseModel):
     If code is omitted, defaults to returning y[0] with the specified units.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     code: Optional[str] = Field(
         default=None,
         description=(
@@ -553,6 +563,8 @@ class Submodel(BaseModel):
     Defines an ODE system that approximates the full model dynamics
     for an isolated experimental system (in vitro, preclinical).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     code: str = Field(
         description=(

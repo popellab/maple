@@ -459,3 +459,253 @@ def format_report(result: dict) -> str:
     )
 
     return "\n".join(lines)
+
+
+# ============================================================================
+# CSV merge & sync
+# ============================================================================
+
+
+def merge_into_priors_csv(results: list[dict], priors_csv: Path) -> tuple[int, int]:
+    """Merge YAML-derived priors into a priors CSV.
+
+    Updates existing rows by name; appends new parameters not yet in the CSV.
+    Returns (n_updated, n_added).
+    """
+    import pandas as pd
+
+    df = pd.read_csv(priors_csv)
+    n_updated = 0
+    n_added = 0
+
+    for r in results:
+        mask = df["name"] == r["name"]
+        updates = {
+            "median": r["median_prior"],
+            "units": r["units"],
+            "distribution": "lognormal",
+            "dist_param1": r["mu_prior"],
+            "dist_param2": r["sigma_prior"],
+        }
+        if mask.any():
+            for col, val in updates.items():
+                df.loc[mask, col] = val
+            n_updated += 1
+        else:
+            row_data = {
+                **updates,
+                "name": r["name"],
+                "lower_bound": np.nan,
+                "upper_bound": np.nan,
+            }
+            df = pd.concat([df, pd.DataFrame([row_data])], ignore_index=True)
+            n_added += 1
+
+    df.to_csv(priors_csv, index=False)
+    return n_updated, n_added
+
+
+def sync_submodel_priors(
+    submodel_dir: Path,
+    priors_csv: Path,
+    glob_pattern: str = "*.yaml",
+    verbose: bool = True,
+) -> list[dict]:
+    """Glob submodel target YAMLs, process each, and merge into priors CSV.
+
+    Returns the list of successfully processed result dicts.
+    """
+    yaml_files = sorted(submodel_dir.glob(glob_pattern))
+    if not yaml_files:
+        if verbose:
+            print(f"  No submodel target YAMLs matching {glob_pattern} in {submodel_dir}")
+        return []
+
+    results = []
+    for yf in yaml_files:
+        try:
+            r = process_yaml(yf)
+            if "error" not in r:
+                results.append(r)
+            elif verbose:
+                print(f"  SKIP {yf.name}: {r['error']}")
+        except Exception as e:
+            if verbose:
+                print(f"  SKIP {yf.name}: {e}")
+
+    if results:
+        n_upd, n_add = merge_into_priors_csv(results, priors_csv)
+        if verbose:
+            names = [r["name"] for r in results]
+            print(
+                f"  Merged {len(results)} submodel priors into {priors_csv}: "
+                f"{n_upd} updated, {n_add} added ({', '.join(names)})"
+            )
+
+    return results
+
+
+# ============================================================================
+# Plotting
+# ============================================================================
+
+DIST_COLORS = {"lognormal": "#2196F3", "gamma": "#4CAF50", "invgamma": "#FF9800"}
+DIST_LABELS = {"lognormal": "Lognormal", "gamma": "Gamma", "invgamma": "Inv-Gamma"}
+
+
+def _dist_pdf(fit: DistFit, x: np.ndarray) -> np.ndarray:
+    """Evaluate the fitted PDF at x values."""
+    if fit.name == "lognormal":
+        return stats.lognorm.pdf(x, s=fit.params["sigma"], scale=np.exp(fit.params["mu"]))
+    elif fit.name == "gamma":
+        return stats.gamma.pdf(x, fit.params["shape"], scale=fit.params["scale"])
+    elif fit.name == "invgamma":
+        return stats.invgamma.pdf(x, fit.params["shape"], scale=fit.params["scale"])
+    return np.zeros_like(x)
+
+
+def plot_fits(results: list[dict], out_dir: Path):
+    """Plot histogram of parameter samples with fitted PDFs and inflated prior."""
+    import matplotlib.pyplot as plt
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    n = len(results)
+    fig, axes = plt.subplots(n, 1, figsize=(8, 3.5 * n), squeeze=False)
+
+    for i, r in enumerate(results):
+        ax = axes[i, 0]
+        samples = r["param_samples"]
+        all_fits = r["all_fits"]
+        best = r["best_dist"]
+
+        # Histogram of inverted parameter samples
+        positive = samples[samples > 0]
+        ax.hist(
+            positive,
+            bins=80,
+            density=True,
+            alpha=0.35,
+            color="#888",
+            edgecolor="none",
+            label="Bootstrap samples",
+        )
+
+        # PDF grid
+        lo, hi = np.percentile(positive, [0.5, 99.5])
+        x = np.linspace(lo, hi, 500)
+
+        # Fitted candidate PDFs
+        best_aic = all_fits[0].aic
+        for f in all_fits:
+            daic = f.aic - best_aic
+            ad_tag = "PASS" if f.ad_pass else "FAIL"
+            lw = 2.2 if f.name == best.name else 1.2
+            ls = "-" if f.name == best.name else "--"
+            label = f"{DIST_LABELS.get(f.name, f.name)} (dAIC={daic:+.0f}, AD {ad_tag})"
+            ax.plot(
+                x, _dist_pdf(f, x), ls, lw=lw, color=DIST_COLORS.get(f.name, "#999"), label=label
+            )
+
+        # Inflated lognormal prior
+        prior_pdf = stats.lognorm.pdf(x, s=r["sigma_prior"], scale=np.exp(r["mu_prior"]))
+        ax.plot(
+            x,
+            prior_pdf,
+            "-",
+            lw=2,
+            color="#E91E63",
+            alpha=0.8,
+            label=f"Prior (LN, sigma={r['sigma_prior']:.2f})",
+        )
+
+        ax.set_xlabel(f"{r['name']} ({r['units']})")
+        ax.set_ylabel("Density")
+        ax.set_title(f"{r['name']} — best: {best.name}")
+        ax.legend(fontsize=8, loc="upper right")
+        ax.set_xlim(lo, hi)
+
+    fig.tight_layout()
+    out_path = out_dir / "yaml_to_prior_fits.png"
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"\nPlot saved to {out_path}")
+
+
+# ============================================================================
+# CLI
+# ============================================================================
+
+
+def main():
+    """CLI entry point for yaml_to_prior."""
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage: maple-yaml-to-prior [--plot] [--merge CSV] <yaml_files_or_dirs...>")
+        sys.exit(1)
+
+    do_plot = "--plot" in sys.argv
+    do_merge = "--merge" in sys.argv
+    args = [a for a in sys.argv[1:] if a not in ("--plot", "--merge")]
+
+    # --merge requires a CSV path as next arg
+    merge_csv = None
+    if do_merge:
+        if args and Path(args[0]).suffix == ".csv":
+            merge_csv = Path(args.pop(0))
+        else:
+            print("ERROR: --merge requires a CSV path (e.g., --merge scenarios/pdac_priors.csv)")
+            sys.exit(1)
+
+    yaml_files = []
+    for arg in args:
+        p = Path(arg)
+        if p.is_dir():
+            yaml_files.extend(sorted(p.glob("*.yaml")))
+        else:
+            yaml_files.append(p)
+
+    print("=" * 80)
+    print("YAML -> PRIOR CONVERSION")
+    print("=" * 80)
+
+    rows = []
+    for yaml_path in yaml_files:
+        print(f"\n--- {yaml_path.name} ---")
+        try:
+            result = process_yaml(yaml_path)
+        except Exception as e:
+            print(f"  SKIP: {e}")
+            continue
+
+        if "error" in result:
+            print(f"  ERROR: {result['error']}")
+            continue
+
+        print(format_report(result))
+        rows.append(result)
+
+    # Print CSV-ready output
+    if rows:
+        print(f"\n{'=' * 80}")
+        print("CSV output:")
+        print(
+            "name,median,units,distribution,dist_param1,dist_param2,"
+            "lower_bound,upper_bound,data_dist"
+        )
+        for r in rows:
+            print(
+                f"{r['name']},{r['median_prior']:.6g},{r['units']},"
+                f"lognormal,{r['mu_prior']:.6f},{r['sigma_prior']:.6f},,"
+                f",{r['best_dist'].name}"
+            )
+
+    # Merge into priors CSV if requested
+    if do_merge and rows and merge_csv:
+        n_upd, n_add = merge_into_priors_csv(rows, merge_csv)
+        print(f"\nMerged into {merge_csv}: {n_upd} updated, {n_add} added")
+
+    # Plot if requested
+    if do_plot and rows:
+        plot_fits(rows, Path("figures/yaml_to_prior"))

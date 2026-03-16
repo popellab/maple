@@ -33,7 +33,7 @@ For in vitro and preclinical data where a small submodel (ODE or algebraic) conn
 **Structure:**
 - `inputs` — Values extracted from papers with full provenance (snippets, source refs)
 - `calibration.parameters` — Model parameters with priors
-- `calibration.forward_model` — Typed ODE or algebraic model (exponential growth, first-order decay, Michaelis-Menten, etc.)
+- `calibration.forward_model` — Typed ODE or algebraic model (exponential growth, first-order decay, Michaelis-Menten, direct_fit dose-response, power_law scaling, etc.)
 - `calibration.error_model` — Maps model output to observed data with likelihood specification
 
 ```yaml

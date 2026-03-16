@@ -33,9 +33,11 @@ from maple.core.calibration.submodel_target import (
     AlgebraicModel,
     BatchAccumulationModel,
     CustomODEModel,
+    DirectFitModel,
     ExponentialGrowthModel,
     FirstOrderDecayModel,
     InputRef,
+    PowerLawModel,
     ReferenceRef,
     LogisticModel,
     MichaelisMentenModel,
@@ -194,6 +196,42 @@ def _generate_steady_state_compute(
             f"    ucf = {ucf}\n"
             f"    vol = {r(model.medium_volume)}\n"
             f"    return sec_rate * cells * t_inc * mw * ucf / vol"
+        )
+    elif isinstance(model, DirectFitModel):
+        x = r(model.x_variable)
+        curve = model.curve.value if hasattr(model.curve, "value") else model.curve
+        if curve == "hill":
+            body = (
+                f"    x = {x}\n"
+                f"    ec50 = {r(model.ec50)}\n"
+                f"    n = {r(model.n_hill)}\n"
+                f"    baseline = {r(model.baseline)}\n"
+                f"    maximum = {r(model.maximum)}\n"
+                f"    return baseline + (maximum - baseline) / (1 + (x / ec50)^n)"
+            )
+        elif curve == "linear":
+            body = (
+                f"    x = {x}\n"
+                f"    slope = {r(model.slope)}\n"
+                f"    intercept = {r(model.intercept)}\n"
+                f"    return slope * x + intercept"
+            )
+        elif curve == "exponential":
+            body = (
+                f"    x = {x}\n"
+                f"    amplitude = {r(model.amplitude)}\n"
+                f"    rate = {r(model.rate)}\n"
+                f"    return amplitude * exp(rate * x)"
+            )
+        else:
+            return None
+    elif isinstance(model, PowerLawModel):
+        body = (
+            f"    coeff = {r(model.coefficient)}\n"
+            f"    x_ref = {r(model.reference_x)}\n"
+            f"    n = {r(model.exponent)}\n"
+            f"    x = {r(model.x_variable)}\n"
+            f"    return coeff * (x / x_ref)^n"
         )
     else:
         return None
@@ -453,6 +491,8 @@ end
                 SteadyStateRatioModel,
                 SteadyStateProliferationIndexModel,
                 BatchAccumulationModel,
+                DirectFitModel,
+                PowerLawModel,
             ),
         ):
             return None
@@ -647,6 +687,8 @@ end
                 SteadyStateRatioModel,
                 SteadyStateProliferationIndexModel,
                 BatchAccumulationModel,
+                DirectFitModel,
+                PowerLawModel,
             ),
         ):
             inputs_code = _generate_inputs_dict_from_target(target)
@@ -1725,6 +1767,8 @@ println("=" ^ 60)"""
                 SteadyStateRatioModel,
                 SteadyStateProliferationIndexModel,
                 BatchAccumulationModel,
+                DirectFitModel,
+                PowerLawModel,
             ),
         ):
             inputs_code = _generate_inputs_dict_from_target(ti.target)

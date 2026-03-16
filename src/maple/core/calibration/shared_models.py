@@ -9,7 +9,7 @@ calibration_target_models.py and pydantic_models.py.
 from enum import Enum
 from typing import List, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from maple.core.calibration.enums import (
     ExperimentalSystem,
@@ -74,6 +74,8 @@ class EstimateInput(BaseModel):
     For experimental conditions used in submodel/observable code, use SubmodelInput.
     For modeling assumptions (e.g., n_mc_samples), use ModelingAssumption.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Input name (used as key in inputs dict)")
     value: Union[float, List[float]] = Field(
@@ -307,6 +309,8 @@ class ModelingAssumption(BaseModel):
     value_location and value_snippet.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(description="Assumption name (used as key in inputs dict)")
     value: Union[float, List[float]] = Field(
         description="Assumed value(s). Scalar for single values, list for per-index-point values."
@@ -345,6 +349,8 @@ class SubmodelInput(BaseModel):
 
     All provenance fields are REQUIRED for traceability.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Input name (used as key in inputs dict)")
     value: Union[float, List[float]] = Field(
@@ -441,6 +447,8 @@ class KeyAssumption(BaseModel):
     This class is kept for backward compatibility with ParameterMetadata and TestStatistic.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     number: int = Field(description="Assumption number (1, 2, 3, ...)")
     text: str = Field(description="Assumption text")
 
@@ -448,12 +456,16 @@ class KeyAssumption(BaseModel):
 class WeightScore(BaseModel):
     """A rubric-based weight score with justification."""
 
+    model_config = ConfigDict(extra="forbid")
+
     value: float = Field(description="Rubric value (0-1)")
     justification: str = Field(description="Justification for this value")
 
 
 class Source(BaseModel):
     """A bibliographic source (primary data)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     source_tag: str = Field(description="Unique tag for referencing")
     title: str = Field(description="Full title")
@@ -464,6 +476,8 @@ class Source(BaseModel):
 
 class SecondarySource(BaseModel):
     """A secondary data source (reference values, textbooks)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     source_tag: str = Field(description="Unique tag for referencing")
     title: str = Field(description="Full title")
@@ -480,6 +494,8 @@ class SecondarySource(BaseModel):
 class Snippet(BaseModel):
     """A text snippet from a source paper."""
 
+    model_config = ConfigDict(extra="forbid")
+
     text: str = Field(description="Exact text from the paper")
     source_tag: str = Field(
         description="Reference to source (must match a source_tag in primary_data_source or secondary_data_sources)"
@@ -491,6 +507,8 @@ class Snippet(BaseModel):
 
 class Validation(BaseModel):
     """Validation metadata (auto-populated by validation suite)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     tags: List[str] = Field(default_factory=list, description="Validation tags")
     validated_at: Optional[str] = Field(None, description="ISO timestamp of validation")
@@ -513,6 +531,8 @@ class CellSpecies(str, Enum):
 class CellLine(BaseModel):
     """Specification of a cell line used in an experiment."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(
         description="Cell line name (e.g., 'Jurkat', 'HeLa', 'MCF-7', 'primary CD8 T cells')"
     )
@@ -525,6 +545,8 @@ class CellLine(BaseModel):
 
 class CultureConditions(BaseModel):
     """Culture conditions for in vitro experimental systems."""
+
+    model_config = ConfigDict(extra="forbid")
 
     medium: Optional[str] = Field(None, description="Culture medium (e.g., 'RPMI-1640', 'DMEM')")
     duration_hours: Optional[float] = Field(None, description="Culture duration in hours")
@@ -546,6 +568,8 @@ class TrajectoryData(BaseModel):
     Use this for kinetic experiments where the same observable is measured
     at multiple time points (e.g., proliferation curves, cytokine kinetics).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     time_points: List[float] = Field(description="Time points at which measurements were taken")
     time_unit: str = Field(description="Pint-parseable unit for time points (e.g., 'hour', 'day')")
@@ -578,6 +602,8 @@ class DoseResponseData(BaseModel):
     Use this for experiments varying a single parameter (concentration, E:T ratio, etc.)
     and measuring the response (e.g., killing curves, EC50 determination).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     doses: List[float] = Field(description="Dose/concentration values tested")
     dose_unit: str = Field(description="Pint-parseable unit for doses (e.g., 'nanomolar', 'ng/mL')")
@@ -626,6 +652,8 @@ class SourceRelevanceAssessment(BaseModel):
     including indication match, source quality, perturbation context, and TME
     compatibility. Validators use this information to flag potential issues.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     # Indication relevance
     indication_match: IndicationMatch = Field(

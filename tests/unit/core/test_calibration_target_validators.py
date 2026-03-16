@@ -674,7 +674,7 @@ class TestCalibrationTargetValidators:
 
         # Update calibration target estimates to match code output (vector format)
         data["empirical_data"]["median"] = [1.0475]
-        data["empirical_data"]["iqr"] = [1.1671]
+
         data["empirical_data"]["ci95"] = [[0.0496, 2.9741]]
 
         # Don't mention variance in limitations
@@ -728,7 +728,7 @@ class TestCalibrationTargetValidators:
             },
         ]
         data["empirical_data"]["median"] = [1.4994]
-        data["empirical_data"]["iqr"] = [0.3359]
+
         data["empirical_data"]["ci95"] = [[1.0079, 1.9935]]
 
         # Also update observable code to return centimeter (to avoid unit mismatch error)
@@ -963,7 +963,7 @@ class TestVectorValuedCalibrationTarget:
         # Use actual computed values from the distribution_code with seed=42
         # These are the values that lognormal(mu_log, 0.5) produces with the given means
         data["empirical_data"]["median"] = [0.799, 1.008, 1.1965, 1.0943]
-        data["empirical_data"]["iqr"] = [0.5474, 0.6965, 0.8269, 0.7674]
+
         data["empirical_data"]["ci95"] = [
             [0.299, 2.1467],
             [0.3768, 2.6694],
@@ -1048,7 +1048,7 @@ class TestVectorValuedCalibrationTarget:
 
         # Set up vector data with 4 time points
         data["empirical_data"]["median"] = [0.8, 1.0, 1.2, 1.1]
-        data["empirical_data"]["iqr"] = [0.5, 0.68, 0.82, 0.75]
+
         data["empirical_data"]["ci95"] = [
             [0.3, 2.2],
             [0.37, 2.7],
@@ -1083,7 +1083,7 @@ class TestVectorValuedCalibrationTarget:
 
         # median has 4 elements, iqr has 3 - mismatch
         data["empirical_data"]["median"] = [0.8, 1.0, 1.2, 1.1]
-        data["empirical_data"]["iqr"] = [0.5, 0.68, 0.82]  # Wrong length!
+
         data["empirical_data"]["ci95"] = [
             [0.3, 2.2],
             [0.37, 2.7],
@@ -1106,7 +1106,7 @@ class TestVectorValuedCalibrationTarget:
 
         # Vector outputs with index_values but missing index_unit
         data["empirical_data"]["median"] = [0.8, 1.0, 1.2, 1.1]
-        data["empirical_data"]["iqr"] = [0.5, 0.68, 0.82, 0.75]
+
         data["empirical_data"]["ci95"] = [
             [0.3, 2.2],
             [0.37, 2.7],
@@ -1127,7 +1127,7 @@ class TestVectorValuedCalibrationTarget:
 
         # No index_values but median has length > 1
         data["empirical_data"]["median"] = [0.8, 1.0]  # Length 2 without index_values
-        data["empirical_data"]["iqr"] = [0.5, 0.68]
+
         data["empirical_data"]["ci95"] = [[0.3, 2.2], [0.37, 2.7]]
         # No index_values set
 

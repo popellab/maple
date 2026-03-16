@@ -8,7 +8,7 @@ experimental context that describes where and how data was collected.
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from maple.core.calibration.enums import (
     Indication,
@@ -27,6 +27,8 @@ from maple.core.calibration.shared_models import CellLine, CultureConditions
 class Stage(BaseModel):
     """Disease stage with extent and burden."""
 
+    model_config = ConfigDict(extra="forbid")
+
     extent: StageExtent = Field(description=enum_field_description(StageExtent, "Disease extent"))
     burden: StageBurden = Field(
         description=enum_field_description(
@@ -37,6 +39,8 @@ class Stage(BaseModel):
 
 class TreatmentContext(BaseModel):
     """Treatment context with history and current status."""
+
+    model_config = ConfigDict(extra="forbid")
 
     history: List[TreatmentHistory] = Field(
         description=enum_field_description(
@@ -65,6 +69,8 @@ class ExperimentalContext(BaseModel):
     Note: `compartment` was removed as it's redundant with `system` - the System enum
     already encodes compartment information (e.g., in_vitro, clinical, mouse).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     # Core fields (always required)
     species: Species = Field(description=enum_field_description(Species, "Species"))

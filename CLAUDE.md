@@ -57,6 +57,8 @@ Supported distributions: `lognormal`, `normal`, `uniform`, `half_normal`
 - `saturation`: dy/dt = k * (1 - y)
 - `logistic`: dy/dt = k * y * (1 - y/K)
 - `michaelis_menten`: dy/dt = -Vmax * y / (Km + y)
+- `direct_fit`: Dose-response curves (hill, linear, exponential) with auto-generated code
+- `power_law`: Biophysical scaling: y = coefficient * (x / reference_x) ^ exponent
 - `algebraic`: No ODE, forward model maps params → observable (e.g., `t_half = ln(2) / k`)
 - `custom_ode`: User-provided ODE code (requires `code_julia`)
 

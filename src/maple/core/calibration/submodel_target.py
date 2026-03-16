@@ -11,7 +11,7 @@ import warnings
 from enum import Enum
 from typing import Annotated, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, ValidationInfo, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 # Import relevance enums from central location
 from maple.core.calibration.enums import (
@@ -74,6 +74,8 @@ class TableExcerpt(BaseModel):
     appear somewhere in the extracted paper text.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     table_id: str = Field(
         description="Table identifier (e.g., 'Table 2', 'Supplementary Table S1')"
     )
@@ -99,6 +101,8 @@ class FigureExcerpt(BaseModel):
     are flagged for manual review instead of failing snippet validation.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     figure_id: str = Field(
         description="Figure identifier (e.g., 'Figure 1C', 'Supplementary Figure S2A')"
     )
@@ -122,6 +126,8 @@ class Input(BaseModel):
     Inputs are referenced by name from calibration.measurements and
     calibration.state_variables.initial_condition.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Unique identifier for this input (used in references)")
     value: float = Field(description="Extracted numeric value")
@@ -165,6 +171,8 @@ class Input(BaseModel):
 class Parameter(BaseModel):
     """A parameter to be estimated during inference."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(description="Parameter name from the full QSP model")
     units: str = Field(description="Parameter units")
 
@@ -177,6 +185,8 @@ class Parameter(BaseModel):
 class FixedInitialCondition(BaseModel):
     """Initial condition with a fixed/normalized value."""
 
+    model_config = ConfigDict(extra="forbid")
+
     value: float = Field(description="Fixed initial value")
     rationale: str = Field(description="Why this value was chosen")
 
@@ -184,12 +194,16 @@ class FixedInitialCondition(BaseModel):
 class InputRefInitialCondition(BaseModel):
     """Initial condition referencing a measured input."""
 
+    model_config = ConfigDict(extra="forbid")
+
     input_ref: str = Field(description="Name of input to use as initial condition")
     rationale: str = Field(description="Why this input is used as IC")
 
 
 class StateVariable(BaseModel):
     """A state variable in the ODE system."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="State variable name")
     units: str = Field(description="State variable units")
@@ -206,11 +220,15 @@ class StateVariable(BaseModel):
 class InputRef(BaseModel):
     """Reference to an input for fixed parameter values."""
 
+    model_config = ConfigDict(extra="forbid")
+
     input_ref: str = Field(description="Name of input to use as fixed value")
 
 
 class ReferenceRef(BaseModel):
     """Reference to a curated value in the reference database (reference_values.yaml)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     reference_ref: str = Field(description="Name of value in reference_values.yaml")
 
@@ -227,6 +245,8 @@ ParameterRole = Union[str, InputRef, ReferenceRef]
 
 class BaseForwardModelSpec(BaseModel):
     """Base class for all forward model specifications."""
+
+    model_config = ConfigDict(extra="forbid")
 
     data_rationale: str = Field(
         description="Why this model type fits the experimental data (assay design, conditions, readout)"
@@ -564,10 +584,99 @@ class AlgebraicModel(BaseForwardModelSpec):
 
 
 class DirectFitModel(BaseForwardModelSpec):
-    """Direct curve fitting (no ODE): e.g., Hill equation for IC50"""
+    """Direct curve fitting (no ODE): dose-response curves, titrations.
+
+    Auto-generates forward model code for common curve types.
+    The x_variable field specifies the independent variable (dose, concentration, etc.)
+    which is resolved from inputs via input_ref.
+
+    Curve types:
+    - hill: y = baseline + (maximum - baseline) / (1 + (x / ec50)^n_hill)
+    - linear: y = slope * x + intercept
+    - exponential: y = amplitude * exp(rate * x)
+    """
 
     type: Literal["direct_fit"] = "direct_fit"
     curve: CurveType = Field(description="Curve type to fit (hill, linear, exponential)")
+    x_variable: ParameterRole = Field(
+        description="Independent variable (dose/concentration) — typically an input_ref"
+    )
+
+    # Hill curve fields (curve == "hill")
+    ec50: Optional[ParameterRole] = Field(
+        default=None,
+        description="Half-maximal effective concentration (parameter to estimate or input_ref)",
+    )
+    n_hill: Optional[ParameterRole] = Field(
+        default="1.0",
+        description="Hill coefficient. Default 1.0 (standard Michaelis-Menten shape).",
+    )
+    baseline: Optional[ParameterRole] = Field(
+        default="0.0",
+        description="Response at zero dose. Default 0.0.",
+    )
+    maximum: Optional[ParameterRole] = Field(
+        default="1.0",
+        description="Maximum response at saturating dose. Default 1.0.",
+    )
+
+    # Linear fields (curve == "linear")
+    slope: Optional[ParameterRole] = Field(
+        default=None, description="Slope parameter (parameter to estimate or input_ref)"
+    )
+    intercept: Optional[ParameterRole] = Field(
+        default="0.0", description="Y-intercept. Default 0.0."
+    )
+
+    # Exponential fields (curve == "exponential")
+    amplitude: Optional[ParameterRole] = Field(
+        default=None, description="Pre-exponential factor (parameter to estimate or input_ref)"
+    )
+    rate: Optional[ParameterRole] = Field(
+        default=None, description="Exponential rate constant (parameter to estimate or input_ref)"
+    )
+
+    @model_validator(mode="after")
+    def validate_curve_fields(self) -> "DirectFitModel":
+        """Validate that required fields are populated for the chosen curve type."""
+        from maple.core.calibration.exceptions import MissingFieldError
+
+        if self.curve == CurveType.HILL:
+            if self.ec50 is None:
+                raise MissingFieldError("direct_fit with curve=hill requires 'ec50' field")
+        elif self.curve == CurveType.LINEAR:
+            if self.slope is None:
+                raise MissingFieldError("direct_fit with curve=linear requires 'slope' field")
+        elif self.curve == CurveType.EXPONENTIAL:
+            if self.amplitude is None:
+                raise MissingFieldError(
+                    "direct_fit with curve=exponential requires 'amplitude' field"
+                )
+            if self.rate is None:
+                raise MissingFieldError("direct_fit with curve=exponential requires 'rate' field")
+        return self
+
+
+class PowerLawModel(BaseForwardModelSpec):
+    """Power-law scaling relationship: y = coefficient * (x / reference_x) ^ exponent.
+
+    Common for biophysical scaling (stiffness vs collagen density, pore size vs concentration,
+    diffusion coefficient vs gel density).
+    """
+
+    type: Literal["power_law"] = "power_law"
+    coefficient: ParameterRole = Field(
+        description="Reference value / coefficient (e.g., E_ref, d_pore_ref)"
+    )
+    reference_x: ParameterRole = Field(
+        description="Reference x value for normalization (e.g., phi_col_ref, c_ref)"
+    )
+    exponent: ParameterRole = Field(
+        description="Power-law exponent (parameter to estimate or fixed literal, e.g., '0.5')"
+    )
+    x_variable: ParameterRole = Field(
+        description="Independent variable — typically an input_ref to the measured x values"
+    )
 
 
 class CustomODEModel(BaseForwardModelSpec):
@@ -601,6 +710,7 @@ ForwardModel = Annotated[
         BatchAccumulationModel,
         AlgebraicModel,
         DirectFitModel,
+        PowerLawModel,
         CustomODEModel,
     ],
     Field(discriminator="type"),
@@ -617,6 +727,8 @@ Model = ForwardModel
 
 class IndependentVariable(BaseModel):
     """The independent variable (what was varied in the experiment)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Variable name: time, dose, concentration, ET_ratio, or custom")
     units: str = Field(description="Units of the independent variable")
@@ -638,6 +750,8 @@ class IndependentVariable(BaseModel):
 class Likelihood(BaseModel):
     """Likelihood specification for fitting."""
 
+    model_config = ConfigDict(extra="forbid")
+
     distribution: str = Field(description="Distribution type (normal, lognormal, beta, etc.)")
     rationale: Optional[str] = Field(
         default=None,
@@ -657,6 +771,8 @@ class Observable(BaseModel):
     For type-based observables, the transformation is implicit.
     For custom observables, code provides the transformation function.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     type: ObservableType = Field(description="Observable type")
     state_variables: List[str] = Field(description="State variable(s) used in the observable")
@@ -682,6 +798,8 @@ class ErrorModel(BaseModel):
     For ODE models, evaluation_points specifies when to compare.
     For algebraic models, evaluation_points is not needed.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Error model entry name")
     observable: Optional[Observable] = Field(
@@ -746,6 +864,8 @@ class Calibration(BaseModel):
     - identifiability_notes: What can/can't be learned from this data
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     parameters: List[Parameter] = Field(description="Parameters to estimate during inference")
     forward_model: ForwardModel = Field(
         description="Forward model specification (physics/math: params → predictions). "
@@ -790,6 +910,8 @@ class Calibration(BaseModel):
 class PrimaryDataSource(BaseModel):
     """Primary literature data source. DOI is required."""
 
+    model_config = ConfigDict(extra="forbid")
+
     doi: str = Field(min_length=1, description="DOI of the source (required)")
     title: Optional[str] = Field(default=None, description="Title of the source")
     authors: Optional[List[str]] = Field(default=None, description="Author list")
@@ -799,6 +921,8 @@ class PrimaryDataSource(BaseModel):
 
 class SecondaryDataSource(BaseModel):
     """Secondary literature data source. Requires either DOI or URL."""
+
+    model_config = ConfigDict(extra="forbid")
 
     doi: Optional[str] = Field(default=None, description="DOI of the source")
     url: Optional[str] = Field(default=None, description="URL if no DOI available")
@@ -858,25 +982,37 @@ class SecondaryDataSource(BaseModel):
 # =============================================================================
 
 
-class CellLine(BaseModel):
-    """Cell line information."""
+class CellType(BaseModel):
+    """Cell type information (for primary cells)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(description="Cell type name")
+    phenotype: Optional[str] = Field(default=None, description="Cell phenotype")
+    isolation_method: Optional[str] = Field(default=None, description="How cells were isolated")
+    source: Optional[str] = Field(
+        default=None,
+        description="Where cells came from (e.g., 'peripheral blood from healthy donors')",
+    )
+
+
+class SubmodelCellLine(BaseModel):
+    """Cell line information for submodel experimental context."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Cell line name")
     species: Optional[str] = Field(default=None, description="Species of origin")
     tissue_origin: Optional[str] = Field(default=None, description="Tissue of origin")
     cell_type: Optional[str] = Field(default=None, description="Cell type")
+    source: Optional[str] = Field(default=None, description="Supplier or origin")
+    passage_range: Optional[str] = Field(default=None, description="Passage range (e.g., 'P5-P15')")
 
 
-class CellType(BaseModel):
-    """Cell type information (for primary cells)."""
+class SubmodelCultureConditions(BaseModel):
+    """Cell culture conditions for submodel experimental context."""
 
-    name: str = Field(description="Cell type name")
-    phenotype: Optional[str] = Field(default=None, description="Cell phenotype")
-    isolation_method: Optional[str] = Field(default=None, description="How cells were isolated")
-
-
-class CultureConditions(BaseModel):
-    """Cell culture conditions."""
+    model_config = ConfigDict(extra="forbid")
 
     substrate: Optional[str] = Field(default=None, description="Culture substrate")
     serum_concentration: Optional[float] = Field(default=None, description="Serum concentration")
@@ -889,20 +1025,35 @@ class CultureConditions(BaseModel):
     culture_type: Optional[str] = Field(
         default=None, description="Culture type (2d_monolayer, 3d_spheroid, etc.)"
     )
+    medium: Optional[str] = Field(
+        default=None, description="Culture medium (e.g., 'RPMI-1640 + 10% FCS')"
+    )
+    supplements: Optional[str] = Field(
+        default=None, description="Media supplements (e.g., 'GM-CSF (50 ng/mL) + IL-4 (10 ng/mL)')"
+    )
+    duration: Optional[str] = Field(
+        default=None,
+        description="Culture duration (e.g., '7 days differentiation + 12h maturation')",
+    )
+    notes: Optional[str] = Field(default=None, description="Additional culture condition notes")
 
 
 class ExperimentalContext(BaseModel):
-    """Experimental context for the calibration target."""
+    """Experimental context for the submodel target."""
+
+    model_config = ConfigDict(extra="forbid")
 
     species: str = Field(description="Species (human, mouse, rat, etc.)")
     system: str = Field(
         description="Experimental system (in_vitro_primary_cells, in_vitro_immortalized, etc.)"
     )
-    cell_lines: Optional[List[CellLine]] = Field(default=None, description="Cell lines used")
+    cell_lines: Optional[List[SubmodelCellLine]] = Field(
+        default=None, description="Cell lines used"
+    )
     cell_types: Optional[List[CellType]] = Field(
         default=None, description="Cell types used (for primary cells)"
     )
-    culture_conditions: Optional[CultureConditions] = Field(
+    culture_conditions: Optional[SubmodelCultureConditions] = Field(
         default=None, description="Culture conditions"
     )
     indication: Optional[str] = Field(default=None, description="Disease indication (PDAC, etc.)")
@@ -959,6 +1110,8 @@ class SubmodelTarget(BaseModel):
     - `calibration`: How to use those inputs for inference
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     target_id: str = Field(description="Unique identifier for this target")
 
     # Extracted data with provenance
@@ -999,6 +1152,20 @@ class SubmodelTarget(BaseModel):
     secondary_data_sources: Optional[List[SecondaryDataSource]] = Field(
         default=None,
         description="Additional literature sources",
+    )
+
+    # Extraction metadata
+    tags: Optional[List[str]] = Field(
+        default=None,
+        description="Metadata tags for categorization and filtering",
+    )
+    extraction_model: Optional[str] = Field(
+        default=None,
+        description="LLM model used for extraction (e.g., 'claude-sonnet-4-20250514')",
+    )
+    extraction_reasoning_effort: Optional[str] = Field(
+        default=None,
+        description="Reasoning effort level used during extraction (e.g., 'high')",
     )
 
     # -------------------------------------------------------------------------
@@ -2979,6 +3146,7 @@ __all__ = [
     "SaturationModel",
     "AlgebraicModel",
     "DirectFitModel",
+    "PowerLawModel",
     "CustomODEModel",
     "Model",
     # Other calibration models
@@ -2990,9 +3158,9 @@ __all__ = [
     # Context models
     "PrimaryDataSource",
     "SecondaryDataSource",
-    "CellLine",
+    "SubmodelCellLine",
     "CellType",
-    "CultureConditions",
+    "SubmodelCultureConditions",
     "ExperimentalContext",
     # Source relevance
     "SourceRelevanceAssessment",
