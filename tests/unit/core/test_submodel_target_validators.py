@@ -219,11 +219,6 @@ def make_algebraic_target(
 def compute(params, inputs):
     return params['k_test']
 """,
-                "code_julia": """
-function compute(params, inputs)
-    return params["k_test"]
-end
-""",
                 "data_rationale": "Test",
                 "submodel_rationale": "Test",
             },
@@ -422,11 +417,6 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
 def compute(params, inputs):
     return params['k_test']
 """,
-                    "code_julia": """
-function compute(params, inputs)
-    return params["k_test"]
-end
-""",
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
                 },
@@ -506,11 +496,6 @@ end
                     "code": """
 def compute(params, inputs):
     return params['k_test']
-""",
-                    "code_julia": """
-function compute(params, inputs)
-    return params["k_test"]
-end
 """,
                     "data_rationale": "Test",
                     "submodel_rationale": "Test",
