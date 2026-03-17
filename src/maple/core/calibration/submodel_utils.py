@@ -573,7 +573,7 @@ def _evaluate_structured_model(
         elif curve == "exponential":
             amplitude = r(model.amplitude)
             rate = r(model.rate)
-            return amplitude * math.exp(rate * x)
+            return amplitude * np.exp(rate * x)
         else:
             raise PriorPredictiveError(f"Unknown direct_fit curve type: {curve}")
     elif model_type == "power_law":
