@@ -1,194 +1,95 @@
-# MAPLE — Model-Aware Parameterization from Literature Evidence
+# MAPLE
 
-[![Tests](https://github.com/popellab/maple/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/maple/actions/workflows/test.yml)
+**Model-Aware Parameterization from Literature Evidence**
 
-Extract calibration targets from scientific literature for quantitative systems pharmacology (QSP) model calibration. Uses structured YAML schemas with Pydantic validation and joint Bayesian inference (NumPyro) to produce informative priors for downstream SBI calibration.
+QSP models have many biological parameters, and most can't be measured directly in the clinical context being modeled. The relevant data is usually scattered across papers, often from different species or indications entirely. Turning that into informative priors is tedious, error-prone, and rarely done systematically.
 
-## Installation
+MAPLE provides a structured pipeline for this. It uses LLMs to extract measurements from papers into validated YAML schemas (with anti-hallucination checks against source text), and scores how well each data source translates to the model context across eight axes (species, indication, TME compatibility, etc.). Each axis contributes a component to a translation sigma that widens the likelihood for that target during joint inference — so a mouse in vitro measurement constraining the same parameter as a human clinical measurement will naturally contribute less. The output is a set of marginal distributions plus a Gaussian copula that preserves posterior correlations for downstream SBI calibration.
+
+## How it works
+
+MAPLE fits into a two-stage calibration pipeline:
+
+**Stage 1** (this repo): Literature data with self-contained forward models → joint MCMC (NumPyro/NUTS) → `submodel_priors.yaml`
+
+**Stage 2** ([qsp-sbi](https://github.com/popellab/qsp-sbi)): Copula priors + clinical data + full QSP simulator → SBI (SNPE-C) → final posterior
+
+## Quick start
 
 ```bash
 git clone https://github.com/popellab/maple.git
 cd maple
-pip install -e .
+pip install -e ".[inference]"   # includes NumPyro/JAX
 
-# For joint inference pipeline (NumPyro/JAX)
-pip install -e ".[inference]"
+# Run joint inference
+maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ --output priors/ --plot
 ```
 
-## Two Schemas, One Goal
+## What goes into a SubmodelTarget
 
-Maple provides two complementary schemas for extracting calibration targets from literature. Both produce validated YAML files that feed into Bayesian inference.
-
-| | **SubmodelTarget** | **CalibrationTarget** |
-|---|---|---|
-| **Use case** | In vitro / preclinical data with isolated submodels | Clinical / in vivo data requiring full model context |
-| **Forward model** | Self-contained ODE or algebraic model | Full QSP model simulation |
-| **Key fields** | `inputs`, `calibration` (parameters, forward_model, error_model) | `observable`, `scenarios`, `empirical_data` (distribution_code) |
-| **Inference** | Joint MCMC (NumPyro) → marginals + copula | SBI (SNPE-C) in qsp-sbi |
-| **Validation script** | `scripts/validate_submodel_target.py` | `scripts/validate_calibration_target.py` |
-
-## SubmodelTarget
-
-For in vitro and preclinical data where a small submodel (ODE or algebraic) connects extracted literature values to model parameters.
-
-**Structure:**
-- `inputs` — Values extracted from papers with full provenance (snippets, source refs)
-- `calibration.parameters` — Model parameter names and units (priors come from CSV)
-- `calibration.forward_model` — Typed ODE or algebraic model (exponential growth, first-order decay, Michaelis-Menten, direct_fit dose-response, power_law scaling, etc.)
-- `calibration.error_model` — Bootstrap observation code; likelihood family inferred automatically
+Each YAML file is a structured extraction from one paper. It connects a literature measurement to one or more model parameters through a self-contained forward model:
 
 ```yaml
-target_id: psc_proliferation_PDAC_deriv001
+target_id: k_IL2_deg_deriv001
 
 inputs:
-  - name: fold_increase_mean
-    value: 4.37
-    units: dimensionless
-    source_ref: schneider_2001
-    value_snippet: "PDGF increased DNA synthesis 4.37 ± 0.89-fold"
+  - name: t_half_alpha
+    value: 6.0
+    units: minute
+    source_ref: Lotze1985
+    value_snippet: "a half-life of approximately 5 to 7 min"
 
 calibration:
   parameters:
-    - name: k_apsc_prolif
-      units: 1/day
+    - name: k_IL2_deg
+      units: 1/minute
   forward_model:
-    type: exponential_growth
-    rate_constant: k_apsc_prolif
-    state_variables:
-      - name: N
-        units: dimensionless
-        initial_condition: {value: 1.0, rationale: "Normalized"}
-    independent_variable: {name: time, units: day, span: [0, 3]}
+    type: algebraic
+    formula: "t_half = ln(2) / k"
+    code: |
+      def compute(params, inputs):
+          import numpy as np
+          return np.log(2) / params['k_IL2_deg']
   error_model:
-    - name: fold_increase
-      units: dimensionless
-      uses_inputs: [fold_increase_mean, fold_increase_sd]
-      sample_size_input: n_samples
+    - name: halflife_obs
+      units: minute
+      uses_inputs: [t_half_alpha, t_half_beta]
+      sample_size_input: n_patients
       observation_code: |
         def derive_observation(inputs, sample_size, rng, n_bootstrap):
             import numpy as np
-            mean = inputs['fold_increase_mean']
-            sd = inputs['fold_increase_sd']
-            return rng.lognormal(np.log(mean), sd / np.sqrt(sample_size), n_bootstrap)
+            vals = [inputs['t_half_alpha'], inputs['t_half_beta']]
+            mu, sigma = np.mean(np.log(vals)), np.std(np.log(vals), ddof=1)
+            return rng.lognormal(mu, sigma, n_bootstrap)
+
+source_relevance:
+  indication_match: related
+  species_source: human
+  species_target: human
+  source_quality: primary_human_clinical
+  # ... (8-axis rubric → translation sigma applied in likelihood)
 ```
 
-### Validation & Extraction
+Forward model types include algebraic formulas, dose-response curves (`direct_fit`), power laws, and several ODE types. The source relevance assessment maps to a translation sigma that inflates the likelihood during inference — so mouse data naturally gets less weight than human data constraining the same parameter.
+
+There's also a **CalibrationTarget** schema for clinical/in vivo observables (biopsies, blood draws) that require full model simulation. These feed into Stage 2.
+
+## LLM-assisted extraction
+
+MAPLE includes an MCP server that exposes the extraction schemas, enum references, validation tools, and a step-by-step workflow guide. This is the preferred way to fill out target YAMLs — working interactively with Claude Code (or another MCP client), reading a paper together, and building the YAML incrementally with validation feedback at each step.
 
 ```bash
-# Validate
-python scripts/validate_submodel_target.py \
-  --model-structure model_structure.json target.yaml
-
-# Extract from literature via LLM
-qsp-extract targets.csv \
-  --type submodel_target \
-  --model-structure model_structure.json \
-  --model-context model_context.txt \
-  --output-dir metadata-storage
+# Run the MCP server
+python -m maple.mcp_server
 ```
 
-## CalibrationTarget
+There's also a batch extraction CLI (`qsp-extract`) that sends a full paper to an LLM in one shot, but the interactive approach tends to produce better results — it's easier to get the forward model right when you can iterate on it, and the source relevance assessment benefits from back-and-forth discussion about the experimental context.
 
-For clinical and in vivo observables (e.g., tumor cell densities, immune cell counts from patient biopsies) where the experimental context must be carefully documented because it may differ from the model context.
+Pydantic validators catch hallucinated values (snippet verification against paper text via Europe PMC), unit errors, invisible characters from PDF copy-paste, and other common extraction failures. These run both during interactive extraction and on batch output.
 
-**Structure:**
-- `observable` — What is being measured (species, units, compartment, support type)
-- `scenarios` — Experimental conditions with intervention details
-- `empirical_data` — Literature-extracted inputs and Monte Carlo `distribution_code` that derives median/CI95
-- `source_relevance` — Formal assessment of indication match, species translation, TME compatibility
-- `experimental_context` — Species, indication, stage, treatment history
+## Docs
 
-```yaml
-calibration_target_id: cd8_tumor_density_PDAC
-
-observable:
-  species: CD8_T
-  units: cells/mm^2
-  support: positive
-  compartment: tumor.primary
-  aggregation_type: spatial_density
-
-scenarios:
-  - name: baseline
-    intervention: {type: none, description: "Treatment-naive"}
-
-empirical_data:
-  median: [42.0]
-  ci95: [[12.0, 138.0]]
-  units: cells/mm^2
-  sample_size: 45
-  inputs:
-    - name: cd8_density_mean
-      value: 42.0
-      units: cells/mm^2
-      value_snippet: "Mean CD8+ T cell density was 42 cells/mm²"
-  distribution_code: |
-    def derive_distribution(inputs, ureg):
-        import numpy as np
-        rng = np.random.default_rng(42)
-        mean = inputs['cd8_density_mean']
-        sd = inputs['cd8_density_sd']
-        samples = rng.normal(mean.magnitude, sd.magnitude, 10000) * mean.units
-        return {
-            'median_obs': np.median(samples),
-            'ci95_lower': np.percentile(samples, 2.5),
-            'ci95_upper': np.percentile(samples, 97.5),
-        }
-```
-
-### Validation & Extraction
-
-```bash
-# Validate
-python scripts/validate_calibration_target.py \
-  --species-units species_units.json target.yaml
-
-# Extract from literature via LLM
-qsp-extract targets.csv \
-  --type calibration_target \
-  --output-dir metadata-storage
-```
-
-## Submodel Prior Inference
-
-Run joint Bayesian inference across SubmodelTargets to produce informative priors:
-
-```bash
-# Joint inference across all submodel targets
-maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ \
-    --output priors/ --plot
-```
-
-The pipeline:
-1. Loads broad starting priors from CSV
-2. Builds a joint NumPyro model from all SubmodelTarget forward models
-3. Applies translation sigma (from source relevance) inside the likelihood
-4. Runs MCMC (NUTS) to produce joint posterior samples
-5. Fits marginal distributions + Gaussian copula
-6. Writes `submodel_priors.yaml` for downstream SBI consumption
-
-## Project Structure
-
-```
-src/maple/
-├── core/
-│   ├── calibration/
-│   │   ├── submodel_target.py         # SubmodelTarget schema
-│   │   ├── calibration_target_models.py  # CalibrationTarget schema
-│   │   ├── submodel_inference.py      # Joint NumPyro MCMC inference
-│   │   ├── posterior_parameterizer.py # Marginals + Gaussian copula
-│   │   ├── yaml_to_prior.py          # Orchestrator + CLI
-│   │   └── ...
-│   ├── tools/                         # LLM agent tools
-│   └── workflow/                      # Workflow orchestration
-├── cli/                               # CLI entry points
-└── prompts/                           # LLM instruction prompts
-```
-
-## Documentation
-
-- [CLAUDE.md](CLAUDE.md) - Developer guide and schema details
-- [maple-paper](https://github.com/popellab/maple-paper) - Manuscript, PDAC calibration targets, and reproducibility scripts
+Schema details, validator reference, and inference pipeline internals are in [CLAUDE.md](CLAUDE.md).
 
 ## License
 

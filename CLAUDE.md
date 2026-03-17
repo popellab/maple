@@ -133,9 +133,8 @@ python scripts/validate_submodel_target.py *.yaml
 | `validate_parameter_roles` | Model parameter strings match `calibration.parameters` |
 | `validate_ode_model_requirements` | ODE models have `state_variables` and `independent_variable.span` |
 | `validate_custom_code_syntax` | Python code has correct function signatures |
-| `validate_observation_code_return_signature` | `observation_code` returns `{value, sd}` |
-| `validate_observation_code_execution` | `observation_code` executes and returns valid dict |
-| `validate_observation_sd_units_for_likelihood` | SD units match likelihood type (dimensionless for lognormal) |
+| `validate_observation_bootstrap_samples` | `observation_code` returns valid bootstrap array |
+| `validate_observation_code_execution` | `observation_code` executes successfully |
 | `validate_no_invisible_characters` | No invisible/control chars (zero-width spaces, soft hyphens, etc.) |
 | `validate_span_ordering` | `span[0] < span[1]` and both non-negative |
 | `validate_evaluation_points_within_span` | Evaluation points within independent_variable.span |
@@ -144,16 +143,14 @@ python scripts/validate_submodel_target.py *.yaml
 | `validate_all_parameters_used_in_forward_model` | All parameters in calibration.parameters are accessed in forward model code |
 | `validate_doi_resolution_and_metadata` | DOIs resolve via CrossRef, metadata matches |
 | `validate_units_are_valid_pint` | All unit strings are valid Pint units |
-| `validate_algebraic_model_output_units` | AlgebraicModel.code returns correct units |
 | `validate_no_hardcoded_values_in_observation_code` | All numeric values come through inputs |
-| `validate_prior_predictive_scale` | Prior prediction matches observation scale (catches unit errors) |
-| `validate_algebraic_prior_predictive` | AlgebraicModel forward prediction matches data scale |
 | `validate_ode_requires_observable` | ODE models have observable in error_model |
 | `validate_source_quality_peer_reviewed` | Warns if `source_quality` is `non_peer_reviewed` |
 | `validate_secondary_sources_quality` | Warns if secondary sources have `non_peer_reviewed` quality |
-| `validate_prior_reflects_translation_uncertainty` | Warns if prior σ is too narrow for `estimated_translation_uncertainty_fold` |
+| `validate_clipping_suggests_lognormal` | Warns if observation_code clips to avoid negatives |
+| `validate_large_variance_documented` | Warns if high variance not discussed in identifiability_notes |
 | `warn_multi_param_algebraic_identifiability` | Warns when AlgebraicModel has more params than measurements |
-| `warn_observation_sd_unreasonable` | Warns if SD is >100x or <0.001x observed value |
+| `warn_observation_cv_unreasonable` | Warns if CV is unreasonably large or small |
 
 **observation_code signature** (required format):
 ```python
@@ -200,7 +197,9 @@ source_relevance:
   perturbation_type: pharmacological  # physiological_baseline, pathological_state, etc.
   tme_compatibility: low  # high, moderate, low
   tme_compatibility_notes: "EG7 thymoma is T cell-permissive; PDAC is excluded..."
-  estimated_translation_uncertainty_fold: 10.0
+  measurement_directness: direct
+  temporal_resolution: endpoint_pair
+  experimental_system: in_vitro_primary
 ```
 
 **Key fields:**
@@ -210,15 +209,9 @@ source_relevance:
 | `indication_match` | Does disease match? | `proxy`/`unrelated` require justification |
 | `source_quality` | Peer review status | `non_peer_reviewed` (Wikipedia, preprints) triggers warning |
 | `tme_compatibility` | TME similarity | `low` for PDAC if source is T cell-permissive tumor |
-| `estimated_translation_uncertainty_fold` | Expected translation error | Should match prior σ: `σ ≈ ln(fold)` |
+| `measurement_directness` | How directly was the parameter measured? | `proxy_observable` adds most uncertainty |
 
-**Translation uncertainty → prior width:**
-```
-fold = 3.0  →  σ = ln(3.0) ≈ 1.1
-fold = 10.0 →  σ = ln(10.0) ≈ 2.3
-```
-
-The `validate_prior_reflects_translation_uncertainty` validator warns if prior σ is less than 70% of `ln(estimated_translation_uncertainty_fold)`.
+Translation sigma is computed from all 8 axes (added in quadrature, floor of 0.15) and applied inside the likelihood during joint inference. See `yaml_to_prior.py:compute_translation_sigma()` for the full rubric.
 
 ### LLM Extraction
 
