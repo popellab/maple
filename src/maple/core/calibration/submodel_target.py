@@ -573,13 +573,9 @@ class AlgebraicModel(BaseForwardModelSpec):
     )
     code: str = Field(
         description="Python FORWARD model: given params, predict observable. "
-        "Signature: def compute(params: dict, inputs: dict, ureg) -> Quantity. "
+        "Signature: def compute(params: dict, inputs: dict) -> float. "
+        "Must use only np.* functions (mapped to jax.numpy at inference time). "
         "Example: return np.log(2) / params['k'] for predicting t_half from k."
-    )
-    code_julia: Optional[str] = Field(
-        default=None,
-        description="Julia FORWARD model for inference. "
-        "Signature: function compute(params::Dict, inputs::Dict) -> value",
     )
 
 
@@ -587,8 +583,8 @@ class DirectFitModel(BaseForwardModelSpec):
     """Direct curve fitting (no ODE): dose-response curves, titrations.
 
     Auto-generates forward model code for common curve types.
-    The x_variable field specifies the independent variable (dose, concentration, etc.)
-    which is resolved from inputs via input_ref.
+    The x-value is provided per error model entry via the `x_input` field,
+    enabling multi-point dose-response evaluation.
 
     Curve types:
     - hill: y = baseline + (maximum - baseline) / (1 + (x / ec50)^n_hill)
@@ -598,9 +594,6 @@ class DirectFitModel(BaseForwardModelSpec):
 
     type: Literal["direct_fit"] = "direct_fit"
     curve: CurveType = Field(description="Curve type to fit (hill, linear, exponential)")
-    x_variable: ParameterRole = Field(
-        description="Independent variable (dose/concentration) — typically an input_ref"
-    )
 
     # Hill curve fields (curve == "hill")
     ec50: Optional[ParameterRole] = Field(
@@ -674,9 +667,6 @@ class PowerLawModel(BaseForwardModelSpec):
     exponent: ParameterRole = Field(
         description="Power-law exponent (parameter to estimate or fixed literal, e.g., '0.5')"
     )
-    x_variable: ParameterRole = Field(
-        description="Independent variable — typically an input_ref to the measured x values"
-    )
 
 
 class CustomODEModel(BaseForwardModelSpec):
@@ -685,11 +675,6 @@ class CustomODEModel(BaseForwardModelSpec):
     type: Literal["custom_ode"] = "custom_ode"
     code: str = Field(
         description="Python ODE function. Signature: def ode(t, y, params, inputs) -> dict"
-    )
-    code_julia: Optional[str] = Field(
-        default=None,
-        description="Julia ODE function for inference. "
-        "Signature: function ode!(du, u, p, t) where du is modified in-place.",
     )
 
 
@@ -743,22 +728,6 @@ class IndependentVariable(BaseModel):
 
 
 # =============================================================================
-# CALIBRATION - LIKELIHOOD
-# =============================================================================
-
-
-class Likelihood(BaseModel):
-    """Likelihood specification for fitting."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    distribution: str = Field(description="Distribution type (normal, lognormal, beta, etc.)")
-    rationale: Optional[str] = Field(
-        default=None,
-        description="Why this distribution was chosen",
-    )
-
-
 # =============================================================================
 # CALIBRATION - ERROR MODEL
 # =============================================================================
@@ -793,7 +762,7 @@ class ErrorModel(BaseModel):
     The error model describes:
     - Which inputs from the data are used
     - How to generate bootstrap samples of the observation
-    - What likelihood to use for inference (optional; can be inferred from samples)
+    - The likelihood family is inferred from bootstrap samples via fit_distributions()
 
     For ODE models, evaluation_points specifies when to compare.
     For algebraic models, evaluation_points is not needed.
@@ -810,6 +779,13 @@ class ErrorModel(BaseModel):
     uses_inputs: Optional[List[str]] = Field(
         default=None,
         description="Names of inputs that feed this measurement",
+    )
+    x_input: Optional[str] = Field(
+        default=None,
+        description="Name of input providing the independent variable value (x) for this "
+        "error model entry. Required for direct_fit and power_law forward models. "
+        "Each entry can reference a different input, enabling multi-point evaluation "
+        "(e.g., different doses in a dose-response curve).",
     )
     evaluation_points: Optional[List[float]] = Field(
         default=None,
@@ -835,11 +811,6 @@ class ErrorModel(BaseModel):
         default=10000,
         description="Number of parametric bootstrap samples to generate. "
         "Default 10000 provides stable median/SD/CI95 estimates.",
-    )
-    likelihood: Optional[Likelihood] = Field(
-        default=None,
-        description="Likelihood specification. If omitted, the framework infers "
-        "the likelihood family from the bootstrap sample distribution.",
     )
 
 
@@ -1068,7 +1039,6 @@ _NON_ROLE_FIELDS = frozenset(
     {
         "type",
         "code",
-        "code_julia",
         "formula",
         "data_rationale",
         "submodel_rationale",
@@ -3015,44 +2985,6 @@ class SubmodelTarget(BaseModel):
 
         return self
 
-    @model_validator(mode="after")
-    def warn_likelihood_distribution_unknown(self) -> "SubmodelTarget":
-        """
-        Warn if likelihood distribution is not a known type.
-
-        Catches typos like 'lognomal' instead of 'lognormal'.
-
-        Known distributions: normal, lognormal, truncated_normal, half_normal,
-        beta, dirichlet, student_t, exponential, gamma, poisson
-        """
-        KNOWN_LIKELIHOODS = {
-            "normal",
-            "lognormal",
-            "truncated_normal",
-            "half_normal",
-            "beta",
-            "dirichlet",
-            "student_t",
-            "exponential",
-            "gamma",
-            "poisson",
-        }
-
-        for entry in self.calibration.error_model:
-            if entry.likelihood is None:
-                continue
-            dist = entry.likelihood.distribution.lower()
-            if dist not in KNOWN_LIKELIHOODS:
-                warnings.warn(
-                    f"Error model '{entry.name}': likelihood distribution '{dist}' "
-                    f"is not a recognized type.\n"
-                    f"Known types: {sorted(KNOWN_LIKELIHOODS)}.\n"
-                    f"If this is intentional (custom distribution), ignore this warning.",
-                    UserWarning,
-                )
-
-        return self
-
     def _compute_confidence_score(self) -> float:
         """
         Compute overall confidence score based on source relevance factors.
@@ -3152,7 +3084,6 @@ __all__ = [
     # Other calibration models
     "IndependentVariable",
     "Observable",
-    "Likelihood",
     "Measurement",
     "Calibration",
     # Context models

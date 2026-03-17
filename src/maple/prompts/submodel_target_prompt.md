@@ -137,10 +137,10 @@ Ask these questions IN ORDER. Use the FIRST match:
 
 **Required fields:**
 - `curve`: hill | linear | exponential
-- `x_variable`: input_ref to the dose/concentration input
 - For hill: `ec50` (required), `n_hill` (default "1.0"), `baseline` (default "0.0"), `maximum` (default "1.0")
 - For linear: `slope` (required), `intercept` (default "0.0")
 - For exponential: `amplitude` (required), `rate` (required)
+- Each error model entry must set `x_input` to the name of the input providing the x-value (dose/concentration) for that entry
 
 **Common pitfall:** Using `algebraic` with hand-written Hill code instead of `direct_fit`. The structured type enables automatic prior inversion and catches unit mismatches that `algebraic` silently ignores.
 
@@ -156,7 +156,7 @@ Ask these questions IN ORDER. Use the FIRST match:
 - `coefficient`: Reference value (e.g., E_ref)
 - `reference_x`: Reference x for normalization (e.g., phi_ref)
 - `exponent`: Power-law exponent (parameter to estimate or fixed literal)
-- `x_variable`: input_ref to the measured x values
+- Each error model entry must set `x_input` to the name of the input providing the x-value for that entry
 
 **Common pitfall:** Using `algebraic` when the relationship is a simple power law. The structured type is cleaner and auto-validates.
 

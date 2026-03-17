@@ -20,7 +20,6 @@ from maple.core.calibration.submodel_target import (
     InputType,
     Parameter,
     Measurement,
-    Likelihood,
     PrimaryDataSource,
 )
 from maple.core.model_structure import ModelStructure, ModelParameter
@@ -165,7 +164,6 @@ def minimal_measurement():
         evaluation_points=[0.0],
         sample_size_input="test_n",
         observation_code=VALID_OBSERVATION_CODE,
-        likelihood=Likelihood(distribution="lognormal"),
     )
 
 
@@ -237,7 +235,6 @@ end
                     "evaluation_points": [0.0],
                     "sample_size_input": "test_n",
                     "observation_code": measurement_error_code,
-                    "likelihood": {"distribution": "lognormal"},
                 }
             ],
             "identifiability_notes": "Test notes",
@@ -441,7 +438,6 @@ end
                         "evaluation_points": [0.0],
                         "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
-                        "likelihood": {"distribution": "lognormal"},
                     }
                 ],
                 "identifiability_notes": "Parameter is identifiable from single observation.",  # No variance keywords
@@ -527,7 +523,6 @@ end
                         "evaluation_points": [0.0],
                         "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
-                        "likelihood": {"distribution": "lognormal"},
                     }
                 ],
                 # Mentions variability
@@ -798,7 +793,6 @@ class TestValidateParameterRoles:
                         "evaluation_points": [10.0],
                         "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
-                        "likelihood": {"distribution": "lognormal"},
                     }
                 ],
                 "identifiability_notes": "Test notes",
@@ -885,7 +879,6 @@ class TestValidateParameterRoles:
                         "evaluation_points": [10.0],
                         "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
-                        "likelihood": {"distribution": "lognormal"},
                     }
                 ],
                 "identifiability_notes": "Test notes",
@@ -1249,7 +1242,6 @@ class TestValidateSpanOrdering:
                         "evaluation_points": [10.0],
                         "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
-                        "likelihood": {"distribution": "lognormal"},
                     }
                 ],
                 "identifiability_notes": "Test notes",
@@ -1335,7 +1327,6 @@ class TestValidateSpanOrdering:
                         "evaluation_points": [10.0],
                         "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
-                        "likelihood": {"distribution": "lognormal"},
                     }
                 ],
                 "identifiability_notes": "Test notes",
@@ -1499,7 +1490,6 @@ class TestValidateODEModelRequirements:
                         "evaluation_points": [10.0],
                         "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
-                        "likelihood": {"distribution": "lognormal"},
                     }
                 ],
                 "identifiability_notes": "Test notes",
@@ -1585,7 +1575,6 @@ class TestValidateODEModelRequirements:
                         "evaluation_points": [10.0],
                         "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
-                        "likelihood": {"distribution": "lognormal"},
                     }
                 ],
                 "identifiability_notes": "Test notes",
@@ -1684,7 +1673,6 @@ class TestValidateODEModelRequirements:
                         "evaluation_points": [10.0],
                         "sample_size_input": "test_n",
                         "observation_code": measurement_error_code,
-                        "likelihood": {"distribution": "lognormal"},
                     }
                 ],
                 "identifiability_notes": "Test notes",
