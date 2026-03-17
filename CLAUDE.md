@@ -213,9 +213,40 @@ source_relevance:
 
 Translation sigma is computed from all 8 axes (added in quadrature, floor of 0.15) and applied inside the likelihood during joint inference. See `yaml_to_prior.py:compute_translation_sigma()` for the full rubric.
 
-### LLM Extraction
+### Interactive Extraction (MCP Server)
 
-Extract SubmodelTarget YAMLs from scientific literature using the CLI:
+The preferred way to create SubmodelTarget YAMLs is interactively via the MCP server with Claude Code. This produces better results than batch extraction because the forward model and source relevance assessment benefit from iterative discussion.
+
+**Setup:** Add to `.claude/settings.json`:
+```json
+{
+  "mcpServers": {
+    "maple": {
+      "command": "python",
+      "args": ["-m", "maple.mcp_server"]
+    }
+  }
+}
+```
+
+**Two tools are available:**
+
+- `extract_target(target_type)` — Loads the full extraction guide: multi-step workflow, prompt template, valid enum values, and hard rules. Call this before starting any extraction session.
+- `validate_target(yaml_path, papers_dir)` — Runs schema validation (Pydantic), prior derivation (bootstrap + forward model inversion + distribution fitting + translation sigma), and snippet verification against source PDFs.
+
+**Typical workflow:**
+
+1. Call `extract_target` to load the guide
+2. Investigate the parameter in the model code (units, mechanistic role, Hill function inputs)
+3. Search literature for quantitative data that constrains the parameter
+4. User obtains PDFs into `papers/<source_tag>/` directories
+5. Read the paper and build the YAML incrementally — inputs first, then forward model, then error model, then source relevance
+6. Call `validate_target` after each major section to catch errors early
+7. Iterate until validation passes
+
+### Batch Extraction (CLI)
+
+For bulk extraction without interactive refinement:
 
 ```bash
 # Extract submodel targets (requires model context files)
