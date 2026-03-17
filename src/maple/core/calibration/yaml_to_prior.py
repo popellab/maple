@@ -338,7 +338,7 @@ def process_yaml(yaml_path: Path, priors_csv: Path) -> list[dict]:
 
     # Run single-target MCMC with lightweight settings
     try:
-        samples = run_joint_inference(
+        samples, diagnostics = run_joint_inference(
             prior_specs,
             [target],
             num_warmup=200,
@@ -375,6 +375,9 @@ def process_yaml(yaml_path: Path, priors_csv: Path) -> list[dict]:
             mu_data = np.log(best.median)
             sigma_data = np.sqrt(np.log(1 + best.cv**2))
 
+        # MCMC diagnostics for this parameter
+        param_diag = diagnostics["per_param"].get(pname, {})
+
         results.append(
             {
                 "name": pname,
@@ -392,6 +395,10 @@ def process_yaml(yaml_path: Path, priors_csv: Path) -> list[dict]:
                 "mu_prior": mu_data,
                 "cv_data": best.cv,
                 "cv_prior": best.cv,
+                "mcmc_diagnostics": {
+                    "num_divergences": diagnostics["num_divergences"],
+                    **param_diag,
+                },
             }
         )
 
@@ -439,6 +446,19 @@ def format_report(result: dict) -> str:
         f"sigma={result['sigma_prior']:.3f}, "
         f"CV={result['cv_prior']:.2f}"
     )
+
+    # MCMC diagnostics
+    diag = result.get("mcmc_diagnostics")
+    if diag:
+        lines.append(
+            f"MCMC: n_eff={diag.get('n_eff', 0):.0f}, "
+            f"r_hat={diag.get('r_hat', 0):.3f}, "
+            f"divergences={diag.get('num_divergences', 0)}"
+        )
+        contraction = diag.get("contraction")
+        z_score = diag.get("z_score")
+        if contraction is not None and z_score is not None:
+            lines.append(f"  contraction={contraction:.2f}, " f"z_score={z_score:.2f}")
 
     return "\n".join(lines)
 
@@ -601,7 +621,7 @@ def process_targets(
     print(f"Loaded {len(targets)} SubmodelTargets")
 
     # 3. Run joint inference
-    samples = run_joint_inference(prior_specs, targets, reference_db, **mcmc_kwargs)
+    samples, _diagnostics = run_joint_inference(prior_specs, targets, reference_db, **mcmc_kwargs)
 
     # 4. Collect translation sigmas for provenance
     translation_sigmas = {}

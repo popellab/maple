@@ -229,6 +229,9 @@ def _build_forward_fns(
 
         elif model_type == "algebraic":
             _inputs = base_inputs.copy()
+            # Inject x_input as '_x' so compute() can use it for multi-point eval
+            if entry.x_input:
+                _inputs["_x"] = base_inputs[entry.x_input]
             local = {"np": jnp, "numpy": jnp}
             exec(model.code, local)  # noqa: S102
             _compute = local["compute"]
@@ -365,11 +368,7 @@ def submodel_joint_model(prior_specs, target_likelihoods):
         for j, entry in enumerate(tl.entries):
             predicted = entry.forward_fn(params)
 
-            site_name = (
-                f"obs_{tl.target_id}_{j}"
-                if len(tl.entries) > 1
-                else f"obs_{tl.target_id}"
-            )
+            site_name = f"obs_{tl.target_id}_{j}" if len(tl.entries) > 1 else f"obs_{tl.target_id}"
 
             if entry.family == "lognormal":
                 sigma_total = jnp.sqrt(entry.sigma**2 + tl.sigma_trans**2)
@@ -379,9 +378,7 @@ def submodel_joint_model(prior_specs, target_likelihoods):
                     obs=entry.value,
                 )
             else:  # normal
-                sd_total = jnp.sqrt(
-                    entry.sigma**2 + (entry.value * tl.sigma_trans) ** 2
-                )
+                sd_total = jnp.sqrt(entry.sigma**2 + (entry.value * tl.sigma_trans) ** 2)
                 numpyro.sample(
                     site_name,
                     dist.Normal(predicted, sd_total),
@@ -394,6 +391,79 @@ def submodel_joint_model(prior_specs, target_likelihoods):
 # =============================================================================
 
 
+def _compute_mcmc_diagnostics(
+    mcmc,
+    prior_specs: dict[str, "PriorSpec"],
+) -> dict:
+    """Extract MCMC diagnostics from a completed MCMC run.
+
+    Returns a dict with:
+      - num_divergences: int
+      - per_param: dict of {param_name: {r_hat, n_eff, contraction, z_score}}
+
+    Contraction = 1 - var(posterior) / var(prior).  Values near 1 mean the data
+    strongly informed the parameter; near 0 means little learning.
+
+    Z-score = |mean(posterior) - mean(prior)| / std(prior).  Large values (>2)
+    indicate the data pulled the posterior away from the prior.
+    """
+    from numpyro.diagnostics import effective_sample_size, split_gelman_rubin
+
+    samples = mcmc.get_samples(group_by_chain=True)
+    flat_samples = mcmc.get_samples(group_by_chain=False)
+    extra_fields = mcmc.get_extra_fields()
+
+    # Divergences
+    num_div = 0
+    if "diverging" in extra_fields:
+        num_div = int(np.asarray(extra_fields["diverging"]).sum())
+
+    per_param = {}
+    for name, spec in prior_specs.items():
+        chain_arr = np.asarray(samples[name])  # (num_chains, num_samples)
+        flat_arr = np.asarray(flat_samples[name])
+
+        # r_hat and n_eff
+        if chain_arr.ndim == 1:
+            # Single chain: reshape to (1, N)
+            chain_arr = chain_arr[np.newaxis, :]
+        r_hat = float(split_gelman_rubin(chain_arr))
+        n_eff = float(effective_sample_size(chain_arr))
+
+        # Prior moments (in natural space)
+        if spec.distribution == "lognormal":
+            prior_mean = np.exp(spec.mu + spec.sigma**2 / 2)
+            prior_var = (np.exp(spec.sigma**2) - 1) * np.exp(2 * spec.mu + spec.sigma**2)
+        elif spec.distribution == "normal":
+            prior_mean = spec.mu
+            prior_var = spec.sigma**2
+        elif spec.distribution == "uniform":
+            prior_mean = (spec.lower + spec.upper) / 2
+            prior_var = (spec.upper - spec.lower) ** 2 / 12
+        else:
+            prior_mean = float(np.mean(flat_arr))
+            prior_var = float(np.var(flat_arr))
+
+        post_mean = float(np.mean(flat_arr))
+        post_var = float(np.var(flat_arr))
+        prior_std = float(np.sqrt(prior_var)) if prior_var > 0 else 1e-30
+
+        contraction = 1.0 - post_var / prior_var if prior_var > 0 else 0.0
+        z_score = abs(post_mean - prior_mean) / prior_std
+
+        per_param[name] = {
+            "r_hat": r_hat,
+            "n_eff": n_eff,
+            "contraction": contraction,
+            "z_score": z_score,
+        }
+
+    return {
+        "num_divergences": num_div,
+        "per_param": per_param,
+    }
+
+
 def run_joint_inference(
     prior_specs: dict[str, PriorSpec],
     targets: list[SubmodelTarget],
@@ -402,7 +472,7 @@ def run_joint_inference(
     num_samples: int = 5000,
     num_chains: int = 4,
     seed: int = 0,
-) -> dict[str, np.ndarray]:
+) -> tuple[dict[str, np.ndarray], dict]:
     """Run joint MCMC inference across all SubmodelTargets.
 
     Args:
@@ -415,12 +485,13 @@ def run_joint_inference(
         seed: Random seed
 
     Returns:
-        dict of {param_name: np.ndarray} with shape (num_samples * num_chains,)
+        Tuple of (samples_dict, diagnostics_dict).
+        samples_dict: {param_name: np.ndarray} with shape (num_samples * num_chains,)
+        diagnostics_dict: {num_divergences, per_param: {name: {r_hat, n_eff, contraction, z_score}}}
     """
     try:
         import jax
         import jax.random
-        import numpyro
         from numpyro.infer import MCMC, NUTS
     except ImportError as e:
         raise ImportError(
@@ -453,7 +524,9 @@ def run_joint_inference(
 
     # Diagnostics
     mcmc.print_summary()
+    diagnostics = _compute_mcmc_diagnostics(mcmc, prior_specs)
 
     samples = mcmc.get_samples()
     # Convert JAX arrays to numpy
-    return {name: np.asarray(vals) for name, vals in samples.items()}
+    samples_np = {name: np.asarray(vals) for name, vals in samples.items()}
+    return samples_np, diagnostics

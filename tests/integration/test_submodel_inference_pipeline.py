@@ -488,6 +488,7 @@ class TestProcessYaml:
             "mu_prior",
             "cv_data",
             "cv_prior",
+            "mcmc_diagnostics",
         }
         assert expected_keys <= set(result.keys())
         assert result["name"] == "EC50_test"
