@@ -6,11 +6,15 @@ Developer guide for Claude Code when working with this repository.
 
 ## Overview
 
-MAPLE (Model-Aware Parameterization from Literature Evidence) provides tools for extracting QSP calibration targets from scientific literature and translating them to Julia/Turing.jl for Bayesian inference.
+MAPLE (Model-Aware Parameterization from Literature Evidence) provides tools for extracting QSP calibration targets from scientific literature and producing informative priors via joint Bayesian inference.
 
 **Two extraction workflows:**
-- **SubmodelTarget**: In vitro / preclinical data with self-contained forward models (ODE or algebraic) and Julia/Turing.jl translation
+- **SubmodelTarget**: In vitro / preclinical data with self-contained forward models (ODE or algebraic) → joint MCMC inference (NumPyro) → marginals + Gaussian copula priors
 - **CalibrationTarget**: Clinical / in vivo observables requiring full model simulation context, with Monte Carlo distribution derivation
+
+**Two-stage calibration:**
+- **Stage 1** (this repo): SubmodelTargets → joint MCMC (NumPyro/NUTS) → `submodel_priors.yaml` (marginals + copula)
+- **Stage 2** (qsp-sbi): CalibrationTargets + copula priors → SBI (SNPE-C) with SimBiology → final posterior
 
 ## Installation
 
@@ -18,6 +22,9 @@ MAPLE (Model-Aware Parameterization from Literature Evidence) provides tools for
 git clone https://github.com/popellab/maple.git
 cd maple
 pip install -e .
+
+# For joint inference pipeline (NumPyro/JAX)
+pip install -e ".[inference]"
 ```
 
 ## SubmodelTarget Schema
@@ -36,19 +43,12 @@ For in vitro and preclinical data with self-contained forward models. Located in
 - `fixed_parameter`: Fixed value in model (not estimated)
 - `auxiliary`: Supporting data (e.g., SD values)
 
-**Parameter priors** (`Prior` model):
+**Parameters** — names and units only. Priors come from `pdac_priors.csv`, not the YAML:
 ```yaml
 parameters:
   - name: k_apsc_prolif
     units: 1/day
-    prior:
-      distribution: lognormal
-      mu: 0.0  # log(1.0)
-      sigma: 1.0
-      rationale: "Wide prior centered at 1/day..."
 ```
-
-Supported distributions: `lognormal`, `normal`, `uniform`, `half_normal`
 
 **Forward model types** (discriminated union in `calibration.forward_model`):
 - `exponential_growth`: dy/dt = k * y
@@ -60,7 +60,7 @@ Supported distributions: `lognormal`, `normal`, `uniform`, `half_normal`
 - `direct_fit`: Dose-response curves (hill, linear, exponential) with auto-generated code
 - `power_law`: Biophysical scaling: y = coefficient * (x / reference_x) ^ exponent
 - `algebraic`: No ODE, forward model maps params → observable (e.g., `t_half = ln(2) / k`)
-- `custom_ode`: User-provided ODE code (requires `code_julia`)
+- `custom_ode`: User-provided ODE code
 
 **Algebraic models** (params → observable):
 ```yaml
@@ -68,15 +68,12 @@ forward_model:
   type: algebraic
   formula: "t_half = ln(2) / k"
   code: |
-    def compute(params, inputs, ureg):
+    def compute(params, inputs):
         import numpy as np
-        k = params['k']
-        return np.log(2) / k * ureg('day')
-  code_julia: |
-    function compute(params, inputs)
-        return log(2) / params["k"]
-    end
+        return np.log(2) / params['k']
 ```
+
+Code must use only `np.*` functions (mapped to `jax.numpy` at inference time). No `ureg`, no `scipy`, no branching on parameter values.
 
 **Custom ODE models:**
 ```yaml
@@ -85,10 +82,6 @@ forward_model:
   code: |
     def ode(t, y, params, inputs):
         ...
-  code_julia: |
-    function my_ode!(du, u, p, t)
-        ...
-    end
 ```
 
 **Error model** (`calibration.error_model`):
@@ -97,15 +90,28 @@ error_model:
   - name: t_half_measurement
     units: day
     uses_inputs: [t_half_mean, t_half_sd]
+    sample_size_input: n_samples
     observation_code: |
-      def derive_observation(inputs, sample_size, ureg):
-          return {
-              'value': inputs['t_half_mean'],
-              'sd': inputs['t_half_sd'].magnitude,
-              'sd_uncertain': False,
-          }
-    likelihood:
-      distribution: lognormal
+      def derive_observation(inputs, sample_size, rng, n_bootstrap):
+          import numpy as np
+          mean = inputs['t_half_mean']
+          sd = inputs['t_half_sd']
+          return rng.lognormal(np.log(mean), sd / np.sqrt(sample_size), n_bootstrap)
+```
+
+The likelihood family is inferred automatically from bootstrap samples via `fit_distributions()` — no manual `likelihood` field.
+
+**`x_input` for dose-response / power-law models:** Each error model entry can specify `x_input` pointing to an input that provides the independent variable value (e.g., dose, concentration). This enables multi-point evaluation:
+```yaml
+error_model:
+  - name: response_low_dose
+    x_input: dose_low      # evaluate forward model at this x value
+    uses_inputs: [obs_low_mean, obs_low_sd]
+    ...
+  - name: response_high_dose
+    x_input: dose_high     # evaluate at a different x value
+    uses_inputs: [obs_high_mean, obs_high_sd]
+    ...
 ```
 
 ### Validation
@@ -149,16 +155,17 @@ python scripts/validate_submodel_target.py *.yaml
 | `warn_multi_param_algebraic_identifiability` | Warns when AlgebraicModel has more params than measurements |
 | `warn_observation_sd_unreasonable` | Warns if SD is >100x or <0.001x observed value |
 
-**observation_code return signature** (required format):
+**observation_code signature** (required format):
 ```python
-def derive_observation(inputs, sample_size, ureg):
-    # ... computation ...
-    return {
-        'value': mean_value * ureg('pg/mL'),  # Pint Quantity, required
-        'sd': sd_value,                        # float or Quantity, required
-        'sd_uncertain': False,                 # bool, optional (True → prior on sigma)
-        'n': sample_size,                      # int, optional
-    }
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    # inputs: dict of {name: float} (magnitudes only, no Pint)
+    # rng: numpy.random.Generator (seeded)
+    # n_bootstrap: number of samples to generate
+    mean = inputs['obs_mean']
+    sd = inputs['obs_sd']
+    return rng.lognormal(np.log(mean), sd / np.sqrt(sample_size), n_bootstrap)
+    # Must return 1D numpy array of parametric bootstrap samples
 ```
 
 **No invisible characters** - catches PDF copy-paste issues:
@@ -324,65 +331,82 @@ observable_name,description,species,compartment,notes
 cd8_tumor_density,CD8+ T cell density in primary tumor,CD8_T,tumor.primary,Treatment-naive PDAC
 ```
 
-## Julia Translator
+## Submodel Prior Inference
 
-Translates SubmodelTarget YAMLs to Julia Turing.jl inference scripts. Located in `julia_translator.py`.
+Joint Bayesian inference across SubmodelTargets using NumPyro. Located in `submodel_inference.py` and `posterior_parameterizer.py`.
 
-### Single Target
+### Pipeline
 
-```python
-from maple.core.calibration.julia_translator import JuliaTranslator
-
-translator = JuliaTranslator()
-julia_code = translator.generate_script("target.yaml")
+```
+pdac_priors.csv (broad starting priors)
+    + SubmodelTarget YAMLs (data + forward models)
+    → build joint NumPyro model:
+        - priors from CSV
+        - forward models from _evaluate_structured_model / exec(model.code)
+        - likelihoods with translation sigma in observation noise
+    → MCMC (NUTS) → joint posterior samples
+    → fit marginal distributions per parameter
+    → fit Gaussian copula (correlation matrix)
+    → output: submodel_priors.yaml (marginals + copula for Stage 2)
 ```
 
-### Joint Inference (Multiple Targets)
+### Usage (Python)
 
 ```python
-from maple.core.calibration.julia_translator import JointInferenceBuilder
+from maple.core.calibration.yaml_to_prior import process_targets
 
-builder = JointInferenceBuilder()
-julia_code = builder.build_from_files([
-    "psc_proliferation.yaml",
-    "psc_death.yaml",
-    "psc_recruitment.yaml",  # Shares parameters with above
-])
+result = process_targets(
+    priors_csv=Path("pdac_priors.csv"),
+    yaml_paths=[Path("target1.yaml"), Path("target2.yaml")],
+    output_dir=Path("priors/"),
+    plot=True,
+)
 ```
-
-**Automatic parameter sharing**: Parameters with the same name across targets are automatically identified and shared in the joint Turing model.
 
 ### CLI Usage
 
 ```bash
-# Single target (--model-structure required)
-python -m maple.core.calibration.julia_translator \
-    --model-structure model_structure.json \
-    target.yaml
+# Joint inference across all submodel targets
+maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ --output priors/ --plot
 
-# Joint inference
-python -m maple.core.calibration.julia_translator --joint \
-    --model-structure model_structure.json \
-    target1.yaml target2.yaml target3.yaml \
-    --output joint_calibration.jl
-
-# Joint inference with fixed sigmas (faster sampling)
-python -m maple.core.calibration.julia_translator --joint \
-    --model-structure model_structure.json \
-    --fixed-sigma \
-    target1.yaml target2.yaml target3.yaml
+# With reference database and CSV export
+maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ \
+    --output priors/ --export-csv updated_priors.csv --reference-db reference_values.yaml
 ```
 
-### What Gets Generated
+### Output Format
 
-The translator produces complete Julia scripts with:
-- Observed data constants (value, sigma from observation_code)
-- ODE functions for each model type (or compute functions for algebraic)
-- Simulate wrapper functions
-- Turing `@model` with priors and likelihoods (normal or lognormal)
-- Priors on sigma when `sd_uncertain: true` in observation_code
-- NUTS sampling code with convergence diagnostics
-- Posterior marginal plots with prior overlays
+```yaml
+# submodel_priors.yaml
+metadata:
+  n_targets: 10
+  n_parameters: 13
+  n_samples: 20000
+
+parameters:
+  - name: k_apsc_prolif
+    marginal:
+      distribution: lognormal
+      mu: -0.31
+      sigma: 0.85
+      median: 0.733
+      cv: 0.95
+    source_targets: [psc_proliferation_PDAC_deriv001]
+
+copula:
+  type: gaussian
+  parameters: [k_apsc_prolif, k_apsc_death]
+  correlation:
+    - [1.0, -0.42]
+    - [-0.42, 1.0]
+```
+
+### Key Design
+
+- **Translation sigma in likelihood**: Per-target source relevance maps to a translation σ applied inside the likelihood during MCMC (not post-hoc). MCMC naturally upweights more relevant sources.
+- **Shared parameters**: Parameters with the same name across targets are sampled once and reused.
+- **Likelihood family inferred**: Bootstrap samples are fit with lognormal/gamma/inv-gamma; best by AIC determines the likelihood type.
+- **JAX-traceable**: All forward models must use `np.*` functions (mapped to `jax.numpy`). No `scipy`, no branching on parameter values.
 
 ## Package Structure
 
@@ -392,7 +416,10 @@ src/maple/
 │   ├── calibration/
 │   │   ├── submodel_target.py         # SubmodelTarget schema
 │   │   ├── calibration_target_models.py  # CalibrationTarget schema
-│   │   ├── julia_translator.py        # YAML → Julia/Turing.jl
+│   │   ├── submodel_inference.py      # Joint NumPyro MCMC inference
+│   │   ├── posterior_parameterizer.py # Marginal fitting + Gaussian copula
+│   │   ├── yaml_to_prior.py          # Orchestrator + CLI
+│   │   ├── julia_translator.py        # YAML → Julia/Turing.jl (legacy)
 │   │   ├── code_validator.py          # Python code validation
 │   │   ├── enums.py                   # Shared enums
 │   │   ├── exceptions.py              # Validation error hierarchy
@@ -455,3 +482,4 @@ pytest
 
 - `qsp-extract` — Run extraction workflows (calibration_target or submodel_target)
 - `qsp-export-model` — Export SimBiology model structure to JSON
+- `maple-yaml-to-prior` — Convert SubmodelTarget YAMLs to priors (joint inference with `--priors CSV`, legacy per-target without)

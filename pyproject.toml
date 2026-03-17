@@ -47,6 +47,11 @@ dev = [
     "ruff>=0.1.0",
     "freezegun>=1.2.0",
 ]
+inference = [
+    "numpyro>=0.15",
+    "jax>=0.4",
+    "jaxlib>=0.4",
+]
 
 [project.urls]
 Homepage = "https://github.com/popellab/maple"

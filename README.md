@@ -2,16 +2,17 @@
 
 [![Tests](https://github.com/popellab/maple/actions/workflows/test.yml/badge.svg)](https://github.com/popellab/maple/actions/workflows/test.yml)
 
-Extract calibration targets from scientific literature for quantitative systems pharmacology (QSP) model calibration. Uses structured YAML schemas with Pydantic validation, then translates to Julia/Turing.jl for Bayesian inference.
+Extract calibration targets from scientific literature for quantitative systems pharmacology (QSP) model calibration. Uses structured YAML schemas with Pydantic validation and joint Bayesian inference (NumPyro) to produce informative priors for downstream SBI calibration.
 
 ## Installation
 
 ```bash
 git clone https://github.com/popellab/maple.git
 cd maple
-python -m venv venv
-source venv/bin/activate
 pip install -e .
+
+# For joint inference pipeline (NumPyro/JAX)
+pip install -e ".[inference]"
 ```
 
 ## Two Schemas, One Goal
@@ -23,7 +24,7 @@ Maple provides two complementary schemas for extracting calibration targets from
 | **Use case** | In vitro / preclinical data with isolated submodels | Clinical / in vivo data requiring full model context |
 | **Forward model** | Self-contained ODE or algebraic model | Full QSP model simulation |
 | **Key fields** | `inputs`, `calibration` (parameters, forward_model, error_model) | `observable`, `scenarios`, `empirical_data` (distribution_code) |
-| **Julia translation** | Yes (automatic) | Not yet |
+| **Inference** | Joint MCMC (NumPyro) → marginals + copula | SBI (SNPE-C) in qsp-sbi |
 | **Validation script** | `scripts/validate_submodel_target.py` | `scripts/validate_calibration_target.py` |
 
 ## SubmodelTarget
@@ -32,9 +33,9 @@ For in vitro and preclinical data where a small submodel (ODE or algebraic) conn
 
 **Structure:**
 - `inputs` — Values extracted from papers with full provenance (snippets, source refs)
-- `calibration.parameters` — Model parameters with priors
+- `calibration.parameters` — Model parameter names and units (priors come from CSV)
 - `calibration.forward_model` — Typed ODE or algebraic model (exponential growth, first-order decay, Michaelis-Menten, direct_fit dose-response, power_law scaling, etc.)
-- `calibration.error_model` — Maps model output to observed data with likelihood specification
+- `calibration.error_model` — Bootstrap observation code; likelihood family inferred automatically
 
 ```yaml
 target_id: psc_proliferation_PDAC_deriv001
@@ -43,7 +44,6 @@ inputs:
   - name: fold_increase_mean
     value: 4.37
     units: dimensionless
-    role: target
     source_ref: schneider_2001
     value_snippet: "PDGF increased DNA synthesis 4.37 ± 0.89-fold"
 
@@ -51,7 +51,6 @@ calibration:
   parameters:
     - name: k_apsc_prolif
       units: 1/day
-      prior: {distribution: lognormal, mu: 0.0, sigma: 1.0}
   forward_model:
     type: exponential_growth
     rate_constant: k_apsc_prolif
@@ -64,13 +63,13 @@ calibration:
     - name: fold_increase
       units: dimensionless
       uses_inputs: [fold_increase_mean, fold_increase_sd]
+      sample_size_input: n_samples
       observation_code: |
-        def derive_observation(inputs, sample_size, ureg):
-            return {
-                'value': inputs['fold_increase_mean'],
-                'sd': inputs['fold_increase_sd'].magnitude,
-            }
-      likelihood: {distribution: lognormal}
+        def derive_observation(inputs, sample_size, rng, n_bootstrap):
+            import numpy as np
+            mean = inputs['fold_increase_mean']
+            sd = inputs['fold_increase_sd']
+            return rng.lognormal(np.log(mean), sd / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ### Validation & Extraction
@@ -150,27 +149,23 @@ qsp-extract targets.csv \
   --output-dir metadata-storage
 ```
 
-## Julia Code Generation
+## Submodel Prior Inference
 
-Translate validated SubmodelTarget YAMLs to Julia/Turing.jl for Bayesian inference:
+Run joint Bayesian inference across SubmodelTargets to produce informative priors:
 
 ```bash
-# Single target
-python -m maple.core.calibration.julia_translator \
-    --model-structure model_structure.json target.yaml
-
-# Joint inference (parameters with same name are shared)
-python -m maple.core.calibration.julia_translator --joint \
-    --model-structure model_structure.json \
-    target1.yaml target2.yaml target3.yaml \
-    --output joint_calibration.jl
+# Joint inference across all submodel targets
+maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ \
+    --output priors/ --plot
 ```
 
-The translator generates complete Julia scripts with:
-- ODE functions (or algebraic compute functions)
-- Turing `@model` blocks with priors and likelihoods
-- NUTS sampling code with convergence diagnostics
-- Posterior marginal plots with prior overlays
+The pipeline:
+1. Loads broad starting priors from CSV
+2. Builds a joint NumPyro model from all SubmodelTarget forward models
+3. Applies translation sigma (from source relevance) inside the likelihood
+4. Runs MCMC (NUTS) to produce joint posterior samples
+5. Fits marginal distributions + Gaussian copula
+6. Writes `submodel_priors.yaml` for downstream SBI consumption
 
 ## Project Structure
 
@@ -180,7 +175,9 @@ src/maple/
 │   ├── calibration/
 │   │   ├── submodel_target.py         # SubmodelTarget schema
 │   │   ├── calibration_target_models.py  # CalibrationTarget schema
-│   │   ├── julia_translator.py        # YAML → Julia/Turing.jl
+│   │   ├── submodel_inference.py      # Joint NumPyro MCMC inference
+│   │   ├── posterior_parameterizer.py # Marginals + Gaussian copula
+│   │   ├── yaml_to_prior.py          # Orchestrator + CLI
 │   │   └── ...
 │   ├── tools/                         # LLM agent tools
 │   └── workflow/                      # Workflow orchestration
