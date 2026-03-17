@@ -507,7 +507,9 @@ def _evaluate_structured_model(
         return _resolve_parameter_role(role, param_values, input_values, reference_db)
 
     model_type = model.type
-    ucf = r(model.unit_conversion_factor)
+    # unit_conversion_factor is only on steady-state and accumulation models,
+    # not on direct_fit or power_law
+    ucf = r(model.unit_conversion_factor) if hasattr(model, "unit_conversion_factor") else 1.0
     if model_type == "steady_state_density":
         return (
             r(model.target_rate)

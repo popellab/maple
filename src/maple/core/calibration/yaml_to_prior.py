@@ -1,11 +1,17 @@
 """
 Convert SubmodelTarget YAMLs to prior distributions for SBI.
 
-Pipeline:
-  1. Load YAML, run observation_code bootstrap -> parameter samples
-  2. Fit candidate distributions (lognormal, gamma, inv-gamma), pick best by AIC
-  3. Apply deterministic translation sigma inflation from source_relevance fields
-  4. Output prior specification with chosen distribution
+Pipeline (per-target via process_yaml):
+  1. Load YAML + priors CSV
+  2. Run single-target NumPyro MCMC (same engine as joint pipeline)
+  3. Fit candidate distributions to posterior samples
+  4. Report translation sigma breakdown (applied inside MCMC likelihood)
+
+Pipeline (joint via process_targets):
+  1. Load all YAMLs + priors CSV
+  2. Run joint NumPyro MCMC across all targets (shared parameters sampled once)
+  3. Fit marginal distributions + Gaussian copula to posterior
+  4. Output submodel_priors.yaml
 
 Translation sigma inflation rubric (8 axes, additive in quadrature, floor=0.15):
   indication_match:        exact=0, related=0.2, proxy=0.5, unrelated=1.0
@@ -29,7 +35,7 @@ These add in quadrature: sigma_total = max(sqrt(sigma_data^2 + sum(sigma_i^2)), 
 Usage (as library)::
 
     from maple.core.calibration.yaml_to_prior import process_yaml
-    result = process_yaml(Path("target.yaml"))
+    results = process_yaml(Path("target.yaml"))  # list of dicts, one per parameter
 
 Usage (CLI)::
 
@@ -279,87 +285,32 @@ def fit_distributions(samples: np.ndarray) -> list[DistFit]:
     return fits
 
 
-def solve_parameter_samples(target: SubmodelTarget) -> Optional[np.ndarray]:
-    """Run observation_code and invert through forward_model to get parameter samples.
+def process_yaml(yaml_path: Path, priors_csv: Path) -> list[dict]:
+    """Process a single SubmodelTarget YAML into prior specifications via MCMC.
 
-    For algebraic models, probes the forward model at test values to detect
-    the transform (identity, linear, or nonlinear) and inverts accordingly.
+    Uses the same NumPyro MCMC engine as the joint pipeline (run_joint_inference)
+    with lightweight settings for fast single-target validation. Returns a result
+    dict for each parameter in the target.
 
-    Returns parameter samples or None if inversion fails.
-    """
-    rng = np.random.default_rng(42)
+    Args:
+        yaml_path: Path to SubmodelTarget YAML file.
+        priors_csv: Path to priors CSV (e.g., pdac_priors.csv).
 
-    # Build inputs dict
-    inputs_dict = {inp.name: inp.value for inp in target.inputs}
+    Returns a list of dicts, one per parameter in the target. Each dict has keys:
+    name, units, target_id, best_dist, all_fits, param_samples, median_data,
+    sigma_data, translation_sigma, translation_breakdown, median_prior,
+    sigma_prior, mu_prior, cv_data, cv_prior.
 
-    # Run observation_code to get bootstrap samples
-    entry = target.calibration.error_model[0]
-    local_scope = {"np": np, "numpy": np}
-    exec(entry.observation_code, local_scope)
-    derive_observation = local_scope["derive_observation"]
-
-    sample_size = int(inputs_dict.get(entry.sample_size_input, 1))
-    obs_samples = derive_observation(inputs_dict, sample_size, rng, entry.n_bootstrap)
-
-    # Run forward_model.code to understand the transform
-    model = target.calibration.forward_model
-    exec(model.code, local_scope)
-    compute = local_scope["compute"]
-
-    param_name = target.calibration.parameters[0].name
-
-    # Probe the forward model at a few values to detect the transform
-    test_vals = [0.1, 1.0, 10.0]
-    outputs = []
-    for v in test_vals:
-        params = {param_name: v}
-        outputs.append(compute(params, inputs_dict))
-
-    # Check if identity: output == param
-    if all(abs(o - v) < 1e-10 for o, v in zip(outputs, test_vals)):
-        return obs_samples
-
-    # Check if linear: output = a * param + b
-    a = (outputs[2] - outputs[0]) / (test_vals[2] - test_vals[0])
-    b = outputs[0] - a * test_vals[0]
-    predicted_1 = a * test_vals[1] + b
-    if abs(predicted_1 - outputs[1]) < 1e-6 * abs(outputs[1] + 1e-30):
-        if abs(a) > 1e-30:
-            return (obs_samples - b) / a
-
-    # Nonlinear — use numerical inversion via bisection
-    from scipy.optimize import brentq
-
-    param_samples = np.full_like(obs_samples, np.nan)
-    n_failed = 0
-    for i, obs in enumerate(obs_samples):
-        try:
-
-            def residual(p):
-                return compute({param_name: p}, inputs_dict) - obs
-
-            param_samples[i] = brentq(residual, 1e-10, 1e6, xtol=1e-12)
-        except (ValueError, RuntimeError):
-            n_failed += 1
-
-    valid = param_samples[np.isfinite(param_samples)]
-    if len(valid) < len(obs_samples) * 0.9:
-        print(f"  WARNING: {n_failed}/{len(obs_samples)} inversions failed")
-    return valid
-
-
-def process_yaml(yaml_path: Path) -> dict:
-    """Process a single SubmodelTarget YAML into a prior specification.
-
-    Returns a dict with keys: name, units, target_id, best_dist, all_fits,
-    param_samples, median_data, sigma_data, translation_sigma,
-    translation_breakdown, median_prior, sigma_prior, mu_prior, cv_data, cv_prior.
-
-    On failure, returns a dict with keys: name, error.
+    On failure, returns a single-element list with a dict containing: name, error.
     """
     import warnings
 
     import yaml
+
+    from maple.core.calibration.submodel_inference import (
+        load_priors_from_csv,
+        run_joint_inference,
+    )
 
     with open(yaml_path) as f:
         data = yaml.safe_load(f)
@@ -368,52 +319,83 @@ def process_yaml(yaml_path: Path) -> dict:
         warnings.simplefilter("ignore")
         target = SubmodelTarget(**data)
 
-    param_name = target.calibration.parameters[0].name
-    param_units = target.calibration.parameters[0].units
+    params = target.calibration.parameters
+    first_name = params[0].name
 
-    # Get parameter samples
-    param_samples = solve_parameter_samples(target)
-    if param_samples is None or len(param_samples) == 0:
-        return {"name": param_name, "error": "Could not solve for parameter"}
+    # Load priors, filter to only this target's parameters for fast MCMC
+    all_priors = load_priors_from_csv(priors_csv)
+    target_param_names = {p.name for p in params}
+    prior_specs = {k: v for k, v in all_priors.items() if k in target_param_names}
 
-    # Fit candidate distributions
-    fits = fit_distributions(param_samples)
-    if not fits:
-        return {"name": param_name, "error": "All distribution fits failed"}
+    missing = target_param_names - set(prior_specs.keys())
+    if missing:
+        return [
+            {
+                "name": first_name,
+                "error": f"Parameters not found in priors CSV: {sorted(missing)}",
+            }
+        ]
 
-    best = fits[0]
+    # Run single-target MCMC with lightweight settings
+    try:
+        samples = run_joint_inference(
+            prior_specs,
+            [target],
+            num_warmup=200,
+            num_samples=500,
+            num_chains=1,
+        )
+    except Exception as e:
+        return [{"name": first_name, "error": f"MCMC inference failed: {e}"}]
 
-    # Compute translation sigma
+    # Translation sigma (shared across parameters for this target)
     trans_sigma, breakdown = compute_translation_sigma(target.source_relevance)
 
-    # Convert to equivalent lognormal sigma for the inflation step
-    if best.name == "lognormal":
-        sigma_data = best.params["sigma"]
-        mu_data = best.params["mu"]
-    else:
-        mu_data = np.log(best.median)
-        sigma_data = np.sqrt(np.log(1 + best.cv**2))
+    # Fit candidate distributions to each parameter's marginal posterior
+    results = []
+    for param in params:
+        pname = param.name
+        punits = param.units
+        param_samples = samples[pname]
 
-    # Total sigma (quadrature in log-space)
-    sigma_total = np.sqrt(sigma_data**2 + trans_sigma**2)
+        fits = fit_distributions(param_samples)
+        if not fits:
+            results.append({"name": pname, "error": "All distribution fits failed"})
+            continue
 
-    return {
-        "name": param_name,
-        "units": param_units,
-        "target_id": target.target_id,
-        "best_dist": best,
-        "all_fits": fits,
-        "param_samples": param_samples,
-        "median_data": best.median,
-        "sigma_data": sigma_data,
-        "translation_sigma": trans_sigma,
-        "translation_breakdown": breakdown,
-        "median_prior": best.median,
-        "sigma_prior": sigma_total,
-        "mu_prior": mu_data,
-        "cv_data": best.cv,
-        "cv_prior": np.sqrt(np.exp(sigma_total**2) - 1),
-    }
+        best = fits[0]
+
+        # Extract lognormal parameters from the posterior fit
+        # Note: posterior already includes translation sigma from the MCMC likelihood,
+        # so we report the fitted posterior directly without post-hoc inflation.
+        if best.name == "lognormal":
+            sigma_data = best.params["sigma"]
+            mu_data = best.params["mu"]
+        else:
+            mu_data = np.log(best.median)
+            sigma_data = np.sqrt(np.log(1 + best.cv**2))
+
+        results.append(
+            {
+                "name": pname,
+                "units": punits,
+                "target_id": target.target_id,
+                "best_dist": best,
+                "all_fits": fits,
+                "param_samples": param_samples,
+                "median_data": best.median,
+                "sigma_data": sigma_data,
+                "translation_sigma": trans_sigma,
+                "translation_breakdown": breakdown,
+                "median_prior": best.median,
+                "sigma_prior": sigma_data,
+                "mu_prior": mu_data,
+                "cv_data": best.cv,
+                "cv_prior": best.cv,
+            }
+        )
+
+    return results
 
 
 def format_report(result: dict) -> str:
@@ -524,11 +506,12 @@ def sync_submodel_priors(
     results = []
     for yf in yaml_files:
         try:
-            r = process_yaml(yf)
-            if "error" not in r:
-                results.append(r)
-            elif verbose:
-                print(f"  SKIP {yf.name}: {r['error']}")
+            param_results = process_yaml(yf, priors_csv=priors_csv)
+            for r in param_results:
+                if "error" not in r:
+                    results.append(r)
+                elif verbose:
+                    print(f"  SKIP {yf.name} ({r['name']}): {r['error']}")
         except Exception as e:
             if verbose:
                 print(f"  SKIP {yf.name}: {e}")
@@ -549,9 +532,6 @@ def sync_submodel_priors(
 # Plotting
 # ============================================================================
 
-DIST_COLORS = {"lognormal": "#2196F3", "gamma": "#4CAF50", "invgamma": "#FF9800"}
-DIST_LABELS = {"lognormal": "Lognormal", "gamma": "Gamma", "invgamma": "Inv-Gamma"}
-
 
 def _dist_pdf(fit: DistFit, x: np.ndarray) -> np.ndarray:
     """Evaluate the fitted PDF at x values."""
@@ -562,74 +542,6 @@ def _dist_pdf(fit: DistFit, x: np.ndarray) -> np.ndarray:
     elif fit.name == "invgamma":
         return stats.invgamma.pdf(x, fit.params["shape"], scale=fit.params["scale"])
     return np.zeros_like(x)
-
-
-def plot_fits(results: list[dict], out_dir: Path):
-    """Plot histogram of parameter samples with fitted PDFs and inflated prior."""
-    import matplotlib.pyplot as plt
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    n = len(results)
-    fig, axes = plt.subplots(n, 1, figsize=(8, 3.5 * n), squeeze=False)
-
-    for i, r in enumerate(results):
-        ax = axes[i, 0]
-        samples = r["param_samples"]
-        all_fits = r["all_fits"]
-        best = r["best_dist"]
-
-        # Histogram of inverted parameter samples
-        positive = samples[samples > 0]
-        ax.hist(
-            positive,
-            bins=80,
-            density=True,
-            alpha=0.35,
-            color="#888",
-            edgecolor="none",
-            label="Bootstrap samples",
-        )
-
-        # PDF grid
-        lo, hi = np.percentile(positive, [0.5, 99.5])
-        x = np.linspace(lo, hi, 500)
-
-        # Fitted candidate PDFs
-        best_aic = all_fits[0].aic
-        for f in all_fits:
-            daic = f.aic - best_aic
-            ad_tag = "PASS" if f.ad_pass else "FAIL"
-            lw = 2.2 if f.name == best.name else 1.2
-            ls = "-" if f.name == best.name else "--"
-            label = f"{DIST_LABELS.get(f.name, f.name)} (dAIC={daic:+.0f}, AD {ad_tag})"
-            ax.plot(
-                x, _dist_pdf(f, x), ls, lw=lw, color=DIST_COLORS.get(f.name, "#999"), label=label
-            )
-
-        # Inflated lognormal prior
-        prior_pdf = stats.lognorm.pdf(x, s=r["sigma_prior"], scale=np.exp(r["mu_prior"]))
-        ax.plot(
-            x,
-            prior_pdf,
-            "-",
-            lw=2,
-            color="#E91E63",
-            alpha=0.8,
-            label=f"Prior (LN, sigma={r['sigma_prior']:.2f})",
-        )
-
-        ax.set_xlabel(f"{r['name']} ({r['units']})")
-        ax.set_ylabel("Density")
-        ax.set_title(f"{r['name']} — best: {best.name}")
-        ax.legend(fontsize=8, loc="upper right")
-        ax.set_xlim(lo, hi)
-
-    fig.tight_layout()
-    out_path = out_dir / "yaml_to_prior_fits.png"
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
-    print(f"\nPlot saved to {out_path}")
 
 
 # ============================================================================
@@ -647,8 +559,6 @@ def process_targets(
     **mcmc_kwargs,
 ) -> dict:
     """Run joint inference across SubmodelTargets and produce parameterized priors.
-
-    This is the new multi-target pipeline replacing the per-target process_yaml().
 
     Args:
         priors_csv: Path to starting priors CSV (pdac_priors.csv)
@@ -705,9 +615,7 @@ def process_targets(
         "num_samples": mcmc_kwargs.get("num_samples", 5000),
         "num_chains": mcmc_kwargs.get("num_chains", 4),
     }
-    result = parameterize_posteriors(
-        samples, targets, translation_sigmas, mcmc_config=mcmc_config
-    )
+    result = parameterize_posteriors(samples, targets, translation_sigmas, mcmc_config=mcmc_config)
 
     # 6. Write output
     if output_dir:
@@ -746,14 +654,16 @@ def _export_marginals_csv(result: dict, csv_path: Path):
         else:
             p1, p2 = 0, 0
 
-        rows.append({
-            "name": param["name"],
-            "median": m["median"],
-            "units": "",
-            "distribution": dist,
-            "dist_param1": p1,
-            "dist_param2": p2,
-        })
+        rows.append(
+            {
+                "name": param["name"],
+                "median": m["median"],
+                "units": "",
+                "distribution": dist,
+                "dist_param1": p1,
+                "dist_param2": p2,
+            }
+        )
 
     df = pd.DataFrame(rows)
     df.to_csv(csv_path, index=False)
@@ -793,8 +703,12 @@ def plot_joint_posteriors(
         fit = DistFit(
             name=m["distribution"],
             params={k: v for k, v in m.items() if k not in ("distribution", "median", "cv")},
-            aic=0, ad_stat=0, ad_crit_5pct=0, ad_pass=True,
-            median=m["median"], cv=m["cv"],
+            aic=0,
+            ad_stat=0,
+            ad_crit_5pct=0,
+            ad_pass=True,
+            median=m["median"],
+            cv=m["cv"],
         )
         ax.plot(x, _dist_pdf(fit, x), "-", lw=2, color="#2563eb", label=f'{m["distribution"]}')
 
@@ -852,8 +766,8 @@ def main():
     if len(sys.argv) < 2:
         print(
             "Usage:\n"
-            "  maple-yaml-to-prior [--plot] [--merge CSV] <yaml_files_or_dirs...>\n"
-            "  maple-yaml-to-prior --priors CSV [--output DIR] [--plot] [--export-csv PATH] <yaml_files_or_dirs...>"
+            "  maple-yaml-to-prior --priors CSV [--output DIR] [--plot] "
+            "[--export-csv PATH] [--reference-db YAML] <yaml_files_or_dirs...>"
         )
         sys.exit(1)
 
@@ -862,40 +776,33 @@ def main():
     do_plot = "--plot" in argv
     argv = [a for a in argv if a != "--plot"]
 
-    # New joint pipeline: --priors CSV
     priors_csv = None
     if "--priors" in argv:
         idx = argv.index("--priors")
         priors_csv = Path(argv[idx + 1])
-        argv = argv[:idx] + argv[idx + 2:]
+        argv = argv[:idx] + argv[idx + 2 :]
 
     output_dir = None
     if "--output" in argv:
         idx = argv.index("--output")
         output_dir = Path(argv[idx + 1])
-        argv = argv[:idx] + argv[idx + 2:]
+        argv = argv[:idx] + argv[idx + 2 :]
 
     export_csv = None
     if "--export-csv" in argv:
         idx = argv.index("--export-csv")
         export_csv = Path(argv[idx + 1])
-        argv = argv[:idx] + argv[idx + 2:]
+        argv = argv[:idx] + argv[idx + 2 :]
 
     reference_db_path = None
     if "--reference-db" in argv:
         idx = argv.index("--reference-db")
         reference_db_path = Path(argv[idx + 1])
-        argv = argv[:idx] + argv[idx + 2:]
+        argv = argv[:idx] + argv[idx + 2 :]
 
-    do_merge = "--merge" in argv
-    argv = [a for a in argv if a != "--merge"]
-    merge_csv = None
-    if do_merge:
-        if argv and Path(argv[0]).suffix == ".csv":
-            merge_csv = Path(argv.pop(0))
-        else:
-            print("ERROR: --merge requires a CSV path")
-            sys.exit(1)
+    if not priors_csv:
+        print("ERROR: --priors CSV is required.")
+        sys.exit(1)
 
     # Collect YAML files
     yaml_files = []
@@ -914,62 +821,14 @@ def main():
         with open(reference_db_path) as f:
             reference_db = pyyaml.safe_load(f)
 
-    # Joint pipeline
-    if priors_csv:
-        print("=" * 80)
-        print("JOINT SUBMODEL PRIOR INFERENCE")
-        print("=" * 80)
-        result = process_targets(
-            priors_csv=priors_csv,
-            yaml_paths=yaml_files,
-            reference_db=reference_db,
-            output_dir=output_dir,
-            plot=do_plot,
-            export_csv=export_csv,
-        )
-        return
-
-    # Legacy per-target pipeline
     print("=" * 80)
-    print("YAML -> PRIOR CONVERSION")
+    print("JOINT SUBMODEL PRIOR INFERENCE")
     print("=" * 80)
-
-    rows = []
-    for yaml_path in yaml_files:
-        print(f"\n--- {yaml_path.name} ---")
-        try:
-            result = process_yaml(yaml_path)
-        except Exception as e:
-            print(f"  SKIP: {e}")
-            continue
-
-        if "error" in result:
-            print(f"  ERROR: {result['error']}")
-            continue
-
-        print(format_report(result))
-        rows.append(result)
-
-    # Print CSV-ready output
-    if rows:
-        print(f"\n{'=' * 80}")
-        print("CSV output:")
-        print(
-            "name,median,units,distribution,dist_param1,dist_param2,"
-            "lower_bound,upper_bound,data_dist"
-        )
-        for r in rows:
-            print(
-                f"{r['name']},{r['median_prior']:.6g},{r['units']},"
-                f"lognormal,{r['mu_prior']:.6f},{r['sigma_prior']:.6f},,"
-                f",{r['best_dist'].name}"
-            )
-
-    # Merge into priors CSV if requested
-    if do_merge and rows and merge_csv:
-        n_upd, n_add = merge_into_priors_csv(rows, merge_csv)
-        print(f"\nMerged into {merge_csv}: {n_upd} updated, {n_add} added")
-
-    # Plot if requested
-    if do_plot and rows:
-        plot_fits(rows, Path("figures/yaml_to_prior"))
+    process_targets(
+        priors_csv=priors_csv,
+        yaml_paths=yaml_files,
+        reference_db=reference_db,
+        output_dir=output_dir,
+        plot=do_plot,
+        export_csv=export_csv,
+    )

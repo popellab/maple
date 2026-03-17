@@ -232,7 +232,7 @@ The preferred way to create SubmodelTarget YAMLs is interactively via the MCP se
 **Two tools are available:**
 
 - `extract_target(target_type)` — Loads the full extraction guide: multi-step workflow, prompt template, valid enum values, and hard rules. Call this before starting any extraction session.
-- `validate_target(yaml_path, papers_dir)` — Runs schema validation (Pydantic), prior derivation (bootstrap + forward model inversion + distribution fitting + translation sigma), and snippet verification against source PDFs.
+- `validate_target(yaml_path, priors_csv, papers_dir)` — Runs schema validation (Pydantic), prior derivation via NumPyro MCMC (bootstrap + forward model + distribution fitting + translation sigma), and snippet verification against source PDFs. `priors_csv` is required (e.g., `parameters/pdac_priors.csv`).
 
 **Typical workflow:**
 
@@ -506,4 +506,4 @@ pytest
 
 - `qsp-extract` — Run extraction workflows (calibration_target or submodel_target)
 - `qsp-export-model` — Export SimBiology model structure to JSON
-- `maple-yaml-to-prior` — Convert SubmodelTarget YAMLs to priors (joint inference with `--priors CSV`, legacy per-target without)
+- `maple-yaml-to-prior` — Convert SubmodelTarget YAMLs to priors via joint NumPyro MCMC (requires `--priors CSV`)

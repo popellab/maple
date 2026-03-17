@@ -208,13 +208,11 @@ The goal is to let the data speak — the observation_code should be a
 faithful statistical model of how the reported numbers were generated,
 not a simplification that discards information.
 
-### 6. Forward model must be invertible
+### 6. Forward model must be JAX-traceable
 
-`yaml_to_prior.py` inverts the forward model to recover parameter samples
-from the observation bootstrap. For `algebraic` type models, the code
-should have a simple params → observable mapping that can be inverted
-(identity, linear, or monotonic). Complex forward models may need
-`type: custom_ode` or a structured algebraic type instead.
+`submodel_inference.py` evaluates the forward model inside NumPyro MCMC.
+The code must use only `np.*` functions (mapped to `jax.numpy` at inference
+time). No `scipy`, no `ureg`, no branching on parameter values.
 """
 
 
@@ -291,15 +289,21 @@ def extract_target(target_type: str = "submodel_target") -> str:
 
 
 @mcp.tool()
-def validate_target(yaml_path: str, papers_dir: str | None = None) -> str:
+def validate_target(
+    yaml_path: str,
+    priors_csv: str,
+    papers_dir: str | None = None,
+) -> str:
     """Validate a SubmodelTarget or CalibrationTarget YAML file.
 
-    Runs schema validation (Pydantic), prior derivation (observation code +
-    forward model inversion + distribution fitting + translation sigma), and
-    snippet verification against source PDFs.
+    Runs schema validation (Pydantic), prior derivation via NumPyro MCMC
+    (bootstrap + forward model + distribution fitting + translation sigma),
+    and snippet verification against source PDFs.
 
     Args:
         yaml_path: Absolute path to the YAML file to validate.
+        priors_csv: Path to priors CSV (e.g., pdac_priors.csv).
+            Required for SubmodelTarget prior derivation.
         papers_dir: Optional directory containing source PDFs in
             subdirectories named by source_tag (e.g., papers/Smith2020/).
             If not provided, defaults to ``<yaml_dir>/papers/``.
@@ -324,7 +328,7 @@ def validate_target(yaml_path: str, papers_dir: str | None = None) -> str:
 
     if is_submodel:
         report_lines.append("**Type:** SubmodelTarget\n")
-        report_lines.extend(_validate_submodel_full(path))
+        report_lines.extend(_validate_submodel_full(path, priors_csv=Path(priors_csv)))
     elif is_calibration:
         report_lines.append("**Type:** CalibrationTarget\n")
         report_lines.extend(_validate_calibration(data))
@@ -344,8 +348,8 @@ def validate_target(yaml_path: str, papers_dir: str | None = None) -> str:
     return "\n".join(report_lines)
 
 
-def _validate_submodel_full(yaml_path: Path) -> list[str]:
-    """Run SubmodelTarget schema validation + full yaml_to_prior pipeline."""
+def _validate_submodel_full(yaml_path: Path, priors_csv: Path) -> list[str]:
+    """Run SubmodelTarget schema validation + MCMC prior derivation."""
     lines = []
 
     # Schema validation
@@ -367,18 +371,22 @@ def _validate_submodel_full(yaml_path: Path) -> list[str]:
         lines.append(f"FAIL: Schema validation failed.\n```\n{e}\n```\n")
         return lines
 
-    # Full prior derivation via yaml_to_prior
+    # Full prior derivation via MCMC
     lines.append("## Prior Derivation\n")
     try:
         from maple.core.calibration.yaml_to_prior import format_report, process_yaml
 
-        result = process_yaml(yaml_path)
-        if "error" in result:
-            lines.append(f"FAIL: {result['error']}\n")
+        results = process_yaml(yaml_path, priors_csv=priors_csv)
+        errors = [r for r in results if "error" in r]
+        successes = [r for r in results if "error" not in r]
+        if errors and not successes:
+            lines.append(f"FAIL: {errors[0]['error']}\n")
         else:
             lines.append("PASS: Prior derivation succeeded.\n")
             lines.append("```")
-            lines.append(format_report(result))
+            for result in results:
+                lines.append(format_report(result))
+                lines.append("")
             lines.append("```\n")
     except Exception as e:
         lines.append(f"WARNING: Prior derivation failed: {e}\n")

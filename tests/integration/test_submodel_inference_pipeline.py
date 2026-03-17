@@ -458,6 +458,85 @@ def mock_doi_resolution():
 # =============================================================================
 
 
+class TestProcessYaml:
+    """Test process_yaml (single-target MCMC, used by MCP validation)."""
+
+    def test_single_param_returns_expected_keys(self, tmp_path):
+        from maple.core.calibration.yaml_to_prior import process_yaml
+
+        (tmp_path / "ec50.yaml").write_text(EC50_YAML)
+        (tmp_path / "priors.csv").write_text(PRIORS_CSV)
+
+        results = process_yaml(tmp_path / "ec50.yaml", priors_csv=tmp_path / "priors.csv")
+
+        assert len(results) == 1
+        result = results[0]
+        assert "error" not in result
+        expected_keys = {
+            "name",
+            "units",
+            "target_id",
+            "best_dist",
+            "all_fits",
+            "param_samples",
+            "median_data",
+            "sigma_data",
+            "translation_sigma",
+            "translation_breakdown",
+            "median_prior",
+            "sigma_prior",
+            "mu_prior",
+            "cv_data",
+            "cv_prior",
+        }
+        assert expected_keys <= set(result.keys())
+        assert result["name"] == "EC50_test"
+        assert result["units"] == "nanomolarity"
+        assert 0.0005 < result["median_prior"] < 0.05
+
+    def test_format_report_works(self, tmp_path):
+        from maple.core.calibration.yaml_to_prior import format_report, process_yaml
+
+        (tmp_path / "ec50.yaml").write_text(EC50_YAML)
+        (tmp_path / "priors.csv").write_text(PRIORS_CSV)
+
+        results = process_yaml(tmp_path / "ec50.yaml", priors_csv=tmp_path / "priors.csv")
+        report = format_report(results[0])
+
+        assert "EC50_test" in report
+        assert "lognormal" in report.lower() or "gamma" in report.lower()
+
+    def test_missing_prior_returns_error(self, tmp_path):
+        from maple.core.calibration.yaml_to_prior import process_yaml
+
+        (tmp_path / "ec50.yaml").write_text(EC50_YAML)
+        # CSV missing EC50_test
+        (tmp_path / "priors.csv").write_text(
+            "name,median,units,distribution,dist_param1,dist_param2\n"
+            "other_param,1.0,dimensionless,lognormal,0.0,1.0\n"
+        )
+
+        results = process_yaml(tmp_path / "ec50.yaml", priors_csv=tmp_path / "priors.csv")
+        assert len(results) == 1
+        assert "error" in results[0]
+        assert "not found in priors CSV" in results[0]["error"]
+
+    def test_multi_param_hill(self, tmp_path):
+        from maple.core.calibration.yaml_to_prior import process_yaml
+
+        (tmp_path / "hill.yaml").write_text(HILL_YAML)
+        (tmp_path / "priors.csv").write_text(PRIORS_CSV)
+
+        # process_yaml reports on all parameters
+        results = process_yaml(tmp_path / "hill.yaml", priors_csv=tmp_path / "priors.csv")
+        assert len(results) == 2
+        names = {r["name"] for r in results}
+        assert names == {"d_crit", "n_hill"}
+        for r in results:
+            assert "error" not in r
+            assert r["median_prior"] > 0
+
+
 class TestSingleParameterIdentity:
     """Test case 1: EC50 with identity forward model."""
 
