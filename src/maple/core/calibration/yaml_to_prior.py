@@ -633,6 +633,214 @@ def plot_fits(results: list[dict], out_dir: Path):
 
 
 # ============================================================================
+# Joint inference orchestrator
+# ============================================================================
+
+
+def process_targets(
+    priors_csv: Path,
+    yaml_paths: list[Path],
+    reference_db: Optional[dict] = None,
+    output_dir: Optional[Path] = None,
+    plot: bool = False,
+    export_csv: Optional[Path] = None,
+    **mcmc_kwargs,
+) -> dict:
+    """Run joint inference across SubmodelTargets and produce parameterized priors.
+
+    This is the new multi-target pipeline replacing the per-target process_yaml().
+
+    Args:
+        priors_csv: Path to starting priors CSV (pdac_priors.csv)
+        yaml_paths: Paths to SubmodelTarget YAML files
+        reference_db: Optional reference values for ReferenceRef resolution
+        output_dir: Where to write submodel_priors.yaml and plots
+        plot: Whether to generate diagnostic plots
+        export_csv: Optional path to write updated CSV
+        **mcmc_kwargs: Passed to run_joint_inference (num_warmup, num_samples, etc.)
+
+    Returns:
+        Result dict from parameterize_posteriors
+    """
+    import warnings
+
+    import yaml as pyyaml
+
+    from maple.core.calibration.posterior_parameterizer import (
+        parameterize_posteriors,
+        write_priors_yaml,
+    )
+    from maple.core.calibration.submodel_inference import (
+        load_priors_from_csv,
+        run_joint_inference,
+    )
+
+    # 1. Load starting priors
+    prior_specs = load_priors_from_csv(priors_csv)
+    print(f"Loaded {len(prior_specs)} priors from {priors_csv}")
+
+    # 2. Load and validate targets
+    targets = []
+    for p in yaml_paths:
+        with open(p) as f:
+            data = pyyaml.safe_load(f)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            target = SubmodelTarget(**data)
+        targets.append(target)
+    print(f"Loaded {len(targets)} SubmodelTargets")
+
+    # 3. Run joint inference
+    samples = run_joint_inference(prior_specs, targets, reference_db, **mcmc_kwargs)
+
+    # 4. Collect translation sigmas for provenance
+    translation_sigmas = {}
+    for target in targets:
+        sigma, breakdown = compute_translation_sigma(target.source_relevance)
+        translation_sigmas[target.target_id] = (sigma, breakdown)
+
+    # 5. Parameterize posteriors
+    mcmc_config = {
+        "num_warmup": mcmc_kwargs.get("num_warmup", 1000),
+        "num_samples": mcmc_kwargs.get("num_samples", 5000),
+        "num_chains": mcmc_kwargs.get("num_chains", 4),
+    }
+    result = parameterize_posteriors(
+        samples, targets, translation_sigmas, mcmc_config=mcmc_config
+    )
+
+    # 6. Write output
+    if output_dir:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        yaml_path = output_dir / "submodel_priors.yaml"
+        write_priors_yaml(result, yaml_path)
+        print(f"\nPriors written to {yaml_path}")
+
+    # 7. Export CSV if requested
+    if export_csv:
+        _export_marginals_csv(result, export_csv)
+        print(f"CSV exported to {export_csv}")
+
+    # 8. Plot if requested
+    if plot and output_dir:
+        plot_joint_posteriors(samples, result, output_dir)
+
+    return result
+
+
+def _export_marginals_csv(result: dict, csv_path: Path):
+    """Export marginal fits to CSV format compatible with pdac_priors.csv."""
+    import pandas as pd
+
+    rows = []
+    for param in result["parameters"]:
+        m = param["marginal"]
+        dist = m["distribution"]
+        if dist == "lognormal":
+            p1, p2 = m["mu"], m["sigma"]
+        elif dist == "gamma":
+            p1, p2 = m["shape"], m["scale"]
+        elif dist == "invgamma":
+            p1, p2 = m["shape"], m["scale"]
+        else:
+            p1, p2 = 0, 0
+
+        rows.append({
+            "name": param["name"],
+            "median": m["median"],
+            "units": "",
+            "distribution": dist,
+            "dist_param1": p1,
+            "dist_param2": p2,
+        })
+
+    df = pd.DataFrame(rows)
+    df.to_csv(csv_path, index=False)
+
+
+def plot_joint_posteriors(
+    samples: dict[str, np.ndarray],
+    result: dict,
+    output_dir: Path,
+):
+    """Plot posterior diagnostics: marginal histograms + corner plot."""
+    import matplotlib.pyplot as plt
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    param_entries = result["parameters"]
+    n = len(param_entries)
+
+    # --- Marginal plots ---
+    fig, axes = plt.subplots(n, 1, figsize=(8, 3.0 * n), squeeze=False)
+
+    for i, entry in enumerate(param_entries):
+        ax = axes[i, 0]
+        name = entry["name"]
+        s = samples[name]
+        m = entry["marginal"]
+
+        # Histogram
+        positive = s[s > 0]
+        ax.hist(positive, bins=80, density=True, alpha=0.35, color="#888", edgecolor="none")
+
+        # Fitted marginal PDF
+        lo, hi = np.percentile(positive, [0.5, 99.5])
+        x = np.linspace(lo, hi, 500)
+
+        fit = DistFit(
+            name=m["distribution"],
+            params={k: v for k, v in m.items() if k not in ("distribution", "median", "cv")},
+            aic=0, ad_stat=0, ad_crit_5pct=0, ad_pass=True,
+            median=m["median"], cv=m["cv"],
+        )
+        ax.plot(x, _dist_pdf(fit, x), "-", lw=2, color="#2563eb", label=f'{m["distribution"]}')
+
+        ax.set_xlabel(name)
+        ax.set_ylabel("Density")
+        ax.set_title(f"{name} — {m['distribution']} (median={m['median']:.3g})")
+        ax.legend(fontsize=8)
+        ax.set_xlim(lo, hi)
+
+    fig.tight_layout()
+    path = output_dir / "posterior_marginals.png"
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Marginal plots saved to {path}")
+
+    # --- Corner plot for copula participants ---
+    if "copula" in result and len(result["copula"]["parameters"]) >= 2:
+        cop_params = result["copula"]["parameters"]
+        nc = len(cop_params)
+        fig, axes = plt.subplots(nc, nc, figsize=(3 * nc, 3 * nc))
+
+        for i in range(nc):
+            for j in range(nc):
+                ax = axes[i, j] if nc > 1 else axes
+                si = samples[cop_params[i]]
+                sj = samples[cop_params[j]]
+
+                if i == j:
+                    ax.hist(si, bins=50, density=True, alpha=0.5, color="#2563eb")
+                    ax.set_xlabel(cop_params[i] if i == nc - 1 else "")
+                elif i > j:
+                    ax.scatter(sj, si, s=1, alpha=0.1, color="#888")
+                    ax.set_xlabel(cop_params[j] if i == nc - 1 else "")
+                    ax.set_ylabel(cop_params[i] if j == 0 else "")
+                else:
+                    ax.axis("off")
+
+        fig.suptitle("Posterior correlations (copula participants)")
+        fig.tight_layout()
+        path = output_dir / "posterior_corner.png"
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+        print(f"Corner plot saved to {path}")
+
+
+# ============================================================================
 # CLI
 # ============================================================================
 
@@ -642,30 +850,86 @@ def main():
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: maple-yaml-to-prior [--plot] [--merge CSV] <yaml_files_or_dirs...>")
+        print(
+            "Usage:\n"
+            "  maple-yaml-to-prior [--plot] [--merge CSV] <yaml_files_or_dirs...>\n"
+            "  maple-yaml-to-prior --priors CSV [--output DIR] [--plot] [--export-csv PATH] <yaml_files_or_dirs...>"
+        )
         sys.exit(1)
 
-    do_plot = "--plot" in sys.argv
-    do_merge = "--merge" in sys.argv
-    args = [a for a in sys.argv[1:] if a not in ("--plot", "--merge")]
+    # Parse flags
+    argv = sys.argv[1:]
+    do_plot = "--plot" in argv
+    argv = [a for a in argv if a != "--plot"]
 
-    # --merge requires a CSV path as next arg
+    # New joint pipeline: --priors CSV
+    priors_csv = None
+    if "--priors" in argv:
+        idx = argv.index("--priors")
+        priors_csv = Path(argv[idx + 1])
+        argv = argv[:idx] + argv[idx + 2:]
+
+    output_dir = None
+    if "--output" in argv:
+        idx = argv.index("--output")
+        output_dir = Path(argv[idx + 1])
+        argv = argv[:idx] + argv[idx + 2:]
+
+    export_csv = None
+    if "--export-csv" in argv:
+        idx = argv.index("--export-csv")
+        export_csv = Path(argv[idx + 1])
+        argv = argv[:idx] + argv[idx + 2:]
+
+    reference_db_path = None
+    if "--reference-db" in argv:
+        idx = argv.index("--reference-db")
+        reference_db_path = Path(argv[idx + 1])
+        argv = argv[:idx] + argv[idx + 2:]
+
+    do_merge = "--merge" in argv
+    argv = [a for a in argv if a != "--merge"]
     merge_csv = None
     if do_merge:
-        if args and Path(args[0]).suffix == ".csv":
-            merge_csv = Path(args.pop(0))
+        if argv and Path(argv[0]).suffix == ".csv":
+            merge_csv = Path(argv.pop(0))
         else:
-            print("ERROR: --merge requires a CSV path (e.g., --merge scenarios/pdac_priors.csv)")
+            print("ERROR: --merge requires a CSV path")
             sys.exit(1)
 
+    # Collect YAML files
     yaml_files = []
-    for arg in args:
+    for arg in argv:
         p = Path(arg)
         if p.is_dir():
             yaml_files.extend(sorted(p.glob("*.yaml")))
         else:
             yaml_files.append(p)
 
+    # Load reference DB if provided
+    reference_db = None
+    if reference_db_path:
+        import yaml as pyyaml
+
+        with open(reference_db_path) as f:
+            reference_db = pyyaml.safe_load(f)
+
+    # Joint pipeline
+    if priors_csv:
+        print("=" * 80)
+        print("JOINT SUBMODEL PRIOR INFERENCE")
+        print("=" * 80)
+        result = process_targets(
+            priors_csv=priors_csv,
+            yaml_paths=yaml_files,
+            reference_db=reference_db,
+            output_dir=output_dir,
+            plot=do_plot,
+            export_csv=export_csv,
+        )
+        return
+
+    # Legacy per-target pipeline
     print("=" * 80)
     print("YAML -> PRIOR CONVERSION")
     print("=" * 80)
