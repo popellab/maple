@@ -522,14 +522,29 @@ def build_target_likelihoods(
       3. Run bootstrap on each error model entry
       4. Package into TargetLikelihood
 
-    Validates that all parameter names exist in prior_specs.
+    Validates that all non-nuisance parameter names exist in prior_specs.
+    Injects nuisance parameters' inline priors into prior_specs.
     """
     likelihoods = []
 
     for target in targets:
-        # Validate parameter coverage
+        # Validate parameter coverage and inject nuisance priors
         for param in target.calibration.parameters:
-            if param.name not in prior_specs:
+            if param.nuisance:
+                # Inject inline prior into prior_specs (if not already present
+                # from another target sharing the same nuisance parameter)
+                if param.name not in prior_specs:
+                    p = param.prior
+                    prior_specs[param.name] = PriorSpec(
+                        name=param.name,
+                        distribution=p.distribution,
+                        units=param.units,
+                        mu=p.mu,
+                        sigma=p.sigma,
+                        lower=p.lower,
+                        upper=p.upper,
+                    )
+            elif param.name not in prior_specs:
                 raise ValueError(
                     f"Parameter '{param.name}' in target '{target.target_id}' "
                     f"not found in priors CSV. Available: {sorted(prior_specs.keys())}"

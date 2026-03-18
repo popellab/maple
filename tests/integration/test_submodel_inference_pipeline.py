@@ -1128,3 +1128,251 @@ class TestCustomODE:
         val_day8 = float(fns[1](params))
         assert val_day8 > val_day4
         assert val_day8 < 1.0
+
+
+# =============================================================================
+# Test case 7: Nuisance parameters
+# =============================================================================
+
+# Same as CUSTOM_ODE_YAML but k_prolif is a nuisance parameter with inline prior
+NUISANCE_YAML = f"""\
+target_id: nuisance_test
+
+study_interpretation: >
+  Two-state activation model where k_prolif is needed for the ODE but is not
+  a QSP model parameter. It is marked nuisance so it is estimated during MCMC
+  but excluded from output priors.
+
+key_assumptions:
+  - "First-order activation kinetics"
+  - "Logistic proliferation of activated cells"
+
+experimental_context:
+  species: human
+  system: in_vitro
+
+primary_data_source:
+  doi: "10.1234/test.006"
+  source_tag: Test2024g
+  title: "Test paper for custom ODE"
+
+secondary_data_sources: []
+
+inputs:
+  - name: Q0
+    value: 900.0
+    units: cell
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Methods"
+    value_snippet: "900 quiescent cells"
+  - name: A0
+    value: 100.0
+    units: cell
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Methods"
+    value_snippet: "100 activated cells"
+  - name: carrying_capacity
+    value: 5000.0
+    units: cell
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Methods"
+    value_snippet: "carrying capacity of 5000 cells"
+  - name: frac_day4_mean
+    value: 0.55
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Figure 3A"
+    value_snippet: "activated fraction was approximately 55% at day 4"
+  - name: frac_day4_sd
+    value: 0.15
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Figure 3A"
+    value_snippet: "log-scale SD approximately 0.15"
+  - name: frac_day8_mean
+    value: 0.82
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Figure 3A"
+    value_snippet: "activated fraction was approximately 82% at day 8"
+  - name: frac_day8_sd
+    value: 0.10
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Figure 3A"
+    value_snippet: "log-scale SD approximately 0.10"
+  - name: n_custom
+    value: 5
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Methods"
+    value_snippet: "n = 5 independent experiments"
+
+calibration:
+  parameters:
+    - name: k_activate
+      units: 1/day
+    - name: k_prolif
+      units: 1/day
+      nuisance: true
+      prior:
+        distribution: lognormal
+        mu: -2.3
+        sigma: 0.8
+  forward_model:
+    type: custom_ode
+    code: |
+      def ode(t, y, params, inputs):
+          import numpy as np
+          Q, A = y[0], y[1]
+          k_act = params['k_activate']
+          k_p = params['k_prolif']
+          K = inputs['carrying_capacity']
+          total = Q + A
+          dQ = -k_act * Q
+          dA = k_act * Q + k_p * A * (1.0 - total / K)
+          return [dQ, dA]
+    independent_variable:
+      name: time
+      units: day
+      span: [0, 10]
+    state_variables:
+      - name: Q
+        units: cell
+        initial_condition:
+          input_ref: Q0
+          rationale: "Initial quiescent count"
+      - name: A
+        units: cell
+        initial_condition:
+          input_ref: A0
+          rationale: "Initial activated count"
+    data_rationale: "Activation fraction over time"
+    submodel_rationale: "Two-state activation + proliferation"
+  error_model:
+    - name: frac_day4
+      units: dimensionless
+      observable:
+        type: custom
+        state_variables: [Q, A]
+        code: |
+          def compute(t, y, y_start):
+              Q, A = y[0], y[1]
+              return A / (Q + A)
+      evaluation_points: [4.0]
+      uses_inputs: [frac_day4_mean, frac_day4_sd]
+      sample_size_input: n_custom
+      observation_code: |
+        def derive_observation(inputs, sample_size, rng, n_bootstrap):
+            import numpy as np
+            median = inputs['frac_day4_mean']
+            log_sd = inputs['frac_day4_sd']
+            n = int(sample_size)
+            return np.exp(rng.normal(np.log(median), log_sd / np.sqrt(n), n_bootstrap))
+    - name: frac_day8
+      units: dimensionless
+      observable:
+        type: custom
+        state_variables: [Q, A]
+        code: |
+          def compute(t, y, y_start):
+              Q, A = y[0], y[1]
+              return A / (Q + A)
+      evaluation_points: [8.0]
+      uses_inputs: [frac_day8_mean, frac_day8_sd]
+      sample_size_input: n_custom
+      observation_code: |
+        def derive_observation(inputs, sample_size, rng, n_bootstrap):
+            import numpy as np
+            median = inputs['frac_day8_mean']
+            log_sd = inputs['frac_day8_sd']
+            n = int(sample_size)
+            return np.exp(rng.normal(np.log(median), log_sd / np.sqrt(n), n_bootstrap))
+  identifiability_notes: >
+    k_activate is the parameter of interest. k_prolif is a nuisance parameter
+    needed for the ODE dynamics but not part of the QSP model.
+
+{_SOURCE_RELEVANCE}
+"""
+
+
+class TestNuisanceParameter:
+    """Test case 7: Nuisance parameter excluded from output."""
+
+    def test_nuisance_excluded_from_output(self, tmp_path):
+        from maple.core.calibration.yaml_to_prior import process_targets
+
+        (tmp_path / "nuisance.yaml").write_text(NUISANCE_YAML)
+        (tmp_path / "priors.csv").write_text(PRIORS_CSV)
+
+        result = process_targets(
+            priors_csv=tmp_path / "priors.csv",
+            yaml_paths=[tmp_path / "nuisance.yaml"],
+            output_dir=tmp_path / "output",
+            num_warmup=200,
+            num_samples=500,
+            num_chains=1,
+        )
+
+        # Only k_activate should appear in output (k_prolif is nuisance)
+        output_names = {p["name"] for p in result["parameters"]}
+        assert output_names == {"k_activate"}
+        assert result["metadata"]["n_parameters"] == 1
+
+        # k_activate should have a reasonable posterior
+        k = result["parameters"][0]
+        assert k["marginal"]["median"] > 0
+
+        # Output YAML should exist and not contain k_prolif
+        yaml_path = tmp_path / "output" / "submodel_priors.yaml"
+        assert yaml_path.exists()
+        content = yaml_path.read_text()
+        assert "k_activate" in content
+        assert "k_prolif" not in content
+
+    def test_nuisance_not_in_csv_ok(self, tmp_path):
+        """Nuisance params should not require an entry in the priors CSV."""
+        from maple.core.calibration.yaml_to_prior import process_yaml
+
+        (tmp_path / "nuisance.yaml").write_text(NUISANCE_YAML)
+        # CSV has k_activate but NOT k_prolif — that's fine since k_prolif is nuisance
+        csv_without_prolif = (
+            "name,median,units,distribution,dist_param1,dist_param2\n"
+            "k_activate,0.2,1/day,lognormal,-1.6,0.8\n"
+        )
+        (tmp_path / "priors.csv").write_text(csv_without_prolif)
+
+        results = process_yaml(tmp_path / "nuisance.yaml", priors_csv=tmp_path / "priors.csv")
+
+        # Should succeed, and only report k_activate
+        assert len(results) == 1
+        assert results[0]["name"] == "k_activate"
+        assert "error" not in results[0]
+
+    def test_nuisance_requires_inline_prior(self):
+        """Nuisance=True without prior field should fail validation."""
+
+        from maple.core.calibration.submodel_target import Parameter
+
+        with pytest.raises(Exception, match="must have an inline prior"):
+            Parameter(name="k_test", units="1/day", nuisance=True)
+
+    def test_non_nuisance_rejects_inline_prior(self):
+        """Nuisance=False with prior field should fail validation."""
+        from maple.core.calibration.submodel_target import InlinePrior, Parameter
+
+        with pytest.raises(Exception, match="must not have an inline prior"):
+            Parameter(
+                name="k_test",
+                units="1/day",
+                nuisance=False,
+                prior=InlinePrior(distribution="lognormal", mu=0.0, sigma=1.0),
+            )

@@ -165,14 +165,21 @@ def parameterize_posteriors(
     Returns:
         Result dict with keys: metadata, parameters, copula, translation_sigma
     """
-    param_names = sorted(samples.keys())
+    # Exclude nuisance parameters from output
+    nuisance_names = set()
+    for target in targets:
+        for param in target.calibration.parameters:
+            if param.nuisance:
+                nuisance_names.add(param.name)
+    output_samples = {k: v for k, v in samples.items() if k not in nuisance_names}
+    param_names = sorted(output_samples.keys())
 
     # Fit marginals
-    marginals = fit_marginals(samples)
+    marginals = fit_marginals(output_samples)
 
     # Build copula
     if len(param_names) > 1:
-        samples_matrix = np.column_stack([samples[n] for n in param_names])
+        samples_matrix = np.column_stack([output_samples[n] for n in param_names])
         marginal_cdfs = [_build_marginal_cdf(marginals[n]) for n in param_names]
         R = fit_gaussian_copula(samples_matrix, marginal_cdfs)
         R_thresh, copula_params = threshold_copula(R, param_names, copula_threshold)
@@ -180,11 +187,12 @@ def parameterize_posteriors(
         R_thresh = np.array([[1.0]])
         copula_params = []
 
-    # Build parameter-to-target mapping
+    # Build parameter-to-target mapping (excluding nuisance)
     param_sources = {}
     for target in targets:
         for param in target.calibration.parameters:
-            param_sources.setdefault(param.name, []).append(target.target_id)
+            if not param.nuisance:
+                param_sources.setdefault(param.name, []).append(target.target_id)
 
     # Assemble result
     parameters = []
@@ -224,7 +232,7 @@ def parameterize_posteriors(
                 "breakdown": {k: float(v) for k, v in breakdown.items()},
             }
 
-    n_samples = len(next(iter(samples.values())))
+    n_samples = len(next(iter(output_samples.values()))) if output_samples else 0
     metadata = {
         "generated_by": "maple.core.calibration.posterior_parameterizer",
         "n_targets": len(targets),

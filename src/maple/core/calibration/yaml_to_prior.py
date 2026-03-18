@@ -322,12 +322,13 @@ def process_yaml(yaml_path: Path, priors_csv: Path) -> list[dict]:
     params = target.calibration.parameters
     first_name = params[0].name
 
-    # Load priors, filter to only this target's parameters for fast MCMC
+    # Load priors, filter to only this target's non-nuisance parameters for fast MCMC
+    # (nuisance parameters carry inline priors and are injected by build_target_likelihoods)
     all_priors = load_priors_from_csv(priors_csv)
-    target_param_names = {p.name for p in params}
-    prior_specs = {k: v for k, v in all_priors.items() if k in target_param_names}
+    non_nuisance_names = {p.name for p in params if not p.nuisance}
+    prior_specs = {k: v for k, v in all_priors.items() if k in non_nuisance_names}
 
-    missing = target_param_names - set(prior_specs.keys())
+    missing = non_nuisance_names - set(prior_specs.keys())
     if missing:
         return [
             {
@@ -351,9 +352,11 @@ def process_yaml(yaml_path: Path, priors_csv: Path) -> list[dict]:
     # Translation sigma (shared across parameters for this target)
     trans_sigma, breakdown = compute_translation_sigma(target.source_relevance)
 
-    # Fit candidate distributions to each parameter's marginal posterior
+    # Fit candidate distributions to each non-nuisance parameter's marginal posterior
     results = []
     for param in params:
+        if param.nuisance:
+            continue
         pname = param.name
         punits = param.units
         param_samples = samples[pname]
@@ -620,13 +623,24 @@ def process_targets(
         targets.append(target)
     print(f"Loaded {len(targets)} SubmodelTargets")
 
-    # 3. Filter priors to only parameters referenced by targets
+    # 3. Filter priors to only non-nuisance parameters referenced by targets
+    #    (nuisance parameters carry inline priors and are injected by build_target_likelihoods)
     target_params = set()
     for target in targets:
         for param in target.calibration.parameters:
-            target_params.add(param.name)
+            if not param.nuisance:
+                target_params.add(param.name)
     prior_specs = {k: v for k, v in all_prior_specs.items() if k in target_params}
-    print(f"Fitting {len(prior_specs)} parameters (of {len(all_prior_specs)} total)")
+    n_nuisance = sum(
+        1
+        for t in targets
+        for p in t.calibration.parameters
+        if p.nuisance and p.name not in prior_specs
+    )
+    print(
+        f"Fitting {len(prior_specs) + n_nuisance} parameters "
+        f"({len(prior_specs)} from CSV, {n_nuisance} nuisance)"
+    )
 
     # 4. Run joint inference
     samples, _diagnostics = run_joint_inference(prior_specs, targets, reference_db, **mcmc_kwargs)

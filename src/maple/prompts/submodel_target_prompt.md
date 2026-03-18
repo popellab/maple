@@ -28,6 +28,25 @@ parameters, but you MAY (and often should) include additional model parameters
 when mechanistically necessary. All parameters in `calibration.parameters`
 will be jointly inferred during Bayesian calibration.
 
+**Nuisance parameters:** If the forward model requires a parameter that is NOT
+in the QSP model (e.g., a proliferation rate needed to constrain an activation
+rate), mark it `nuisance: true` and provide an inline `prior`:
+```yaml
+parameters:
+  - name: k_activation     # QSP parameter — prior from CSV
+    units: 1/day
+  - name: k_prolif          # not in QSP model — nuisance
+    units: 1/day
+    nuisance: true
+    prior:
+      distribution: lognormal
+      mu: -2.3
+      sigma: 0.8
+```
+Nuisance parameters are sampled during MCMC (helping constrain the QSP
+parameters) but excluded from the output priors. Only nuisance parameters may
+have an inline `prior`; QSP parameters always get priors from the CSV.
+
 {{USED_PRIMARY_STUDIES}}
 
 ---

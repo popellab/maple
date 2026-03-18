@@ -50,6 +50,21 @@ parameters:
     units: 1/day
 ```
 
+**Nuisance parameters** — needed by the forward model but not in the QSP model. Carry their own inline prior, sampled during MCMC but excluded from output:
+```yaml
+parameters:
+  - name: k_activation
+    units: 1/day
+  - name: k_prolif
+    units: 1/day
+    nuisance: true
+    prior:
+      distribution: lognormal
+      mu: -2.3
+      sigma: 0.8
+```
+Validators enforce: `nuisance: true` requires `prior`; non-nuisance forbids `prior`.
+
 **Forward model types** (discriminated union in `calibration.forward_model`):
 - `exponential_growth`: dy/dt = k * y
 - `first_order_decay`: dy/dt = -k * y

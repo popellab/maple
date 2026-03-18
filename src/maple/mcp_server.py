@@ -72,7 +72,7 @@ def _build_schema_overview() -> str:
         "│   ├── source_ref, source_location",
         "│   └── value_snippet | table_excerpt | figure_excerpt  # provenance (at least one required)",
         "├── calibration",
-        "│   ├── parameters: [{name, units}]        # Priors come from pdac_priors.csv, NOT the YAML",
+        "│   ├── parameters: [{name, units, nuisance?, prior?}]  # QSP priors from CSV; nuisance: inline prior",
         "│   ├── forward_model: ForwardModel        # Physics/math: params → predictions",
         f"│   │   ├── type: {fm_type_str}",
         "│   │   ├── state_variables: [{name, units, initial_condition}]  # For ODE models",

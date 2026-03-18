@@ -72,6 +72,8 @@ source_relevance:
 
 Forward model types include algebraic formulas, dose-response curves (`direct_fit`), power laws, and ODE systems — both structured types with analytical solutions (`exponential_growth`, `first_order_decay`, `logistic`, etc.) and arbitrary user-provided ODEs (`custom_ode`) integrated numerically via diffrax. The source relevance assessment maps to a translation sigma that inflates the likelihood during inference — so mouse data naturally gets less weight than human data constraining the same parameter.
 
+Parameters can be marked `nuisance: true` when needed by the forward model but not part of the QSP model (e.g., a proliferation rate that helps constrain an activation rate). Nuisance parameters carry their own inline prior, are sampled during MCMC, but are excluded from the output priors.
+
 There's also a **CalibrationTarget** schema for clinical/in vivo observables (biopsies, blood draws) that require full model simulation. These feed into Stage 2.
 
 ## LLM-assisted extraction

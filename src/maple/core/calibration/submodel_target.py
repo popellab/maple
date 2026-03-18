@@ -168,13 +168,56 @@ class Input(BaseModel):
 # =============================================================================
 
 
+class InlinePrior(BaseModel):
+    """Inline prior specification for nuisance parameters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    distribution: str = Field(description="Distribution: lognormal, normal, or uniform")
+    mu: Optional[float] = Field(default=None, description="Location parameter (lognormal, normal)")
+    sigma: Optional[float] = Field(default=None, description="Scale parameter (lognormal, normal)")
+    lower: Optional[float] = Field(default=None, description="Lower bound (uniform)")
+    upper: Optional[float] = Field(default=None, description="Upper bound (uniform)")
+
+
 class Parameter(BaseModel):
-    """A parameter to be estimated during inference."""
+    """A parameter to be estimated during inference.
+
+    Set ``nuisance=True`` for parameters that are needed by the forward model
+    but are not part of the full QSP model (e.g., a proliferation rate that
+    helps constrain the activation rate of interest). Nuisance parameters:
+      - carry their own inline ``prior`` (since they are not in the priors CSV)
+      - are sampled during MCMC alongside QSP parameters
+      - are excluded from the output marginals and copula
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Parameter name from the full QSP model")
     units: str = Field(description="Parameter units")
+    nuisance: bool = Field(
+        default=False,
+        description="If true, parameter is estimated during MCMC but excluded from output priors",
+    )
+    prior: Optional[InlinePrior] = Field(
+        default=None,
+        description="Inline prior specification. Required for nuisance parameters, "
+        "forbidden for QSP parameters (which get priors from the CSV).",
+    )
+
+    @model_validator(mode="after")
+    def validate_nuisance_prior(self):
+        """Nuisance parameters must have an inline prior; non-nuisance parameters must not."""
+        if self.nuisance and self.prior is None:
+            raise ValueError(
+                f"Nuisance parameter '{self.name}' must have an inline prior specification."
+            )
+        if not self.nuisance and self.prior is not None:
+            raise ValueError(
+                f"Non-nuisance parameter '{self.name}' must not have an inline prior. "
+                f"QSP parameters get priors from the CSV."
+            )
+        return self
 
 
 # =============================================================================
