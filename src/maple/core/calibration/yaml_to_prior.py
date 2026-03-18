@@ -606,8 +606,8 @@ def process_targets(
     )
 
     # 1. Load starting priors
-    prior_specs = load_priors_from_csv(priors_csv)
-    print(f"Loaded {len(prior_specs)} priors from {priors_csv}")
+    all_prior_specs = load_priors_from_csv(priors_csv)
+    print(f"Loaded {len(all_prior_specs)} priors from {priors_csv}")
 
     # 2. Load and validate targets
     targets = []
@@ -620,16 +620,24 @@ def process_targets(
         targets.append(target)
     print(f"Loaded {len(targets)} SubmodelTargets")
 
-    # 3. Run joint inference
+    # 3. Filter priors to only parameters referenced by targets
+    target_params = set()
+    for target in targets:
+        for param in target.calibration.parameters:
+            target_params.add(param.name)
+    prior_specs = {k: v for k, v in all_prior_specs.items() if k in target_params}
+    print(f"Fitting {len(prior_specs)} parameters (of {len(all_prior_specs)} total)")
+
+    # 4. Run joint inference
     samples, _diagnostics = run_joint_inference(prior_specs, targets, reference_db, **mcmc_kwargs)
 
-    # 4. Collect translation sigmas for provenance
+    # 5. Collect translation sigmas for provenance
     translation_sigmas = {}
     for target in targets:
         sigma, breakdown = compute_translation_sigma(target.source_relevance)
         translation_sigmas[target.target_id] = (sigma, breakdown)
 
-    # 5. Parameterize posteriors
+    # 6. Parameterize posteriors
     mcmc_config = {
         "num_warmup": mcmc_kwargs.get("num_warmup", 1000),
         "num_samples": mcmc_kwargs.get("num_samples", 5000),
@@ -637,7 +645,7 @@ def process_targets(
     }
     result = parameterize_posteriors(samples, targets, translation_sigmas, mcmc_config=mcmc_config)
 
-    # 6. Write output
+    # 7. Write output
     if output_dir:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -645,12 +653,12 @@ def process_targets(
         write_priors_yaml(result, yaml_path)
         print(f"\nPriors written to {yaml_path}")
 
-    # 7. Export CSV if requested
+    # 8. Export CSV if requested
     if export_csv:
         _export_marginals_csv(result, export_csv)
         print(f"CSV exported to {export_csv}")
 
-    # 8. Plot if requested
+    # 9. Plot if requested
     if plot and output_dir:
         plot_joint_posteriors(samples, result, output_dir)
 

@@ -556,7 +556,7 @@ class TestSingleParameterIdentity:
             num_chains=1,
         )
 
-        assert result["metadata"]["n_parameters"] == 4  # all CSV params
+        assert result["metadata"]["n_parameters"] == 1  # only target-referenced params
         ec50 = [p for p in result["parameters"] if p["name"] == "EC50_test"][0]
         median = ec50["marginal"]["median"]
 
@@ -761,7 +761,7 @@ class TestOutputArtifacts:
 
         assert "metadata" in loaded
         assert "parameters" in loaded
-        assert loaded["metadata"]["n_parameters"] == 4
+        assert loaded["metadata"]["n_parameters"] == 1  # only target-referenced params
 
         for param in loaded["parameters"]:
             assert "name" in param
@@ -788,4 +788,4 @@ class TestOutputArtifacts:
 
         df = pd.read_csv(tmp_path / "exported.csv")
         assert "EC50_test" in df["name"].values
-        assert len(df) == 4  # all params from CSV
+        assert len(df) == 1  # only target-referenced params
