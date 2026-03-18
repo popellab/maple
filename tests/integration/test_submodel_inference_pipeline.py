@@ -421,6 +421,9 @@ EC50_test,0.01,nanomolarity,lognormal,-4.6,2.0
 d_crit,3.5,micrometer,lognormal,1.25,0.5
 n_hill,15.0,dimensionless,lognormal,2.7,0.5
 k_shared,0.1,1/day,lognormal,-2.3,1.0
+k_growth,0.3,1/day,lognormal,-1.2,0.8
+k_activate,0.2,1/day,lognormal,-1.6,0.8
+k_prolif,0.1,1/day,lognormal,-2.3,0.8
 """
 
 
@@ -434,6 +437,8 @@ DOI_TITLES = {
     "10.1083/test.003": "Test paper for transmigration",
     "10.1234/test.004a": "Test paper A for shared parameter",
     "10.1234/test.004b": "Test paper B for shared parameter",
+    "10.1234/test.005": "Test paper for exponential growth",
+    "10.1234/test.006": "Test paper for custom ODE",
 }
 
 
@@ -789,3 +794,337 @@ class TestOutputArtifacts:
         df = pd.read_csv(tmp_path / "exported.csv")
         assert "EC50_test" in df["name"].values
         assert len(df) == 1  # only target-referenced params
+
+
+# =============================================================================
+# Test case 5: Exponential growth ODE (analytical solution)
+# =============================================================================
+
+EXP_GROWTH_YAML = f"""\
+target_id: exp_growth_test
+
+study_interpretation: >
+  Cell proliferation assay measuring cell count over time. Exponential growth
+  model with known initial condition.
+
+key_assumptions:
+  - "Exponential growth during log phase"
+
+experimental_context:
+  species: human
+  system: in_vitro
+
+primary_data_source:
+  doi: "10.1234/test.005"
+  source_tag: Test2024f
+  title: "Test paper for exponential growth"
+
+secondary_data_sources: []
+
+inputs:
+  - name: cell_count_0
+    value: 1000.0
+    units: cell
+    input_type: direct_measurement
+    source_ref: Test2024f
+    source_location: "Methods"
+    value_snippet: "seeded at 1000 cells"
+  - name: cell_count_day3
+    value: 2460.0
+    units: cell
+    input_type: direct_measurement
+    source_ref: Test2024f
+    source_location: "Figure 2"
+    value_snippet: "approximately 2460 cells at day 3"
+  - name: cell_count_day3_sd
+    value: 0.15
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024f
+    source_location: "Figure 2"
+    value_snippet: "log-scale SD approximately 0.15"
+  - name: n_exp_growth
+    value: 4
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024f
+    source_location: "Methods"
+    value_snippet: "n = 4 replicates"
+
+calibration:
+  parameters:
+    - name: k_growth
+      units: 1/day
+  forward_model:
+    type: exponential_growth
+    rate_constant: k_growth
+    independent_variable:
+      name: time
+      units: day
+      span: [0, 3]
+    state_variables:
+      - name: cells
+        units: cell
+        initial_condition:
+          input_ref: cell_count_0
+          rationale: "Seeded cell count"
+    data_rationale: "Cell count measured over time in log phase"
+    submodel_rationale: "Exponential growth before confluence"
+  error_model:
+    - name: cell_count_obs
+      units: cell
+      observable:
+        type: identity
+        state_variables: [cells]
+      evaluation_points: [3.0]
+      uses_inputs: [cell_count_day3, cell_count_day3_sd]
+      sample_size_input: n_exp_growth
+      observation_code: |
+        def derive_observation(inputs, sample_size, rng, n_bootstrap):
+            import numpy as np
+            median = inputs['cell_count_day3']
+            log_sd = inputs['cell_count_day3_sd']
+            n = int(sample_size)
+            return np.exp(rng.normal(np.log(median), log_sd / np.sqrt(n), n_bootstrap))
+  identifiability_notes: "Single parameter from time-course, well-identified."
+
+{_SOURCE_RELEVANCE}
+"""
+
+# =============================================================================
+# Test case 6: Custom ODE (2-state activation with custom observable)
+# =============================================================================
+
+CUSTOM_ODE_YAML = f"""\
+target_id: custom_ode_test
+
+study_interpretation: >
+  Two-state activation model. Quiescent cells (Q) activate to become active (A)
+  with proliferation. Custom observable is the activated fraction A/(Q+A).
+
+key_assumptions:
+  - "First-order activation kinetics"
+  - "Logistic proliferation of activated cells"
+
+experimental_context:
+  species: human
+  system: in_vitro
+
+primary_data_source:
+  doi: "10.1234/test.006"
+  source_tag: Test2024g
+  title: "Test paper for custom ODE"
+
+secondary_data_sources: []
+
+inputs:
+  - name: Q0
+    value: 900.0
+    units: cell
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Methods"
+    value_snippet: "900 quiescent cells"
+  - name: A0
+    value: 100.0
+    units: cell
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Methods"
+    value_snippet: "100 activated cells"
+  - name: carrying_capacity
+    value: 5000.0
+    units: cell
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Methods"
+    value_snippet: "carrying capacity of 5000 cells"
+  - name: frac_day4_mean
+    value: 0.55
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Figure 3A"
+    value_snippet: "activated fraction was approximately 55% at day 4"
+  - name: frac_day4_sd
+    value: 0.15
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Figure 3A"
+    value_snippet: "log-scale SD approximately 0.15"
+  - name: frac_day8_mean
+    value: 0.82
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Figure 3A"
+    value_snippet: "activated fraction was approximately 82% at day 8"
+  - name: frac_day8_sd
+    value: 0.10
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Figure 3A"
+    value_snippet: "log-scale SD approximately 0.10"
+  - name: n_custom
+    value: 5
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Test2024g
+    source_location: "Methods"
+    value_snippet: "n = 5 independent experiments"
+
+calibration:
+  parameters:
+    - name: k_activate
+      units: 1/day
+    - name: k_prolif
+      units: 1/day
+  forward_model:
+    type: custom_ode
+    code: |
+      def ode(t, y, params, inputs):
+          import numpy as np
+          Q, A = y[0], y[1]
+          k_act = params['k_activate']
+          k_p = params['k_prolif']
+          K = inputs['carrying_capacity']
+          total = Q + A
+          dQ = -k_act * Q
+          dA = k_act * Q + k_p * A * (1.0 - total / K)
+          return [dQ, dA]
+    independent_variable:
+      name: time
+      units: day
+      span: [0, 10]
+    state_variables:
+      - name: Q
+        units: cell
+        initial_condition:
+          input_ref: Q0
+          rationale: "Initial quiescent count"
+      - name: A
+        units: cell
+        initial_condition:
+          input_ref: A0
+          rationale: "Initial activated count"
+    data_rationale: "Activation fraction over time"
+    submodel_rationale: "Two-state activation + proliferation"
+  error_model:
+    - name: frac_day4
+      units: dimensionless
+      observable:
+        type: custom
+        state_variables: [Q, A]
+        code: |
+          def compute(t, y, y_start):
+              Q, A = y[0], y[1]
+              return A / (Q + A)
+      evaluation_points: [4.0]
+      uses_inputs: [frac_day4_mean, frac_day4_sd]
+      sample_size_input: n_custom
+      observation_code: |
+        def derive_observation(inputs, sample_size, rng, n_bootstrap):
+            import numpy as np
+            median = inputs['frac_day4_mean']
+            log_sd = inputs['frac_day4_sd']
+            n = int(sample_size)
+            return np.exp(rng.normal(np.log(median), log_sd / np.sqrt(n), n_bootstrap))
+    - name: frac_day8
+      units: dimensionless
+      observable:
+        type: custom
+        state_variables: [Q, A]
+        code: |
+          def compute(t, y, y_start):
+              Q, A = y[0], y[1]
+              return A / (Q + A)
+      evaluation_points: [8.0]
+      uses_inputs: [frac_day8_mean, frac_day8_sd]
+      sample_size_input: n_custom
+      observation_code: |
+        def derive_observation(inputs, sample_size, rng, n_bootstrap):
+            import numpy as np
+            median = inputs['frac_day8_mean']
+            log_sd = inputs['frac_day8_sd']
+            n = int(sample_size)
+            return np.exp(rng.normal(np.log(median), log_sd / np.sqrt(n), n_bootstrap))
+  identifiability_notes: >
+    Two parameters from two time points. k_activate dominates early dynamics,
+    k_prolif dominates later growth. Should be identifiable with informative priors.
+
+{_SOURCE_RELEVANCE}
+"""
+
+
+class TestExponentialGrowthODE:
+    """Test case 5: Exponential growth ODE with analytical solution."""
+
+    def test_posterior_near_true_rate(self, tmp_path):
+        from maple.core.calibration.yaml_to_prior import process_targets
+
+        (tmp_path / "growth.yaml").write_text(EXP_GROWTH_YAML)
+        (tmp_path / "priors.csv").write_text(PRIORS_CSV)
+
+        result = process_targets(
+            priors_csv=tmp_path / "priors.csv",
+            yaml_paths=[tmp_path / "growth.yaml"],
+            num_warmup=200,
+            num_samples=500,
+            num_chains=1,
+        )
+
+        assert result["metadata"]["n_parameters"] == 1
+        k = [p for p in result["parameters"] if p["name"] == "k_growth"][0]
+        median = k["marginal"]["median"]
+
+        # True rate: ln(2460/1000) / 3 ≈ 0.30
+        # Posterior should be in that neighborhood
+        assert 0.1 < median < 0.8
+
+
+class TestCustomODE:
+    """Test case 6: Custom ODE with diffrax and custom observable."""
+
+    def test_two_param_custom_ode(self, tmp_path):
+        from maple.core.calibration.yaml_to_prior import process_targets
+
+        (tmp_path / "custom_ode.yaml").write_text(CUSTOM_ODE_YAML)
+        (tmp_path / "priors.csv").write_text(PRIORS_CSV)
+
+        result = process_targets(
+            priors_csv=tmp_path / "priors.csv",
+            yaml_paths=[tmp_path / "custom_ode.yaml"],
+            num_warmup=200,
+            num_samples=500,
+            num_chains=1,
+        )
+
+        param_names = {p["name"] for p in result["parameters"]}
+        assert param_names == {"k_activate", "k_prolif"}
+
+        for p in result["parameters"]:
+            assert p["marginal"]["median"] > 0
+
+    def test_forward_fn_produces_reasonable_values(self):
+        """Verify the custom ODE forward function produces sensible predictions."""
+        import yaml
+
+        from maple.core.calibration.submodel_inference import _build_forward_fns
+        from maple.core.calibration.submodel_target import SubmodelTarget
+
+        target = SubmodelTarget(**yaml.safe_load(CUSTOM_ODE_YAML))
+        fns = _build_forward_fns(target)
+
+        # Evaluate with reasonable parameter values
+        params = {"k_activate": 0.2, "k_prolif": 0.1}
+
+        # Day 4 activated fraction should be between 0 and 1
+        val_day4 = float(fns[0](params))
+        assert 0.0 < val_day4 < 1.0
+
+        # Day 8 fraction should be higher than day 4
+        val_day8 = float(fns[1](params))
+        assert val_day8 > val_day4
+        assert val_day8 < 1.0

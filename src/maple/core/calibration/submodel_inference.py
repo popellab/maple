@@ -177,7 +177,7 @@ def _run_bootstrap(entry, inputs_dict: dict[str, float]) -> DistFit:
 # Forward function builder
 # =============================================================================
 
-# ODE types that would need diffrax — deferred
+# ODE types requiring integration (analytical or numerical)
 ODE_TYPES = {
     "first_order_decay",
     "exponential_growth",
@@ -186,6 +186,14 @@ ODE_TYPES = {
     "logistic",
     "michaelis_menten",
     "custom_ode",
+}
+
+ANALYTICAL_ODE_TYPES = {
+    "exponential_growth",
+    "first_order_decay",
+    "saturation",
+    "two_state",
+    "logistic",
 }
 
 _NUMPY_IMPORT_RE = re.compile(r"^\s*import\s+numpy(?:\s+as\s+\w+)?\s*$", re.MULTILINE)
@@ -201,6 +209,200 @@ def _strip_numpy_imports(code: str) -> str:
     return _NUMPY_IMPORT_RE.sub("", code)
 
 
+def _resolve_ic(sv, inputs_dict: dict[str, float]) -> float:
+    """Extract initial condition value from a StateVariable."""
+    ic = sv.initial_condition
+    if hasattr(ic, "input_ref"):
+        return float(inputs_dict[ic.input_ref])
+    return float(ic.value)
+
+
+def _resolve_role(role, param_values, inputs_dict, reference_db):
+    """Resolve a ParameterRole to a JAX-traceable value.
+
+    For parameters being estimated, returns the JAX tracer from param_values.
+    For InputRef/ReferenceRef/numeric literals, returns a plain float.
+    Reuses the logic from submodel_utils._resolve_parameter_role.
+    """
+    from maple.core.calibration.submodel_utils import _resolve_parameter_role
+
+    return _resolve_parameter_role(role, param_values, inputs_dict, reference_db)
+
+
+def _make_observable_fn(obs, sv_names):
+    """Build a JAX-traceable observable transform.
+
+    Args:
+        obs: Observable model (type="identity" or type="custom")
+        sv_names: list of state variable names in order
+
+    Returns:
+        callable: (t, y, y_start) -> scalar, where y is a JAX array
+    """
+    import jax.numpy as jnp
+
+    if obs is None or obs.type == "identity":
+        # Return the first (or only) state variable
+        return lambda t, y, y_start: y[0]
+
+    if obs.type == "custom":
+        local = {"np": jnp, "numpy": jnp}
+        code = _strip_numpy_imports(obs.code)
+        exec(code, local)  # noqa: S102
+        _compute = local["compute"]
+        return _compute
+
+    raise ValueError(f"Unknown observable type: {obs.type}")
+
+
+def _make_analytical_ode_fn(
+    model_type, model, inputs_dict, reference_db, y0_values, eval_point, obs_fn, sv_names
+):
+    """Build a JAX-traceable forward fn using closed-form ODE solution.
+
+    Returns a closure: param_values -> scalar prediction at eval_point.
+    """
+    import jax.numpy as jnp
+
+    _t = float(eval_point)
+    _y0 = [float(v) for v in y0_values]
+    t0 = float(model.independent_variable.span[0])
+    dt = _t - t0
+
+    def _factory(model_type, model, inputs_dict, reference_db, _y0, dt, obs_fn):
+        def forward(param_values):
+            def r(role):
+                return _resolve_role(role, param_values, inputs_dict, reference_db)
+
+            if model_type == "exponential_growth":
+                k = r(model.rate_constant)
+                y_t = jnp.array([_y0[0] * jnp.exp(k * dt)])
+
+            elif model_type == "first_order_decay":
+                k = r(model.rate_constant)
+                y_t = jnp.array([_y0[0] * jnp.exp(-k * dt)])
+
+            elif model_type == "saturation":
+                k = r(model.rate_constant)
+                y_t = jnp.array([1.0 - (1.0 - _y0[0]) * jnp.exp(-k * dt)])
+
+            elif model_type == "two_state":
+                k = r(model.forward_rate)
+                A0, B0 = _y0[0], _y0[1]
+                A_t = A0 * jnp.exp(-k * dt)
+                B_t = A0 * (1.0 - jnp.exp(-k * dt)) + B0
+                y_t = jnp.array([A_t, B_t])
+
+            elif model_type == "logistic":
+                k = r(model.rate_constant)
+                K = r(model.carrying_capacity)
+                y0_val = _y0[0]
+                y_t = jnp.array(
+                    [K * y0_val * jnp.exp(k * dt) / (K - y0_val + y0_val * jnp.exp(k * dt))]
+                )
+
+            else:
+                raise ValueError(f"No analytical solution for {model_type}")
+
+            y_start = jnp.array(_y0)
+            return obs_fn(_t, y_t, y_start)
+
+        return forward
+
+    return _factory(model_type, model, inputs_dict, reference_db, _y0, dt, obs_fn)
+
+
+def _make_diffrax_ode_fn(
+    model_type, model, inputs_dict, reference_db, y0_values, t_span, eval_point, obs_fn, sv_names
+):
+    """Build a JAX-traceable forward fn using diffrax ODE solver.
+
+    Used for michaelis_menten and custom_ode types.
+    """
+    import jax.numpy as jnp
+
+    _t0 = float(t_span[0])
+    _t1 = float(eval_point)
+    _y0 = jnp.array([float(v) for v in y0_values])
+    _y0_start = _y0  # for observable y_start argument
+
+    if model_type == "custom_ode":
+        # exec user code to get ode(t, y, params, inputs)
+        local = {"np": jnp, "numpy": jnp}
+        code = _strip_numpy_imports(model.code)
+        exec(code, local)  # noqa: S102
+        _user_ode = local["ode"]
+
+        def _factory_custom(_user_ode, inputs_dict, _y0, _y0_start, _t0, _t1, obs_fn):
+            def forward(param_values):
+                import diffrax
+
+                def rhs(t, y, args):
+                    params, inputs = args
+                    dy = _user_ode(t, y, params, inputs)
+                    if isinstance(dy, (list, tuple)):
+                        return jnp.array(dy)
+                    return dy
+
+                sol = diffrax.diffeqsolve(
+                    diffrax.ODETerm(rhs),
+                    diffrax.Tsit5(),
+                    t0=_t0,
+                    t1=_t1,
+                    dt0=(_t1 - _t0) / 100.0,
+                    y0=_y0,
+                    args=(param_values, inputs_dict),
+                    saveat=diffrax.SaveAt(t1=True),
+                    stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-8),
+                    max_steps=16384,
+                    throw=False,
+                )
+                y_final = sol.ys[-1]
+                return obs_fn(_t1, y_final, _y0_start)
+
+            return forward
+
+        return _factory_custom(_user_ode, inputs_dict, _y0, _y0_start, _t0, _t1, obs_fn)
+
+    elif model_type == "michaelis_menten":
+
+        def _factory_mm(model, inputs_dict, reference_db, _y0, _y0_start, _t0, _t1, obs_fn):
+            def forward(param_values):
+                import diffrax
+
+                def r(role):
+                    return _resolve_role(role, param_values, inputs_dict, reference_db)
+
+                vmax = r(model.vmax)
+                km = r(model.km)
+
+                def rhs(t, y, _args):
+                    return jnp.array([-vmax * y[0] / (km + y[0])])
+
+                sol = diffrax.diffeqsolve(
+                    diffrax.ODETerm(rhs),
+                    diffrax.Tsit5(),
+                    t0=_t0,
+                    t1=_t1,
+                    dt0=(_t1 - _t0) / 100.0,
+                    y0=_y0,
+                    args=None,
+                    saveat=diffrax.SaveAt(t1=True),
+                    stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-8),
+                    max_steps=16384,
+                    throw=False,
+                )
+                y_final = sol.ys[-1]
+                return obs_fn(_t1, y_final, _y0_start)
+
+            return forward
+
+        return _factory_mm(model, inputs_dict, reference_db, _y0, _y0_start, _t0, _t1, obs_fn)
+
+    else:
+        raise ValueError(f"_make_diffrax_ode_fn does not handle model type: {model_type}")
+
+
 def _build_forward_fns(
     target: SubmodelTarget,
     reference_db: Optional[dict[str, float]] = None,
@@ -211,6 +413,7 @@ def _build_forward_fns(
 
     For structured types, wraps _evaluate_structured_model.
     For algebraic types, execs model.code with jax.numpy.
+    For ODE types, uses analytical solutions or diffrax.
     """
     import jax.numpy as jnp
 
@@ -263,10 +466,37 @@ def _build_forward_fns(
             fns.append(_make_algebraic_fn(_compute, _inputs))
 
         elif model_type in ODE_TYPES:
-            raise NotImplementedError(
-                f"ODE model type '{model_type}' not yet supported in inference pipeline. "
-                f"Use structured or algebraic types."
-            )
+            sv_list = model.state_variables
+            sv_names = [sv.name for sv in sv_list]
+            y0_values = [_resolve_ic(sv, base_inputs) for sv in sv_list]
+            t_span = model.independent_variable.span
+            eval_pt = entry.evaluation_points[0] if entry.evaluation_points else t_span[1]
+            obs_fn = _make_observable_fn(entry.observable, sv_names)
+
+            if model_type in ANALYTICAL_ODE_TYPES:
+                fn = _make_analytical_ode_fn(
+                    model_type,
+                    model,
+                    base_inputs,
+                    reference_db,
+                    y0_values,
+                    eval_pt,
+                    obs_fn,
+                    sv_names,
+                )
+            else:  # michaelis_menten, custom_ode
+                fn = _make_diffrax_ode_fn(
+                    model_type,
+                    model,
+                    base_inputs,
+                    reference_db,
+                    y0_values,
+                    t_span,
+                    eval_pt,
+                    obs_fn,
+                    sv_names,
+                )
+            fns.append(fn)
 
         else:
             raise ValueError(f"Unknown forward model type: {model_type}")
@@ -388,18 +618,26 @@ def submodel_joint_model(prior_specs, target_likelihoods):
 
             site_name = f"obs_{tl.target_id}_{j}" if len(tl.entries) > 1 else f"obs_{tl.target_id}"
 
+            # Guard against NaN/non-positive predictions from solver failures
+            # (e.g. diffrax hitting max_steps with extreme parameter draws).
+            # Replace with a safe dummy value and assign -inf log-probability
+            # so NUTS rejects the sample.
+            valid = jnp.isfinite(predicted) & (predicted > 0)
+            safe_predicted = jnp.where(valid, predicted, 1.0)
+            numpyro.factor(f"valid_{site_name}", jnp.where(valid, 0.0, -jnp.inf))
+
             if entry.family == "lognormal":
                 sigma_total = jnp.sqrt(entry.sigma**2 + tl.sigma_trans**2)
                 numpyro.sample(
                     site_name,
-                    dist.LogNormal(jnp.log(predicted), sigma_total),
+                    dist.LogNormal(jnp.log(safe_predicted), sigma_total),
                     obs=entry.value,
                 )
             else:  # normal
                 sd_total = jnp.sqrt(entry.sigma**2 + (entry.value * tl.sigma_trans) ** 2)
                 numpyro.sample(
                     site_name,
-                    dist.Normal(predicted, sd_total),
+                    dist.Normal(safe_predicted, sd_total),
                     obs=entry.value,
                 )
 

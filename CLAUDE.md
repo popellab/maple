@@ -366,8 +366,9 @@ pdac_priors.csv (broad starting priors)
     + SubmodelTarget YAMLs (data + forward models)
     → build joint NumPyro model:
         - priors from CSV
-        - forward models from _evaluate_structured_model / exec(model.code)
+        - forward models: structured algebraic, exec(algebraic code), analytical ODE, or diffrax ODE
         - likelihoods with translation sigma in observation noise
+        - NaN guard: solver failures → -inf log-prob → NUTS rejects sample
     → MCMC (NUTS) → joint posterior samples
     → fit marginal distributions per parameter
     → fit Gaussian copula (correlation matrix)
@@ -431,6 +432,8 @@ copula:
 - **Shared parameters**: Parameters with the same name across targets are sampled once and reused.
 - **Likelihood family inferred**: Bootstrap samples are fit with lognormal/gamma/inv-gamma; best by AIC determines the likelihood type.
 - **JAX-traceable**: All forward models must use `np.*` functions (mapped to `jax.numpy`). No `scipy`, no branching on parameter values.
+- **ODE support**: Analytical closed-form solutions for `exponential_growth`, `first_order_decay`, `saturation`, `two_state`, `logistic`. Numerical integration via diffrax (`Tsit5`) for `michaelis_menten` and `custom_ode`. Custom observables (e.g., `A/(Q+A)`) are exec'd with `jnp`.
+- **NaN guard**: Forward functions that return NaN (e.g., diffrax solver failure from extreme MCMC proposals) trigger a `-inf` log-probability via `numpyro.factor`, causing NUTS to reject the proposal rather than crashing.
 
 ## Package Structure
 

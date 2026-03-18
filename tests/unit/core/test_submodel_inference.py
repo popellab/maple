@@ -292,19 +292,19 @@ class TestBuildForwardFns:
         result = fns[0]({"k_test": 1.0})
         assert float(result) == pytest.approx(np.log(2), rel=1e-5)
 
-    def test_ode_raises_not_implemented(self):
-        """ODE types should raise NotImplementedError."""
+    def test_unknown_type_raises_value_error(self):
+        """Unknown model types should raise ValueError."""
 
         from unittest.mock import MagicMock
 
         from maple.core.calibration.submodel_inference import _build_forward_fns
 
         target = MagicMock()
-        target.calibration.forward_model.type = "first_order_decay"
+        target.calibration.forward_model.type = "totally_unknown_type"
         target.calibration.error_model = [MagicMock()]
         target.inputs = []
 
-        with pytest.raises(NotImplementedError, match="ODE model type"):
+        with pytest.raises(ValueError, match="Unknown forward model type"):
             _build_forward_fns(target)
 
 
@@ -432,4 +432,68 @@ class TestSubmodelJointModel:
         k_samples = np.asarray(samples["k"])
         assert k_samples.shape == (200,)
         # Posterior should be pulled toward observed value of 2.0
+        assert np.median(k_samples) == pytest.approx(2.0, rel=0.5)
+
+    def test_nan_forward_fn_does_not_crash(self):
+        """Forward functions that return NaN should not crash MCMC.
+
+        This simulates the scenario where an ODE solver fails for extreme
+        parameter values (e.g. diffrax hitting max_steps). The NaN guard
+        in submodel_joint_model should assign -inf log-probability so NUTS
+        rejects those samples gracefully.
+        """
+        import jax
+        import jax.numpy as jnp
+        import jax.random
+        from numpyro.infer import MCMC, NUTS
+
+        from maple.core.calibration.submodel_inference import submodel_joint_model
+
+        prior_specs = {
+            "k": PriorSpec(name="k", distribution="lognormal", units="1/day", mu=0.0, sigma=1.0)
+        }
+
+        # Forward function that returns NaN when k > 5 (simulating solver failure)
+        def unstable_fn(params):
+            k = params["k"]
+            return jnp.where(k < 5.0, k, jnp.nan)
+
+        entry = ErrorModelEntry(
+            forward_fn=unstable_fn,
+            value=2.0,
+            sigma=0.3,
+            family="lognormal",
+            fit=DistFit(
+                name="lognormal",
+                params={"mu": np.log(2.0), "sigma": 0.3},
+                aic=0.0,
+                ad_stat=0.0,
+                ad_crit_5pct=1.0,
+                ad_pass=True,
+                median=2.0,
+                cv=0.3,
+            ),
+        )
+
+        tl = TargetLikelihood(
+            target_id="nan_test",
+            sigma_trans=0.15,
+            sigma_breakdown={},
+            entries=[entry],
+        )
+
+        kernel = NUTS(submodel_joint_model)
+        mcmc = MCMC(kernel, num_warmup=100, num_samples=200, num_chains=1)
+        # This should NOT raise "Normal distribution got invalid loc parameter"
+        mcmc.run(
+            jax.random.PRNGKey(42),
+            prior_specs=prior_specs,
+            target_likelihoods=[tl],
+        )
+
+        samples = mcmc.get_samples()
+        k_samples = np.asarray(samples["k"])
+        # All accepted samples should be finite (NaN proposals were rejected)
+        assert np.all(np.isfinite(k_samples))
+        # Posterior should still be near the observed value
         assert np.median(k_samples) == pytest.approx(2.0, rel=0.5)
