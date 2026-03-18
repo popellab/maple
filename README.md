@@ -78,12 +78,40 @@ There's also a **CalibrationTarget** schema for clinical/in vivo observables (bi
 
 MAPLE includes an MCP server that exposes the extraction schemas, enum references, validation tools, and a step-by-step workflow guide. This is the preferred way to fill out target YAMLs — working interactively with Claude Code (or another MCP client), reading a paper together, and building the YAML incrementally with validation feedback at each step.
 
-```bash
-# Run the MCP server
-python -m maple.mcp_server
+### Setup with Claude Code
+
+Add to your project's `.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "maple": {
+      "command": "python",
+      "args": ["-m", "maple.mcp_server"]
+    }
+  }
+}
 ```
 
-There's also a batch extraction CLI (`qsp-extract`) that sends a full paper to an LLM in one shot, but the interactive approach tends to produce better results — it's easier to get the forward model right when you can iterate on it, and the source relevance assessment benefits from back-and-forth discussion about the experimental context.
+### Tools
+
+The MCP server exposes three tools:
+
+- **`extract_target(target_type)`** — Loads the full extraction guide: schema, workflow, valid enum values, and hard rules. Call this before starting any extraction session.
+- **`validate_target(yaml_path, priors_csv)`** — Runs schema validation (Pydantic), prior derivation via NumPyro MCMC, and snippet verification against source PDFs.
+- **`run_joint_inference(priors_csv, submodel_dir)`** — Runs joint MCMC across all targets in a directory and returns a diagnostic report.
+
+### Typical workflow
+
+1. Call `extract_target` to load the guide
+2. Investigate the parameter in the model code (units, mechanistic role)
+3. Search literature for quantitative data that constrains the parameter
+4. Obtain PDFs into `papers/<source_tag>/` directories
+5. Read the paper and write the full SubmodelTarget YAML
+6. Call `validate_target` — fix any schema, MCMC, or snippet errors
+7. Iterate until validation passes
+
+There's also a batch extraction CLI (`qsp-extract`) that sends a full paper to an LLM in one shot, but the interactive approach tends to produce better results — the forward model parameterization and error model design usually need iteration to get right.
 
 Pydantic validators catch hallucinated values (snippet verification against paper text via Europe PMC), unit errors, invisible characters from PDF copy-paste, and other common extraction failures. These run both during interactive extraction and on batch output.
 

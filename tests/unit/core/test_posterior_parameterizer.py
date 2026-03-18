@@ -14,7 +14,6 @@ from maple.core.calibration.posterior_parameterizer import (
     threshold_copula,
     write_priors_yaml,
 )
-from maple.core.calibration.yaml_to_prior import DistFit
 
 
 # =============================================================================
@@ -104,11 +103,13 @@ class TestFitGaussianCopula:
 
 class TestThresholdCopula:
     def test_small_correlations_zeroed(self):
-        R = np.array([
-            [1.0, 0.03, 0.5],
-            [0.03, 1.0, -0.02],
-            [0.5, -0.02, 1.0],
-        ])
+        R = np.array(
+            [
+                [1.0, 0.03, 0.5],
+                [0.03, 1.0, -0.02],
+                [0.5, -0.02, 1.0],
+            ]
+        )
         R_thresh, participants = threshold_copula(R, ["a", "b", "c"], threshold=0.05)
 
         # a-b and b-c should be zeroed out

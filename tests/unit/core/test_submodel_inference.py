@@ -87,10 +87,7 @@ def _make_algebraic_target(
 ):
     """Build a minimal SubmodelTarget dict for algebraic models."""
     if code is None:
-        code = (
-            "def compute(params, inputs):\n"
-            f"    return params['{param_name}']\n"
-        )
+        code = "def compute(params, inputs):\n" f"    return params['{param_name}']\n"
 
     return {
         "target_id": target_id,
@@ -285,10 +282,7 @@ class TestBuildForwardFns:
         from maple.core.calibration.submodel_inference import _build_forward_fns
         from maple.core.calibration.submodel_target import SubmodelTarget
 
-        code = (
-            "def compute(params, inputs):\n"
-            "    return np.log(2) / params['k_test']\n"
-        )
+        code = "def compute(params, inputs):\n" "    return np.log(2) / params['k_test']\n"
         data = _make_algebraic_target(code=code, formula="t_half = ln(2) / k")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -300,7 +294,6 @@ class TestBuildForwardFns:
 
     def test_ode_raises_not_implemented(self):
         """ODE types should raise NotImplementedError."""
-        import warnings
 
         from unittest.mock import MagicMock
 
@@ -395,9 +388,7 @@ class TestSubmodelJointModel:
         from maple.core.calibration.submodel_inference import submodel_joint_model
 
         prior_specs = {
-            "k": PriorSpec(
-                name="k", distribution="lognormal", units="1/day", mu=0.0, sigma=1.0
-            )
+            "k": PriorSpec(name="k", distribution="lognormal", units="1/day", mu=0.0, sigma=1.0)
         }
 
         # Observed value=2.0, sigma=0.3, forward model is identity

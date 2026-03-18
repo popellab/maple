@@ -134,9 +134,7 @@ def threshold_copula(
     # Identify parameters with any nonzero off-diagonal correlation
     participants = []
     for i in range(n):
-        has_correlation = any(
-            abs(R_thresh[i, j]) > 0 for j in range(n) if j != i
-        )
+        has_correlation = any(abs(R_thresh[i, j]) > 0 for j in range(n) if j != i)
         if has_correlation:
             participants.append(param_names[i])
 
@@ -273,8 +271,7 @@ def write_priors_yaml(result: dict, path: Path) -> None:
     # Round correlation matrix for readability
     if "copula" in result:
         result["copula"]["correlation"] = [
-            [round(v, 4) for v in row]
-            for row in result["copula"]["correlation"]
+            [round(v, 4) for v in row] for row in result["copula"]["correlation"]
         ]
 
     # Round marginal params
