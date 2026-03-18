@@ -43,35 +43,7 @@ will be jointly inferred during Bayesian calibration.
 
 ## Schema Overview
 
-```
-SubmodelTarget
-├── target_id: str
-├── inputs: List[Input]                    # Extracted values with provenance
-│   ├── name, value, units
-│   ├── uncertainty: {ci95: [lo, hi]} | {sd: float}
-│   ├── input_type: direct_measurement | proxy_measurement | experimental_condition | inferred_estimate | assumed_value
-│   ├── role: initial_condition | target | fixed_parameter | auxiliary
-│   ├── extraction_method: manual | webplotdigitizer | digitizer | other
-│   └── source_ref, source_location, value_snippet
-├── calibration
-│   ├── parameters: [{name, units, prior: {distribution, mu, sigma, ...}}]
-│   ├── forward_model: ForwardModel        # Physics/math: params → predictions
-│   │   ├── type: exponential_growth | first_order_decay | steady_state_density | ... | algebraic | custom_ode
-│   │   ├── state_variables: [{name, units, initial_condition}]  # For ODE models
-│   │   ├── independent_variable: {name, units, span}            # For ODE models
-│   │   └── (type-specific fields: ParameterRole fields for structured types, or code/code_julia for algebraic)
-│   ├── error_model: List[ErrorModel]      # Statistics: predictions + data → likelihood
-│   │   ├── name, units, uses_inputs
-│   │   ├── evaluation_points: [float]     # For ODE models only
-│   │   ├── observation_code: str          # Returns {value, sd, sd_uncertain}
-│   │   ├── sample_size, observable, likelihood
-│   │   └── ...
-│   └── identifiability_notes: str
-├── experimental_context: {species, system, cell_lines, cell_types, ...}
-├── source_relevance: SourceRelevanceAssessment  # REQUIRED - see below
-├── study_interpretation, key_assumptions, key_study_limitations
-└── primary_data_source, secondary_data_sources
-```
+{{SCHEMA_OVERVIEW}}
 
 ---
 
@@ -123,7 +95,7 @@ Ask these questions IN ORDER. Use the FIRST match:
    --> `custom_ode`
 
 10. None of the above fit?
-    --> `algebraic` (last resort -- requires hand-written code + code_julia)
+    --> `algebraic` (last resort -- requires hand-written code)
 
 ---
 
@@ -178,7 +150,7 @@ Ask these questions IN ORDER. Use the FIRST match:
 
 | Type | Use When |
 |------|----------|
-| `algebraic` | Custom forward model that does not fit any structured type (e.g., t_half = ln(2) / k). **Requires code and code_julia.** Only use this as a last resort when no structured type applies. |
+| `algebraic` | Custom forward model that does not fit any structured type (e.g., t_half = ln(2) / k). **Requires code.** Only use this as a last resort when no structured type applies. |
 
 ### Structured Algebraic (preferred over `algebraic` -- no code needed)
 
@@ -229,39 +201,45 @@ Many papers report mean +/- SEM (standard error of the mean) rather than SD (sta
 - Papers with small n often report SEM to make error bars appear smaller
 
 **When SEM is reported:**
-1. Extract `n` (sample size) as a separate input with `role: auxiliary`
+1. Extract `n` (sample size) as a separate input
 2. Name the uncertainty input `*_sem` not `*_sd` to be explicit
-3. In `observation_code`, convert: `sd = sem * np.sqrt(n)`
-4. Add a `notes` field explaining the conversion
+3. In `observation_code`, convert SEM to SD: `sd = sem * np.sqrt(n)`
 
 **Example:**
 ```yaml
 inputs:
   - name: treg_fraction_mean
     value: 0.178
-    role: target
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Smith2020
+    source_location: "Table 1"
+    value_snippet: "Treg fraction 17.8 +/- 0.7%"
   - name: treg_fraction_sem
     value: 0.007075
-    role: auxiliary
-    notes: |
-      Reported as mean+/-SEM. SD = SEM * sqrt(n) = 0.007 * sqrt(45) = 0.047
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Smith2020
+    source_location: "Table 1"
+    value_snippet: "Treg fraction 17.8 +/- 0.7%"
   - name: n_patients
     value: 45
-    role: auxiliary
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Smith2020
+    source_location: "Table 1"
+    value_snippet: "n = 45"
 ```
 
 ```python
 # In observation_code:
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
     mean = inputs['treg_fraction_mean']
     sem = inputs['treg_fraction_sem']
     n = int(inputs['n_patients'])
     sd = sem * np.sqrt(n)  # Convert SEM to SD
-    return {
-        'value': mean,
-        'sd': sd,
-        'sd_uncertain': True,  # SD derived from SEM, some uncertainty
-    }
+    return rng.normal(mean, sd / np.sqrt(sample_size), n_bootstrap)
 ```
 
 **Red flag:** If reported uncertainty seems implausibly small (e.g., 17.8 +/- 0.7% for a biological fraction), it's almost certainly SEM.
@@ -270,14 +248,7 @@ def derive_observation(inputs, sample_size):
 
 ## Prior Distributions
 
-| Distribution | Parameters | Use For |
-|--------------|------------|---------|
-| `lognormal` | mu (log-scale), sigma | Rates, densities (positive) |
-| `normal` | mu, sigma | Unconstrained parameters |
-| `uniform` | lower, upper | Bounded parameters |
-| `half_normal` | sigma | Positive with mode at zero |
-
-Always include `rationale` explaining the prior choice.
+**Priors come from `pdac_priors.csv`, NOT the YAML.** The `calibration.parameters` list contains only `name` and `units`. The inference pipeline reads the starting prior (distribution, mu, sigma, bounds) from the CSV file. Do NOT add a `prior` block to parameters in the YAML.
 
 ---
 
@@ -291,25 +262,36 @@ When the data involves a non-ODE analytical relationship (parameter → observab
 
 - `formula`: Human-readable description of the relationship
 - `code`: Python forward model: `def compute(params, inputs) -> float`
-- `code_julia`: Julia forward model: `function compute(params, inputs) -> value`
 
-### observation_code Return Signature
+### observation_code Signature
 
-The `derive_observation` function in `error_model` MUST return:
-- `value`: Observed point estimate (plain float) **[required]**
-- `sd`: Measurement uncertainty (plain float: dimensionless CV for lognormal, absolute for normal) **[required]**
-- `sd_uncertain`: If True, inference adds a prior on sigma (optional, default False)
-- `n`: Sample size for reference (optional)
-
-All inputs are plain floats. Unit metadata is in the YAML schema for documentation. Your code works with plain numbers.
+The `derive_observation` function in `error_model` generates **parametric bootstrap samples**:
 
 ```python
-def derive_observation(inputs, sample_size):
-    return {
-        'value': inputs['half_life_mean'],
-        'sd': inputs['half_life_sd'] / inputs['half_life_mean'],  # CV for lognormal
-        'sd_uncertain': False,
-    }
+def derive_observation(inputs, sample_size, rng, n_bootstrap) -> np.ndarray:
+    """
+    inputs: dict of {name: float} (magnitudes only, no Pint)
+    sample_size: int (from sample_size_input)
+    rng: numpy.random.Generator (seeded, provided by framework)
+    n_bootstrap: int (number of samples to generate)
+
+    Returns: 1D numpy array of parametric bootstrap samples
+    """
+```
+
+The framework derives median, SD, and CI95 from the samples, and infers the likelihood family (lognormal/gamma/inv-gamma) via AIC. Choose the bootstrap distribution to match the data-generating process:
+- `rng.normal(mean, sd / np.sqrt(sample_size), n_bootstrap)` for mean +/- SD data
+- `rng.lognormal(np.log(mean), sd / np.sqrt(sample_size), n_bootstrap)` for positive quantities
+- `rng.poisson(count, n_bootstrap)` for count data
+
+All inputs are plain floats. Unit metadata is in the YAML schema for documentation.
+
+```python
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    mean = inputs['half_life_mean']
+    sd = inputs['half_life_sd']
+    return rng.lognormal(np.log(mean), sd / mean / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ### Example: Inferring rate from half-life (`algebraic` fallback)
@@ -323,30 +305,22 @@ forward_model:
         import numpy as np
         k = params['k_clearance']
         return np.log(2) / k
-  code_julia: |
-    function compute(params, inputs)
-        return log(2) / params["k_clearance"]
-    end
   data_rationale: "Paper reports half-life directly"
   submodel_rationale: "First-order kinetics in full model"
 
 error_model:
   - name: half_life_measurement
     units: day
-    uses_inputs: [half_life_mean, half_life_sd]
+    uses_inputs: [half_life_mean, half_life_sd, n_samples]
+    sample_size_input: n_samples
     observation_code: |
-      def derive_observation(inputs, sample_size):
+      def derive_observation(inputs, sample_size, rng, n_bootstrap):
+          import numpy as np
           t_half = inputs['half_life_mean']
           t_half_sd = inputs['half_life_sd']
-          # For lognormal likelihood, SD is in log-space (CV)
+          # Lognormal bootstrap: half-lives are positive
           cv = t_half_sd / t_half
-          return {
-              'value': t_half,
-              'sd': cv,
-          }
-    likelihood:
-      distribution: lognormal
-      rationale: "Half-lives are positive and often log-distributed"
+          return rng.lognormal(np.log(t_half), cv / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ### No Hardcoded Values
@@ -358,25 +332,31 @@ error_model:
 
 Allowed constants: `0`, `1`, `2`, `1.96` (for CI calculations)
 
-❌ **Wrong:**
+**Wrong:**
 ```python
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
     sd = inputs['mean'] * 0.3  # Hardcoded 30% CV!
-    return {'value': inputs['mean'], 'sd': sd}
+    return rng.lognormal(np.log(inputs['mean']), 0.3 / np.sqrt(sample_size), n_bootstrap)
 ```
 
-✓ **Correct:**
+**Correct:**
 ```yaml
 inputs:
   - name: assumed_cv
     value: 0.3
-    input_type: assumed_value
-    notes: "Assumed 30% CV based on typical biological variability"
+    units: dimensionless
+    input_type: reference_value
+    rationale: "Assumed 30% CV based on typical biological variability"
+    source_ref: Smith2020
+    source_location: "Methods"
+    value_snippet: "..."
 ```
 ```python
-def derive_observation(inputs, sample_size):
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
     cv = inputs['assumed_cv']
-    return {'value': inputs['mean'], 'sd': cv}
+    return rng.lognormal(np.log(inputs['mean']), cv / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ---
@@ -388,7 +368,6 @@ Use `custom_ode` when the built-in ODE types don't capture your dynamics.
 ### Required Fields
 
 - `code`: Python ODE function: `def ode(t, y, params, inputs) -> dy`
-- `code_julia`: Julia ODE function: `function ode!(du, u, p, t)`
 
 ### Example: Two-compartment model
 
@@ -403,13 +382,6 @@ forward_model:
         dA = -k_ab * A + k_ba * B
         dB = k_ab * A - k_ba * B
         return [dA, dB]
-  code_julia: |
-    function two_compartment!(du, u, p, t)
-        A, B = u
-        k_ab, k_ba = p
-        du[1] = -k_ab * A + k_ba * B
-        du[2] = k_ab * A - k_ba * B
-    end
   data_rationale: "Two-compartment kinetics observed"
   submodel_rationale: "Maps to transfer rates in full model"
   state_variables:
@@ -440,8 +412,7 @@ inputs:
   - name: initial_cells
     value: 100000.0
     units: cell
-    input_type: experimental_condition
-    role: initial_condition
+    input_type: direct_measurement
     source_ref: Smith2020
     source_location: "Methods"
     value_snippet: "1x10^5 CD8+ T cells were seeded"
@@ -450,29 +421,38 @@ inputs:
     value: 750000.0
     units: cell
     input_type: direct_measurement
-    role: target
     source_ref: Smith2020
     source_location: "Figure 2A"
-    value_snippet: "7.5x10^5 +/- 1.5x10^5 cells by day 3"
+    figure_excerpt:
+      figure_id: "Figure 2A"
+      value: "~7.5x10^5"
+      description: "Mean cell count at 72h from bar chart"
+      context: "CD8+ T cell expansion, anti-CD3/CD28 stimulation"
 
   - name: final_cells_sd
     value: 150000.0
     units: cell
     input_type: direct_measurement
-    role: auxiliary
     source_ref: Smith2020
     source_location: "Figure 2A"
-    value_snippet: "7.5x10^5 +/- 1.5x10^5 cells by day 3"
+    figure_excerpt:
+      figure_id: "Figure 2A"
+      value: "+/- 1.5x10^5"
+      description: "Error bar height at 72h"
+      context: "Error bars represent SD (n=3)"
+
+  - name: n_replicates
+    value: 3
+    units: dimensionless
+    input_type: direct_measurement
+    source_ref: Smith2020
+    source_location: "Methods"
+    value_snippet: "experiments were performed in triplicate"
 
 calibration:
   parameters:
     - name: k_CD8_pro
       units: 1/day
-      prior:
-        distribution: lognormal
-        mu: 0.0
-        sigma: 1.0
-        rationale: "Wide prior centered at 1/day"
 
   forward_model:
     type: exponential_growth
@@ -493,25 +473,20 @@ calibration:
   error_model:
     - name: cell_count_72h
       units: cell
-      uses_inputs: [final_cells_mean, final_cells_sd]
+      uses_inputs: [final_cells_mean, final_cells_sd, n_replicates]
       evaluation_points: [72]
-      sample_size: 3
+      sample_size_input: n_replicates
       observation_code: |
-        def derive_observation(inputs, sample_size):
+        def derive_observation(inputs, sample_size, rng, n_bootstrap):
+            import numpy as np
             mean = inputs['final_cells_mean']
             sd = inputs['final_cells_sd']
-            # CV for lognormal likelihood
+            # Lognormal bootstrap for positive cell counts
             cv = sd / mean
-            return {
-                'value': mean,
-                'sd': cv,
-            }
+            return rng.lognormal(np.log(mean), cv / np.sqrt(sample_size), n_bootstrap)
       observable:
         type: identity
         state_variables: [T_cells]
-      likelihood:
-        distribution: lognormal
-        rationale: "Cell counts are positive"
 
   identifiability_notes: "k_pro identifiable from fold-expansion; death rate not separable"
 
@@ -529,8 +504,16 @@ source_relevance:
   species_target: human
   source_quality: primary_human_in_vitro
   perturbation_type: physiological_baseline
-  tme_compatibility: null  # Not applicable for in vitro
-  estimated_translation_uncertainty_fold: 2.0
+  perturbation_relevance: |
+    Anti-CD3/CD28 stimulation is a standard activation protocol
+    that recapitulates TCR signaling without antigen specificity.
+  tme_compatibility: moderate
+  tme_compatibility_notes: |
+    In vitro expansion does not capture immunosuppressive TME of PDAC.
+    Expect proliferation rates to be upper bounds for in vivo behavior.
+  measurement_directness: direct
+  temporal_resolution: endpoint_pair
+  experimental_system: in_vitro_primary
 
 study_interpretation: "T cell expansion provides proliferation rate"
 key_assumptions:
@@ -633,8 +616,8 @@ The schema automatically validates:
 - All references (`input_ref`, `uses_inputs`, `source_ref`) point to existing items
 - ODE models have `state_variables`, `independent_variable.span`, and `evaluation_points`
 - ODE models have `observable` defined in error_model
-- `algebraic` models have `code` and `code_julia` (structured algebraic types auto-generate code)
-- `observation_code` returns `{value, sd}` as plain floats
+- `algebraic` models have `code` (structured algebraic types auto-generate code)
+- `observation_code` returns 1D numpy array of bootstrap samples
 - `observation_code` has no hardcoded numeric values (all through inputs)
 - Prior predictive matches observation scale (catches unit errors)
 - AlgebraicModel forward prediction matches data scale

@@ -22,6 +22,83 @@ from maple.core.calibration.enums import (
 )
 from maple.core.resource_utils import read_prompt
 
+
+def _build_schema_overview() -> str:
+    """Generate the SubmodelTarget schema overview from the actual Pydantic models.
+
+    This ensures the extraction prompt always reflects the current schema,
+    avoiding drift between the prompt and the code.
+    """
+    from maple.core.calibration.submodel_target import (
+        ExperimentalContext,
+        InputType,
+    )
+    from maple.core.calibration.shared_models import SourceRelevanceAssessment
+
+    def _field_names(model_cls) -> list[str]:
+        return list(model_cls.model_fields.keys())
+
+    def _enum_values(enum_cls) -> str:
+        return " | ".join(m.value for m in enum_cls)
+
+    input_type_vals = _enum_values(InputType)
+
+    # Build SourceRelevanceAssessment field summary
+    sra_fields = _field_names(SourceRelevanceAssessment)
+
+    # Build ExperimentalContext field summary
+    ec_fields = _field_names(ExperimentalContext)
+
+    # Get forward model types from the ForwardModel union
+    from maple.core.calibration.submodel_target import ForwardModel
+    import typing
+
+    fm_types = []
+    for t in typing.get_args(typing.get_args(ForwardModel)[0]):
+        type_field = t.model_fields.get("type")
+        if type_field and type_field.default:
+            fm_types.append(type_field.default)
+
+    fm_type_str = " | ".join(fm_types)
+
+    lines = [
+        "```",
+        "SubmodelTarget",
+        "├── target_id: str",
+        "├── inputs: List[Input]                    # Extracted values with provenance",
+        "│   ├── name, value, units",
+        f"│   ├── input_type: {input_type_vals}",
+        "│   ├── rationale (required for unit_conversion and reference_value)",
+        "│   ├── source_ref, source_location",
+        "│   └── value_snippet | table_excerpt | figure_excerpt  # provenance (at least one required)",
+        "├── calibration",
+        "│   ├── parameters: [{name, units}]        # Priors come from pdac_priors.csv, NOT the YAML",
+        "│   ├── forward_model: ForwardModel        # Physics/math: params → predictions",
+        f"│   │   ├── type: {fm_type_str}",
+        "│   │   ├── state_variables: [{name, units, initial_condition}]  # For ODE models",
+        "│   │   ├── independent_variable: {name, units, span}            # For ODE models",
+        "│   │   └── (type-specific ParameterRole fields, or code for algebraic/custom_ode)",
+        "│   ├── error_model: List[ErrorModel]      # Statistics: predictions + data → likelihood",
+        "│   │   ├── name, units, uses_inputs",
+        "│   │   ├── x_input: str                   # For direct_fit / power_law (independent variable input)",
+        "│   │   ├── evaluation_points: [float]     # For ODE models only",
+        "│   │   ├── sample_size_input: str          # Name of input providing sample size",
+        "│   │   ├── observation_code: str           # def derive_observation(inputs, sample_size, rng, n_bootstrap) -> np.ndarray",
+        "│   │   ├── n_bootstrap: int (default 10000)",
+        "│   │   └── observable: Observable          # For ODE models (identity or custom transform)",
+        "│   └── identifiability_notes: str",
+        f"├── experimental_context: {{{', '.join(ec_fields)}}}",
+        "├── source_relevance: SourceRelevanceAssessment  # REQUIRED - see below",
+        f"│   └── {{{', '.join(sra_fields)}}}",
+        "├── study_interpretation, key_assumptions, key_study_limitations",
+        "├── primary_data_source: {doi, source_tag, title, authors, year}",
+        "├── secondary_data_sources: [{doi|url, source_tag, title, ...}]",
+        "└── tags, extraction_model  # optional metadata",
+        "```",
+    ]
+    return "\n".join(lines)
+
+
 mcp = FastMCP("maple")
 
 
@@ -272,6 +349,8 @@ def extract_target(target_type: str = "submodel_target") -> str:
     """
     if target_type == "submodel_target":
         prompt = read_prompt("submodel_target_prompt.md")
+        # Inject auto-generated schema overview from Pydantic models
+        prompt = prompt.replace("{{SCHEMA_OVERVIEW}}", _build_schema_overview())
     elif target_type == "calibration_target":
         prompt = read_prompt("calibration_target_prompt.md")
     else:
@@ -442,6 +521,144 @@ def _validate_snippets_real(yaml_path: Path, papers_dir: Path | None) -> list[st
         lines.append(f"WARNING: Snippet validation failed: {e}")
 
     return lines
+
+
+@mcp.tool()
+def run_joint_inference(
+    priors_csv: str,
+    submodel_dir: str,
+    output_dir: str | None = None,
+    glob_pattern: str = "*_PDAC_deriv*.yaml",
+    num_warmup: int = 1000,
+    num_samples: int = 5000,
+    num_chains: int = 4,
+) -> str:
+    """Run joint MCMC inference across all SubmodelTarget YAMLs in a directory.
+
+    Loads starting priors from the CSV (read-only — does NOT modify it),
+    runs NumPyro NUTS across all targets jointly, fits marginal distributions,
+    computes Gaussian copula for correlated parameters, and returns a
+    diagnostic report.
+
+    Outputs submodel_priors.yaml to output_dir if provided.
+
+    Args:
+        priors_csv: Path to base priors CSV (e.g., parameters/pdac_priors.csv).
+            Read-only — never modified.
+        submodel_dir: Directory containing SubmodelTarget YAML files.
+        output_dir: Optional directory for submodel_priors.yaml output.
+        glob_pattern: Glob pattern to match YAML files in submodel_dir.
+        num_warmup: NUTS warmup iterations per chain.
+        num_samples: Post-warmup samples per chain.
+        num_chains: Number of MCMC chains.
+
+    Returns:
+        Diagnostic report with per-parameter marginals, contraction,
+        copula correlations, and MCMC convergence diagnostics.
+    """
+    from maple.core.calibration.yaml_to_prior import process_targets
+
+    yaml_dir = Path(submodel_dir)
+    if not yaml_dir.exists():
+        return f"Directory not found: {submodel_dir}"
+
+    yamls = sorted(yaml_dir.glob(glob_pattern))
+    if not yamls:
+        return f"No YAML files matching '{glob_pattern}' in {submodel_dir}"
+
+    csv_path = Path(priors_csv)
+    if not csv_path.exists():
+        return f"Priors CSV not found: {priors_csv}"
+
+    out = Path(output_dir) if output_dir else None
+
+    result = process_targets(
+        priors_csv=csv_path,
+        yaml_paths=yamls,
+        output_dir=out,
+        plot=False,
+        num_warmup=num_warmup,
+        num_samples=num_samples,
+        num_chains=num_chains,
+    )
+
+    return _format_joint_report(result, yamls)
+
+
+def _format_joint_report(result: dict, yaml_paths: list[Path]) -> str:
+    """Format joint inference result as a markdown report."""
+    lines = ["# Joint Inference Report\n"]
+
+    # Metadata
+    meta = result.get("metadata", {})
+    lines.append(f"**Targets:** {meta.get('n_targets', '?')}")
+    lines.append(f"**Parameters:** {meta.get('n_parameters', '?')}")
+    lines.append(f"**Samples:** {meta.get('n_samples', '?')}")
+    lines.append(
+        f"**MCMC:** {meta.get('num_warmup', '?')} warmup, "
+        f"{meta.get('num_samples', '?')} samples, "
+        f"{meta.get('num_chains', '?')} chains"
+    )
+    lines.append("")
+
+    # Target files
+    lines.append("## Targets\n")
+    for p in yaml_paths:
+        lines.append(f"- `{p.name}`")
+    lines.append("")
+
+    # Per-parameter marginals
+    lines.append("## Parameter Marginals\n")
+    lines.append(
+        f"| {'Parameter':<30} | {'Distribution':<12} | "
+        f"{'Median':>10} | {'CV':>6} | {'Source Targets'} |"
+    )
+    lines.append(f"|{'-'*30}:|{'-'*12}:|{'-'*10}:|{'-'*6}:|{'-'*40}|")
+
+    for p in result.get("parameters", []):
+        m = p["marginal"]
+        sources = ", ".join(p.get("source_targets", []))
+        lines.append(
+            f"| `{p['name']:<28}` | {m['distribution']:<12} | "
+            f"{m['median']:>10.4g} | {m['cv']:>6.2f} | {sources} |"
+        )
+    lines.append("")
+
+    # Translation sigmas
+    trans = result.get("translation_sigma", {})
+    if trans:
+        lines.append("## Translation Sigmas\n")
+        for target_id, info in trans.items():
+            breakdown = info.get("breakdown", {})
+            breakdown_str = ", ".join(f"{k}=+{v:.2f}" for k, v in breakdown.items() if v > 0)
+            lines.append(f"- **{target_id}**: total={info['total']:.3f} ({breakdown_str})")
+        lines.append("")
+
+    # Copula
+    copula = result.get("copula")
+    if copula:
+        lines.append("## Gaussian Copula (significant correlations)\n")
+        params = copula["parameters"]
+        corr = copula["correlation"]
+        lines.append(f"**Participants:** {len(params)} parameters\n")
+        # Show off-diagonal entries above threshold
+        pairs = []
+        for i in range(len(params)):
+            for j in range(i + 1, len(params)):
+                r = corr[i][j]
+                if abs(r) > 0.05:
+                    pairs.append((params[i], params[j], r))
+        if pairs:
+            pairs.sort(key=lambda x: -abs(x[2]))
+            lines.append(f"| {'Param A':<25} | {'Param B':<25} | {'r':>6} |")
+            lines.append(f"|{'-'*25}:|{'-'*25}:|{'-'*6}:|")
+            for a, b, r in pairs:
+                lines.append(f"| `{a:<23}` | `{b:<23}` | {r:>+.3f} |")
+        else:
+            lines.append("No significant pairwise correlations above threshold.")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
