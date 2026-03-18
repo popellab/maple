@@ -19,6 +19,7 @@ Usage::
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -187,6 +188,18 @@ ODE_TYPES = {
     "custom_ode",
 }
 
+_NUMPY_IMPORT_RE = re.compile(r"^\s*import\s+numpy(?:\s+as\s+\w+)?\s*$", re.MULTILINE)
+
+
+def _strip_numpy_imports(code: str) -> str:
+    """Remove ``import numpy as np`` lines from forward model code.
+
+    Forward model code is exec'd with ``{"np": jnp}`` so bare ``np.*`` calls
+    map to JAX.  An explicit import inside the function body overrides that
+    binding with real NumPy, causing ``__array__()`` errors on JAX tracers.
+    """
+    return _NUMPY_IMPORT_RE.sub("", code)
+
 
 def _build_forward_fns(
     target: SubmodelTarget,
@@ -233,7 +246,12 @@ def _build_forward_fns(
             if entry.x_input:
                 _inputs["_x"] = base_inputs[entry.x_input]
             local = {"np": jnp, "numpy": jnp}
-            exec(model.code, local)  # noqa: S102
+            # Strip 'import numpy' lines from forward model code — the exec scope
+            # injects jax.numpy as 'np'/'numpy', but an explicit import inside the
+            # function body would override that with real numpy, causing JAX tracer
+            # errors during MCMC.
+            _code = _strip_numpy_imports(model.code)
+            exec(_code, local)  # noqa: S102
             _compute = local["compute"]
 
             def _make_algebraic_fn(_compute, _inputs):
