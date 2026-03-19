@@ -26,7 +26,9 @@ not just use the same parameter names with different dynamics.
 **Using additional parameters:** Your submodel should calibrate the specified
 parameters, but you MAY (and often should) include additional model parameters
 when mechanistically necessary. All parameters in `calibration.parameters`
-will be jointly inferred during Bayesian calibration.
+will be jointly inferred during Bayesian calibration. **Prefer targets with
+5-7 QSP parameters over 1-2.** More shared parameters per target means more
+correlations captured in joint inference and a better joint posterior.
 
 **Nuisance parameters:** If the forward model requires a parameter that is NOT
 in the QSP model (e.g., a proliferation rate needed to constrain an activation
@@ -677,6 +679,93 @@ The schema automatically validates:
 - ❌ `α-SMA` → ✓ `alpha-SMA`
 - ❌ `Estarás` → ✓ `Estaras`
 - ❌ `≥50%` → ✓ `>=50%`
+
+---
+
+## Forward Model Design Principles
+
+**CRITICAL:** The forward model must replicate the QSP model's parameterization
+of the target parameter(s), not simplify it. Include ALL Hill functions, gating
+terms, and carrying capacity expressions from the actual reaction in the QSP model.
+
+**Why this matters:** A simplified ODE like `dQ = -k_act * Q` absorbs Hill function
+terms into the effective rate constant. When another target models the same parameter
+with the Hill function explicit, the two targets give inconsistent estimates (e.g.,
+0.065/day vs 0.92/day for the same k_act). Including the Hill functions with nuisance
+parameters for experimental conditions resolves the discrepancy.
+
+**Example:** If the QSP model has:
+```
+rate = k_act * TGFb/(TGFb_50 + TGFb) * PDGF/(PDGF_50 + PDGF)
+```
+Then the submodel ODE should be:
+```python
+def ode(t, y, params, inputs):
+    k_act = params['k_psc_activation_myCAF']
+    ec50_tgfb = params['TGFb_50_CAF_act']
+    ec50_pdgf = params['PDGF_50']
+    tgfb = params['tgfb_basal_culture']   # nuisance
+    pdgf = params['pdgf_basal_culture']   # nuisance
+    h_tgfb = tgfb / (ec50_tgfb + tgfb)
+    h_pdgf = pdgf / (ec50_pdgf + pdgf)
+    dQ = -k_act * h_tgfb * h_pdgf * Q
+    ...
+```
+
+NOT the simplified version:
+```python
+def ode(t, y, params, inputs):
+    k_act = params['k_psc_activation_myCAF']
+    dQ = -k_act * Q  # WRONG: absorbs Hill terms into k_act
+```
+
+**Steps:**
+1. Look up the actual reaction in `core/modules/*.m` that uses the parameter
+2. Include ALL Hill functions and gating terms from that reaction
+3. Add nuisance parameters for experimental conditions (basal cytokine levels,
+   culture volume, etc.) that are not QSP parameters
+4. The EC50 parameters (e.g., TGFb_50_CAF_act) become QSP parameters in the
+   target, providing additional constraints from the same data
+
+---
+
+## Working with Figure Data
+
+Most rich kinetic data (time courses, dose-response curves) is in figures, not
+tables. Standard workflow for figure digitization:
+
+1. Create a CSV template in `calibration_targets/submodel_targets/papers/<SourceTag>/`
+   with column headers and empty rows for each data point
+2. The user fills in values from the figure (mean and mean+SD or mean-SD,
+   depending on error bar direction)
+3. Compute actual SDs from the reported values (e.g., SD = mean+SD_col - mean_col)
+4. Use `figure_excerpt` entries (not `value_snippet`) for digitized values —
+   these are correctly flagged as MANUAL REVIEW REQUIRED by the validator
+
+**Keep input values in paper units.** Do not convert percent to fraction, hours
+to days, ng/ml to nM in the input values. The validator checks that input values
+appear in snippets/figure_excerpts, so converted values fail validation. Do all
+unit conversions in the forward model code or observation_code.
+
+---
+
+## Lessons from Extraction Practice
+
+- **Translation sigma dominates for proxy data.** Cross-species, cross-organ
+  data (e.g., rat liver HSC for human PDAC CAF) gets translation sigma ~0.75-0.80.
+  Expect moderate contraction (0.2-0.7), not tight constraints. This is correct —
+  the data is informative but the extrapolation adds real uncertainty.
+
+- **Don't invent uncertainty.** If a paper reports only point estimates without
+  SD, use the actual spread in the data: bootstrap across conditions, use the
+  range of measurements across states, or use subgroup-level values as a
+  bootstrap population. If there is genuinely no spread, the target may not be
+  cleanly extractable.
+
+- **Multiple targets for the same parameter are valuable.** Different experimental
+  designs probe different aspects of the same parameter. Joint inference composes
+  them. Disagreement between targets often reveals modeling assumptions that need
+  revision (missing Hill functions, incorrect units, etc.).
 
 ---
 
