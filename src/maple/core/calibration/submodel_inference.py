@@ -770,6 +770,11 @@ def run_joint_inference(
             "Install with: pip install maple[inference]"
         ) from e
 
+    # Ensure JAX can run parallel chains on CPU
+    import numpyro
+
+    numpyro.set_host_device_count(num_chains)
+
     # Build target likelihoods (runs bootstrap, builds forward fns)
     target_likelihoods = build_target_likelihoods(targets, prior_specs, reference_db)
 
