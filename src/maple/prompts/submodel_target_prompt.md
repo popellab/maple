@@ -336,7 +336,50 @@ When the data involves a non-ODE analytical relationship (parameter → observab
 ### Required Fields (for `algebraic` type only -- structured types do not need these)
 
 - `formula`: Human-readable description of the relationship
-- `code`: Python forward model: `def compute(params, inputs) -> float`
+- `code`: Python forward model: `def compute(params, inputs) -> float` (single-output)
+  or `def compute(params, inputs) -> dict` (multi-output)
+
+### Multi-output algebraic models
+
+For multi-condition experiments (e.g., control vs treatment at multiple time
+points), `compute()` can return a dict of all predictions. Each error model
+entry uses an `observable` to select its output — the same pattern as ODE
+models:
+
+```yaml
+forward_model:
+  type: algebraic
+  code: |
+    def compute(params, inputs):
+        k = params['k_act']
+        ec50 = params['EC50']
+        h_ctrl = basal / (ec50 + basal)
+        h_treat = (basal + exog) / (ec50 + basal + exog)
+        return {
+            'ctrl_d4': 1 - np.exp(-k * h_ctrl * 4),
+            'treat_d4': 1 - np.exp(-k * h_treat * 4),
+        }
+
+error_model:
+  - name: ctrl_day4
+    observable:
+      type: custom
+      code: |
+        def compute(t, y, y_start):
+            return y['ctrl_d4']
+    ...
+  - name: treat_day4
+    observable:
+      type: custom
+      code: |
+        def compute(t, y, y_start):
+            return y['treat_d4']
+    ...
+```
+
+This replaces `custom_ode` when the ODE has an analytical solution (e.g.,
+first-order decay, exponential growth + linear accumulation, Richards logistic).
+Algebraic forward models are much faster than diffrax ODE solves in MCMC.
 
 ### observation_code Signature
 
