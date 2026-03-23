@@ -802,16 +802,21 @@ class IndependentVariable(BaseModel):
 
 class Observable(BaseModel):
     """
-    Transform ODE state variable(s) into the measured quantity.
+    Transform model output into the measured quantity.
 
-    For type-based observables, the transformation is implicit.
-    For custom observables, code provides the transformation function.
+    For ODE models: transforms state variable vector into the observable.
+    For algebraic models: selects/transforms from the dict returned by compute().
     """
 
     model_config = ConfigDict(extra="forbid")
 
     type: ObservableType = Field(description="Observable type")
-    state_variables: List[str] = Field(description="State variable(s) used in the observable")
+    state_variables: Optional[List[str]] = Field(
+        default=None,
+        description="State variable(s) used in the observable. "
+        "Required for ODE models (defines y vector ordering). "
+        "Optional for algebraic models where y is the compute() return value.",
+    )
     rationale: Optional[str] = Field(
         default=None,
         description="Why this observable type was chosen",
@@ -1540,33 +1545,34 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_algebraic_model_no_observable(self) -> "SubmodelTarget":
+    def validate_algebraic_model_observable_usage(self) -> "SubmodelTarget":
         """
-        Warn if algebraic models have observable defined in error_model.
+        Check observable usage in algebraic models.
 
-        For algebraic models, the forward_model.code directly computes the predicted
-        observable, so having a separate observable.code is redundant and confusing.
-        The observable field is designed for ODE models where state variables need
-        to be transformed into measured quantities.
+        Algebraic models support two patterns:
+        1. Single-output: compute() returns a scalar, no observable needed.
+        2. Multi-output: compute() returns a vector/dict, each error model entry
+           uses observable.code to select/transform the relevant output. This is
+           the same pattern as ODE models and is useful for multi-condition
+           experiments (e.g., control vs treatment sharing the same forward model).
+
+        Warns if SOME entries have observables and others don't (inconsistent).
         """
         model = self.calibration.model
         if model.type != "algebraic":
             return self
 
-        for entry in self.calibration.error_model:
-            if entry.observable and entry.observable.code:
-                warnings.warn(
-                    f"Error model '{entry.name}' has observable.code but forward_model "
-                    f"is 'algebraic'.\n\n"
-                    f"For algebraic models, forward_model.code directly computes the "
-                    f"predicted observable. The observable.code field is for ODE models "
-                    f"where state variables need transformation.\n\n"
-                    f"Consider:\n"
-                    f"  1. Remove observable.code (use forward_model.code output directly)\n"
-                    f"  2. If transformation is needed, incorporate it into forward_model.code\n"
-                    f"  3. Set observable to None or use type='identity'",
-                    UserWarning,
-                )
+        has_obs = [
+            e.observable is not None and e.observable.code is not None
+            for e in self.calibration.error_model
+        ]
+        if any(has_obs) and not all(has_obs):
+            warnings.warn(
+                "Algebraic model has mixed observable usage: some error model entries "
+                "have observable.code and others don't. For multi-output algebraic "
+                "models, all entries should have observables to select their output.",
+                UserWarning,
+            )
 
         return self
 
@@ -3164,6 +3170,19 @@ class SubmodelTarget(BaseModel):
             from maple.core.calibration.exceptions import ObservableConfigError
 
             raise ObservableConfigError.from_errors(errors)
+
+        # ODE observables require state_variables (defines y vector ordering)
+        sv_errors = []
+        for entry in self.calibration.error_model:
+            if entry.observable is not None and not entry.observable.state_variables:
+                sv_errors.append(
+                    f"Error model '{entry.name}': ODE model type '{model_type}' "
+                    f"requires observable.state_variables to define y vector ordering."
+                )
+        if sv_errors:
+            from maple.core.calibration.exceptions import ObservableConfigError
+
+            raise ObservableConfigError.from_errors(sv_errors)
 
         return self
 

@@ -460,13 +460,23 @@ def _build_forward_fns(
             exec(_code, local)  # noqa: S102
             _compute = local["compute"]
 
-            def _make_algebraic_fn(_compute, _inputs):
+            # Per-entry observable: if present, compute() returns a vector/dict
+            # and the observable selects/transforms the relevant output.
+            # Same pattern as ODE models. If no observable, return raw scalar.
+            _obs_fn = None
+            if entry.observable is not None:
+                _obs_fn = _make_observable_fn(entry.observable, [])
+
+            def _make_algebraic_fn(_compute, _inputs, _obs_fn):
                 def forward(param_values):
-                    return _compute(param_values, _inputs)
+                    raw = _compute(param_values, _inputs)
+                    if _obs_fn is not None:
+                        return _obs_fn(None, raw, None)
+                    return raw
 
                 return forward
 
-            fns.append(_make_algebraic_fn(_compute, _inputs))
+            fns.append(_make_algebraic_fn(_compute, _inputs, _obs_fn))
 
         elif model_type in ODE_TYPES:
             sv_list = model.state_variables
