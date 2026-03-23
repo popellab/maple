@@ -37,6 +37,26 @@ For in vitro and preclinical data with self-contained forward models. Located in
 - `inputs`: Raw values extracted from papers with full provenance
 - `calibration`: Everything needed for inference (parameters, model, measurements)
 
+**Input types** (`InputType` enum):
+- `direct_measurement`: Value traceable to paper text (requires snippet/table_excerpt/figure_excerpt)
+- `unit_conversion`: Dimensionless conversion factor (e.g., IQR-to-SD, pM-per-nM)
+- `reference_value`: Normalization/reference constant (e.g., V_T_ref, tumor_cell_density)
+- `derived_arithmetic`: Deterministic derivation from other inputs via a formula (e.g., `E = 3*G'`)
+
+**Derived arithmetic inputs** — for values calculated from other extracted inputs:
+```yaml
+- name: E_stiff_kPa
+  value: 51.0
+  units: kilopascal
+  input_type: derived_arithmetic
+  source_inputs: [Gprime_stiff_kPa]
+  formula: "3 * Gprime_stiff_kPa"
+  rationale: "E = 2*(1+nu)*G' with nu=0.5 for incompressible hydrogels"
+  source_ref: Smith2020
+  source_location: "Table 1"
+```
+Validators enforce: `derived_arithmetic` requires `formula` + `source_inputs`; formula is evaluated and checked against `value` (1% tolerance). Non-derived inputs must not have `formula`/`source_inputs`.
+
 **Input roles** (`InputRole` enum):
 - `initial_condition`: Used as IC for ODE integration
 - `target`: Used as calibration target (likelihood term)
@@ -154,6 +174,7 @@ python scripts/validate_submodel_target.py *.yaml
 | `validate_span_ordering` | `span[0] < span[1]` and both non-negative |
 | `validate_evaluation_points_within_span` | Evaluation points within independent_variable.span |
 | `validate_input_values_in_snippets` | Extracted values appear in `value_snippet` (anti-hallucination) |
+| `validate_derived_arithmetic_inputs` | Formula evaluates correctly, source_inputs exist, fields only on derived_arithmetic |
 | `validate_snippets_in_source` | Verifies snippets appear in actual paper text (Europe PMC, Unpaywall) |
 | `validate_all_parameters_used_in_forward_model` | All parameters in calibration.parameters are accessed in forward model code |
 | `validate_doi_resolution_and_metadata` | DOIs resolve via CrossRef, metadata matches |
@@ -379,15 +400,17 @@ Joint Bayesian inference across SubmodelTargets using NumPyro. Located in `submo
 ```
 pdac_priors.csv (broad starting priors)
     + SubmodelTarget YAMLs (data + forward models)
+    + parameter_groups.yaml (optional hierarchical structure)
     → build joint NumPyro model:
-        - priors from CSV
+        - independent priors from CSV (non-grouped params)
+        - hierarchical priors for grouped params: k_base + tau + deltas
         - forward models: structured algebraic, exec(algebraic code), analytical ODE, or diffrax ODE
         - likelihoods with translation sigma in observation noise
         - NaN guard: solver failures → -inf log-prob → NUTS rejects sample
-    → MCMC (NUTS) → joint posterior samples
+    → MCMC (NUTS, dense_mass=True, chain_method="vectorized")
     → fit marginal distributions per parameter
     → fit Gaussian copula (correlation matrix)
-    → output: submodel_priors.yaml (marginals + copula for Stage 2)
+    → output: submodel_priors.yaml (marginals + copula + group hyperparameters for Stage 2)
 ```
 
 ### Usage (Python)
@@ -449,6 +472,9 @@ copula:
 - **JAX-traceable**: All forward models must use `np.*` functions (mapped to `jax.numpy`). No `scipy`, no branching on parameter values.
 - **ODE support**: Analytical closed-form solutions for `exponential_growth`, `first_order_decay`, `saturation`, `two_state`, `logistic`. Numerical integration via diffrax (`Tsit5`) for `michaelis_menten` and `custom_ode`. Custom observables (e.g., `A/(Q+A)`) are exec'd with `jnp`.
 - **NaN guard**: Forward functions that return NaN (e.g., diffrax solver failure from extreme MCMC proposals) trigger a `-inf` log-probability via `numpyro.factor`, causing NUTS to reject the proposal rather than crashing.
+- **Hierarchical parameter groups**: Optional `parameter_groups.yaml` declares groups of related parameters (e.g., CAF subtype death rates) that share a latent base rate with per-member deviations. Sampling: `k_base ~ LogNormal(mu, sigma)`, `tau ~ HalfNormal(sigma_tau)`, `delta_i ~ Normal(mu_i, sigma_i)`, `k_i = k_base * exp(delta_i)`. Members with target data get pulled by observations; members without data shrink toward the group mean (partial pooling). `base_prior` is optional — when omitted, derived at runtime from CSV priors of members (recommended). Per-member `delta_prior` encodes biological ordering (e.g., quiescent cells biased toward lower death rates). See `parameter_groups.py` for the schema.
+- **Compilation cache**: JAX persistent compilation cache at `~/.cache/maple/jax_compilation_cache/`. First run compiles the full model; subsequent runs with the same structure load instantly.
+- **diffrax compatibility**: Uses `chain_method="vectorized"` (not `pmap`) to avoid diffrax `RESULTS` closure conversion bug on Apple Silicon. `NoProgressMeter()` and `max_steps=512` for faster compilation.
 
 ## Package Structure
 
@@ -458,7 +484,9 @@ src/maple/
 │   ├── calibration/
 │   │   ├── submodel_target.py         # SubmodelTarget schema
 │   │   ├── calibration_target_models.py  # CalibrationTarget schema
+│   │   ├── parameter_groups.py        # Hierarchical parameter group schema + loader
 │   │   ├── submodel_inference.py      # Joint NumPyro MCMC inference
+│   │   ├── inference_comparison.py    # Single-target vs joint inference comparison
 │   │   ├── posterior_parameterizer.py # Marginal fitting + Gaussian copula
 │   │   ├── yaml_to_prior.py          # Orchestrator + CLI
 │   │   ├── julia_translator.py        # YAML → Julia/Turing.jl (legacy)

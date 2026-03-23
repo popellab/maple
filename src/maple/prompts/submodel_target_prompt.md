@@ -49,6 +49,16 @@ Nuisance parameters are sampled during MCMC (helping constrain the QSP
 parameters) but excluded from the output priors. Only nuisance parameters may
 have an inline `prior`; QSP parameters always get priors from the CSV.
 
+**Hierarchical parameter groups:** Some QSP parameters belong to hierarchical
+groups defined in `parameter_groups.yaml` (e.g., CAF subtype death rates share
+a latent base rate with per-member deviations). During joint inference, grouped
+parameters get partial pooling — members with submodel target data pull the
+group, while members without data shrink toward the group mean. You do NOT need
+to extract data for every member of a group. A single well-constrained target
+on one member (e.g., k_myCAF_death from Kisseleva 2012) informs the entire
+group. When designing targets, be aware that shared parameters across targets
+AND group membership both contribute to the joint posterior.
+
 {{USED_PRIMARY_STUDIES}}
 
 ---
@@ -209,6 +219,50 @@ These models auto-generate code from their fields. Each field is a **ParameterRo
 | `target` | Calibration target | Cell count at day 3 |
 | `fixed_parameter` | Fixed in model | Known rate from literature |
 | `auxiliary` | Supporting data | SD/SEM values, sample sizes |
+
+---
+
+## Derived Arithmetic Inputs
+
+Use `input_type: derived_arithmetic` when a value is deterministically calculated
+from other extracted inputs — not read directly from the paper. The validator
+evaluates the formula and checks it matches the declared value.
+
+**When to use:**
+- Physics conversions: G' (storage modulus) to E (Young's modulus) via `E = 3 * G'`
+- Arithmetic: "2 ROIs x 2 gels = 4 observations" → `n_obs = n_ROIs * n_gels`
+- Unit scaling: nmol/mg to uM via tissue density
+
+**Required fields:** `formula`, `source_inputs`, `rationale`
+
+**Example:**
+```yaml
+inputs:
+  - name: Gprime_stiff_kPa
+    value: 17.0
+    units: kilopascal
+    input_type: direct_measurement
+    source_ref: Smith2020
+    source_location: "Table 1"
+    value_snippet: "G' = 17.0 kPa for stiff hydrogels"
+
+  - name: E_stiff_kPa
+    value: 51.0
+    units: kilopascal
+    input_type: derived_arithmetic
+    source_inputs: [Gprime_stiff_kPa]
+    formula: "3 * Gprime_stiff_kPa"
+    rationale: "E = 2*(1+nu)*G' with nu=0.5 for incompressible PEG hydrogels"
+    source_ref: Smith2020
+    source_location: "Table 1"
+```
+
+**Key rules:**
+- All names in `source_inputs` must be existing inputs in the same YAML
+- The formula is evaluated with source input values and must match `value` within 1%
+- `formula` may use basic math functions: `abs`, `min`, `max`, `log`, `sqrt`, `exp`, `pi`
+- Keep raw paper values as `direct_measurement` (snippet-validated) and derive from them
+- Snippet validation is skipped for `derived_arithmetic` inputs
 
 ---
 

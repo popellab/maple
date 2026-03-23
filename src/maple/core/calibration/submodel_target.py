@@ -42,6 +42,17 @@ class InputType(str, Enum):
     REFERENCE_VALUE = (
         "reference_value"  # Normalization/reference constant (e.g., V_T_ref, tumor_cell_density)
     )
+    DERIVED_ARITHMETIC = "derived_arithmetic"
+    """Deterministic arithmetic derivation from other inputs.
+
+    Use when a value is calculated from extracted inputs via an explicit
+    formula (e.g., E = 3*G' for incompressible materials, slope * time,
+    2 ROIs * 2 gels = 4 observations). The formula is evaluated and
+    checked against the declared value. Snippet validation is skipped
+    since the derived value won't appear in the source text.
+
+    Requires ``formula`` and ``source_inputs`` fields on the Input.
+    """
 
 
 class CurveType(str, Enum):
@@ -160,6 +171,19 @@ class Input(BaseModel):
         description="Structured figure excerpt when value is read from a figure. "
         "Figure-derived values are flagged for manual review instead of "
         "failing snippet validation.",
+    )
+    source_inputs: Optional[List[str]] = Field(
+        default=None,
+        description="Names of other inputs used in the formula. "
+        "Required for derived_arithmetic inputs. "
+        "All referenced names must exist as inputs in the same target.",
+    )
+    formula: Optional[str] = Field(
+        default=None,
+        description="Arithmetic formula deriving this value from source_inputs. "
+        "Required for derived_arithmetic inputs. Use input names directly "
+        "in the expression (e.g., '3 * Gprime_stiff_kPa'). "
+        "The validator evaluates this and checks it matches the declared value.",
     )
 
 
@@ -2155,6 +2179,7 @@ class SubmodelTarget(BaseModel):
             if inp.input_type in (
                 InputType.UNIT_CONVERSION,
                 InputType.REFERENCE_VALUE,
+                InputType.DERIVED_ARITHMETIC,
             ):
                 continue
 
@@ -2208,19 +2233,129 @@ class SubmodelTarget(BaseModel):
     @model_validator(mode="after")
     def validate_non_measurement_inputs_have_rationale(self) -> "SubmodelTarget":
         """
-        Require rationale for unit_conversion and reference_value inputs.
+        Require rationale for unit_conversion, reference_value, and derived_arithmetic inputs.
 
         These input types don't come from paper text, so they need an explicit
-        rationale explaining why this value was chosen.
+        rationale explaining why this value was chosen or how it was derived.
         """
         errors = []
         for inp in self.inputs:
-            if inp.input_type in (InputType.UNIT_CONVERSION, InputType.REFERENCE_VALUE):
+            if inp.input_type in (
+                InputType.UNIT_CONVERSION,
+                InputType.REFERENCE_VALUE,
+                InputType.DERIVED_ARITHMETIC,
+            ):
                 if not inp.rationale:
                     errors.append(
                         f"Input '{inp.name}' has input_type='{inp.input_type.value}' "
                         f"but no rationale provided. Non-measurement inputs require "
                         f"a rationale explaining why this value was chosen."
+                    )
+
+        if errors:
+            raise ValueError("\n".join(errors))
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_derived_arithmetic_inputs(self) -> "SubmodelTarget":
+        """
+        Validate derived_arithmetic inputs: require formula + source_inputs,
+        check that source_inputs reference existing inputs, and verify that
+        evaluating the formula produces the declared value.
+
+        Also rejects formula/source_inputs on non-derived_arithmetic inputs.
+        """
+        import math
+        import re
+
+        input_map = {inp.name: inp.value for inp in self.inputs}
+        errors = []
+
+        for inp in self.inputs:
+            if inp.input_type == InputType.DERIVED_ARITHMETIC:
+                if not inp.formula:
+                    errors.append(
+                        f"Input '{inp.name}' has input_type='derived_arithmetic' "
+                        f"but no formula provided."
+                    )
+                if not inp.source_inputs:
+                    errors.append(
+                        f"Input '{inp.name}' has input_type='derived_arithmetic' "
+                        f"but no source_inputs provided."
+                    )
+                if not inp.formula or not inp.source_inputs:
+                    continue
+
+                # Check all source_inputs exist
+                missing = [s for s in inp.source_inputs if s not in input_map]
+                if missing:
+                    errors.append(
+                        f"Input '{inp.name}': source_inputs {missing} " f"not found in inputs."
+                    )
+                    continue
+
+                # Evaluate formula and check against declared value
+                # Build a safe namespace with source input values
+                namespace = {s: input_map[s] for s in inp.source_inputs}
+                # Allow basic math functions
+                safe_builtins = {
+                    "abs": abs,
+                    "min": min,
+                    "max": max,
+                    "log": math.log,
+                    "log2": math.log2,
+                    "log10": math.log10,
+                    "sqrt": math.sqrt,
+                    "exp": math.exp,
+                    "pi": math.pi,
+                }
+                namespace.update(safe_builtins)
+
+                try:
+                    # Validate the formula only uses known names
+                    formula_names = set(re.findall(r"\b([a-zA-Z_]\w*)\b", inp.formula))
+                    allowed_names = set(inp.source_inputs) | set(safe_builtins.keys())
+                    unknown = formula_names - allowed_names
+                    if unknown:
+                        errors.append(
+                            f"Input '{inp.name}': formula references unknown "
+                            f"names {unknown}. Only source_inputs and math "
+                            f"functions (abs, min, max, log, sqrt, exp) are allowed."
+                        )
+                        continue
+
+                    computed = eval(inp.formula, {"__builtins__": {}}, namespace)  # noqa: S307
+                    # Check with relative tolerance (1% for floating point)
+                    if inp.value == 0:
+                        if abs(computed) > 1e-10:
+                            errors.append(
+                                f"Input '{inp.name}': formula '{inp.formula}' "
+                                f"evaluates to {computed}, but declared value is 0."
+                            )
+                    elif abs(computed - inp.value) / abs(inp.value) > 0.01:
+                        errors.append(
+                            f"Input '{inp.name}': formula '{inp.formula}' "
+                            f"evaluates to {computed}, but declared value "
+                            f"is {inp.value} (>{1}% mismatch)."
+                        )
+                except Exception as e:
+                    errors.append(
+                        f"Input '{inp.name}': formula '{inp.formula}' " f"failed to evaluate: {e}"
+                    )
+            else:
+                # Non-derived_arithmetic inputs must not have formula/source_inputs
+                if inp.formula is not None:
+                    errors.append(
+                        f"Input '{inp.name}' has input_type='{inp.input_type.value}' "
+                        f"but has a formula field. formula is only valid for "
+                        f"derived_arithmetic inputs."
+                    )
+                if inp.source_inputs is not None:
+                    errors.append(
+                        f"Input '{inp.name}' has input_type='{inp.input_type.value}' "
+                        f"but has a source_inputs field. source_inputs is only valid "
+                        f"for derived_arithmetic inputs."
                     )
 
         if errors:
@@ -2266,7 +2401,11 @@ class SubmodelTarget(BaseModel):
                 continue
 
             # Uncertainty patterns on non-measurement types
-            if inp.input_type in (InputType.UNIT_CONVERSION, InputType.REFERENCE_VALUE):
+            if inp.input_type in (
+                InputType.UNIT_CONVERSION,
+                InputType.REFERENCE_VALUE,
+                InputType.DERIVED_ARITHMETIC,
+            ):
                 for pattern in UNCERTAINTY_PATTERNS:
                     if pattern in name_lower:
                         errors.append(

@@ -1813,3 +1813,150 @@ class TestValidatePerturbationJustification:
             SubmodelTarget(**data)
         except ValidationError as e:
             assert "perturbation_relevance" not in str(e).lower()
+
+
+# ============================================================================
+# Tests for validate_derived_arithmetic_inputs
+# ============================================================================
+
+
+class TestDerivedArithmeticInputs:
+    """Tests for the derived_arithmetic input type and its validator."""
+
+    def _make_target_with_derived(self, **derived_overrides):
+        """Helper to create a target with a derived_arithmetic input."""
+        data = make_algebraic_target(input_value=10.0)
+        derived_input = {
+            "name": "derived_val",
+            "value": 30.0,
+            "units": "1/day",
+            "input_type": "derived_arithmetic",
+            "source_inputs": ["test_value"],
+            "formula": "3 * test_value",
+            "rationale": "Multiply by 3 for conversion",
+            "source_ref": "Test2023",
+            "source_location": "Table 1",
+        }
+        derived_input.update(derived_overrides)
+        data["inputs"].append(derived_input)
+        return data
+
+    def test_valid_derived_arithmetic_passes(self):
+        """A well-formed derived_arithmetic input should pass validation."""
+        data = self._make_target_with_derived()
+        # Should not raise
+        SubmodelTarget(**data)
+
+    def test_missing_formula_fails(self):
+        """derived_arithmetic without formula should fail."""
+        data = self._make_target_with_derived()
+        # Remove formula
+        for inp in data["inputs"]:
+            if inp["name"] == "derived_val":
+                del inp["formula"]
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+        assert "formula" in str(exc_info.value).lower()
+
+    def test_missing_source_inputs_fails(self):
+        """derived_arithmetic without source_inputs should fail."""
+        data = self._make_target_with_derived()
+        for inp in data["inputs"]:
+            if inp["name"] == "derived_val":
+                del inp["source_inputs"]
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+        assert "source_inputs" in str(exc_info.value).lower()
+
+    def test_missing_rationale_fails(self):
+        """derived_arithmetic without rationale should fail."""
+        data = self._make_target_with_derived()
+        for inp in data["inputs"]:
+            if inp["name"] == "derived_val":
+                inp["rationale"] = None
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+        assert "rationale" in str(exc_info.value).lower()
+
+    def test_source_input_not_found_fails(self):
+        """source_inputs referencing non-existent input should fail."""
+        data = self._make_target_with_derived(
+            source_inputs=["nonexistent_input"],
+            formula="3 * nonexistent_input",
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+        assert "nonexistent_input" in str(exc_info.value)
+
+    def test_formula_mismatch_fails(self):
+        """Formula that evaluates to wrong value should fail."""
+        data = self._make_target_with_derived(
+            value=99.0,  # Doesn't match 3 * 10 = 30
+            formula="3 * test_value",
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+        assert "mismatch" in str(exc_info.value).lower()
+
+    def test_formula_with_math_functions(self):
+        """Formula using math functions (log, sqrt, etc.) should work."""
+        import math
+
+        data = self._make_target_with_derived(
+            value=round(math.log(2) / 10.0, 10),
+            formula="log(2) / test_value",
+        )
+        SubmodelTarget(**data)
+
+    def test_formula_on_non_derived_fails(self):
+        """formula field on a direct_measurement input should fail."""
+        data = make_algebraic_target(input_value=10.0)
+        data["inputs"][0]["formula"] = "some formula"
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+        assert "formula" in str(exc_info.value).lower()
+
+    def test_source_inputs_on_non_derived_fails(self):
+        """source_inputs field on a direct_measurement input should fail."""
+        data = make_algebraic_target(input_value=10.0)
+        data["inputs"][0]["source_inputs"] = ["other"]
+        with pytest.raises(ValidationError) as exc_info:
+            SubmodelTarget(**data)
+        assert "source_inputs" in str(exc_info.value).lower()
+
+    def test_skips_snippet_validation(self):
+        """derived_arithmetic inputs should skip snippet validation."""
+        data = self._make_target_with_derived()
+        # Remove all provenance — should still pass
+        for inp in data["inputs"]:
+            if inp["name"] == "derived_val":
+                inp["value_snippet"] = None
+                inp.pop("table_excerpt", None)
+                inp.pop("figure_excerpt", None)
+        # Should not raise snippet errors
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            assert "not found in snippet" not in str(e).lower()
+            assert "no provenance" not in str(e).lower()
+
+    def test_multiple_source_inputs(self):
+        """Formula referencing multiple source inputs should work."""
+        data = make_algebraic_target(input_value=5.0)
+        # test_value=5.0, test_n=10 → product = 50
+        data["inputs"][0]["value"] = 5.0
+        data["inputs"][0]["value_snippet"] = "The rate was 5.0 per day"
+        data["inputs"].append(
+            {
+                "name": "product_val",
+                "value": 50.0,
+                "units": "dimensionless",
+                "input_type": "derived_arithmetic",
+                "source_inputs": ["test_value", "test_n"],
+                "formula": "test_value * test_n",
+                "rationale": "Product of rate and count",
+                "source_ref": "Test2023",
+                "source_location": "Derived",
+            }
+        )
+        SubmodelTarget(**data)

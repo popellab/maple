@@ -68,7 +68,8 @@ def _build_schema_overview() -> str:
         "├── inputs: List[Input]                    # Extracted values with provenance",
         "│   ├── name, value, units",
         f"│   ├── input_type: {input_type_vals}",
-        "│   ├── rationale (required for unit_conversion and reference_value)",
+        "│   ├── rationale (required for unit_conversion, reference_value, derived_arithmetic)",
+        "│   ├── source_inputs, formula (required for derived_arithmetic)",
         "│   ├── source_ref, source_location",
         "│   └── value_snippet | table_excerpt | figure_excerpt  # provenance (at least one required)",
         "├── calibration",
@@ -265,9 +266,13 @@ thickness) and use `input_type: unit_conversion` with a `rationale`.
 
 ### 4. input_type enum
 
-Only three values: `direct_measurement`, `unit_conversion`, `reference_value`.
+Four values: `direct_measurement`, `unit_conversion`, `reference_value`, `derived_arithmetic`.
 
-- `unit_conversion` requires a `rationale` field.
+- `unit_conversion` and `reference_value` require a `rationale` field.
+- `derived_arithmetic` requires `formula`, `source_inputs`, and `rationale` fields.
+  The validator evaluates the formula against source input values and checks it
+  matches the declared value (within 1%). Use this for deterministic conversions
+  like `E = 3 * G'` or `n_obs = n_ROIs * n_gels`.
 - Do NOT use `derived`, `reference_constant`, or any other value.
 
 ### 5. Observation code must use all data
