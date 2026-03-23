@@ -54,6 +54,7 @@ def run_comparison(
     num_warmup: int = 500,
     num_samples: int = 2000,
     num_chains: int = 2,
+    parameter_groups_path: str | Path | None = None,
 ) -> str:
     """Run single-target and joint inference, return comparison report.
 
@@ -64,6 +65,7 @@ def run_comparison(
         num_warmup: NUTS warmup per chain.
         num_samples: Post-warmup samples per chain.
         num_chains: Number of MCMC chains.
+        parameter_groups_path: Optional path to parameter_groups.yaml for hierarchical pooling.
 
     Returns:
         Markdown-formatted comparison report.
@@ -80,17 +82,99 @@ def run_comparison(
         process_yaml,
     )
 
+    from maple.core.calibration.parameter_groups import load_parameter_groups
+
     priors_csv = Path(priors_csv)
     submodel_dir = Path(submodel_dir)
 
+    # Load parameter groups if provided (or auto-discover in submodel_dir)
+    param_groups = None
+    if parameter_groups_path is not None:
+        param_groups = load_parameter_groups(Path(parameter_groups_path))
+    else:
+        auto_path = submodel_dir / "parameter_groups.yaml"
+        if auto_path.exists():
+            param_groups = load_parameter_groups(auto_path)
+    if param_groups and param_groups.groups:
+        logger.info(
+            "Loaded %d parameter groups (%d params)",
+            len(param_groups.groups),
+            len(param_groups.all_grouped_params),
+        )
+
     yaml_files = sorted(submodel_dir.glob(glob_pattern))
+    # Exclude parameter_groups.yaml from target list
+    yaml_files = [f for f in yaml_files if f.name != "parameter_groups.yaml"]
     if not yaml_files:
         return f"No YAML files found matching {glob_pattern} in {submodel_dir}"
 
     csv_priors = load_priors_from_csv(priors_csv)
 
-    # ── Phase 1: Single-target inference ──
-    logger.info("Phase 1: Running single-target inference on %d targets", len(yaml_files))
+    # ── Phase 1: Joint inference (run first to smoke out issues early) ──
+    logger.info("Phase 1: Running joint inference")
+    targets = []
+    for yf in yaml_files:
+        try:
+            with open(yf) as f:
+                data = yaml.safe_load(f)
+            target = SubmodelTarget.model_validate(data)
+            targets.append(target)
+        except Exception as e:
+            logger.warning("Failed to load %s for joint: %s", yf.name, e)
+
+    all_param_names = set()
+    for t in targets:
+        for p in t.calibration.parameters:
+            if not p.nuisance:
+                all_param_names.add(p.name)
+    # Also include grouped params — they may not appear in any target but
+    # need CSV priors for resolve_base_prior and hierarchical sampling
+    if param_groups:
+        all_param_names |= param_groups.all_grouped_params
+    joint_prior_specs = {k: v for k, v in csv_priors.items() if k in all_param_names}
+
+    try:
+        joint_samples, joint_diag = run_joint_inference(
+            joint_prior_specs,
+            targets,
+            parameter_groups=param_groups,
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            num_chains=num_chains,
+        )
+    except Exception as e:
+        return f"Joint inference failed: {e}"
+
+    # Fit distributions to joint posteriors
+    joint_fits: dict[str, dict] = {}
+    for pname in sorted(all_param_names):
+        if pname not in joint_samples:
+            continue
+        fits = fit_distributions(joint_samples[pname])
+        if not fits:
+            continue
+        best = fits[0]
+
+        if best.name == "lognormal":
+            post_sigma = best.params["sigma"]
+        else:
+            post_sigma = np.sqrt(np.log(1 + best.cv**2))
+
+        prior_sigma = csv_priors[pname].sigma if pname in csv_priors else 1.0
+        prior_mu = csv_priors[pname].mu if pname in csv_priors else 0.0
+        post_mu = np.log(best.median)
+
+        joint_fits[pname] = {
+            "median": best.median,
+            "cv": best.cv,
+            "sigma": post_sigma,
+            "dist": best.name,
+            "contraction": _contraction(prior_sigma, post_sigma),
+            "z_score": _z_score(prior_mu, post_mu, prior_sigma),
+        }
+
+    # ── Phase 2: Single-target inference ──
+    logger.info("Phase 2: Running single-target inference on %d targets", len(yaml_files))
     # {param_name: [{target_id, median, cv, sigma, contraction, z_score, dist}]}
     single_results: dict[str, list[dict]] = {}
     target_param_map: dict[str, list[str]] = {}  # {target_id: [param_names]}
@@ -134,64 +218,6 @@ def run_comparison(
                 target_param_map[tid].append(pname)
         except Exception as e:
             logger.warning("Failed to process %s: %s", yf.name, e)
-
-    # ── Phase 2: Joint inference ──
-    logger.info("Phase 2: Running joint inference")
-    targets = []
-    for yf in yaml_files:
-        try:
-            with open(yf) as f:
-                data = yaml.safe_load(f)
-            target = SubmodelTarget.model_validate(data)
-            targets.append(target)
-        except Exception as e:
-            logger.warning("Failed to load %s for joint: %s", yf.name, e)
-
-    all_param_names = set()
-    for t in targets:
-        for p in t.calibration.parameters:
-            if not p.nuisance:
-                all_param_names.add(p.name)
-    joint_prior_specs = {k: v for k, v in csv_priors.items() if k in all_param_names}
-
-    try:
-        joint_samples, joint_diag = run_joint_inference(
-            joint_prior_specs,
-            targets,
-            num_warmup=num_warmup,
-            num_samples=num_samples,
-            num_chains=num_chains,
-        )
-    except Exception as e:
-        return f"Joint inference failed: {e}"
-
-    # Fit distributions to joint posteriors
-    joint_fits: dict[str, dict] = {}
-    for pname in sorted(all_param_names):
-        if pname not in joint_samples:
-            continue
-        fits = fit_distributions(joint_samples[pname])
-        if not fits:
-            continue
-        best = fits[0]
-
-        if best.name == "lognormal":
-            post_sigma = best.params["sigma"]
-        else:
-            post_sigma = np.sqrt(np.log(1 + best.cv**2))
-
-        prior_sigma = csv_priors[pname].sigma if pname in csv_priors else 1.0
-        prior_mu = csv_priors[pname].mu if pname in csv_priors else 0.0
-        post_mu = np.log(best.median)
-
-        joint_fits[pname] = {
-            "median": best.median,
-            "cv": best.cv,
-            "sigma": post_sigma,
-            "dist": best.name,
-            "contraction": _contraction(prior_sigma, post_sigma),
-            "z_score": _z_score(prior_mu, post_mu, prior_sigma),
-        }
 
     # ── Phase 3: Build comparison report ──
     lines = [
@@ -345,6 +371,10 @@ def main():
     parser.add_argument("--num-samples", type=int, default=2000)
     parser.add_argument("--num-chains", type=int, default=2)
     parser.add_argument("--output", help="Optional output file (markdown)")
+    parser.add_argument(
+        "--parameter-groups",
+        help="Path to parameter_groups.yaml (auto-discovered in submodel-dir if not set)",
+    )
 
     args = parser.parse_args()
 
@@ -357,6 +387,7 @@ def main():
         num_warmup=args.num_warmup,
         num_samples=args.num_samples,
         num_chains=args.num_chains,
+        parameter_groups_path=args.parameter_groups,
     )
 
     if args.output:

@@ -25,6 +25,7 @@ from typing import Optional
 import numpy as np
 from scipy import stats
 
+from maple.core.calibration.parameter_groups import ParameterGroupsConfig
 from maple.core.calibration.submodel_target import SubmodelTarget
 from maple.core.calibration.yaml_to_prior import DistFit, fit_distributions
 
@@ -152,6 +153,7 @@ def parameterize_posteriors(
     translation_sigmas: Optional[dict[str, tuple[float, dict]]] = None,
     copula_threshold: float = 0.05,
     mcmc_config: Optional[dict] = None,
+    parameter_groups: Optional[ParameterGroupsConfig] = None,
 ) -> dict:
     """Parameterize posterior samples as marginals + Gaussian copula.
 
@@ -161,17 +163,25 @@ def parameterize_posteriors(
         translation_sigmas: {target_id: (total, breakdown)} for provenance
         copula_threshold: Minimum |correlation| to include in copula
         mcmc_config: MCMC settings for metadata
+        parameter_groups: Optional hierarchical group config for metadata
 
     Returns:
-        Result dict with keys: metadata, parameters, copula, translation_sigma
+        Result dict with keys: metadata, parameters, copula, translation_sigma,
+        and optionally parameter_groups
     """
-    # Exclude nuisance parameters from output
+    # Exclude nuisance parameters and group hyperparameters from output
     nuisance_names = set()
     for target in targets:
         for param in target.calibration.parameters:
             if param.nuisance:
                 nuisance_names.add(param.name)
-    output_samples = {k: v for k, v in samples.items() if k not in nuisance_names}
+
+    # Group hyperparameters have __base, __tau, or __delta suffixes
+    hyper_names = {k for k in samples if "__base" in k or "__tau" in k or "__delta" in k}
+
+    output_samples = {
+        k: v for k, v in samples.items() if k not in nuisance_names and k not in hyper_names
+    }
     param_names = sorted(output_samples.keys())
 
     # Fit marginals
@@ -251,6 +261,43 @@ def parameterize_posteriors(
         result["copula"] = copula_block
     if trans_sigma_block:
         result["translation_sigma"] = trans_sigma_block
+
+    # Group hyperparameter summaries
+    if parameter_groups and parameter_groups.groups:
+        groups_block = []
+        for group in parameter_groups.groups:
+            gid = group.group_id
+            group_entry = {
+                "group_id": gid,
+                "description": group.description,
+                "members": [m.name for m in group.members],
+            }
+            # Base rate posterior
+            base_key = f"{gid}__base"
+            if base_key in samples:
+                base_samples = np.asarray(samples[base_key])
+                group_entry["base_posterior"] = {
+                    "median": float(np.median(base_samples)),
+                    "sd": float(np.std(base_samples)),
+                    "ci95": [
+                        float(np.percentile(base_samples, 2.5)),
+                        float(np.percentile(base_samples, 97.5)),
+                    ],
+                }
+            # Tau posterior
+            tau_key = f"{gid}__tau"
+            if tau_key in samples:
+                tau_samples = np.asarray(samples[tau_key])
+                group_entry["tau_posterior"] = {
+                    "median": float(np.median(tau_samples)),
+                    "sd": float(np.std(tau_samples)),
+                    "ci95": [
+                        float(np.percentile(tau_samples, 2.5)),
+                        float(np.percentile(tau_samples, 97.5)),
+                    ],
+                }
+            groups_block.append(group_entry)
+        result["parameter_groups"] = groups_block
 
     return result
 

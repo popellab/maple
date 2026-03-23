@@ -49,6 +49,7 @@ from typing import Optional
 import numpy as np
 from scipy import stats
 
+from maple.core.calibration.parameter_groups import load_parameter_groups
 from maple.core.calibration.submodel_target import SubmodelTarget
 
 
@@ -518,9 +519,16 @@ def sync_submodel_priors(
 ) -> list[dict]:
     """Glob submodel target YAMLs, process each, and merge into priors CSV.
 
+    Also loads parameter_groups.yaml from submodel_dir if present.
+    Note: parameter groups are only applied during joint inference
+    (process_targets), not during per-target sync. The sync pipeline
+    processes targets individually for fast validation.
+
     Returns the list of successfully processed result dicts.
     """
     yaml_files = sorted(submodel_dir.glob(glob_pattern))
+    # Exclude parameter_groups.yaml from target list
+    yaml_files = [f for f in yaml_files if f.name != "parameter_groups.yaml"]
     if not yaml_files:
         if verbose:
             print(f"  No submodel target YAMLs matching {glob_pattern} in {submodel_dir}")
@@ -579,6 +587,7 @@ def process_targets(
     output_dir: Optional[Path] = None,
     plot: bool = False,
     export_csv: Optional[Path] = None,
+    parameter_groups_path: Optional[Path] = None,
     **mcmc_kwargs,
 ) -> dict:
     """Run joint inference across SubmodelTargets and produce parameterized priors.
@@ -590,6 +599,7 @@ def process_targets(
         output_dir: Where to write submodel_priors.yaml and plots
         plot: Whether to generate diagnostic plots
         export_csv: Optional path to write updated CSV
+        parameter_groups_path: Optional path to parameter_groups.yaml for hierarchical pooling
         **mcmc_kwargs: Passed to run_joint_inference (num_warmup, num_samples, etc.)
 
     Returns:
@@ -612,6 +622,16 @@ def process_targets(
     all_prior_specs = load_priors_from_csv(priors_csv)
     print(f"Loaded {len(all_prior_specs)} priors from {priors_csv}")
 
+    # 1b. Load parameter groups if provided
+    param_groups = None
+    if parameter_groups_path is not None:
+        param_groups = load_parameter_groups(parameter_groups_path)
+        if param_groups.groups:
+            print(
+                f"Loaded {len(param_groups.groups)} parameter groups "
+                f"({len(param_groups.all_grouped_params)} params)"
+            )
+
     # 2. Load and validate targets
     targets = []
     for p in yaml_paths:
@@ -630,6 +650,10 @@ def process_targets(
         for param in target.calibration.parameters:
             if not param.nuisance:
                 target_params.add(param.name)
+    # Also include grouped params — they may not appear in any target but
+    # need CSV priors for resolve_base_prior and hierarchical sampling
+    if param_groups:
+        target_params |= param_groups.all_grouped_params
     prior_specs = {k: v for k, v in all_prior_specs.items() if k in target_params}
     n_nuisance = sum(
         1
@@ -643,7 +667,13 @@ def process_targets(
     )
 
     # 4. Run joint inference
-    samples, _diagnostics = run_joint_inference(prior_specs, targets, reference_db, **mcmc_kwargs)
+    samples, _diagnostics = run_joint_inference(
+        prior_specs,
+        targets,
+        reference_db,
+        parameter_groups=param_groups,
+        **mcmc_kwargs,
+    )
 
     # 5. Collect translation sigmas for provenance
     translation_sigmas = {}
@@ -657,7 +687,13 @@ def process_targets(
         "num_samples": mcmc_kwargs.get("num_samples", 5000),
         "num_chains": mcmc_kwargs.get("num_chains", 4),
     }
-    result = parameterize_posteriors(samples, targets, translation_sigmas, mcmc_config=mcmc_config)
+    result = parameterize_posteriors(
+        samples,
+        targets,
+        translation_sigmas,
+        mcmc_config=mcmc_config,
+        parameter_groups=param_groups,
+    )
 
     # 7. Write output
     if output_dir:
@@ -842,6 +878,12 @@ def main():
         reference_db_path = Path(argv[idx + 1])
         argv = argv[:idx] + argv[idx + 2 :]
 
+    parameter_groups_path = None
+    if "--parameter-groups" in argv:
+        idx = argv.index("--parameter-groups")
+        parameter_groups_path = Path(argv[idx + 1])
+        argv = argv[:idx] + argv[idx + 2 :]
+
     if not priors_csv:
         print("ERROR: --priors CSV is required.")
         sys.exit(1)
@@ -873,4 +915,5 @@ def main():
         output_dir=output_dir,
         plot=do_plot,
         export_csv=export_csv,
+        parameter_groups_path=parameter_groups_path,
     )

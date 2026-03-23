@@ -26,6 +26,7 @@ from typing import Optional
 
 import numpy as np
 
+from maple.core.calibration.parameter_groups import ParameterGroupsConfig
 from maple.core.calibration.submodel_target import SubmodelTarget
 from maple.core.calibration.submodel_utils import (
     STRUCTURED_ALGEBRAIC_TYPES,
@@ -354,8 +355,9 @@ def _make_diffrax_ode_fn(
                     args=(param_values, inputs_dict),
                     saveat=diffrax.SaveAt(t1=True),
                     stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-8),
-                    max_steps=16384,
+                    max_steps=512,
                     throw=False,
+                    progress_meter=diffrax.NoProgressMeter(),
                 )
                 y_final = sol.ys[-1]
                 return obs_fn(_t1, y_final, _y0_start)
@@ -389,8 +391,9 @@ def _make_diffrax_ode_fn(
                     args=None,
                     saveat=diffrax.SaveAt(t1=True),
                     stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-8),
-                    max_steps=16384,
+                    max_steps=512,
                     throw=False,
+                    progress_meter=diffrax.NoProgressMeter(),
                 )
                 y_final = sol.ys[-1]
                 return obs_fn(_t1, y_final, _y0_start)
@@ -525,9 +528,18 @@ def build_target_likelihoods(
     Validates that all non-nuisance parameter names exist in prior_specs.
     Injects nuisance parameters' inline priors into prior_specs.
     """
+    import time
+
     likelihoods = []
 
-    for target in targets:
+    for i, target in enumerate(targets):
+        t0 = time.monotonic()
+        model_type = target.calibration.forward_model.type
+        print(
+            f"  [{i+1}/{len(targets)}] {target.target_id} ({model_type})...",
+            end="",
+            flush=True,
+        )
         # Validate parameter coverage and inject nuisance priors
         for param in target.calibration.parameters:
             if param.nuisance:
@@ -594,6 +606,8 @@ def build_target_likelihoods(
                 entries=entries,
             )
         )
+        dt = time.monotonic() - t0
+        print(f" {len(entries)} entries, {dt:.1f}s", flush=True)
 
     return likelihoods
 
@@ -603,20 +617,28 @@ def build_target_likelihoods(
 # =============================================================================
 
 
-def submodel_joint_model(prior_specs, target_likelihoods):
+def submodel_joint_model(prior_specs, target_likelihoods, parameter_groups=None):
     """NumPyro model for joint inference across SubmodelTargets.
 
     Args:
         prior_specs: dict of {param_name: PriorSpec}
         target_likelihoods: list of TargetLikelihood
+        parameter_groups: optional ParameterGroupsConfig for hierarchical sampling
     """
     import numpyro
     import numpyro.distributions as dist
     from jax import numpy as jnp
 
-    # Sample each parameter from its CSV-specified prior
+    # Identify which parameters are in hierarchical groups
+    grouped_params: set[str] = set()
+    if parameter_groups is not None:
+        grouped_params = parameter_groups.all_grouped_params
+
+    # Sample non-grouped parameters from their CSV-specified priors
     params = {}
     for name, spec in prior_specs.items():
+        if name in grouped_params:
+            continue  # handled below in hierarchical block
         if spec.distribution == "lognormal":
             params[name] = numpyro.sample(name, dist.LogNormal(spec.mu, spec.sigma))
         elif spec.distribution == "normal":
@@ -625,6 +647,41 @@ def submodel_joint_model(prior_specs, target_likelihoods):
             params[name] = numpyro.sample(name, dist.Uniform(spec.lower, spec.upper))
         else:
             raise ValueError(f"Unsupported prior distribution: {spec.distribution}")
+
+    # Sample hierarchical groups
+    if parameter_groups is not None:
+        for group in parameter_groups.groups:
+            gid = group.group_id
+            bp = group.resolve_base_prior(prior_specs)
+
+            # Sample group base rate (log-space)
+            if bp.distribution == "lognormal":
+                k_base = numpyro.sample(f"{gid}__base", dist.LogNormal(bp.mu, bp.sigma))
+            else:  # normal
+                k_base = numpyro.sample(f"{gid}__base", dist.Normal(bp.mu, bp.sigma))
+
+            # Sample between-member SD (tau)
+            tau_prior = group.between_member_sd
+            tau = numpyro.sample(f"{gid}__tau", dist.HalfNormal(tau_prior.sigma))
+
+            # Sample each member's deviation
+            for member in group.members:
+                dp = member.delta_prior
+                if dp is not None:
+                    # Informative delta prior (e.g., biased lower for qPSC)
+                    delta = numpyro.sample(
+                        f"{member.name}__delta",
+                        dist.Normal(dp.mu, dp.sigma),
+                    )
+                else:
+                    # Default: centered on group mean, spread controlled by tau
+                    delta = numpyro.sample(
+                        f"{member.name}__delta",
+                        dist.Normal(0.0, tau),
+                    )
+
+                # Final parameter value: k_i = k_base * exp(delta_i)
+                params[member.name] = numpyro.deterministic(member.name, k_base * jnp.exp(delta))
 
     # Likelihood: loop over targets, then error model entries
     for tl in target_likelihoods:
@@ -739,6 +796,7 @@ def run_joint_inference(
     prior_specs: dict[str, PriorSpec],
     targets: list[SubmodelTarget],
     reference_db: Optional[dict[str, float]] = None,
+    parameter_groups: Optional[ParameterGroupsConfig] = None,
     num_warmup: int = 1000,
     num_samples: int = 5000,
     num_chains: int = 4,
@@ -750,6 +808,7 @@ def run_joint_inference(
         prior_specs: Prior specifications from CSV
         targets: List of SubmodelTarget objects
         reference_db: Optional reference values for ReferenceRef resolution
+        parameter_groups: Optional hierarchical parameter groups for partial pooling
         num_warmup: NUTS warmup iterations per chain
         num_samples: Post-warmup samples per chain
         num_chains: Number of MCMC chains
@@ -770,32 +829,45 @@ def run_joint_inference(
             "Install with: pip install maple[inference]"
         ) from e
 
-    # Ensure JAX can run parallel chains on CPU
-    import numpyro
-
-    numpyro.set_host_device_count(num_chains)
+    # Enable persistent compilation cache — first run compiles, subsequent
+    # runs with the same model structure load from disk instantly.
+    _cache_dir = Path.home() / ".cache" / "maple" / "jax_compilation_cache"
+    _cache_dir.mkdir(parents=True, exist_ok=True)
+    jax.config.update("jax_compilation_cache_dir", str(_cache_dir))
+    jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
 
     # Build target likelihoods (runs bootstrap, builds forward fns)
     target_likelihoods = build_target_likelihoods(targets, prior_specs, reference_db)
 
     n_likelihood_terms = sum(len(tl.entries) for tl in target_likelihoods)
+    n_groups = len(parameter_groups.groups) if parameter_groups else 0
+    n_grouped = len(parameter_groups.all_grouped_params) if parameter_groups else 0
     print(
-        f"Built joint model: {len(prior_specs)} parameters, "
+        f"Built joint model: {len(prior_specs)} parameters "
+        f"({n_grouped} in {n_groups} hierarchical groups), "
         f"{len(targets)} targets, {n_likelihood_terms} likelihood terms"
     )
 
     # Run MCMC
-    kernel = NUTS(submodel_joint_model)
+    print("Starting MCMC (JAX compilation on first step may be slow)...", flush=True)
+    kernel = NUTS(submodel_joint_model, dense_mass=True)
+    # Use vectorized chain method to avoid JAX pmap issues with diffrax.
+    # pmap (the default) causes diffrax RESULTS<traced> vs RESULTS<unknown>
+    # closure conversion mismatch on Apple Silicon virtual CPU devices.
+    # vectorized uses vmap instead, which traces consistently and batches
+    # chains for better throughput.
     mcmc = MCMC(
         kernel,
         num_warmup=num_warmup,
         num_samples=num_samples,
         num_chains=num_chains,
+        chain_method="vectorized",
     )
     mcmc.run(
         jax.random.PRNGKey(seed),
         prior_specs=prior_specs,
         target_likelihoods=target_likelihoods,
+        parameter_groups=parameter_groups,
     )
 
     # Diagnostics
