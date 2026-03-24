@@ -721,8 +721,8 @@ def compare_inference(
 
 @mcp.tool()
 def verify_dois(
-    dois: list[str],
-    source_tags: list[str],
+    dois: str,
+    source_tags: str,
     papers_dir: str,
 ) -> str:
     """Verify DOIs via CrossRef and create paper directories.
@@ -732,9 +732,9 @@ def verify_dois(
     ``papers/<source_tag>/`` directories for PDF placement.
 
     Args:
-        dois: List of DOIs to verify (e.g., ["10.3390/ijms19103043"]).
-        source_tags: Corresponding source tags (e.g., ["Saga2018"]).
-            Must be same length as dois.
+        dois: Comma-separated DOIs (e.g., "10.3390/ijms19103043,10.1155/2014/590654").
+        source_tags: Comma-separated source tags (e.g., "Saga2018,Kawka2014").
+            Must be same count as dois.
         papers_dir: Base directory for paper folders
             (e.g., "calibration_targets/submodel_targets/papers").
 
@@ -743,8 +743,11 @@ def verify_dois(
     """
     import json
     from pathlib import Path
-    from urllib.request import urlopen
     from urllib.error import URLError
+    from urllib.request import urlopen
+
+    dois = [d.strip() for d in dois.split(",")]
+    source_tags = [t.strip() for t in source_tags.split(",")]
 
     if len(dois) != len(source_tags):
         return f"ERROR: dois ({len(dois)}) and source_tags ({len(source_tags)}) must be same length"
@@ -798,7 +801,7 @@ def verify_dois(
 
 @mcp.tool()
 def fetch_papers_from_zotero(
-    source_tags: list[str],
+    source_tags: str,
     papers_dir: str,
     zotero_storage: str = "~/Zotero/storage",
 ) -> str:
@@ -808,12 +811,8 @@ def fetch_papers_from_zotero(
     PDF attachment, and copies it from Zotero's local storage to
     ``papers/<source_tag>/``.
 
-    Requires the Zotero MCP server to be running (for search + children
-    lookup). Falls back to scanning Zotero storage directly if MCP is
-    unavailable.
-
     Args:
-        source_tags: List of source tags to fetch (e.g., ["Saga2018", "Magni2021"]).
+        source_tags: Comma-separated source tags (e.g., "Saga2018,Magni2021").
         papers_dir: Base directory for paper folders.
         zotero_storage: Path to Zotero local storage (default: ~/Zotero/storage).
 
@@ -822,6 +821,8 @@ def fetch_papers_from_zotero(
     """
     import shutil
     from pathlib import Path
+
+    source_tags = [t.strip() for t in source_tags.split(",")]
 
     storage = Path(zotero_storage).expanduser()
     papers_path = Path(papers_dir)
