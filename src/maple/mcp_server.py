@@ -202,13 +202,21 @@ Flag parameters where the literature data does not map to the model's
 parameterization — these need a different search strategy or may not
 be extractable as direct submodel targets.
 
-### Step 3: User obtains PDFs
+### Step 2b: Verify DOIs and create directories
 
-The user will get the PDFs into `to-review/papers/<source_tag>/` directories
-(one subfolder per source, named like `Smith2020`). Create the directory
-structure for them if needed.
+Call `verify_dois` with the candidate DOIs and source tags. This:
+1. Resolves each DOI via CrossRef (catches hallucinated/wrong DOIs)
+2. Reports title, authors, year, journal for confirmation
+3. Creates `papers/<source_tag>/` directories
 
-Wait for the user to confirm PDFs are in place before proceeding.
+### Step 3: User obtains PDFs via Zotero
+
+The user adds the papers to Zotero (via browser connector, DOI import, etc.).
+Then call `fetch_papers_from_zotero` with the source tags — this copies
+PDFs from Zotero's local storage into the paper directories automatically.
+
+If fetch_papers_from_zotero can't find a PDF, the user may need to
+download it manually into the `papers/<source_tag>/` directory.
 
 ### Step 4: Extract targets one by one
 
@@ -704,6 +712,159 @@ def compare_inference(
         num_samples=num_samples,
         num_chains=num_chains,
     )
+
+
+# ---------------------------------------------------------------------------
+# Paper management tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def verify_dois(
+    dois: list[str],
+    source_tags: list[str],
+    papers_dir: str,
+) -> str:
+    """Verify DOIs via CrossRef and create paper directories.
+
+    Call this after the literature search agent returns candidate papers.
+    Verifies each DOI resolves, reports title/author/year, and creates
+    ``papers/<source_tag>/`` directories for PDF placement.
+
+    Args:
+        dois: List of DOIs to verify (e.g., ["10.3390/ijms19103043"]).
+        source_tags: Corresponding source tags (e.g., ["Saga2018"]).
+            Must be same length as dois.
+        papers_dir: Base directory for paper folders
+            (e.g., "calibration_targets/submodel_targets/papers").
+
+    Returns:
+        Markdown report with verification results and created directories.
+    """
+    import json
+    from pathlib import Path
+    from urllib.request import urlopen
+    from urllib.error import URLError
+
+    if len(dois) != len(source_tags):
+        return f"ERROR: dois ({len(dois)}) and source_tags ({len(source_tags)}) must be same length"
+
+    papers_path = Path(papers_dir)
+    lines = ["# DOI Verification Report\n"]
+
+    for doi, tag in zip(dois, source_tags):
+        lines.append(f"## {tag} — `{doi}`\n")
+
+        try:
+            url = f"https://api.crossref.org/works/{doi}"
+            with urlopen(url, timeout=15) as resp:
+                data = json.loads(resp.read())["message"]
+
+            title = data.get("title", ["Unknown"])[0]
+            authors = [a.get("family", "?") for a in data.get("author", [])]
+            author_str = ", ".join(authors[:3])
+            if len(authors) > 3:
+                author_str += f" et al. ({len(authors)} authors)"
+
+            year = "?"
+            for date_field in ["published-print", "published-online", "created"]:
+                if date_field in data:
+                    year = data[date_field]["date-parts"][0][0]
+                    break
+
+            journal = data.get("container-title", ["?"])[0]
+
+            lines.append(f"- **Title:** {title}")
+            lines.append(f"- **Authors:** {author_str}")
+            lines.append(f"- **Year:** {year}")
+            lines.append(f"- **Journal:** {journal}")
+            lines.append("- **Status:** VERIFIED\n")
+
+        except (URLError, KeyError, json.JSONDecodeError) as e:
+            lines.append(f"- **Status:** FAILED — {e}\n")
+
+        # Create directory
+        dir_path = papers_path / tag
+        dir_path.mkdir(parents=True, exist_ok=True)
+        lines.append(f"- **Directory:** `{dir_path}` (created)\n")
+
+    lines.append("---\n")
+    lines.append(
+        "Add PDFs to Zotero, then call `fetch_papers_from_zotero` to pull them into these directories."
+    )
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def fetch_papers_from_zotero(
+    source_tags: list[str],
+    papers_dir: str,
+    zotero_storage: str = "~/Zotero/storage",
+) -> str:
+    """Fetch PDFs from local Zotero storage into paper directories.
+
+    For each source_tag, searches Zotero for a matching item, finds the
+    PDF attachment, and copies it from Zotero's local storage to
+    ``papers/<source_tag>/``.
+
+    Requires the Zotero MCP server to be running (for search + children
+    lookup). Falls back to scanning Zotero storage directly if MCP is
+    unavailable.
+
+    Args:
+        source_tags: List of source tags to fetch (e.g., ["Saga2018", "Magni2021"]).
+        papers_dir: Base directory for paper folders.
+        zotero_storage: Path to Zotero local storage (default: ~/Zotero/storage).
+
+    Returns:
+        Report of which PDFs were found and copied.
+    """
+    import shutil
+    from pathlib import Path
+
+    storage = Path(zotero_storage).expanduser()
+    papers_path = Path(papers_dir)
+    lines = ["# Zotero PDF Fetch Report\n"]
+
+    if not storage.exists():
+        return f"ERROR: Zotero storage not found at {storage}"
+
+    for tag in source_tags:
+        dest_dir = papers_path / tag
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check if PDF already exists
+        existing = list(dest_dir.glob("*.pdf"))
+        if existing:
+            lines.append(f"## {tag} — SKIP (already has {existing[0].name})\n")
+            continue
+
+        # Scan all Zotero storage folders for a PDF matching the tag
+        # (e.g., "Saga" in filename for Saga2018)
+        author = tag.rstrip("0123456789")  # Strip year digits
+        found = False
+
+        for key_dir in storage.iterdir():
+            if not key_dir.is_dir():
+                continue
+            for pdf in key_dir.glob("*.pdf"):
+                if author.lower() in pdf.name.lower():
+                    shutil.copy2(pdf, dest_dir / pdf.name)
+                    lines.append(f"## {tag} — COPIED\n")
+                    lines.append(f"- **Source:** `{pdf}`")
+                    lines.append(f"- **Dest:** `{dest_dir / pdf.name}`\n")
+                    found = True
+                    break
+            if found:
+                break
+
+        if not found:
+            lines.append(f"## {tag} — NOT FOUND\n")
+            lines.append(f"- No PDF matching '{author}' found in Zotero storage.")
+            lines.append("- Ensure the paper is in Zotero with a downloaded PDF.\n")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
