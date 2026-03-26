@@ -19,6 +19,7 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +38,8 @@ from maple.core.calibration.yaml_to_prior import (
     compute_translation_sigma,
     fit_distributions,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -660,8 +663,39 @@ def submodel_joint_model(prior_specs, target_likelihoods, parameter_groups=None)
 
     # Sample hierarchical groups
     if parameter_groups is not None:
+        # Determine which grouped params are actually constrained by targets
+        constrained_params: set[str] = set()
+        for tl in target_likelihoods:
+            for entry in tl.entries:
+                # forward_fn closure captures param names; check prior_specs keys
+                # that appear in the target's forward model
+                pass
+        # Simpler: a param is constrained if it appears in prior_specs
+        # (prior_specs only includes params referenced by loaded targets)
+        constrained_params = set(prior_specs.keys())
+
         for group in parameter_groups.groups:
             gid = group.group_id
+            member_names = {m.name for m in group.members}
+
+            # Skip groups where no member is constrained by any target
+            n_constrained = len(member_names & constrained_params)
+            if n_constrained == 0:
+                logger.info("Skipping group %s: no members constrained by targets", gid)
+                # Fall back to independent CSV priors for these params
+                for member in group.members:
+                    if member.name in prior_specs:
+                        spec = prior_specs[member.name]
+                        if spec.distribution == "lognormal":
+                            params[member.name] = numpyro.sample(
+                                member.name, dist.LogNormal(spec.mu, spec.sigma)
+                            )
+                        elif spec.distribution == "normal":
+                            params[member.name] = numpyro.sample(
+                                member.name, dist.Normal(spec.mu, spec.sigma)
+                            )
+                continue
+
             bp = group.resolve_base_prior(prior_specs)
 
             # Sample group base rate (log-space)
@@ -670,25 +704,33 @@ def submodel_joint_model(prior_specs, target_likelihoods, parameter_groups=None)
             else:  # normal
                 k_base = numpyro.sample(f"{gid}__base", dist.Normal(bp.mu, bp.sigma))
 
-            # Sample between-member SD (tau)
+            # For small groups (<=2 constrained members), fix tau to avoid
+            # unidentifiable hyperparameter that harms sampling geometry.
+            # For larger groups, sample tau with non-centered parameterization.
             tau_prior = group.between_member_sd
-            tau = numpyro.sample(f"{gid}__tau", dist.HalfNormal(tau_prior.sigma))
+            if n_constrained <= 2:
+                tau = tau_prior.sigma  # fixed, not sampled
+            else:
+                tau = numpyro.sample(f"{gid}__tau", dist.HalfNormal(tau_prior.sigma))
 
-            # Sample each member's deviation
+            # Non-centered parameterization: sample z ~ N(0,1), compute delta = tau * z
+            # This avoids the "funnel" geometry where tau and delta are correlated.
             for member in group.members:
                 dp = member.delta_prior
                 if dp is not None:
-                    # Informative delta prior (e.g., biased lower for qPSC)
-                    delta = numpyro.sample(
-                        f"{member.name}__delta",
-                        dist.Normal(dp.mu, dp.sigma),
+                    # Informative delta prior — still use non-centered
+                    z = numpyro.sample(
+                        f"{member.name}__z",
+                        dist.Normal(0.0, 1.0),
                     )
+                    delta = dp.mu + dp.sigma * z
                 else:
-                    # Default: centered on group mean, spread controlled by tau
-                    delta = numpyro.sample(
-                        f"{member.name}__delta",
-                        dist.Normal(0.0, tau),
+                    # Default: non-centered on group mean
+                    z = numpyro.sample(
+                        f"{member.name}__z",
+                        dist.Normal(0.0, 1.0),
                     )
+                    delta = tau * z
 
                 # Final parameter value: k_i = k_base * exp(delta_i)
                 params[member.name] = numpyro.deterministic(member.name, k_base * jnp.exp(delta))

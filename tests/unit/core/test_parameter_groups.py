@@ -422,7 +422,10 @@ def test_hierarchical_sampling_produces_grouped_params():
 
     # Hyperparameters should also be present
     assert "test_rates__base" in samples
-    assert "test_rates__tau" in samples
+    # tau is fixed (not sampled) for small groups (<=2 constrained members)
+    # z-scores from non-centered parameterization should be present
+    assert "k_anchored__z" in samples
+    assert "k_unanchored__z" in samples
 
     # k_anchored should be pulled toward 0.02 by the target
     median_anchored = np.median(samples["k_anchored"])
