@@ -2,32 +2,49 @@
 
 **Model-Aware Parameterization from Literature Evidence**
 
+---
+
 QSP models have many biological parameters, and most can't be measured directly in the clinical context being modeled. The relevant data is usually scattered across papers, often from different species or indications entirely. Turning that into informative priors is tedious, error-prone, and rarely done systematically.
 
 MAPLE provides a structured pipeline for this. It uses LLMs to extract measurements from papers into validated YAML schemas (with anti-hallucination checks against source text), and scores how well each data source translates to the model context across eight axes (species, indication, TME compatibility, etc.). Each axis contributes a component to a translation sigma that widens the likelihood for that target during joint inference — so a mouse in vitro measurement constraining the same parameter as a human clinical measurement will naturally contribute less. The output is a set of marginal distributions plus a Gaussian copula that preserves posterior correlations for downstream SBI calibration.
+
+---
 
 ## How it works
 
 MAPLE fits into a two-stage calibration pipeline:
 
-**Stage 1** (this repo): Literature data with self-contained forward models → joint MCMC (NumPyro/NUTS) → `submodel_priors.yaml`
-
-**Stage 2** ([qsp-sbi](https://github.com/popellab/qsp-sbi)): Copula priors + clinical data + full QSP simulator → SBI (SNPE-C) → final posterior
+| Stage | Input | Method | Output |
+|-------|-------|--------|--------|
+| **1** (this repo) | Literature data + self-contained forward models | Joint MCMC (NumPyro/NUTS) | `submodel_priors.yaml` (marginals + copula) |
+| **2** ([qsp-sbi](https://github.com/popellab/qsp-sbi)) | Copula priors + clinical data + full QSP simulator | SBI (SNPE-C) | Final posterior |
 
 ## Quick start
 
 ```bash
-git clone https://github.com/popellab/maple.git
-cd maple
-pip install -e ".[inference]"   # includes NumPyro/JAX
+pip install maple-qsp[inference]   # includes NumPyro/JAX
+```
 
-# Run joint inference
+Add the MAPLE MCP server to your coding agent (Claude Code, Codex, Cursor, etc.) — see [setup details](#setup). Then, from your model repo, ask the agent to extract a parameter:
+
+> *"Use the MAPLE tool to help me extract the k_IL6_sec parameter"*
+
+The agent loads the extraction guide, investigates the parameter in your model code (units, mechanistic role, Hill function inputs), searches literature for constraining data, verifies DOIs, fetches PDFs from Zotero, and then extracts the SubmodelTarget YAML with validation at each step. The agent drives the workflow and tells you what to do at each step (e.g., add a paper to Zotero, digitize a figure). Your job is to verify that extracted inputs match the paper, that the agent isn't making up assumptions, and that the forward and error models make sense for the parameter and data source.
+
+Once you have targets, run joint inference:
+
+```bash
 maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ --output priors/ --plot
 ```
+
+---
 
 ## What goes into a SubmodelTarget
 
 Each YAML file is a structured extraction from one paper. It connects a literature measurement to one or more model parameters through a self-contained forward model:
+
+<details>
+<summary><b>Example: IL-2 degradation rate from half-life data</b></summary>
 
 ```yaml
 target_id: k_IL2_deg_deriv001
@@ -70,19 +87,23 @@ source_relevance:
   # ... (8-axis rubric → translation sigma applied in likelihood)
 ```
 
-Forward model types include algebraic formulas, dose-response curves (`direct_fit`), power laws, and ODE systems — both structured types with analytical solutions (`exponential_growth`, `first_order_decay`, `logistic`, etc.) and arbitrary user-provided ODEs (`custom_ode`) integrated numerically via diffrax. The source relevance assessment maps to a translation sigma that inflates the likelihood during inference — so mouse data naturally gets less weight than human data constraining the same parameter.
+</details>
 
-Parameters can be marked `nuisance: true` when needed by the forward model but not part of the QSP model (e.g., a proliferation rate that helps constrain an activation rate). Nuisance parameters carry their own inline prior, are sampled during MCMC, but are excluded from the output priors.
+**Forward model types** include algebraic formulas, dose-response curves (`direct_fit`), power laws, and ODE systems — both structured types with analytical solutions (`exponential_growth`, `first_order_decay`, `logistic`, etc.) and arbitrary user-provided ODEs (`custom_ode`) integrated numerically via diffrax. The source relevance assessment maps to a translation sigma that inflates the likelihood during inference — so mouse data naturally gets less weight than human data constraining the same parameter.
 
-There's also a **CalibrationTarget** schema for clinical/in vivo observables (biopsies, blood draws) that require full model simulation. These feed into Stage 2.
+**Nuisance parameters** can be marked `nuisance: true` when needed by the forward model but not part of the QSP model (e.g., a proliferation rate that helps constrain an activation rate). They carry their own inline prior, are sampled during MCMC, but are excluded from the output priors.
+
+There's also a **CalibrationTarget** schema for clinical/in vivo observables (biopsies, blood draws) that require full model simulation — these feed into Stage 2.
+
+---
 
 ## LLM-assisted extraction
 
-MAPLE includes an MCP server that exposes the extraction schemas, enum references, validation tools, and a step-by-step workflow guide. This is the preferred way to fill out target YAMLs — working interactively with Claude Code (or another MCP client), reading a paper together, and building the YAML incrementally with validation feedback at each step.
+MAPLE includes an MCP server that exposes the extraction schemas, enum references, validation tools, and a step-by-step workflow guide. This is the preferred way to fill out target YAMLs — working interactively with a coding agent, reading a paper together, and building the YAML incrementally with validation feedback at each step.
 
-### Setup with Claude Code
+### Setup
 
-Add to your project's `.claude/settings.json`:
+Add the MCP server to your coding agent's config. For Claude Code, add to `.claude/settings.json`:
 
 ```json
 {
@@ -97,29 +118,43 @@ Add to your project's `.claude/settings.json`:
 
 ### Tools
 
-The MCP server exposes six tools:
-
-- **`extract_target(target_type)`** — Loads the full extraction guide: schema, workflow, valid enum values, and hard rules. Call this before starting any extraction session.
-- **`validate_target(yaml_path, priors_csv)`** — Runs schema validation (Pydantic), prior derivation via NumPyro MCMC, and snippet verification against source PDFs.
-- **`run_joint_inference(priors_csv, submodel_dir)`** — Runs joint MCMC across all targets in a directory and returns a diagnostic report.
-- **`compare_inference(priors_csv, submodel_dir)`** — Compares single-target vs joint inference across all SubmodelTargets.
-- **`verify_dois(dois)`** — Verifies DOIs resolve via CrossRef and returns metadata.
-- **`fetch_papers_from_zotero(dois)`** — Fetches PDFs from Zotero for given DOIs into the papers directory.
+| Tool | Purpose |
+|------|---------|
+| `extract_target(target_type)` | Load the full extraction guide (schema, workflow, enum values, hard rules) |
+| `validate_target(yaml_path, priors_csv)` | Schema validation + NumPyro MCMC prior derivation + snippet verification |
+| `run_joint_inference(priors_csv, submodel_dir)` | Joint MCMC across all targets with diagnostic report |
+| `compare_inference(priors_csv, submodel_dir)` | Single-target vs joint inference comparison |
+| `verify_dois(dois)` | Verify DOIs resolve via CrossRef, return metadata |
+| `fetch_papers_from_zotero(dois)` | Copy PDFs from Zotero's local storage into paper directories |
 
 ### Typical workflow
 
-1. Call `extract_target` to load the guide
-2. Investigate the parameter in the model code (units, mechanistic role)
-3. Search literature for quantitative data that constrains the parameter
-4. Obtain PDFs into `papers/<source_tag>/` directories
-5. Read the paper — prefer digitizing figures (via WebPlotDigitizer) over text-reported summary statistics when figures contain richer data
-6. Build the SubmodelTarget YAML incrementally with validation at each step
-7. Call `validate_target` — fix any schema, MCMC, or snippet errors
-8. Iterate until validation passes
+> **Agent** and **You** labels indicate who drives each step.
 
-There's also a batch extraction CLI (`qsp-extract`) that sends a full paper to an LLM in one shot, but the interactive approach tends to produce better results — the forward model parameterization and error model design usually need iteration to get right.
+1. **You** — Ask the agent to extract a parameter (e.g., *"use the MAPLE tool to extract k_IL6_sec"*)
+2. **Agent** — Loads the extraction guide (`extract_target`)
+3. **Agent** — Investigates the parameter in your model code: units, mechanistic role, Hill function inputs, interactions with other parameters
+4. **Agent** — Searches literature for quantitative data that constrains the parameter; verifies DOIs via CrossRef
+5. **You** — Add papers to Zotero; agent calls `fetch_papers_from_zotero` to pull PDFs
+6. **Agent** — Reads the paper. If figures contain richer data (scatter plots, dose-response curves), asks you to digitize with WebPlotDigitizer
+7. **Agent** — Builds the SubmodelTarget YAML incrementally, validating at each step
+8. **You** — Review inputs, forward model, and error model. Check that values match the paper, assumptions are justified, and the model makes sense for the data
+9. **Agent** — Runs `validate_target` — fixes schema, MCMC, or snippet errors
+10. Iterate steps 7-9 until validation passes
 
-Pydantic validators catch hallucinated values (snippet verification against paper text via Europe PMC), unit errors, invisible characters from PDF copy-paste, and other common extraction failures. These run both during interactive extraction and on batch output.
+There's also a batch extraction CLI (`qsp-extract`) that sends a full paper to an LLM in one shot, but the interactive approach produces better results — the forward model parameterization and error model design usually need iteration.
+
+### Built-in safeguards
+
+Pydantic validators catch common extraction failures automatically:
+
+- **Anti-hallucination** — extracted values must appear in `value_snippet`; snippets are verified against paper text via Europe PMC / Unpaywall
+- **Unit validation** — all unit strings checked against Pint
+- **Code validation** — forward model and observation code syntax and execution checks
+- **DOI verification** — CrossRef resolution and metadata matching
+- **Invisible characters** — catches zero-width spaces and other PDF copy-paste artifacts
+
+---
 
 ## Docs
 
