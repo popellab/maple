@@ -25,7 +25,7 @@ MAPLE fits into a two-stage calibration pipeline:
 pip install maple-qsp[inference]   # includes NumPyro/JAX
 ```
 
-Add the MAPLE MCP server to your coding agent (Claude Code, Codex, Cursor, etc.) — see [setup details](#setup). Then, from your model repo, ask the agent to extract a parameter:
+MAPLE works with any AI tool that can access your files and run Python — coding agents (Claude Code, Codex, Cursor) via [MCP](#setup), or chat UIs with code execution (Claude Cowork, ChatGPT with Code Interpreter) via the [Python API](#python-api). From your model repo, ask the agent to extract a parameter:
 
 > *"Use the MAPLE tool to help me extract the k_IL6_sec parameter"*
 
@@ -99,11 +99,11 @@ There's also a **CalibrationTarget** schema for clinical/in vivo observables (bi
 
 ## LLM-assisted extraction
 
-MAPLE includes an MCP server that exposes the extraction schemas, enum references, validation tools, and a step-by-step workflow guide. This is the preferred way to fill out target YAMLs — working interactively with a coding agent, reading a paper together, and building the YAML incrementally with validation feedback at each step.
+MAPLE works with any AI tool that can run Python and access your files. There are two ways to connect it:
 
-### Setup
+### MCP server (coding agents)
 
-Add the MCP server to your coding agent's config. For Claude Code, add to `.claude/settings.json`:
+For Claude Code, Codex, Cursor, and other MCP-compatible agents. Add to `.claude/settings.json`:
 
 ```json
 {
@@ -114,6 +114,23 @@ Add the MCP server to your coding agent's config. For Claude Code, add to `.clau
     }
   }
 }
+```
+
+### Python API (chat UIs)
+
+For Claude Cowork, ChatGPT with Code Interpreter, or any environment that can `pip install` and run Python. The same tools are available as plain functions:
+
+```python
+from maple.mcp_server import extract_target, validate_target, run_joint_inference
+
+# Load the extraction guide
+guide = extract_target("submodel_target")
+
+# Validate a target YAML
+report = validate_target("path/to/target.yaml", "pdac_priors.csv")
+
+# Run joint inference
+report = run_joint_inference("pdac_priors.csv", "submodel_targets/")
 ```
 
 ### Tools
