@@ -47,6 +47,107 @@ def _z_score(prior_mu: float, posterior_mu: float, prior_sigma: float) -> float:
     return abs(posterior_mu - prior_mu) / prior_sigma
 
 
+def _build_structured_results(
+    csv_priors: dict,
+    joint_fits: dict,
+    single_results: dict,
+    joint_diag: dict,
+    all_param_names: set,
+    n_targets: int,
+    num_warmup: int,
+    num_samples: int,
+    num_chains: int,
+) -> dict:
+    """Build structured dict for YAML serialization."""
+    from datetime import datetime, timezone
+
+    parameters = {}
+    for pname in sorted(all_param_names):
+        prior_spec = csv_priors.get(pname)
+        prior = (
+            {
+                "median": float(prior_spec.median),
+                "sigma": float(prior_spec.sigma),
+            }
+            if prior_spec
+            else None
+        )
+
+        joint = None
+        if pname in joint_fits:
+            jf = joint_fits[pname]
+            joint = {
+                "median": float(jf["median"]),
+                "sigma": float(jf["sigma"]),
+                "cv": float(jf["cv"]),
+                "contraction": round(float(jf["contraction"]), 4),
+                "z_score": round(float(jf["z_score"]), 4),
+                "distribution": jf["dist"],
+            }
+
+        singles = []
+        if pname in single_results:
+            for entry in single_results[pname]:
+                singles.append(
+                    {
+                        "target_id": entry["target_id"],
+                        "median": float(entry["median"]),
+                        "sigma": float(entry["sigma"]),
+                        "cv": float(entry["cv"]),
+                        "contraction": round(float(entry["contraction"]), 4),
+                        "z_score": round(float(entry["z_score"]), 4),
+                    }
+                )
+
+        # Flags
+        flags = []
+        if prior and joint and prior["sigma"] > 0:
+            if joint["sigma"] / prior["sigma"] > 0.8:
+                flags.append("weak_contraction")
+        if joint and joint["z_score"] > 2.0:
+            flags.append("high_z_score")
+
+        # Tension: single-target medians disagree by >3x
+        tension = False
+        if len(singles) >= 2:
+            medians = [s["median"] for s in singles]
+            if min(medians) > 0:
+                tension = max(medians) / min(medians) > 3.0
+
+        diag = joint_diag.get("per_param", {}).get(pname)
+        mcmc_diag = None
+        if diag:
+            mcmc_diag = {
+                "n_eff": round(float(diag.get("n_eff", 0))),
+                "r_hat": round(float(diag.get("r_hat", 0)), 4),
+            }
+
+        param_entry = {"prior": prior, "joint": joint}
+        if singles:
+            param_entry["single_targets"] = singles
+        if tension:
+            param_entry["tension"] = True
+        if flags:
+            param_entry["flags"] = flags
+        if mcmc_diag:
+            param_entry["mcmc_diagnostics"] = mcmc_diag
+
+        parameters[pname] = param_entry
+
+    return {
+        "metadata": {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "n_targets": n_targets,
+            "n_parameters": len(all_param_names),
+            "num_warmup": num_warmup,
+            "num_samples": num_samples,
+            "num_chains": num_chains,
+            "num_divergences": joint_diag.get("num_divergences", 0),
+        },
+        "parameters": parameters,
+    }
+
+
 def run_comparison(
     priors_csv: str | Path,
     submodel_dir: str | Path,
@@ -218,6 +319,23 @@ def run_comparison(
                 target_param_map[tid].append(pname)
         except Exception as e:
             logger.warning("Failed to process %s: %s", yf.name, e)
+
+    # ── Save structured results ──
+    structured = _build_structured_results(
+        csv_priors=csv_priors,
+        joint_fits=joint_fits,
+        single_results=single_results,
+        joint_diag=joint_diag,
+        all_param_names=all_param_names,
+        n_targets=len(targets),
+        num_warmup=num_warmup,
+        num_samples=num_samples,
+        num_chains=num_chains,
+    )
+    results_path = submodel_dir / "compare_inference_results.yaml"
+    with open(results_path, "w") as f:
+        yaml.dump(structured, f, default_flow_style=False, sort_keys=False)
+    logger.info("Structured results saved to %s", results_path)
 
     # ── Phase 3: Build comparison report ──
     lines = [
