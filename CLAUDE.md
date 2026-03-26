@@ -37,10 +37,10 @@ For in vitro and preclinical data with self-contained forward models. Located in
 - `inputs`: Raw values extracted from papers with full provenance
 - `calibration`: Everything needed for inference (parameters, model, measurements)
 
-**Input types** (`InputType` enum):
-- `direct_measurement`: Value traceable to paper text (requires snippet/table_excerpt/figure_excerpt)
-- `unit_conversion`: Dimensionless conversion factor (e.g., IQR-to-SD, pM-per-nM)
-- `reference_value`: Normalization/reference constant (e.g., V_T_ref, tumor_cell_density)
+**Input types** (`InputType` enum) — strongly prefer `direct_measurement`:
+- `direct_measurement`: Value traceable to paper text (requires snippet/table_excerpt/figure_excerpt). Preferred for all extracted values.
+- `unit_conversion`: Dimensionless conversion factor (e.g., IQR-to-SD, pM-per-nM). Use sparingly — only for genuine unit conversions.
+- `reference_value`: Normalization/reference constant (e.g., V_T_ref, tumor_cell_density). Use sparingly — only for genuine physical constants.
 - `derived_arithmetic`: Deterministic derivation from other inputs via a formula (e.g., `E = 3*G'`)
 
 **Derived arithmetic inputs** — for values calculated from other extracted inputs:
@@ -265,10 +265,14 @@ The preferred way to create SubmodelTarget YAMLs is interactively via the MCP se
 }
 ```
 
-**Two tools are available:**
+**MCP tools:**
 
 - `extract_target(target_type)` — Loads the full extraction guide: multi-step workflow, prompt template, valid enum values, and hard rules. Call this before starting any extraction session.
 - `validate_target(yaml_path, priors_csv, papers_dir)` — Runs schema validation (Pydantic), prior derivation via NumPyro MCMC (bootstrap + forward model + distribution fitting + translation sigma), and snippet verification against source PDFs. `priors_csv` is required (e.g., `parameters/pdac_priors.csv`).
+- `run_joint_inference(priors_csv, submodel_dir)` — Runs joint MCMC across all targets in a directory and returns a diagnostic report.
+- `compare_inference(priors_csv, submodel_dir)` — Compares single-target vs joint inference across all SubmodelTargets.
+- `verify_dois(dois)` — Verifies DOIs resolve via CrossRef and returns metadata.
+- `fetch_papers_from_zotero(dois)` — Fetches PDFs from Zotero for given DOIs into the papers directory.
 
 **Typical workflow:**
 
@@ -276,9 +280,10 @@ The preferred way to create SubmodelTarget YAMLs is interactively via the MCP se
 2. Investigate the parameter in the model code (units, mechanistic role, Hill function inputs)
 3. Search literature for quantitative data that constrains the parameter
 4. User obtains PDFs into `papers/<source_tag>/` directories
-5. Read the paper and build the YAML incrementally — inputs first, then forward model, then error model, then source relevance
-6. Call `validate_target` after each major section to catch errors early
-7. Iterate until validation passes
+5. Read the paper — check figures for richer data (scatter plots, dose-response curves with error bars). Prefer digitizing figures via WebPlotDigitizer over text-reported summary statistics when figures contain more information.
+6. Build the YAML incrementally — inputs first, then forward model, then error model, then source relevance
+7. Call `validate_target` after each major section to catch errors early
+8. Iterate until validation passes
 
 ### Batch Extraction (CLI)
 

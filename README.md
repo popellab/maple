@@ -97,11 +97,14 @@ Add to your project's `.claude/settings.json`:
 
 ### Tools
 
-The MCP server exposes three tools:
+The MCP server exposes six tools:
 
 - **`extract_target(target_type)`** — Loads the full extraction guide: schema, workflow, valid enum values, and hard rules. Call this before starting any extraction session.
 - **`validate_target(yaml_path, priors_csv)`** — Runs schema validation (Pydantic), prior derivation via NumPyro MCMC, and snippet verification against source PDFs.
 - **`run_joint_inference(priors_csv, submodel_dir)`** — Runs joint MCMC across all targets in a directory and returns a diagnostic report.
+- **`compare_inference(priors_csv, submodel_dir)`** — Compares single-target vs joint inference across all SubmodelTargets.
+- **`verify_dois(dois)`** — Verifies DOIs resolve via CrossRef and returns metadata.
+- **`fetch_papers_from_zotero(dois)`** — Fetches PDFs from Zotero for given DOIs into the papers directory.
 
 ### Typical workflow
 
@@ -109,9 +112,10 @@ The MCP server exposes three tools:
 2. Investigate the parameter in the model code (units, mechanistic role)
 3. Search literature for quantitative data that constrains the parameter
 4. Obtain PDFs into `papers/<source_tag>/` directories
-5. Read the paper and write the full SubmodelTarget YAML
-6. Call `validate_target` — fix any schema, MCMC, or snippet errors
-7. Iterate until validation passes
+5. Read the paper — prefer digitizing figures (via WebPlotDigitizer) over text-reported summary statistics when figures contain richer data
+6. Build the SubmodelTarget YAML incrementally with validation at each step
+7. Call `validate_target` — fix any schema, MCMC, or snippet errors
+8. Iterate until validation passes
 
 There's also a batch extraction CLI (`qsp-extract`) that sends a full paper to an LLM in one shot, but the interactive approach tends to produce better results — the forward model parameterization and error model design usually need iteration to get right.
 

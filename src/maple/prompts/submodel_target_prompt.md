@@ -829,15 +829,22 @@ def ode(t, y, params, inputs):
 ## Working with Figure Data
 
 Most rich kinetic data (time courses, dose-response curves) is in figures, not
-tables. Standard workflow for figure digitization:
+tables. **Always prefer digitizing figures when they contain richer data than
+text summaries.** If a paper reports only a mean in text but has a scatter plot
+with individual data points in a figure, digitize the figure — it gives real
+patient-level distributions and proper uncertainty without invented assumptions.
 
-1. Create a CSV template in `calibration_targets/submodel_targets/papers/<SourceTag>/`
-   with column headers and empty rows for each data point
-2. The user fills in values from the figure (mean and mean+SD or mean-SD,
-   depending on error bar direction)
-3. Compute actual SDs from the reported values (e.g., SD = mean+SD_col - mean_col)
+Standard workflow for figure digitization:
+
+1. Describe the figure to the user: figure ID, axes, scale (log vs linear),
+   what data to capture (individual points, means, error bars)
+2. The user digitizes with WebPlotDigitizer (WPD) and downloads a CSV
+3. Read the WPD CSV (x,y coordinates), group by condition, compute summary
+   statistics (mean, SD, n per group)
 4. Use `figure_excerpt` entries (not `value_snippet`) for digitized values —
    these are correctly flagged as MANUAL REVIEW REQUIRED by the validator
+
+**Do NOT create CSV templates with empty rows.** The user uses WPD directly.
 
 **Keep input values in paper units.** Do not convert percent to fraction, hours
 to days, ng/ml to nM in the input values. The validator checks that input values

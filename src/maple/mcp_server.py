@@ -224,10 +224,15 @@ For each parameter with good literature data:
 
 1. Call `extract_target` if not already loaded
 2. Read the PDF via the papers directory
-3. Write the SubmodelTarget YAML to `to-review/<parameter_name>.yaml`
-4. Call `validate_target` to check schema, prior derivation, and snippets
-5. Fix any validation errors
-6. Move to the next parameter
+3. **Check figures for richer data.** If the paper has scatter plots with
+   individual data points or dose-response curves with error bars, prefer
+   digitizing those over using text-reported summary statistics. Describe
+   the figure to the user (axes, scale, what to capture) and ask them to
+   digitize with WebPlotDigitizer (WPD). Read the resulting CSV.
+4. Write the SubmodelTarget YAML to `to-review/<parameter_name>.yaml`
+5. Call `validate_target` to check schema, prior derivation, and snippets
+6. Fix any validation errors
+7. Move to the next parameter
 
 Work through parameters one at a time — do not batch-write YAMLs without
 validating each one.
@@ -272,9 +277,18 @@ For reference constants (cell diameters, section volumes), attribute
 them to the paper whose methods define the relevant value (e.g., section
 thickness) and use `input_type: unit_conversion` with a `rationale`.
 
-### 4. input_type enum
+### 4. input_type enum — strongly prefer `direct_measurement`
 
 Four values: `direct_measurement`, `unit_conversion`, `reference_value`, `derived_arithmetic`.
+
+**Strong preference for `direct_measurement`.** Every numeric value should trace
+to a specific location in the paper with a checkable snippet or table excerpt.
+Only `direct_measurement` and `derived_arithmetic` get full validation.
+`reference_value` and `unit_conversion` bypass snippet checking and should be
+used sparingly — only for genuine physical constants or unit conversions, never
+for assumed CVs, uncertainty factors, or modeling assumptions. If you find
+yourself reaching for `reference_value`, ask whether the data can be digitized
+from a figure instead.
 
 - `unit_conversion` and `reference_value` require a `rationale` field.
 - `derived_arithmetic` requires `formula`, `source_inputs`, and `rationale` fields.
