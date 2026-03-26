@@ -64,14 +64,13 @@ def _build_structured_results(
     parameters = {}
     for pname in sorted(all_param_names):
         prior_spec = csv_priors.get(pname)
-        prior = (
-            {
-                "median": float(prior_spec.median),
-                "sigma": float(prior_spec.sigma),
+        prior = None
+        if prior_spec:
+            median = float(np.exp(prior_spec.mu)) if prior_spec.mu is not None else None
+            prior = {
+                "median": median,
+                "sigma": float(prior_spec.sigma) if prior_spec.sigma is not None else None,
             }
-            if prior_spec
-            else None
-        )
 
         joint = None
         if pname in joint_fits:
