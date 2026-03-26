@@ -951,15 +951,30 @@ class Calibration(BaseModel):
 
 
 class PrimaryDataSource(BaseModel):
-    """Primary literature data source. DOI is required."""
+    """Primary literature data source. Requires DOI or PMID (for pre-DOI papers)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    doi: str = Field(min_length=1, description="DOI of the source (required)")
+    doi: Optional[str] = Field(default=None, min_length=1, description="DOI of the source")
+    pmid: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="PubMed ID (fallback for pre-DOI-era papers)",
+    )
     title: Optional[str] = Field(default=None, description="Title of the source")
     authors: Optional[List[str]] = Field(default=None, description="Author list")
     year: Optional[int] = Field(default=None, description="Publication year")
     source_tag: str = Field(description="Short identifier for referencing (e.g., 'Smith2023')")
+
+    @model_validator(mode="after")
+    def validate_doi_or_pmid(self) -> "PrimaryDataSource":
+        """Ensure at least one of doi or pmid is provided."""
+        if not self.doi and not self.pmid:
+            raise ValueError(
+                "Primary data source must have either 'doi' or 'pmid'. "
+                "Use 'pmid' for pre-DOI-era papers."
+            )
+        return self
 
 
 class SecondaryDataSource(BaseModel):
@@ -2496,15 +2511,16 @@ class SubmodelTarget(BaseModel):
                         f"recorded {year}, CrossRef says {metadata['year']}"
                     )
 
-        # Check primary source (DOI required)
-        check_doi_source(
-            self.primary_data_source.doi,
-            self.primary_data_source.source_tag,
-            self.primary_data_source.title,
-            self.primary_data_source.year,
-            self.primary_data_source.authors,
-            "Primary source",
-        )
+        # Check primary source (DOI validated if present; PMID-only sources skip DOI check)
+        if self.primary_data_source.doi:
+            check_doi_source(
+                self.primary_data_source.doi,
+                self.primary_data_source.source_tag,
+                self.primary_data_source.title,
+                self.primary_data_source.year,
+                self.primary_data_source.authors,
+                "Primary source",
+            )
 
         # Check secondary sources (only validate if they have DOI, URL-only sources skip validation)
         if self.secondary_data_sources:
