@@ -20,12 +20,62 @@ Or called programmatically::
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from pathlib import Path
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# MCMC result caching
+# =============================================================================
+
+
+def _compute_hash(*contents: str | bytes) -> str:
+    """Compute a short SHA256 hash from concatenated contents."""
+    h = hashlib.sha256()
+    for c in contents:
+        if isinstance(c, str):
+            c = c.encode()
+        h.update(c)
+    return h.hexdigest()[:16]
+
+
+def _cache_dir(submodel_dir: Path) -> Path:
+    d = submodel_dir / ".compare_cache"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _save_cache(path: Path, data: dict) -> None:
+    """Save MCMC results to JSON cache file."""
+
+    def _convert(obj):
+        if isinstance(obj, (np.floating, np.float64, np.float32)):
+            return float(obj)
+        if isinstance(obj, (np.integer, np.int64, np.int32)):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        raise TypeError(f"Cannot serialize {type(obj)}")
+
+    with open(path, "w") as f:
+        json.dump(data, f, default=_convert)
+
+
+def _load_cache(path: Path) -> dict | None:
+    """Load cached MCMC results if they exist."""
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def _contraction(prior_sigma: float, posterior_sigma: float) -> float:
@@ -209,14 +259,16 @@ def run_comparison(
         return f"No YAML files found matching {glob_pattern} in {submodel_dir}"
 
     csv_priors = load_priors_from_csv(priors_csv)
+    cache = _cache_dir(submodel_dir)
 
-    # ── Phase 1: Joint inference (run first to smoke out issues early) ──
-    logger.info("Phase 1: Running joint inference")
+    # ── Load and parse all targets ──
     targets = []
+    yaml_contents = {}  # {filename: raw_content} for cache hashing
     for yf in yaml_files:
         try:
-            with open(yf) as f:
-                data = yaml.safe_load(f)
+            raw = yf.read_text()
+            yaml_contents[yf.name] = raw
+            data = yaml.safe_load(raw)
             target = SubmodelTarget.model_validate(data)
             targets.append(target)
         except Exception as e:
@@ -233,55 +285,98 @@ def run_comparison(
         all_param_names |= param_groups.all_grouped_params
     joint_prior_specs = {k: v for k, v in csv_priors.items() if k in all_param_names}
 
-    try:
-        joint_samples, joint_diag = run_joint_inference(
-            joint_prior_specs,
-            targets,
-            parameter_groups=param_groups,
-            num_warmup=num_warmup,
-            num_samples=num_samples,
-            num_chains=num_chains,
-        )
-    except Exception as e:
-        return f"Joint inference failed: {e}"
+    # Cache key for joint: hash of all YAML contents + priors + MCMC config
+    priors_content = priors_csv.read_text()
+    all_yaml_content = "".join(yaml_contents[k] for k in sorted(yaml_contents))
+    mcmc_config_str = f"{num_warmup}:{num_samples}:{num_chains}"
+    joint_hash = _compute_hash(all_yaml_content, priors_content, mcmc_config_str)
+    joint_cache_path = cache / f"joint_{joint_hash}.json"
 
-    # Fit distributions to joint posteriors
-    joint_fits: dict[str, dict] = {}
-    for pname in sorted(all_param_names):
-        if pname not in joint_samples:
-            continue
-        fits = fit_distributions(joint_samples[pname])
-        if not fits:
-            continue
-        best = fits[0]
+    # ── Phase 1: Joint inference (cached) ──
+    cached_joint = _load_cache(joint_cache_path)
+    if cached_joint is not None:
+        logger.info("Phase 1: Loaded joint inference from cache")
+        joint_fits = cached_joint["joint_fits"]
+        joint_diag = cached_joint["joint_diag"]
+    else:
+        logger.info("Phase 1: Running joint inference (no cache hit)")
+        try:
+            joint_samples, joint_diag = run_joint_inference(
+                joint_prior_specs,
+                targets,
+                parameter_groups=param_groups,
+                num_warmup=num_warmup,
+                num_samples=num_samples,
+                num_chains=num_chains,
+            )
+        except Exception as e:
+            return f"Joint inference failed: {e}"
 
-        if best.name == "lognormal":
-            post_sigma = best.params["sigma"]
-        else:
-            post_sigma = np.sqrt(np.log(1 + best.cv**2))
+        # Fit distributions to joint posteriors
+        joint_fits: dict[str, dict] = {}
+        for pname in sorted(all_param_names):
+            if pname not in joint_samples:
+                continue
+            fits = fit_distributions(joint_samples[pname])
+            if not fits:
+                continue
+            best = fits[0]
 
-        prior_sigma = csv_priors[pname].sigma if pname in csv_priors else 1.0
-        prior_mu = csv_priors[pname].mu if pname in csv_priors else 0.0
-        post_mu = np.log(best.median)
+            if best.name == "lognormal":
+                post_sigma = best.params["sigma"]
+            else:
+                post_sigma = np.sqrt(np.log(1 + best.cv**2))
 
-        joint_fits[pname] = {
-            "median": best.median,
-            "cv": best.cv,
-            "sigma": post_sigma,
-            "dist": best.name,
-            "contraction": _contraction(prior_sigma, post_sigma),
-            "z_score": _z_score(prior_mu, post_mu, prior_sigma),
-        }
+            prior_sigma = csv_priors[pname].sigma if pname in csv_priors else 1.0
+            prior_mu = csv_priors[pname].mu if pname in csv_priors else 0.0
+            post_mu = np.log(best.median)
 
-    # ── Phase 2: Single-target inference ──
+            joint_fits[pname] = {
+                "median": best.median,
+                "cv": best.cv,
+                "sigma": post_sigma,
+                "dist": best.name,
+                "contraction": _contraction(prior_sigma, post_sigma),
+                "z_score": _z_score(prior_mu, post_mu, prior_sigma),
+            }
+
+        # Save to cache
+        _save_cache(joint_cache_path, {"joint_fits": joint_fits, "joint_diag": joint_diag})
+        logger.info("Phase 1: Saved joint results to cache")
+
+    # ── Phase 2: Single-target inference (cached per-target) ──
     logger.info("Phase 2: Running single-target inference on %d targets", len(yaml_files))
     # {param_name: [{target_id, median, cv, sigma, contraction, z_score, dist}]}
     single_results: dict[str, list[dict]] = {}
     target_param_map: dict[str, list[str]] = {}  # {target_id: [param_names]}
 
+    n_cached = 0
+    n_computed = 0
     for yf in yaml_files:
+        # Per-target cache key: hash of YAML content + relevant priors + config
+        yf_content = yaml_contents.get(yf.name, yf.read_text())
+        target_hash = _compute_hash(yf_content, priors_content, mcmc_config_str)
+        target_cache_path = cache / f"single_{yf.stem}_{target_hash}.json"
+
+        cached_single = _load_cache(target_cache_path)
+        if cached_single is not None:
+            # Restore from cache
+            n_cached += 1
+            for entry in cached_single["entries"]:
+                pname = entry["param_name"]
+                if pname not in single_results:
+                    single_results[pname] = []
+                single_results[pname].append(entry)
+                tid = entry["target_id"]
+                if tid not in target_param_map:
+                    target_param_map[tid] = []
+                target_param_map[tid].append(pname)
+            continue
+
+        # Cache miss — run MCMC
         try:
             results = process_yaml(yf, priors_csv=priors_csv)
+            entries_to_cache = []
             for r in results:
                 if "error" in r:
                     logger.warning("Single-target %s: %s", yf.name, r["error"])
@@ -301,6 +396,7 @@ def run_comparison(
 
                 entry = {
                     "target_id": tid,
+                    "param_name": pname,
                     "median": r["median_data"],
                     "cv": r["cv_data"],
                     "sigma": post_sigma,
@@ -316,8 +412,16 @@ def run_comparison(
                 if tid not in target_param_map:
                     target_param_map[tid] = []
                 target_param_map[tid].append(pname)
+
+                entries_to_cache.append(entry)
+
+            # Save to cache
+            _save_cache(target_cache_path, {"entries": entries_to_cache})
+            n_computed += 1
         except Exception as e:
             logger.warning("Failed to process %s: %s", yf.name, e)
+
+    logger.info("Phase 2: %d targets from cache, %d computed", n_cached, n_computed)
 
     # ── Save structured results ──
     structured = _build_structured_results(
