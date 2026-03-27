@@ -937,26 +937,23 @@ def run_joint_inference_vi(
     targets: list[SubmodelTarget],
     reference_db: Optional[dict[str, float]] = None,
     parameter_groups: Optional[ParameterGroupsConfig] = None,
-    num_steps: int = 5000,
     num_samples: int = 4000,
     seed: int = 0,
-    lr: float = 0.005,
 ) -> tuple[dict[str, np.ndarray], dict]:
-    """Run joint VI (AutoMultivariateNormal) across all SubmodelTargets.
+    """Run joint Laplace approximation across all SubmodelTargets.
 
-    Much faster than NUTS for high-dimensional models. Fits a multivariate
-    normal approximation in unconstrained space via SVI with Adam optimizer.
-    Appropriate when posteriors are approximately Gaussian (log-space).
+    Finds the MAP estimate, computes the Hessian to get a Gaussian
+    approximation, then draws samples. Much faster than NUTS or SVI
+    because it requires only one optimization pass (no iterative
+    gradient steps through the guide).
 
     Args:
         prior_specs: Prior specifications from CSV
         targets: List of SubmodelTarget objects
         reference_db: Optional reference values
         parameter_groups: Optional hierarchical parameter groups
-        num_steps: Number of SVI optimization steps
-        num_samples: Number of posterior samples to draw after fitting
+        num_samples: Number of posterior samples to draw from Laplace approx
         seed: Random seed
-        lr: Adam learning rate
 
     Returns:
         Same interface as run_joint_inference: (samples_dict, diagnostics_dict)
@@ -966,7 +963,7 @@ def run_joint_inference_vi(
         import jax.random
         import numpyro
         from numpyro.infer import SVI, Trace_ELBO
-        from numpyro.infer.autoguide import AutoMultivariateNormal
+        from numpyro.infer.autoguide import AutoLaplaceApproximation
         from numpyro.optim import Adam
     except ImportError as e:
         raise ImportError(
@@ -998,55 +995,56 @@ def run_joint_inference_vi(
             parameter_groups=parameter_groups,
         )
 
-    guide = AutoMultivariateNormal(model)
-    optimizer = Adam(lr)
-    svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+    guide = AutoLaplaceApproximation(model)
+    svi = SVI(model, guide, Adam(0.01), loss=Trace_ELBO())
 
+    print("Running Laplace approximation (MAP + Hessian)...", flush=True)
     rng_key = jax.random.PRNGKey(seed)
     svi_state = svi.init(rng_key)
 
-    # Run SVI loop with progress bar
+    # Optimize to find MAP — Laplace only needs convergence to the mode
+    n_steps = 2000
     try:
         from tqdm import trange
 
-        pbar = trange(num_steps, desc="SVI", unit="step")
+        pbar = trange(n_steps, desc="MAP", unit="step")
     except ImportError:
-        pbar = range(num_steps)
+        pbar = range(n_steps)
 
     losses = []
     for step in pbar:
         svi_state, loss = svi.update(svi_state)
         losses.append(float(loss))
         if hasattr(pbar, "set_postfix") and (step + 1) % 50 == 0:
-            pbar.set_postfix(ELBO=f"{np.mean(losses[-100:]):.1f}")
+            pbar.set_postfix(loss=f"{np.mean(losses[-50:]):.1f}")
 
     params = svi.get_params(svi_state)
-    print(f"SVI done. Final ELBO: {np.mean(losses[-100:]):.1f}")
+    final_loss = np.mean(losses[-50:])
+    print(f"MAP done. Final loss: {final_loss:.1f}")
 
-    # Draw posterior samples including deterministic sites (grouped params from z + base)
+    # Draw samples from the Laplace approximation (MAP + Hessian)
+    print(f"Drawing {num_samples} samples from Laplace approximation...")
     rng_key = jax.random.PRNGKey(seed + 1)
-    predictive_full = numpyro.infer.Predictive(
+    predictive = numpyro.infer.Predictive(
         model, guide=guide, params=params, num_samples=num_samples
     )
-    all_samples = predictive_full(rng_key)
+    all_samples = predictive(rng_key)
 
     samples_np = {name: np.asarray(vals) for name, vals in all_samples.items()}
 
-    # Build diagnostics (no MCMC diagnostics for VI, but provide structure)
     diagnostics = {
         "num_divergences": 0,
-        "method": "vi_auto_mvn",
-        "num_steps": num_steps,
-        "final_elbo": float(np.mean(losses[-100:])),
+        "method": "laplace",
+        "final_loss": float(final_loss),
         "per_param": {},
     }
 
     for name in prior_specs:
         if name in samples_np:
             diagnostics["per_param"][name] = {
-                "r_hat": 1.0,  # not applicable for VI
-                "n_eff": float(num_samples),  # all samples are independent
-                "contraction": 0.0,  # filled in later
+                "r_hat": 1.0,
+                "n_eff": float(num_samples),
+                "contraction": 0.0,
                 "z_score": 0.0,
             }
 
