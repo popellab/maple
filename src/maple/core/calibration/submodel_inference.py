@@ -1400,7 +1400,13 @@ def run_component_npe(
 
     # Forward simulate all observables
     x = np.full((num_simulations, n_obs), np.nan)
-    for i in range(num_simulations):
+    try:
+        from tqdm import trange
+
+        sim_iter = trange(num_simulations, desc="Simulating", unit="sim")
+    except ImportError:
+        sim_iter = range(num_simulations)
+    for i in sim_iter:
         param_dict = {pname: float(theta[i, j]) for j, pname in enumerate(qsp_params)}
         for nname, nspec in nuisance_specs.items():
             param_dict[nname] = float(rng.lognormal(nspec["mu"], nspec["sigma"]))
@@ -1430,7 +1436,6 @@ def run_component_npe(
 
     import torch
     from sbi.inference import NPE
-    from sbi.utils import BoxUniform
 
     log_theta = np.log(theta_valid).astype(np.float32)
     log_x = np.log(x_valid).astype(np.float32)
@@ -1444,11 +1449,26 @@ def run_component_npe(
     theta_tensor = torch.as_tensor(log_theta)
     x_tensor = torch.as_tensor(x_normed)
 
-    log_lo = torch.tensor(log_theta.min(axis=0) - 1.0, dtype=torch.float32)
-    log_hi = torch.tensor(log_theta.max(axis=0) + 1.0, dtype=torch.float32)
-    prior_box = BoxUniform(low=log_lo, high=log_hi)
+    # Prior in log-space: diagonal Gaussian matching CSV lognormal priors (unbounded)
+    prior_mus = []
+    prior_sigmas = []
+    for pname in qsp_params:
+        spec = prior_specs.get(pname)
+        if spec:
+            prior_mus.append(spec.mu)
+            prior_sigmas.append(spec.sigma)
+        else:
+            prior_mus.append(0.0)
+            prior_sigmas.append(1.0)
+    prior_dist = torch.distributions.Independent(
+        torch.distributions.Normal(
+            torch.tensor(prior_mus, dtype=torch.float32),
+            torch.tensor(prior_sigmas, dtype=torch.float32),
+        ),
+        1,
+    )
 
-    inference = NPE(prior=prior_box)
+    inference = NPE(prior=prior_dist)
     inference.append_simulations(theta_tensor, x_tensor)
     density_estimator = inference.train(
         training_batch_size=min(256, n_valid // 4),
