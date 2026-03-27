@@ -1312,8 +1312,6 @@ def run_component_npe(
     """
     import time as _time
 
-    from scipy.integrate import solve_ivp
-
     rng = np.random.default_rng(seed)
 
     # Collect QSP param names
@@ -1338,159 +1336,75 @@ def run_component_npe(
         f"{num_simulations} sims"
     )
 
-    # Build simulator definitions for each observable
-    sim_defs = []
+    # Build numpy forward functions (fast scipy-based, no JAX)
+    forward_fns = []
     obs_values = []
-
     for target in targets:
-        fm = target.calibration.forward_model
-        inputs_dict = {inp.name: inp.value for inp in target.inputs}
-
-        for entry in target.calibration.error_model:
+        fns = build_numpy_forward_fns(target, reference_db)
+        for fn, entry in zip(fns, target.calibration.error_model):
+            forward_fns.append(fn)
             obs_values.append(entry.fit.median)
 
-            if fm.type == "custom_ode":
-                local_ns = {"np": np, "numpy": np}
-                exec(fm.code, local_ns)  # noqa: S102
-                ode_fn = local_ns["ode"]
-
-                y0 = []
-                sv_names = [sv.name for sv in fm.state_variables]
-                for sv in fm.state_variables:
-                    ic = sv.initial_condition
-                    if hasattr(ic, "input_ref") and ic.input_ref:
-                        y0.append(float(inputs_dict[ic.input_ref]))
-                    elif hasattr(ic, "value") and ic.value is not None:
-                        y0.append(float(ic.value))
-                    else:
-                        y0.append(0.0)
-
-                t_span = [
-                    float(fm.independent_variable.span[0]),
-                    float(fm.independent_variable.span[1]),
-                ]
-                eval_pt = entry.evaluation_points[0] if entry.evaluation_points else t_span[1]
-
-                obs_code = entry.observable.code if entry.observable else None
-
-                sim_defs.append(
-                    {
-                        "type": "ode",
-                        "ode_fn": ode_fn,
-                        "y0": np.array(y0),
-                        "t_span": t_span,
-                        "eval_pt": eval_pt,
-                        "inputs": inputs_dict,
-                        "sv_names": sv_names,
-                        "obs_code": obs_code,
-                    }
-                )
-
-            elif fm.type == "algebraic":
-                local_ns = {"np": np, "numpy": np}
-                exec(fm.code, local_ns)  # noqa: S102
-                compute_fn = local_ns["compute"]
-                obs_code = entry.observable.code if entry.observable else None
-
-                sim_defs.append(
-                    {
-                        "type": "algebraic",
-                        "compute_fn": compute_fn,
-                        "inputs": inputs_dict,
-                        "obs_code": obs_code,
-                    }
-                )
-
-            else:
-                # Structured types — evaluate directly
-                from maple.core.calibration.submodel_utils import (
-                    _evaluate_structured_model,
-                )
-
-                x_val = inputs_dict.get(entry.x_input) if entry.x_input else None
-                sim_defs.append(
-                    {
-                        "type": "structured",
-                        "model": fm,
-                        "inputs": inputs_dict,
-                        "reference_db": reference_db,
-                        "x_val": x_val,
-                    }
-                )
-
-    n_obs = len(sim_defs)
+    n_obs = len(forward_fns)
     print(f"  {n_obs} observables")
 
-    # Sample prior draws
+    # Build hierarchical group sampling info
+    group_sampling = []  # [(base_prior, member_indices, tau, delta_priors)]
+    param_in_group = set()
+    if parameter_groups:
+        for group in parameter_groups.groups:
+            member_indices = []
+            delta_priors = []
+            for member in group.members:
+                if member.name in qsp_params:
+                    idx = qsp_params.index(member.name)
+                    member_indices.append(idx)
+                    delta_priors.append(
+                        (member.delta_prior.mu, member.delta_prior.sigma)
+                        if member.delta_prior
+                        else None
+                    )
+                    param_in_group.add(member.name)
+            if member_indices:
+                bp = group.resolve_base_prior(prior_specs)
+                tau = group.between_member_sd.sigma
+                group_sampling.append((bp, member_indices, tau, delta_priors))
+        if group_sampling:
+            print(f"  {len(group_sampling)} hierarchical groups in prior sampling")
+
+    # Sample prior draws with hierarchical structure
     t0 = _time.perf_counter()
     theta = np.zeros((num_simulations, len(qsp_params)))
+
+    # Independent params (not in any group)
     for j, pname in enumerate(qsp_params):
+        if pname in param_in_group:
+            continue
         spec = prior_specs.get(pname)
         if spec:
             theta[:, j] = rng.lognormal(spec.mu, spec.sigma, num_simulations)
         else:
             theta[:, j] = rng.lognormal(0, 1, num_simulations)
 
+    # Grouped params: k_i = base_rate * exp(delta_i)
+    for bp, member_indices, tau, delta_priors in group_sampling:
+        base = rng.lognormal(bp.mu, bp.sigma, num_simulations)
+        for idx, dp in zip(member_indices, delta_priors):
+            if dp is not None:
+                delta = rng.normal(dp[0], dp[1], num_simulations)
+            else:
+                delta = rng.normal(0, tau, num_simulations)
+            theta[:, idx] = base * np.exp(delta)
+
     # Forward simulate all observables
     x = np.full((num_simulations, n_obs), np.nan)
     for i in range(num_simulations):
-        param_dict = {pname: theta[i, j] for j, pname in enumerate(qsp_params)}
-        # Add nuisance draws
+        param_dict = {pname: float(theta[i, j]) for j, pname in enumerate(qsp_params)}
         for nname, nspec in nuisance_specs.items():
-            param_dict[nname] = rng.lognormal(nspec["mu"], nspec["sigma"])
-
-        for obs_idx, sd in enumerate(sim_defs):
+            param_dict[nname] = float(rng.lognormal(nspec["mu"], nspec["sigma"]))
+        for obs_idx, fn in enumerate(forward_fns):
             try:
-                if sd["type"] == "ode":
-
-                    def rhs(t, y, _ode_fn=sd["ode_fn"], _p=param_dict, _inp=sd["inputs"]):
-                        dy = _ode_fn(t, y, _p, _inp)
-                        return np.array(dy) if isinstance(dy, (list, tuple)) else dy
-
-                    sol = solve_ivp(
-                        rhs,
-                        sd["t_span"],
-                        sd["y0"],
-                        t_eval=[sd["eval_pt"]],
-                        method="RK23",
-                        rtol=1e-4,
-                        atol=1e-6,
-                    )
-                    if not sol.success:
-                        continue
-                    y_final = sol.y[:, -1]
-
-                    if sd["obs_code"]:
-                        obs_ns = {"np": np, "numpy": np}
-                        exec(sd["obs_code"], obs_ns)  # noqa: S102
-                        y_dict = dict(zip(sd["sv_names"], y_final))
-                        x[i, obs_idx] = float(obs_ns["compute"](sd["eval_pt"], y_dict, sd["y0"]))
-                    else:
-                        x[i, obs_idx] = float(y_final[0])
-
-                elif sd["type"] == "algebraic":
-                    raw = sd["compute_fn"](param_dict, sd["inputs"])
-                    if sd["obs_code"]:
-                        obs_ns = {"np": np, "numpy": np}
-                        exec(sd["obs_code"], obs_ns)  # noqa: S102
-                        x[i, obs_idx] = float(obs_ns["compute"](None, raw, None))
-                    else:
-                        x[i, obs_idx] = float(raw)
-
-                elif sd["type"] == "structured":
-                    from maple.core.calibration.submodel_utils import (
-                        _evaluate_structured_model,
-                    )
-
-                    x[i, obs_idx] = float(
-                        _evaluate_structured_model(
-                            sd["model"],
-                            param_dict,
-                            sd["inputs"],
-                            sd["reference_db"],
-                            x_value=sd["x_val"],
-                        )
-                    )
+                x[i, obs_idx] = float(fn(param_dict))
             except Exception:
                 continue
 
