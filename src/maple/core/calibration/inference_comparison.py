@@ -104,9 +104,7 @@ def _build_structured_results(
     joint_diag: dict,
     all_param_names: set,
     n_targets: int,
-    num_warmup: int,
     num_samples: int,
-    num_chains: int,
 ) -> dict:
     """Build structured dict for YAML serialization."""
     from datetime import datetime, timezone
@@ -188,9 +186,8 @@ def _build_structured_results(
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "n_targets": n_targets,
             "n_parameters": len(all_param_names),
-            "num_warmup": num_warmup,
+            "method": "npe",
             "num_samples": num_samples,
-            "num_chains": num_chains,
             "num_divergences": joint_diag.get("num_divergences", 0),
         },
         "parameters": parameters,
@@ -264,25 +261,17 @@ def run_comparison(
     priors_csv: str | Path,
     submodel_dir: str | Path,
     glob_pattern: str = "*_PDAC_deriv*.yaml",
-    num_warmup: int = 500,
-    num_samples: int = 2000,
-    num_chains: int = 2,
+    num_samples: int = 4000,
     parameter_groups_path: str | Path | None = None,
 ) -> str:
     """Run component-wise NPE inference, return comparison report.
-
-    Finds connected components of targets (linked by shared params or
-    hierarchical groups), runs NPE on each independently via scipy
-    forward simulation + sbi neural posterior estimation.
 
     Args:
         priors_csv: Path to priors CSV.
         submodel_dir: Directory containing SubmodelTarget YAMLs.
         glob_pattern: Glob for YAML files.
-        num_warmup: Unused (kept for API compat).
         num_samples: Number of posterior samples per component.
-        num_chains: Unused (kept for API compat).
-        parameter_groups_path: Optional path to parameter_groups.yaml for hierarchical pooling.
+        parameter_groups_path: Optional path to parameter_groups.yaml.
 
     Returns:
         Markdown-formatted comparison report.
@@ -295,7 +284,6 @@ def run_comparison(
     from maple.core.calibration.submodel_target import SubmodelTarget
     from maple.core.calibration.yaml_to_prior import (
         fit_distributions,
-        process_yaml,
     )
 
     from maple.core.calibration.parameter_groups import load_parameter_groups
@@ -349,7 +337,7 @@ def run_comparison(
         all_param_names |= param_groups.all_grouped_params
 
     priors_content = priors_csv.read_text()
-    mcmc_config_str = f"{num_warmup}:{num_samples}:{num_chains}"
+    mcmc_config_str = f"npe:{num_samples}"
     method_str = "npe"
 
     # ── Phase 1: Component-wise joint inference ──
@@ -485,94 +473,9 @@ def run_comparison(
 
     logger.info("Phase 1: done (%d params fitted)", len(joint_fits))
 
-    # ── Phase 2: Single-target inference (cached per-target) ──
-    logger.info("Phase 2: Running single-target inference on %d targets", len(yaml_files))
-    # {param_name: [{target_id, median, cv, sigma, contraction, z_score, dist}]}
+    # Single-target results no longer computed separately — NPE handles
+    # everything component-wise. Keep empty dicts for report compatibility.
     single_results: dict[str, list[dict]] = {}
-    target_param_map: dict[str, list[str]] = {}  # {target_id: [param_names]}
-
-    n_cached = 0
-    n_computed = 0
-    for yf in yaml_files:
-        # Per-target cache key: hash of YAML content + relevant priors + config
-        yf_content = yaml_contents.get(yf.name, yf.read_text())
-        target_hash = _compute_hash(yf_content, priors_content, mcmc_config_str)
-        target_cache_path = cache / f"single_{yf.stem}_{target_hash}.json"
-
-        cached_single = _load_cache(target_cache_path)
-        if cached_single is not None:
-            # Restore from cache
-            n_cached += 1
-            for entry in cached_single["entries"]:
-                pname = entry["param_name"]
-                if pname not in single_results:
-                    single_results[pname] = []
-                single_results[pname].append(entry)
-                tid = entry["target_id"]
-                if tid not in target_param_map:
-                    target_param_map[tid] = []
-                target_param_map[tid].append(pname)
-            continue
-
-        # Cache miss — run MCMC
-        try:
-            results = process_yaml(yf, priors_csv=priors_csv)
-            entries_to_cache = []
-            samples_to_cache = {}
-            for r in results:
-                if "error" in r:
-                    logger.warning("Single-target %s: %s", yf.name, r["error"])
-                    continue
-                pname = r["name"]
-                tid = r["target_id"]
-
-                # Compute log-space sigma for contraction
-                if r["best_dist"].name == "lognormal":
-                    post_sigma = r["best_dist"].params["sigma"]
-                else:
-                    post_sigma = np.sqrt(np.log(1 + r["cv_data"] ** 2))
-
-                prior_sigma = csv_priors[pname].sigma if pname in csv_priors else 1.0
-                prior_mu = csv_priors[pname].mu if pname in csv_priors else 0.0
-                post_mu = np.log(r["median_data"])
-
-                entry = {
-                    "target_id": tid,
-                    "param_name": pname,
-                    "median": r["median_data"],
-                    "cv": r["cv_data"],
-                    "sigma": post_sigma,
-                    "dist": r["best_dist"].name,
-                    "contraction": _contraction(prior_sigma, post_sigma),
-                    "z_score": _z_score(prior_mu, post_mu, prior_sigma),
-                }
-
-                if pname not in single_results:
-                    single_results[pname] = []
-                single_results[pname].append(entry)
-
-                if tid not in target_param_map:
-                    target_param_map[tid] = []
-                target_param_map[tid].append(pname)
-
-                entries_to_cache.append(entry)
-
-                if "param_samples" in r:
-                    samples_to_cache[pname] = r["param_samples"]
-
-            # Save to cache (include raw samples for downstream plotting)
-            _save_cache(
-                target_cache_path,
-                {
-                    "entries": entries_to_cache,
-                    "samples": samples_to_cache,
-                },
-            )
-            n_computed += 1
-        except Exception as e:
-            logger.warning("Failed to process %s: %s", yf.name, e)
-
-    logger.info("Phase 2: %d targets from cache, %d computed", n_cached, n_computed)
 
     # ── Save structured results ──
     structured = _build_structured_results(
@@ -582,22 +485,20 @@ def run_comparison(
         joint_diag=joint_diag,
         all_param_names=all_param_names,
         n_targets=len(targets),
-        num_warmup=num_warmup,
         num_samples=num_samples,
-        num_chains=num_chains,
     )
     results_path = submodel_dir / "compare_inference_results.yaml"
     with open(results_path, "w") as f:
         yaml.dump(structured, f, default_flow_style=False, sort_keys=False)
     logger.info("Structured results saved to %s", results_path)
 
-    # ── Phase 3: Build comparison report ──
+    # ── Build comparison report ──
     lines = [
         "# Inference Comparison Report",
         "",
         f"**Targets:** {len(targets)}",
         f"**Parameters:** {len(all_param_names)}",
-        f"**MCMC:** {num_warmup} warmup, {num_samples} samples, {num_chains} chains",
+        f"**Method:** Component-wise NPE ({num_samples} posterior samples)",
         "",
     ]
 
@@ -739,9 +640,7 @@ def main():
     parser.add_argument("--priors-csv", required=True, help="Path to priors CSV")
     parser.add_argument("--submodel-dir", required=True, help="Directory with SubmodelTarget YAMLs")
     parser.add_argument("--glob-pattern", default="*_PDAC_deriv*.yaml")
-    parser.add_argument("--num-warmup", type=int, default=500)
-    parser.add_argument("--num-samples", type=int, default=2000)
-    parser.add_argument("--num-chains", type=int, default=2)
+    parser.add_argument("--num-samples", type=int, default=4000)
     parser.add_argument("--output", help="Optional output file (markdown)")
     parser.add_argument(
         "--parameter-groups",
