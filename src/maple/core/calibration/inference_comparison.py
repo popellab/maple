@@ -197,6 +197,69 @@ def _build_structured_results(
     }
 
 
+def _find_components(targets, param_groups):
+    """Find connected components of targets linked by shared params or groups.
+
+    Returns list of dicts: [{"params": set[str], "targets": list[SubmodelTarget]}]
+    """
+    from collections import defaultdict, deque
+
+    # Build param -> target mapping (QSP params only)
+    param_to_targets = defaultdict(list)
+    target_to_params = {}
+    for t in targets:
+        t_params = set()
+        for p in t.calibration.parameters:
+            if not p.nuisance:
+                t_params.add(p.name)
+                param_to_targets[p.name].append(t)
+        target_to_params[id(t)] = t_params
+
+    # Build group membership edges
+    group_edges = defaultdict(set)  # param -> set of group-linked params
+    if param_groups:
+        for g in param_groups.groups:
+            members = {m.name for m in g.members}
+            for m in members:
+                group_edges[m] = group_edges[m] | members
+
+    # All params (from targets + groups)
+    all_params = set(param_to_targets.keys())
+    if param_groups:
+        all_params |= param_groups.all_grouped_params
+
+    # BFS to find connected components
+    visited = set()
+    components = []
+    for start_p in sorted(all_params):
+        if start_p in visited:
+            continue
+        comp_params = set()
+        comp_targets_set = set()
+        queue = deque([start_p])
+        while queue:
+            p = queue.popleft()
+            if p in visited:
+                continue
+            visited.add(p)
+            comp_params.add(p)
+            # Link via shared targets
+            for t in param_to_targets.get(p, []):
+                comp_targets_set.add(id(t))
+                for p2 in target_to_params[id(t)]:
+                    if p2 not in visited:
+                        queue.append(p2)
+            # Link via group membership
+            for p2 in group_edges.get(p, set()):
+                if p2 not in visited:
+                    queue.append(p2)
+
+        comp_targets = [t for t in targets if id(t) in comp_targets_set]
+        components.append({"params": comp_params, "targets": comp_targets})
+
+    return components
+
+
 def run_comparison(
     priors_csv: str | Path,
     submodel_dir: str | Path,
@@ -266,7 +329,6 @@ def run_comparison(
 
     # ── Load and parse all targets ──
     targets = []
-    skipped_ode = []
     yaml_contents = {}  # {filename: raw_content} for cache hashing
     for yf in yaml_files:
         try:
@@ -274,80 +336,121 @@ def run_comparison(
             yaml_contents[yf.name] = raw
             data = yaml.safe_load(raw)
             target = SubmodelTarget.model_validate(data)
-            if fast and target.calibration.forward_model.type == "custom_ode":
-                skipped_ode.append(yf.name)
-                continue
             targets.append(target)
         except Exception as e:
             logger.warning("Failed to load %s for joint: %s", yf.name, e)
-    if skipped_ode:
-        logger.info(
-            "Fast mode: skipped %d custom_ode targets (%s)",
-            len(skipped_ode),
-            ", ".join(skipped_ode),
-        )
 
     all_param_names = set()
     for t in targets:
         for p in t.calibration.parameters:
             if not p.nuisance:
                 all_param_names.add(p.name)
-    # Also include grouped params — they may not appear in any target but
-    # need CSV priors for resolve_base_prior and hierarchical sampling
     if param_groups:
         all_param_names |= param_groups.all_grouped_params
-    joint_prior_specs = {k: v for k, v in csv_priors.items() if k in all_param_names}
 
-    # Cache key for joint: hash of all YAML contents + priors + MCMC config
     priors_content = priors_csv.read_text()
-    all_yaml_content = "".join(yaml_contents[k] for k in sorted(yaml_contents))
     mcmc_config_str = f"{num_warmup}:{num_samples}:{num_chains}"
-    # Cache key includes method (NUTS vs VI) so they don't collide
     method_str = "vi" if fast else "nuts"
-    joint_hash = _compute_hash(all_yaml_content, priors_content, mcmc_config_str, method_str)
-    joint_cache_path = cache / f"joint_{joint_hash}.json"
 
-    cached_joint = _load_cache(joint_cache_path)
-    if cached_joint is not None:
-        logger.info("Phase 1: Loaded joint inference from cache")
-        joint_fits = cached_joint["joint_fits"]
-        joint_diag = cached_joint["joint_diag"]
-    else:
-        if fast:
-            from maple.core.calibration.submodel_inference import (
-                run_joint_inference_vi,
+    # ── Phase 1: Component-wise joint inference ──
+    # Find connected components (params linked by shared targets or group membership)
+    components = _find_components(targets, param_groups)
+    logger.info(
+        "Phase 1: %d components (largest: %d params, %d targets)",
+        len(components),
+        max(len(c["params"]) for c in components) if components else 0,
+        max(len(c["targets"]) for c in components) if components else 0,
+    )
+
+    joint_fits: dict[str, dict] = {}
+    joint_diag: dict = {"num_divergences": 0, "per_param": {}}
+    joint_samples_all: dict[str, list] = {}
+
+    for ci, comp in enumerate(components):
+        comp_targets = comp["targets"]
+        comp_params = comp["params"]
+        if not comp_targets:
+            continue  # group with no targets — skip
+
+        # Cache per component
+        comp_content = "".join(
+            yaml_contents.get(t.primary_data_source.source_tag + ".yaml", "") for t in comp_targets
+        )
+        # Fall back to target_id-based content hashing
+        if not comp_content:
+            comp_content = "|".join(sorted(t.target_id for t in comp_targets))
+        comp_hash = _compute_hash(comp_content, priors_content, mcmc_config_str, method_str)
+        comp_cache_path = cache / f"component_{ci}_{comp_hash}.json"
+
+        cached_comp = _load_cache(comp_cache_path)
+        if cached_comp is not None:
+            for k, v in cached_comp.get("fits", {}).items():
+                joint_fits[k] = v
+            comp_diag = cached_comp.get("diag", {})
+            joint_diag["num_divergences"] += comp_diag.get("num_divergences", 0)
+            for k, v in comp_diag.get("per_param", {}).items():
+                joint_diag["per_param"][k] = v
+            for k, v in cached_comp.get("samples", {}).items():
+                joint_samples_all[k] = v
+            continue
+
+        # Build prior specs for this component
+        comp_prior_specs = {k: v for k, v in csv_priors.items() if k in comp_params}
+
+        # Find relevant parameter groups for this component
+        comp_groups = None
+        if param_groups:
+            from maple.core.calibration.parameter_groups import (
+                ParameterGroupsConfig,
             )
 
-            logger.info("Phase 1: Running joint VI (fast mode)")
-            try:
-                joint_samples, joint_diag = run_joint_inference_vi(
-                    joint_prior_specs,
-                    targets,
-                    parameter_groups=param_groups,
+            relevant = [
+                g for g in param_groups.groups if any(m.name in comp_params for m in g.members)
+            ]
+            if relevant:
+                comp_groups = ParameterGroupsConfig(groups=relevant)
+
+        n_p = len(comp_params)
+        n_t = len(comp_targets)
+        logger.info(
+            "  Component %d/%d: %d params, %d targets",
+            ci + 1,
+            len(components),
+            n_p,
+            n_t,
+        )
+
+        try:
+            if fast:
+                from maple.core.calibration.submodel_inference import (
+                    run_joint_inference_vi,
+                )
+
+                comp_samples, comp_diag = run_joint_inference_vi(
+                    comp_prior_specs,
+                    comp_targets,
+                    parameter_groups=comp_groups,
                     num_samples=num_samples,
                 )
-            except Exception as e:
-                return f"Joint VI failed: {e}"
-        else:
-            logger.info("Phase 1: Running joint inference (NUTS)")
-            try:
-                joint_samples, joint_diag = run_joint_inference(
-                    joint_prior_specs,
-                    targets,
-                    parameter_groups=param_groups,
+            else:
+                comp_samples, comp_diag = run_joint_inference(
+                    comp_prior_specs,
+                    comp_targets,
+                    parameter_groups=comp_groups,
                     num_warmup=num_warmup,
                     num_samples=num_samples,
                     num_chains=num_chains,
                 )
-            except Exception as e:
-                return f"Joint inference failed: {e}"
+        except Exception as e:
+            logger.warning("  Component %d failed: %s", ci + 1, e)
+            continue
 
-        # Fit distributions to joint posteriors
-        joint_fits: dict[str, dict] = {}
-        for pname in sorted(all_param_names):
-            if pname not in joint_samples:
+        # Fit distributions and accumulate
+        comp_fits = {}
+        for pname in sorted(comp_params):
+            if pname not in comp_samples:
                 continue
-            fits = fit_distributions(joint_samples[pname])
+            fits = fit_distributions(comp_samples[pname])
             if not fits:
                 continue
             best = fits[0]
@@ -361,7 +464,7 @@ def run_comparison(
             prior_mu = csv_priors[pname].mu if pname in csv_priors else 0.0
             post_mu = np.log(best.median)
 
-            joint_fits[pname] = {
+            comp_fits[pname] = {
                 "median": best.median,
                 "cv": best.cv,
                 "sigma": post_sigma,
@@ -369,17 +472,26 @@ def run_comparison(
                 "contraction": _contraction(prior_sigma, post_sigma),
                 "z_score": _z_score(prior_mu, post_mu, prior_sigma),
             }
+            joint_fits[pname] = comp_fits[pname]
 
-        # Save to cache (include raw samples for downstream plotting)
+        joint_diag["num_divergences"] += comp_diag.get("num_divergences", 0)
+        for k, v in comp_diag.get("per_param", {}).items():
+            joint_diag["per_param"][k] = v
+
+        comp_samples_list = {k: v for k, v in comp_samples.items()}
+        for k, v in comp_samples_list.items():
+            joint_samples_all[k] = v
+
         _save_cache(
-            joint_cache_path,
+            comp_cache_path,
             {
-                "joint_fits": joint_fits,
-                "joint_diag": joint_diag,
-                "joint_samples": {k: v for k, v in joint_samples.items()},
+                "fits": comp_fits,
+                "diag": comp_diag,
+                "samples": comp_samples_list,
             },
         )
-        logger.info("Phase 1: Saved joint results to cache")
+
+    logger.info("Phase 1: done (%d params fitted)", len(joint_fits))
 
     # ── Phase 2: Single-target inference (cached per-target) ──
     logger.info("Phase 2: Running single-target inference on %d targets", len(yaml_files))
