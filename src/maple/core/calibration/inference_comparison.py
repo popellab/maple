@@ -268,20 +268,21 @@ def run_comparison(
     num_samples: int = 2000,
     num_chains: int = 2,
     parameter_groups_path: str | Path | None = None,
-    fast: bool = False,
 ) -> str:
-    """Run single-target and joint inference, return comparison report.
+    """Run component-wise NPE inference, return comparison report.
+
+    Finds connected components of targets (linked by shared params or
+    hierarchical groups), runs NPE on each independently via scipy
+    forward simulation + sbi neural posterior estimation.
 
     Args:
         priors_csv: Path to priors CSV.
         submodel_dir: Directory containing SubmodelTarget YAMLs.
         glob_pattern: Glob for YAML files.
-        num_warmup: NUTS warmup per chain.
-        num_samples: Post-warmup samples per chain.
-        num_chains: Number of MCMC chains.
+        num_warmup: Unused (kept for API compat).
+        num_samples: Number of posterior samples per component.
+        num_chains: Unused (kept for API compat).
         parameter_groups_path: Optional path to parameter_groups.yaml for hierarchical pooling.
-        fast: Use variational inference (AutoMultivariateNormal) instead of NUTS
-            for joint inference. Much faster but approximate.
 
     Returns:
         Markdown-formatted comparison report.
@@ -290,7 +291,6 @@ def run_comparison(
 
     from maple.core.calibration.submodel_inference import (
         load_priors_from_csv,
-        run_joint_inference,
     )
     from maple.core.calibration.submodel_target import SubmodelTarget
     from maple.core.calibration.yaml_to_prior import (
@@ -350,7 +350,7 @@ def run_comparison(
 
     priors_content = priors_csv.read_text()
     mcmc_config_str = f"{num_warmup}:{num_samples}:{num_chains}"
-    method_str = "vi" if fast else "nuts"
+    method_str = "npe"
 
     # ── Phase 1: Component-wise joint inference ──
     # Find connected components (params linked by shared targets or group membership)
@@ -423,26 +423,16 @@ def run_comparison(
         )
 
         try:
-            if fast:
-                from maple.core.calibration.submodel_inference import (
-                    run_component_npe,
-                )
+            from maple.core.calibration.submodel_inference import (
+                run_component_npe,
+            )
 
-                comp_samples, comp_diag = run_component_npe(
-                    comp_prior_specs,
-                    comp_targets,
-                    parameter_groups=comp_groups,
-                    num_posterior_samples=num_samples,
-                )
-            else:
-                comp_samples, comp_diag = run_joint_inference(
-                    comp_prior_specs,
-                    comp_targets,
-                    parameter_groups=comp_groups,
-                    num_warmup=num_warmup,
-                    num_samples=num_samples,
-                    num_chains=num_chains,
-                )
+            comp_samples, comp_diag = run_component_npe(
+                comp_prior_specs,
+                comp_targets,
+                parameter_groups=comp_groups,
+                num_posterior_samples=num_samples,
+            )
         except Exception as e:
             logger.warning("  Component %d failed: %s", ci + 1, e)
             continue
@@ -757,12 +747,6 @@ def main():
         "--parameter-groups",
         help="Path to parameter_groups.yaml (auto-discovered in submodel-dir if not set)",
     )
-    parser.add_argument(
-        "--fast",
-        action="store_true",
-        help="Use VI (AutoMultivariateNormal) instead of NUTS for joint inference",
-    )
-
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -771,11 +755,8 @@ def main():
         priors_csv=args.priors_csv,
         submodel_dir=args.submodel_dir,
         glob_pattern=args.glob_pattern,
-        num_warmup=args.num_warmup,
         num_samples=args.num_samples,
-        num_chains=args.num_chains,
         parameter_groups_path=args.parameter_groups,
-        fast=args.fast,
     )
 
     if args.output:

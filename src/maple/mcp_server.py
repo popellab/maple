@@ -693,28 +693,20 @@ def compare_inference(
     priors_csv: str,
     submodel_dir: str,
     glob_pattern: str = "*_PDAC_deriv*.yaml",
-    num_warmup: int = 500,
-    num_samples: int = 2000,
-    num_chains: int = 2,
-    fast: bool = False,
+    num_samples: int = 4000,
 ) -> str:
-    """Compare single-target vs joint inference across all SubmodelTargets.
+    """Run component-wise NPE inference across all SubmodelTargets.
 
-    Runs MCMC on each target individually, then jointly, and produces a
-    comparison report showing per-parameter: CSV prior median/sigma,
-    each single-target posterior (median, CV, sigma, contraction, z-score),
-    and the joint posterior. Flags parameters where single-target estimates
-    disagree by >3x.
+    Finds connected components of targets, runs NPE on each via scipy
+    simulation + sbi neural posterior estimation. Produces a comparison
+    report with per-parameter contraction, tension detection, and
+    diagnostics.
 
     Args:
         priors_csv: Path to base priors CSV (read-only).
         submodel_dir: Directory containing SubmodelTarget YAML files.
         glob_pattern: Glob pattern for YAML files.
-        num_warmup: NUTS warmup iterations per chain.
-        num_samples: Post-warmup samples per chain.
-        num_chains: Number of MCMC chains.
-        fast: Use variational inference (AutoMultivariateNormal) instead of
-            NUTS for joint inference. Much faster but approximate.
+        num_samples: Number of posterior samples per component.
 
     Returns:
         Markdown comparison report.
@@ -725,10 +717,7 @@ def compare_inference(
         priors_csv=priors_csv,
         submodel_dir=submodel_dir,
         glob_pattern=glob_pattern,
-        num_warmup=num_warmup,
         num_samples=num_samples,
-        num_chains=num_chains,
-        fast=fast,
     )
 
 
