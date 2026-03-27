@@ -1002,21 +1002,26 @@ def run_joint_inference_vi(
     optimizer = Adam(lr)
     svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
 
-    print(f"Starting SVI ({num_steps} steps, lr={lr})...", flush=True)
     rng_key = jax.random.PRNGKey(seed)
     svi_state = svi.init(rng_key)
 
-    # Run SVI loop
+    # Run SVI loop with progress bar
+    try:
+        from tqdm import trange
+
+        pbar = trange(num_steps, desc="SVI", unit="step")
+    except ImportError:
+        pbar = range(num_steps)
+
     losses = []
-    for step in range(num_steps):
+    for step in pbar:
         svi_state, loss = svi.update(svi_state)
         losses.append(float(loss))
-        if (step + 1) % 1000 == 0:
-            recent = np.mean(losses[-100:])
-            print(f"  step {step+1}/{num_steps}, ELBO loss: {recent:.1f}")
+        if hasattr(pbar, "set_postfix") and (step + 1) % 50 == 0:
+            pbar.set_postfix(ELBO=f"{np.mean(losses[-100:]):.1f}")
 
     params = svi.get_params(svi_state)
-    print(f"SVI converged. Final ELBO: {np.mean(losses[-100:]):.1f}")
+    print(f"SVI done. Final ELBO: {np.mean(losses[-100:]):.1f}")
 
     # Draw posterior samples including deterministic sites (grouped params from z + base)
     rng_key = jax.random.PRNGKey(seed + 1)
