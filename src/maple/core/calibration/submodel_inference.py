@@ -908,10 +908,27 @@ def run_joint_inference(
         f"{len(targets)} targets, {n_likelihood_terms} likelihood terms"
     )
 
-    # Run MCMC
-
-    print("Starting MCMC...", flush=True)
+    # Run MCMC — split warmup(1) for compilation timing, then the rest
     kernel = NUTS(submodel_joint_model, dense_mass=True)
+
+    # Phase A: single warmup step to trigger JAX compilation
+    print("Compiling model (first MCMC step)...", flush=True)
+    mcmc_compile = MCMC(kernel, num_warmup=1, num_samples=1, num_chains=1)
+    t0 = _time.perf_counter()
+    mcmc_compile.run(
+        jax.random.PRNGKey(seed + 99),
+        prior_specs=prior_specs,
+        target_likelihoods=target_likelihoods,
+        parameter_groups=parameter_groups,
+    )
+    t_compile = _time.perf_counter() - t0
+    print(f"Compilation: {t_compile:.1f}s", flush=True)
+
+    # Phase B: actual sampling (compilation cached, should be fast)
+    print(
+        f"Sampling ({num_warmup} warmup + {num_samples} samples, " f"{num_chains} chains)...",
+        flush=True,
+    )
     mcmc = MCMC(
         kernel,
         num_warmup=num_warmup,
@@ -926,8 +943,8 @@ def run_joint_inference(
         target_likelihoods=target_likelihoods,
         parameter_groups=parameter_groups,
     )
-    elapsed = _time.perf_counter() - t0
-    print(f"MCMC done in {elapsed:.1f}s")
+    t_sample = _time.perf_counter() - t0
+    print(f"Sampling: {t_sample:.1f}s")
 
     # Diagnostics
     mcmc.print_summary()
