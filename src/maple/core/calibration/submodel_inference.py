@@ -322,13 +322,16 @@ def _make_diffrax_ode_fn(
     """Build a JAX-traceable forward fn using diffrax ODE solver.
 
     Used for michaelis_menten and custom_ode types.
+    Uses fixed-step Heun solver (no adaptive stepping) for fast JAX compilation.
     """
     import jax.numpy as jnp
 
     _t0 = float(t_span[0])
     _t1 = float(eval_point)
-    _y0 = jnp.array([float(v) for v in y0_values])
+    _y0 = jnp.array([float(v) for v in y0_values], dtype=jnp.float32)
     _y0_start = _y0  # for observable y_start argument
+    # Fixed step size: 200 steps across the integration interval
+    _dt = (_t1 - _t0) / 200.0
 
     if model_type == "custom_ode":
         # exec user code to get ode(t, y, params, inputs)
@@ -337,7 +340,7 @@ def _make_diffrax_ode_fn(
         exec(code, local)  # noqa: S102
         _user_ode = local["ode"]
 
-        def _factory_custom(_user_ode, inputs_dict, _y0, _y0_start, _t0, _t1, obs_fn):
+        def _factory_custom(_user_ode, inputs_dict, _y0, _y0_start, _t0, _t1, _dt, obs_fn):
             def forward(param_values):
                 import diffrax
 
@@ -350,15 +353,15 @@ def _make_diffrax_ode_fn(
 
                 sol = diffrax.diffeqsolve(
                     diffrax.ODETerm(rhs),
-                    diffrax.Tsit5(),
+                    diffrax.Heun(),
                     t0=_t0,
                     t1=_t1,
-                    dt0=(_t1 - _t0) / 100.0,
+                    dt0=_dt,
                     y0=_y0,
                     args=(param_values, inputs_dict),
                     saveat=diffrax.SaveAt(t1=True),
-                    stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-8),
-                    max_steps=512,
+                    stepsize_controller=diffrax.ConstantStepSize(),
+                    max_steps=4096,
                     throw=False,
                     progress_meter=diffrax.NoProgressMeter(),
                 )
@@ -367,11 +370,11 @@ def _make_diffrax_ode_fn(
 
             return forward
 
-        return _factory_custom(_user_ode, inputs_dict, _y0, _y0_start, _t0, _t1, obs_fn)
+        return _factory_custom(_user_ode, inputs_dict, _y0, _y0_start, _t0, _t1, _dt, obs_fn)
 
     elif model_type == "michaelis_menten":
 
-        def _factory_mm(model, inputs_dict, reference_db, _y0, _y0_start, _t0, _t1, obs_fn):
+        def _factory_mm(model, inputs_dict, reference_db, _y0, _y0_start, _t0, _t1, _dt, obs_fn):
             def forward(param_values):
                 import diffrax
 
@@ -386,15 +389,15 @@ def _make_diffrax_ode_fn(
 
                 sol = diffrax.diffeqsolve(
                     diffrax.ODETerm(rhs),
-                    diffrax.Tsit5(),
+                    diffrax.Heun(),
                     t0=_t0,
                     t1=_t1,
-                    dt0=(_t1 - _t0) / 100.0,
+                    dt0=_dt,
                     y0=_y0,
                     args=None,
                     saveat=diffrax.SaveAt(t1=True),
-                    stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-8),
-                    max_steps=512,
+                    stepsize_controller=diffrax.ConstantStepSize(),
+                    max_steps=4096,
                     throw=False,
                     progress_meter=diffrax.NoProgressMeter(),
                 )
@@ -403,7 +406,7 @@ def _make_diffrax_ode_fn(
 
             return forward
 
-        return _factory_mm(model, inputs_dict, reference_db, _y0, _y0_start, _t0, _t1, obs_fn)
+        return _factory_mm(model, inputs_dict, reference_db, _y0, _y0_start, _t0, _t1, _dt, obs_fn)
 
     else:
         raise ValueError(f"_make_diffrax_ode_fn does not handle model type: {model_type}")
@@ -887,6 +890,7 @@ def run_joint_inference(
     _cache_dir.mkdir(parents=True, exist_ok=True)
     jax.config.update("jax_compilation_cache_dir", str(_cache_dir))
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
+    jax.config.update("jax_enable_x64", False)
 
     # Build target likelihoods (runs bootstrap, builds forward fns)
     target_likelihoods = build_target_likelihoods(targets, prior_specs, reference_db)
@@ -975,6 +979,7 @@ def run_joint_inference_vi(
     _cache_dir.mkdir(parents=True, exist_ok=True)
     jax.config.update("jax_compilation_cache_dir", str(_cache_dir))
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
+    jax.config.update("jax_enable_x64", False)
 
     target_likelihoods = build_target_likelihoods(targets, prior_specs, reference_db)
 
