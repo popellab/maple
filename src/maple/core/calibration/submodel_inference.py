@@ -1484,6 +1484,8 @@ def run_component_npe(
     x_obs_tensor = torch.as_tensor(x_obs_normed)
 
     log_post = posterior.sample((num_posterior_samples,), x=x_obs_tensor).numpy()
+    # Clip to prevent overflow — values beyond ±50 in log-space are unphysical
+    log_post = np.clip(log_post, -50, 50)
     post_samples = np.exp(log_post)
 
     samples_dict = {pname: post_samples[:, j] for j, pname in enumerate(qsp_params)}
