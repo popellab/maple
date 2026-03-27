@@ -892,26 +892,26 @@ def run_joint_inference(
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
     jax.config.update("jax_enable_x64", False)
 
+    import time as _time
+
     # Build target likelihoods (runs bootstrap, builds forward fns)
+    t0 = _time.perf_counter()
     target_likelihoods = build_target_likelihoods(targets, prior_specs, reference_db)
+    t_build = _time.perf_counter() - t0
 
     n_likelihood_terms = sum(len(tl.entries) for tl in target_likelihoods)
     n_groups = len(parameter_groups.groups) if parameter_groups else 0
     n_grouped = len(parameter_groups.all_grouped_params) if parameter_groups else 0
     print(
-        f"Built joint model: {len(prior_specs)} parameters "
+        f"Built joint model in {t_build:.1f}s: {len(prior_specs)} parameters "
         f"({n_grouped} in {n_groups} hierarchical groups), "
         f"{len(targets)} targets, {n_likelihood_terms} likelihood terms"
     )
 
     # Run MCMC
-    print("Starting MCMC (JAX compilation on first step may be slow)...", flush=True)
+
+    print("Starting MCMC...", flush=True)
     kernel = NUTS(submodel_joint_model, dense_mass=True)
-    # Use vectorized chain method to avoid JAX pmap issues with diffrax.
-    # pmap (the default) causes diffrax RESULTS<traced> vs RESULTS<unknown>
-    # closure conversion mismatch on Apple Silicon virtual CPU devices.
-    # vectorized uses vmap instead, which traces consistently and batches
-    # chains for better throughput.
     mcmc = MCMC(
         kernel,
         num_warmup=num_warmup,
@@ -919,12 +919,15 @@ def run_joint_inference(
         num_chains=num_chains,
         chain_method="vectorized",
     )
+    t0 = _time.perf_counter()
     mcmc.run(
         jax.random.PRNGKey(seed),
         prior_specs=prior_specs,
         target_likelihoods=target_likelihoods,
         parameter_groups=parameter_groups,
     )
+    elapsed = _time.perf_counter() - t0
+    print(f"MCMC done in {elapsed:.1f}s")
 
     # Diagnostics
     mcmc.print_summary()
@@ -981,13 +984,17 @@ def run_joint_inference_vi(
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
     jax.config.update("jax_enable_x64", False)
 
+    import time as _time
+
+    t0 = _time.perf_counter()
     target_likelihoods = build_target_likelihoods(targets, prior_specs, reference_db)
+    t_build = _time.perf_counter() - t0
 
     n_likelihood_terms = sum(len(tl.entries) for tl in target_likelihoods)
     n_groups = len(parameter_groups.groups) if parameter_groups else 0
     n_grouped = len(parameter_groups.all_grouped_params) if parameter_groups else 0
     print(
-        f"Built joint model: {len(prior_specs)} parameters "
+        f"Built joint model in {t_build:.1f}s: {len(prior_specs)} parameters "
         f"({n_grouped} in {n_groups} hierarchical groups), "
         f"{len(targets)} targets, {n_likelihood_terms} likelihood terms"
     )
@@ -1003,11 +1010,14 @@ def run_joint_inference_vi(
     guide = AutoLaplaceApproximation(model)
     svi = SVI(model, guide, Adam(0.01), loss=Trace_ELBO())
 
-    print("Running Laplace approximation (MAP + Hessian)...", flush=True)
+    print("Initializing Laplace (JAX compilation)...", flush=True)
     rng_key = jax.random.PRNGKey(seed)
+    t0 = _time.perf_counter()
     svi_state = svi.init(rng_key)
+    t_init = _time.perf_counter() - t0
+    print(f"Compilation: {t_init:.1f}s", flush=True)
 
-    # Optimize to find MAP — Laplace only needs convergence to the mode
+    # Optimize to find MAP
     n_steps = 2000
     try:
         from tqdm import trange
@@ -1016,6 +1026,7 @@ def run_joint_inference_vi(
     except ImportError:
         pbar = range(n_steps)
 
+    t0 = _time.perf_counter()
     losses = []
     for step in pbar:
         svi_state, loss = svi.update(svi_state)
@@ -1023,17 +1034,21 @@ def run_joint_inference_vi(
         if hasattr(pbar, "set_postfix") and (step + 1) % 50 == 0:
             pbar.set_postfix(loss=f"{np.mean(losses[-50:]):.1f}")
 
+    t_opt = _time.perf_counter() - t0
     params = svi.get_params(svi_state)
     final_loss = np.mean(losses[-50:])
-    print(f"MAP done. Final loss: {final_loss:.1f}")
+    print(f"MAP done in {t_opt:.1f}s. Final loss: {final_loss:.1f}")
 
     # Draw samples from the Laplace approximation (MAP + Hessian)
-    print(f"Drawing {num_samples} samples from Laplace approximation...")
+    print(f"Drawing {num_samples} samples from Laplace approximation...", flush=True)
     rng_key = jax.random.PRNGKey(seed + 1)
+    t0 = _time.perf_counter()
     predictive = numpyro.infer.Predictive(
         model, guide=guide, params=params, num_samples=num_samples
     )
     all_samples = predictive(rng_key)
+    t_sample = _time.perf_counter() - t0
+    print(f"Sampling: {t_sample:.1f}s")
 
     samples_np = {name: np.asarray(vals) for name, vals in all_samples.items()}
 
