@@ -266,6 +266,7 @@ def run_comparison(
 
     # ── Load and parse all targets ──
     targets = []
+    skipped_ode = []
     yaml_contents = {}  # {filename: raw_content} for cache hashing
     for yf in yaml_files:
         try:
@@ -273,9 +274,18 @@ def run_comparison(
             yaml_contents[yf.name] = raw
             data = yaml.safe_load(raw)
             target = SubmodelTarget.model_validate(data)
+            if fast and target.calibration.forward_model.type == "custom_ode":
+                skipped_ode.append(yf.name)
+                continue
             targets.append(target)
         except Exception as e:
             logger.warning("Failed to load %s for joint: %s", yf.name, e)
+    if skipped_ode:
+        logger.info(
+            "Fast mode: skipped %d custom_ode targets (%s)",
+            len(skipped_ode),
+            ", ".join(skipped_ode),
+        )
 
     all_param_names = set()
     for t in targets:
@@ -360,8 +370,15 @@ def run_comparison(
                 "z_score": _z_score(prior_mu, post_mu, prior_sigma),
             }
 
-        # Save to cache
-        _save_cache(joint_cache_path, {"joint_fits": joint_fits, "joint_diag": joint_diag})
+        # Save to cache (include raw samples for downstream plotting)
+        _save_cache(
+            joint_cache_path,
+            {
+                "joint_fits": joint_fits,
+                "joint_diag": joint_diag,
+                "joint_samples": {k: v for k, v in joint_samples.items()},
+            },
+        )
         logger.info("Phase 1: Saved joint results to cache")
 
     # ── Phase 2: Single-target inference (cached per-target) ──
@@ -397,6 +414,7 @@ def run_comparison(
         try:
             results = process_yaml(yf, priors_csv=priors_csv)
             entries_to_cache = []
+            samples_to_cache = {}
             for r in results:
                 if "error" in r:
                     logger.warning("Single-target %s: %s", yf.name, r["error"])
@@ -435,8 +453,17 @@ def run_comparison(
 
                 entries_to_cache.append(entry)
 
-            # Save to cache
-            _save_cache(target_cache_path, {"entries": entries_to_cache})
+                if "param_samples" in r:
+                    samples_to_cache[pname] = r["param_samples"]
+
+            # Save to cache (include raw samples for downstream plotting)
+            _save_cache(
+                target_cache_path,
+                {
+                    "entries": entries_to_cache,
+                    "samples": samples_to_cache,
+                },
+            )
             n_computed += 1
         except Exception as e:
             logger.warning("Failed to process %s: %s", yf.name, e)
