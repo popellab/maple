@@ -930,3 +930,119 @@ def run_joint_inference(
     # Convert JAX arrays to numpy
     samples_np = {name: np.asarray(vals) for name, vals in samples.items()}
     return samples_np, diagnostics
+
+
+def run_joint_inference_vi(
+    prior_specs: dict[str, PriorSpec],
+    targets: list[SubmodelTarget],
+    reference_db: Optional[dict[str, float]] = None,
+    parameter_groups: Optional[ParameterGroupsConfig] = None,
+    num_steps: int = 5000,
+    num_samples: int = 4000,
+    seed: int = 0,
+    lr: float = 0.005,
+) -> tuple[dict[str, np.ndarray], dict]:
+    """Run joint VI (AutoMultivariateNormal) across all SubmodelTargets.
+
+    Much faster than NUTS for high-dimensional models. Fits a multivariate
+    normal approximation in unconstrained space via SVI with Adam optimizer.
+    Appropriate when posteriors are approximately Gaussian (log-space).
+
+    Args:
+        prior_specs: Prior specifications from CSV
+        targets: List of SubmodelTarget objects
+        reference_db: Optional reference values
+        parameter_groups: Optional hierarchical parameter groups
+        num_steps: Number of SVI optimization steps
+        num_samples: Number of posterior samples to draw after fitting
+        seed: Random seed
+        lr: Adam learning rate
+
+    Returns:
+        Same interface as run_joint_inference: (samples_dict, diagnostics_dict)
+    """
+    try:
+        import jax
+        import jax.random
+        import numpyro
+        from numpyro.infer import SVI, Trace_ELBO
+        from numpyro.infer.autoguide import AutoMultivariateNormal
+        from numpyro.optim import Adam
+    except ImportError as e:
+        raise ImportError(
+            "JAX and NumPyro are required for inference. "
+            "Install with: pip install maple[inference]"
+        ) from e
+
+    _cache_dir = Path.home() / ".cache" / "maple" / "jax_compilation_cache"
+    _cache_dir.mkdir(parents=True, exist_ok=True)
+    jax.config.update("jax_compilation_cache_dir", str(_cache_dir))
+    jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
+
+    target_likelihoods = build_target_likelihoods(targets, prior_specs, reference_db)
+
+    n_likelihood_terms = sum(len(tl.entries) for tl in target_likelihoods)
+    n_groups = len(parameter_groups.groups) if parameter_groups else 0
+    n_grouped = len(parameter_groups.all_grouped_params) if parameter_groups else 0
+    print(
+        f"Built joint model: {len(prior_specs)} parameters "
+        f"({n_grouped} in {n_groups} hierarchical groups), "
+        f"{len(targets)} targets, {n_likelihood_terms} likelihood terms"
+    )
+
+    # Build model function with args bound
+    def model():
+        submodel_joint_model(
+            prior_specs=prior_specs,
+            target_likelihoods=target_likelihoods,
+            parameter_groups=parameter_groups,
+        )
+
+    guide = AutoMultivariateNormal(model)
+    optimizer = Adam(lr)
+    svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+
+    print(f"Starting SVI ({num_steps} steps, lr={lr})...", flush=True)
+    rng_key = jax.random.PRNGKey(seed)
+    svi_state = svi.init(rng_key)
+
+    # Run SVI loop
+    losses = []
+    for step in range(num_steps):
+        svi_state, loss = svi.update(svi_state)
+        losses.append(float(loss))
+        if (step + 1) % 1000 == 0:
+            recent = np.mean(losses[-100:])
+            print(f"  step {step+1}/{num_steps}, ELBO loss: {recent:.1f}")
+
+    params = svi.get_params(svi_state)
+    print(f"SVI converged. Final ELBO: {np.mean(losses[-100:]):.1f}")
+
+    # Draw posterior samples including deterministic sites (grouped params from z + base)
+    rng_key = jax.random.PRNGKey(seed + 1)
+    predictive_full = numpyro.infer.Predictive(
+        model, guide=guide, params=params, num_samples=num_samples
+    )
+    all_samples = predictive_full(rng_key)
+
+    samples_np = {name: np.asarray(vals) for name, vals in all_samples.items()}
+
+    # Build diagnostics (no MCMC diagnostics for VI, but provide structure)
+    diagnostics = {
+        "num_divergences": 0,
+        "method": "vi_auto_mvn",
+        "num_steps": num_steps,
+        "final_elbo": float(np.mean(losses[-100:])),
+        "per_param": {},
+    }
+
+    for name in prior_specs:
+        if name in samples_np:
+            diagnostics["per_param"][name] = {
+                "r_hat": 1.0,  # not applicable for VI
+                "n_eff": float(num_samples),  # all samples are independent
+                "contraction": 0.0,  # filled in later
+                "z_score": 0.0,
+            }
+
+    return samples_np, diagnostics

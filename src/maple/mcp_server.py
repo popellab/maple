@@ -696,6 +696,7 @@ def compare_inference(
     num_warmup: int = 500,
     num_samples: int = 2000,
     num_chains: int = 2,
+    fast: bool = False,
 ) -> str:
     """Compare single-target vs joint inference across all SubmodelTargets.
 
@@ -712,6 +713,8 @@ def compare_inference(
         num_warmup: NUTS warmup iterations per chain.
         num_samples: Post-warmup samples per chain.
         num_chains: Number of MCMC chains.
+        fast: Use variational inference (AutoMultivariateNormal) instead of
+            NUTS for joint inference. Much faster but approximate.
 
     Returns:
         Markdown comparison report.
@@ -725,6 +728,7 @@ def compare_inference(
         num_warmup=num_warmup,
         num_samples=num_samples,
         num_chains=num_chains,
+        fast=fast,
     )
 
 

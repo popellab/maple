@@ -205,6 +205,7 @@ def run_comparison(
     num_samples: int = 2000,
     num_chains: int = 2,
     parameter_groups_path: str | Path | None = None,
+    fast: bool = False,
 ) -> str:
     """Run single-target and joint inference, return comparison report.
 
@@ -216,6 +217,8 @@ def run_comparison(
         num_samples: Post-warmup samples per chain.
         num_chains: Number of MCMC chains.
         parameter_groups_path: Optional path to parameter_groups.yaml for hierarchical pooling.
+        fast: Use variational inference (AutoMultivariateNormal) instead of NUTS
+            for joint inference. Much faster but approximate.
 
     Returns:
         Markdown-formatted comparison report.
@@ -289,28 +292,45 @@ def run_comparison(
     priors_content = priors_csv.read_text()
     all_yaml_content = "".join(yaml_contents[k] for k in sorted(yaml_contents))
     mcmc_config_str = f"{num_warmup}:{num_samples}:{num_chains}"
-    joint_hash = _compute_hash(all_yaml_content, priors_content, mcmc_config_str)
+    # Cache key includes method (NUTS vs VI) so they don't collide
+    method_str = "vi" if fast else "nuts"
+    joint_hash = _compute_hash(all_yaml_content, priors_content, mcmc_config_str, method_str)
     joint_cache_path = cache / f"joint_{joint_hash}.json"
 
-    # ── Phase 1: Joint inference (cached) ──
     cached_joint = _load_cache(joint_cache_path)
     if cached_joint is not None:
         logger.info("Phase 1: Loaded joint inference from cache")
         joint_fits = cached_joint["joint_fits"]
         joint_diag = cached_joint["joint_diag"]
     else:
-        logger.info("Phase 1: Running joint inference (no cache hit)")
-        try:
-            joint_samples, joint_diag = run_joint_inference(
-                joint_prior_specs,
-                targets,
-                parameter_groups=param_groups,
-                num_warmup=num_warmup,
-                num_samples=num_samples,
-                num_chains=num_chains,
+        if fast:
+            from maple.core.calibration.submodel_inference import (
+                run_joint_inference_vi,
             )
-        except Exception as e:
-            return f"Joint inference failed: {e}"
+
+            logger.info("Phase 1: Running joint VI (fast mode)")
+            try:
+                joint_samples, joint_diag = run_joint_inference_vi(
+                    joint_prior_specs,
+                    targets,
+                    parameter_groups=param_groups,
+                    num_samples=num_samples,
+                )
+            except Exception as e:
+                return f"Joint VI failed: {e}"
+        else:
+            logger.info("Phase 1: Running joint inference (NUTS)")
+            try:
+                joint_samples, joint_diag = run_joint_inference(
+                    joint_prior_specs,
+                    targets,
+                    parameter_groups=param_groups,
+                    num_warmup=num_warmup,
+                    num_samples=num_samples,
+                    num_chains=num_chains,
+                )
+            except Exception as e:
+                return f"Joint inference failed: {e}"
 
         # Fit distributions to joint posteriors
         joint_fits: dict[str, dict] = {}
@@ -596,6 +616,11 @@ def main():
         "--parameter-groups",
         help="Path to parameter_groups.yaml (auto-discovered in submodel-dir if not set)",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use VI (AutoMultivariateNormal) instead of NUTS for joint inference",
+    )
 
     args = parser.parse_args()
 
@@ -609,6 +634,7 @@ def main():
         num_samples=args.num_samples,
         num_chains=args.num_chains,
         parameter_groups_path=args.parameter_groups,
+        fast=args.fast,
     )
 
     if args.output:
