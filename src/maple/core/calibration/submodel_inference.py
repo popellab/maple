@@ -1337,13 +1337,15 @@ def run_component_npe(
     )
 
     # Build numpy forward functions (fast scipy-based, no JAX)
+    # Also get bootstrap medians from build_target_likelihoods (runs bootstrap once)
+    target_likelihoods = build_target_likelihoods(targets, prior_specs, reference_db)
     forward_fns = []
     obs_values = []
-    for target in targets:
+    for target, tl in zip(targets, target_likelihoods):
         fns = build_numpy_forward_fns(target, reference_db)
-        for fn, entry in zip(fns, target.calibration.error_model):
+        for fn, likelihood_entry in zip(fns, tl.entries):
             forward_fns.append(fn)
-            obs_values.append(entry.fit.median)
+            obs_values.append(float(likelihood_entry.fit.median))
 
     n_obs = len(forward_fns)
     print(f"  {n_obs} observables")
