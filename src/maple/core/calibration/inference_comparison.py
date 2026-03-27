@@ -366,42 +366,11 @@ def run_comparison(
     joint_diag: dict = {"num_divergences": 0, "per_param": {}}
     joint_samples_all: dict[str, list] = {}
 
-    # Identify singleton components (1 target, no extra group members)
-    # These will be covered by Phase 2 single-target runs — skip in Phase 1
-    singleton_target_ids = set()
-    multi_components = []
-    for comp in components:
-        comp_targets = comp["targets"]
-        comp_params = comp["params"]
-        if not comp_targets:
-            continue
-        # Singleton: 1 target, and all params are either in that target or have no other targets
-        target_params = set()
-        if len(comp_targets) == 1:
-            for p in comp_targets[0].calibration.parameters:
-                if not p.nuisance:
-                    target_params.add(p.name)
-            # Skip if the only extra params are unconstrained group members
-            if comp_params == target_params or all(
-                p in target_params
-                or p
-                not in {
-                    pp.name for t in targets for pp in t.calibration.parameters if not pp.nuisance
-                }
-                for p in comp_params
-            ):
-                singleton_target_ids.add(comp_targets[0].target_id)
-                continue
-        multi_components.append(comp)
+    # Filter out components with no targets (e.g., group-only with no data)
+    active_components = [c for c in components if c["targets"]]
+    logger.info("Phase 1: %d active components", len(active_components))
 
-    if singleton_target_ids:
-        logger.info(
-            "Phase 1: %d singletons deferred to Phase 2, %d multi-target components to run",
-            len(singleton_target_ids),
-            len(multi_components),
-        )
-
-    for ci, comp in enumerate(multi_components):
+    for ci, comp in enumerate(active_components):
         comp_targets = comp["targets"]
         comp_params = comp["params"]
 
@@ -448,37 +417,22 @@ def run_comparison(
         logger.info(
             "  Component %d/%d: %d params, %d targets",
             ci + 1,
-            len(components),
+            len(active_components),
             n_p,
             n_t,
         )
 
-        # Check if component has ODE targets
-        has_ode = any(t.calibration.forward_model.type == "custom_ode" for t in comp_targets)
-
         try:
-            if has_ode:
+            if fast:
                 from maple.core.calibration.submodel_inference import (
                     run_component_npe,
                 )
 
-                logger.info("    (using NPE — component has ODE targets)")
                 comp_samples, comp_diag = run_component_npe(
                     comp_prior_specs,
                     comp_targets,
                     parameter_groups=comp_groups,
                     num_posterior_samples=num_samples,
-                )
-            elif fast:
-                from maple.core.calibration.submodel_inference import (
-                    run_joint_inference_vi,
-                )
-
-                comp_samples, comp_diag = run_joint_inference_vi(
-                    comp_prior_specs,
-                    comp_targets,
-                    parameter_groups=comp_groups,
-                    num_samples=num_samples,
                 )
             else:
                 comp_samples, comp_diag = run_joint_inference(
