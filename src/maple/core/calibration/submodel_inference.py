@@ -1327,11 +1327,24 @@ def run_component_npe(
     target_likelihoods = build_target_likelihoods(targets, prior_specs, reference_db)
     forward_fns = []
     obs_values = []
+    obs_ci95 = []
     for target, tl in zip(targets, target_likelihoods):
         fns = build_numpy_forward_fns(target, reference_db)
         for fn, likelihood_entry in zip(fns, tl.entries):
             forward_fns.append(fn)
-            obs_values.append(float(likelihood_entry.fit.median))
+            fit = likelihood_entry.fit
+            obs_values.append(float(fit.median))
+            # Bootstrap CI from fitted distribution
+            if fit.name == "lognormal" and "sigma" in fit.params:
+                from scipy.stats import lognorm as _lognorm
+
+                d = _lognorm(s=fit.params["sigma"], scale=fit.median)
+                obs_ci95.append([float(d.ppf(0.025)), float(d.ppf(0.975))])
+            elif fit.cv and fit.cv > 0:
+                sd = fit.median * fit.cv
+                obs_ci95.append([float(fit.median - 1.96 * sd), float(fit.median + 1.96 * sd)])
+            else:
+                obs_ci95.append(None)
 
     n_obs = len(forward_fns)
     print(f"  {n_obs} observables")
@@ -1575,6 +1588,8 @@ def run_component_npe(
             "name": obs_names[obs_idx] if obs_idx < len(obs_names) else f"obs_{obs_idx}",
             "observed": float(obs_val),
         }
+        if obs_idx < len(obs_ci95) and obs_ci95[obs_idx]:
+            entry["obs_ci95"] = obs_ci95[obs_idx]
         if len(post_valid) >= 10:
             ppc_lo = float(np.percentile(post_valid, 2.5))
             ppc_hi = float(np.percentile(post_valid, 97.5))

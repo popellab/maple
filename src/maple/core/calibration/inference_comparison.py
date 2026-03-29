@@ -535,12 +535,26 @@ def run_comparison(
 
             ppc_fns = []
             ppc_obs = []
+            ppc_obs_ci = []
             comp_tls = build_target_likelihoods(comp_targets, comp_prior_specs)
             for target, tl_entry in zip(comp_targets, comp_tls):
                 fns = build_numpy_forward_fns(target)
                 for fn, le in zip(fns, tl_entry.entries):
                     ppc_fns.append(fn)
-                    ppc_obs.append(float(le.fit.median))
+                    fit = le.fit
+                    ppc_obs.append(float(fit.median))
+                    if fit.name == "lognormal" and "sigma" in fit.params:
+                        from scipy.stats import lognorm as _lognorm
+
+                        d = _lognorm(s=fit.params["sigma"], scale=fit.median)
+                        ppc_obs_ci.append([float(d.ppf(0.025)), float(d.ppf(0.975))])
+                    elif fit.cv and fit.cv > 0:
+                        sd = fit.median * fit.cv
+                        ppc_obs_ci.append(
+                            [float(fit.median - 1.96 * sd), float(fit.median + 1.96 * sd)]
+                        )
+                    else:
+                        ppc_obs_ci.append(None)
 
             # Build observable names
             ppc_obs_names = []
@@ -556,9 +570,26 @@ def run_comparison(
                         if p.nuisance and p.prior:
                             nuisance[p.name] = (p.prior.mu, p.prior.sigma)
                 rng = np.random.default_rng(42)
+
+                # Prior predictive (sample from CSV priors)
+                prior_preds_all = [[] for _ in ppc_fns]
+                for i in range(n_ppc):
+                    pd = {}
+                    for pn in comp_prior_specs:
+                        sp = comp_prior_specs[pn]
+                        pd[pn] = float(rng.lognormal(sp.mu, sp.sigma))
+                    for nn, (mu, sig) in nuisance.items():
+                        pd[nn] = float(rng.lognormal(mu, sig))
+                    for obs_idx, fn in enumerate(ppc_fns):
+                        try:
+                            prior_preds_all[obs_idx].append(float(fn(pd)))
+                        except Exception:
+                            pass
+
                 n_covered = 0
                 ppc_observables = []
                 for obs_idx, fn in enumerate(ppc_fns):
+                    # Posterior predictive
                     preds = []
                     for i in range(n_ppc):
                         pd = {
@@ -580,6 +611,17 @@ def run_comparison(
                         ),
                         "observed": ppc_obs[obs_idx],
                     }
+                    if obs_idx < len(ppc_obs_ci) and ppc_obs_ci[obs_idx]:
+                        entry["obs_ci95"] = ppc_obs_ci[obs_idx]
+                    # Prior predictive CI
+                    pp = prior_preds_all[obs_idx]
+                    pp_valid = [v for v in pp if np.isfinite(v) and v > 0]
+                    if len(pp_valid) >= 10:
+                        entry["prior_median"] = float(np.median(pp_valid))
+                        entry["prior_ci95"] = [
+                            float(np.percentile(pp_valid, 2.5)),
+                            float(np.percentile(pp_valid, 97.5)),
+                        ]
                     if len(preds) >= 10:
                         lo, hi = np.percentile(preds, [2.5, 97.5])
                         entry["post_median"] = float(np.median(preds))
