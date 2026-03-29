@@ -1113,6 +1113,7 @@ def run_joint_inference(
         kernel,
         num_warmup=num_warmup,
         num_samples=num_samples,
+        progress_bar=False,
         num_chains=num_chains,
         chain_method="vectorized",
     )
