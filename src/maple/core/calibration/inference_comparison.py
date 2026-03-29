@@ -179,16 +179,28 @@ def _build_structured_results(
         if mcmc_diag:
             param_entry["mcmc_diagnostics"] = mcmc_diag
 
+        # SBC results (NPE components only)
+        sbc = joint_diag.get("sbc", {}).get(pname)
+        if sbc:
+            param_entry["sbc"] = sbc
+
         parameters[pname] = param_entry
+
+    # Aggregate PPC stats
+    ppc_covered = joint_diag.get("ppc_n_covered", 0)
+    ppc_total = joint_diag.get("ppc_n_total", 0)
 
     return {
         "metadata": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "n_targets": n_targets,
             "n_parameters": len(all_param_names),
-            "method": "npe",
+            "method": "component_wise",
             "num_samples": num_samples,
             "num_divergences": joint_diag.get("num_divergences", 0),
+            "ppc_coverage": float(ppc_covered / ppc_total) if ppc_total else None,
+            "ppc_n_covered": ppc_covered,
+            "ppc_n_total": ppc_total,
         },
         "parameters": parameters,
     }
@@ -410,17 +422,76 @@ def run_comparison(
             n_t,
         )
 
-        try:
-            from maple.core.calibration.submodel_inference import (
-                run_component_npe,
-            )
+        has_ode = any(t.calibration.forward_model.type == "custom_ode" for t in comp_targets)
+        is_singleton = len(comp_targets) == 1 and not has_ode
 
-            comp_samples, comp_diag = run_component_npe(
-                comp_prior_specs,
-                comp_targets,
-                parameter_groups=comp_groups,
-                num_posterior_samples=num_samples,
-            )
+        try:
+            if has_ode:
+                from maple.core.calibration.submodel_inference import (
+                    run_component_npe,
+                )
+
+                logger.info("    (NPE — component has ODE targets)")
+                comp_samples, comp_diag = run_component_npe(
+                    comp_prior_specs,
+                    comp_targets,
+                    parameter_groups=comp_groups,
+                    num_posterior_samples=num_samples,
+                )
+            elif is_singleton:
+                from maple.core.calibration.yaml_to_prior import process_yaml
+
+                logger.info("    (single-target MCMC)")
+                # Find the YAML file for this target
+                target = comp_targets[0]
+                yf = None
+                for f in yaml_files:
+                    if yaml_contents.get(f.name, "").find(target.target_id) >= 0:
+                        yf = f
+                        break
+                if yf is None:
+                    logger.warning("    Could not find YAML for %s", target.target_id)
+                    continue
+
+                results = process_yaml(yf, priors_csv=priors_csv)
+                comp_samples = {}
+                comp_diag = {"num_divergences": 0, "per_param": {}}
+                for r in results:
+                    if "error" in r:
+                        continue
+                    pname = r["name"]
+                    if "param_samples" in r:
+                        comp_samples[pname] = np.array(r["param_samples"])
+                    else:
+                        best = r["best_dist"]
+                        if best.name == "lognormal":
+                            comp_samples[pname] = np.random.lognormal(
+                                np.log(best.median), best.params["sigma"], num_samples
+                            )
+                        else:
+                            comp_samples[pname] = np.full(num_samples, best.median)
+                    mcmc_diag = r.get("mcmc_diagnostics", {})
+                    comp_diag["num_divergences"] += mcmc_diag.get("num_divergences", 0)
+                    comp_diag["per_param"][pname] = {
+                        "r_hat": float(mcmc_diag.get("r_hat", 1.0)),
+                        "n_eff": float(mcmc_diag.get("n_eff", 0)),
+                        "contraction": float(mcmc_diag.get("contraction", 0)),
+                        "z_score": float(mcmc_diag.get("z_score", 0)),
+                    }
+            else:
+                from maple.core.calibration.submodel_inference import (
+                    run_joint_inference,
+                )
+
+                logger.info("    (joint MCMC — %d targets)", n_t)
+                comp_samples, comp_diag = run_joint_inference(
+                    comp_prior_specs,
+                    comp_targets,
+                    parameter_groups=comp_groups,
+                    num_warmup=500,
+                    num_samples=num_samples,
+                    num_chains=1,
+                )
         except Exception as e:
             logger.warning("  Component %d failed: %s", ci + 1, e)
             continue
@@ -454,9 +525,69 @@ def run_comparison(
             }
             joint_fits[pname] = comp_fits[pname]
 
+        # Run PPC for non-NPE components (NPE does its own PPC internally)
+        if not has_ode and "ppc_coverage" not in comp_diag:
+            from maple.core.calibration.submodel_inference import (
+                build_numpy_forward_fns,
+                build_target_likelihoods,
+            )
+
+            ppc_fns = []
+            ppc_obs = []
+            comp_tls = build_target_likelihoods(comp_targets, comp_prior_specs)
+            for target, tl_entry in zip(comp_targets, comp_tls):
+                fns = build_numpy_forward_fns(target)
+                for fn, le in zip(fns, tl_entry.entries):
+                    ppc_fns.append(fn)
+                    ppc_obs.append(float(le.fit.median))
+
+            n_ppc = min(200, len(comp_samples.get(next(iter(comp_samples), ""), [])))
+            if n_ppc > 0 and ppc_fns:
+                nuisance = {}
+                for t in comp_targets:
+                    for p in t.calibration.parameters:
+                        if p.nuisance and p.prior:
+                            nuisance[p.name] = (p.prior.mu, p.prior.sigma)
+                rng = np.random.default_rng(42)
+                n_covered = 0
+                for obs_idx, fn in enumerate(ppc_fns):
+                    preds = []
+                    for i in range(n_ppc):
+                        pd = {
+                            pn: float(comp_samples[pn][i])
+                            for pn in comp_samples
+                            if i < len(comp_samples[pn])
+                        }
+                        for nn, (mu, sig) in nuisance.items():
+                            pd[nn] = float(rng.lognormal(mu, sig))
+                        try:
+                            preds.append(float(fn(pd)))
+                        except Exception:
+                            pass
+                    if len(preds) >= 10:
+                        lo, hi = np.percentile(preds, [2.5, 97.5])
+                        if lo <= ppc_obs[obs_idx] <= hi:
+                            n_covered += 1
+                comp_diag["ppc_coverage"] = float(n_covered / len(ppc_fns)) if ppc_fns else 0
+                comp_diag["ppc_n_covered"] = n_covered
+                comp_diag["ppc_n_total"] = len(ppc_fns)
+                logger.info("    PPC: %d/%d covered", n_covered, len(ppc_fns))
+
         joint_diag["num_divergences"] += comp_diag.get("num_divergences", 0)
         for k, v in comp_diag.get("per_param", {}).items():
             joint_diag["per_param"][k] = v
+        # Accumulate SBC results
+        if "sbc" in comp_diag:
+            if "sbc" not in joint_diag:
+                joint_diag["sbc"] = {}
+            joint_diag["sbc"].update(comp_diag["sbc"])
+        # Accumulate PPC
+        joint_diag["ppc_n_covered"] = joint_diag.get("ppc_n_covered", 0) + comp_diag.get(
+            "ppc_n_covered", 0
+        )
+        joint_diag["ppc_n_total"] = joint_diag.get("ppc_n_total", 0) + comp_diag.get(
+            "ppc_n_total", 0
+        )
 
         comp_samples_list = {k: v for k, v in comp_samples.items()}
         for k, v in comp_samples_list.items():

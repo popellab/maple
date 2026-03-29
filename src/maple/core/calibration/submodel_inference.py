@@ -1103,25 +1103,10 @@ def run_joint_inference(
         f"{len(targets)} targets, {n_likelihood_terms} likelihood terms"
     )
 
-    # Run MCMC — split warmup(1) for compilation timing, then the rest
+    # Run MCMC
     kernel = NUTS(submodel_joint_model, dense_mass=True)
-
-    # Phase A: single warmup step to trigger JAX compilation
-    print("Compiling model (first MCMC step)...", flush=True)
-    mcmc_compile = MCMC(kernel, num_warmup=1, num_samples=1, num_chains=1)
-    t0 = _time.perf_counter()
-    mcmc_compile.run(
-        jax.random.PRNGKey(seed + 99),
-        prior_specs=prior_specs,
-        target_likelihoods=target_likelihoods,
-        parameter_groups=parameter_groups,
-    )
-    t_compile = _time.perf_counter() - t0
-    print(f"Compilation: {t_compile:.1f}s", flush=True)
-
-    # Phase B: actual sampling (compilation cached, should be fast)
     print(
-        f"Sampling ({num_warmup} warmup + {num_samples} samples, " f"{num_chains} chains)...",
+        f"MCMC ({num_warmup} warmup + {num_samples} samples, {num_chains} chains)...",
         flush=True,
     )
     mcmc = MCMC(
@@ -1138,8 +1123,8 @@ def run_joint_inference(
         target_likelihoods=target_likelihoods,
         parameter_groups=parameter_groups,
     )
-    t_sample = _time.perf_counter() - t0
-    print(f"Sampling: {t_sample:.1f}s")
+    elapsed = _time.perf_counter() - t0
+    print(f"MCMC done in {elapsed:.1f}s")
 
     # Diagnostics
     mcmc.print_summary()
@@ -1437,14 +1422,28 @@ def run_component_npe(
     import torch
     from sbi.inference import NPE
 
-    log_theta = np.log(theta_valid).astype(np.float32)
-    log_x = np.log(x_valid).astype(np.float32)
+    log_theta_all = np.log(theta_valid).astype(np.float32)
+    log_x_all = np.log(x_valid).astype(np.float32)
 
-    # Standardize
+    # Train/test split for SBC
+    n_test = max(500, n_valid // 10)
+    n_train = n_valid - n_test
+    split_idx = rng.permutation(n_valid)
+    train_idx, test_idx = split_idx[:n_train], split_idx[n_train:]
+
+    log_theta = log_theta_all[train_idx]
+    log_x = log_x_all[train_idx]
+    log_theta_test = log_theta_all[test_idx]
+    log_x_test = log_x_all[test_idx]
+
+    print(f"  Train: {n_train}, Test: {n_test}")
+
+    # Standardize (fit on train)
     x_mean = np.mean(log_x, axis=0)
     x_std = np.std(log_x, axis=0)
     x_std = np.where(x_std < 1e-6, 1.0, x_std)
     x_normed = (log_x - x_mean) / x_std
+    x_test_normed = (log_x_test - x_mean) / x_std
 
     theta_tensor = torch.as_tensor(log_theta)
     x_tensor = torch.as_tensor(x_normed)
@@ -1490,6 +1489,58 @@ def run_component_npe(
 
     samples_dict = {pname: post_samples[:, j] for j, pname in enumerate(qsp_params)}
 
+    # ── SBC on held-out test set ──
+    from scipy.stats import kstest
+
+    n_sbc = min(n_test, 500)
+    n_sbc_posterior = 200
+    sbc_results = {}
+    print(f"  Running SBC ({n_sbc} test points)...", flush=True)
+    for j, pname in enumerate(qsp_params):
+        ranks = np.zeros(n_sbc, dtype=int)
+        for k in range(n_sbc):
+            x_k = torch.as_tensor(x_test_normed[k : k + 1])
+            post_k = posterior.sample((n_sbc_posterior,), x=x_k).numpy()
+            ranks[k] = int(np.sum(post_k[:, j] < log_theta_test[k, j]))
+        normalized = ranks / n_sbc_posterior
+        ks_stat, ks_p = kstest(normalized, "uniform")
+        sbc_results[pname] = {
+            "ks_p": float(ks_p),
+            "mean_rank": float(np.mean(ranks)),
+            "calibrated": bool(ks_p > 0.01),
+        }
+    n_calibrated = sum(1 for v in sbc_results.values() if v["calibrated"])
+    print(f"  SBC: {n_calibrated}/{len(qsp_params)} calibrated")
+
+    # ── PPC ──
+    n_ppc = 200
+    print(f"  Running PPC ({n_ppc} draws)...", flush=True)
+    ppc_x = np.full((n_ppc, len(forward_fns)), np.nan)
+    for i in range(n_ppc):
+        param_dict = {pname: float(post_samples[i, j]) for j, pname in enumerate(qsp_params)}
+        for nname, nspec in nuisance_specs.items():
+            param_dict[nname] = float(rng.lognormal(nspec["mu"], nspec["sigma"]))
+        for obs_idx, fn in enumerate(forward_fns):
+            try:
+                ppc_x[i, obs_idx] = float(fn(param_dict))
+            except Exception:
+                pass
+
+    n_covered = 0
+    for obs_idx in range(len(forward_fns)):
+        col = ppc_x[:, obs_idx]
+        valid_col = col[np.isfinite(col)]
+        if len(valid_col) < 10:
+            continue
+        obs_val = obs_values[obs_idx]
+        ppc_lo = float(np.percentile(valid_col, 2.5))
+        ppc_hi = float(np.percentile(valid_col, 97.5))
+        covered = ppc_lo <= obs_val <= ppc_hi
+        if covered:
+            n_covered += 1
+    ppc_coverage = n_covered / len(forward_fns) if forward_fns else 0
+    print(f"  PPC: {n_covered}/{len(forward_fns)} covered ({ppc_coverage:.0%})")
+
     diagnostics = {
         "num_divergences": 0,
         "method": "npe",
@@ -1497,6 +1548,10 @@ def run_component_npe(
         "num_valid": n_valid,
         "sim_time_s": float(t_sim),
         "train_time_s": float(t_train),
+        "sbc": sbc_results,
+        "ppc_coverage": float(ppc_coverage),
+        "ppc_n_covered": n_covered,
+        "ppc_n_total": len(forward_fns),
         "per_param": {
             pname: {
                 "r_hat": 1.0,
