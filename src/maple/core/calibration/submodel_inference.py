@@ -1494,6 +1494,7 @@ def run_component_npe(
 
     n_sbc = min(n_test, 500)
     n_sbc_posterior = 200
+    expected_mean = n_sbc_posterior / 2
     sbc_results = {}
     print(f"  Running SBC ({n_sbc} test points)...", flush=True)
     for j, pname in enumerate(qsp_params):
@@ -1504,40 +1505,92 @@ def run_component_npe(
             ranks[k] = int(np.sum(post_k[:, j] < log_theta_test[k, j]))
         normalized = ranks / n_sbc_posterior
         ks_stat, ks_p = kstest(normalized, "uniform")
+        mean_rank = float(np.mean(ranks))
+        # Interpret failure mode
+        if ks_p <= 0.01:
+            if mean_rank > expected_mean + 10:
+                issue = "biased_low"
+            elif mean_rank < expected_mean - 10:
+                issue = "biased_high"
+            else:
+                # Mean rank OK but KS fails → shape issue (over/under-confident)
+                rank_var = np.var(normalized)
+                uniform_var = 1.0 / 12.0  # var of Uniform(0,1)
+                if rank_var > uniform_var * 1.2:
+                    issue = "overconfident"
+                elif rank_var < uniform_var * 0.8:
+                    issue = "underconfident"
+                else:
+                    issue = "miscalibrated"
+        else:
+            issue = "ok"
         sbc_results[pname] = {
             "ks_p": float(ks_p),
-            "mean_rank": float(np.mean(ranks)),
+            "mean_rank": mean_rank,
+            "expected_rank": float(expected_mean),
             "calibrated": bool(ks_p > 0.01),
+            "issue": issue,
+            "ranks": ranks.tolist(),
         }
     n_calibrated = sum(1 for v in sbc_results.values() if v["calibrated"])
     print(f"  SBC: {n_calibrated}/{len(qsp_params)} calibrated")
 
-    # ── PPC ──
+    # ── PPC (posterior + prior predictive) ──
     n_ppc = 200
-    print(f"  Running PPC ({n_ppc} draws)...", flush=True)
-    ppc_x = np.full((n_ppc, len(forward_fns)), np.nan)
+    print(f"  Running PPC ({n_ppc} posterior + {n_ppc} prior draws)...", flush=True)
+
+    # Build observable names
+    obs_names = []
+    for target in targets:
+        for entry in target.calibration.error_model:
+            obs_names.append(f"{target.target_id}__{entry.name}")
+
+    # Posterior predictive
+    ppc_post = np.full((n_ppc, len(forward_fns)), np.nan)
     for i in range(n_ppc):
         param_dict = {pname: float(post_samples[i, j]) for j, pname in enumerate(qsp_params)}
         for nname, nspec in nuisance_specs.items():
             param_dict[nname] = float(rng.lognormal(nspec["mu"], nspec["sigma"]))
         for obs_idx, fn in enumerate(forward_fns):
             try:
-                ppc_x[i, obs_idx] = float(fn(param_dict))
+                ppc_post[i, obs_idx] = float(fn(param_dict))
             except Exception:
                 pass
 
+    # Prior predictive (use first n_ppc training sims)
+    ppc_prior = np.exp(log_x[:n_ppc]).astype(np.float64)
+
+    # Per-observable PPC results
+    ppc_observables = []
     n_covered = 0
     for obs_idx in range(len(forward_fns)):
-        col = ppc_x[:, obs_idx]
-        valid_col = col[np.isfinite(col)]
-        if len(valid_col) < 10:
-            continue
+        post_col = ppc_post[:, obs_idx]
+        post_valid = post_col[np.isfinite(post_col)]
+        prior_col = ppc_prior[:, obs_idx] if obs_idx < ppc_prior.shape[1] else np.array([])
+        prior_valid = prior_col[np.isfinite(prior_col)]
         obs_val = obs_values[obs_idx]
-        ppc_lo = float(np.percentile(valid_col, 2.5))
-        ppc_hi = float(np.percentile(valid_col, 97.5))
-        covered = ppc_lo <= obs_val <= ppc_hi
-        if covered:
-            n_covered += 1
+
+        entry = {
+            "name": obs_names[obs_idx] if obs_idx < len(obs_names) else f"obs_{obs_idx}",
+            "observed": float(obs_val),
+        }
+        if len(post_valid) >= 10:
+            ppc_lo = float(np.percentile(post_valid, 2.5))
+            ppc_hi = float(np.percentile(post_valid, 97.5))
+            entry["post_median"] = float(np.median(post_valid))
+            entry["post_ci95"] = [ppc_lo, ppc_hi]
+            entry["covered"] = bool(ppc_lo <= obs_val <= ppc_hi)
+            if entry["covered"]:
+                n_covered += 1
+        if len(prior_valid) >= 10:
+            entry["prior_median"] = float(np.median(prior_valid))
+            entry["prior_ci95"] = [
+                float(np.percentile(prior_valid, 2.5)),
+                float(np.percentile(prior_valid, 97.5)),
+            ]
+
+        ppc_observables.append(entry)
+
     ppc_coverage = n_covered / len(forward_fns) if forward_fns else 0
     print(f"  PPC: {n_covered}/{len(forward_fns)} covered ({ppc_coverage:.0%})")
 
@@ -1552,6 +1605,7 @@ def run_component_npe(
         "ppc_coverage": float(ppc_coverage),
         "ppc_n_covered": n_covered,
         "ppc_n_total": len(forward_fns),
+        "ppc_observables": ppc_observables,
         "per_param": {
             pname: {
                 "r_hat": 1.0,

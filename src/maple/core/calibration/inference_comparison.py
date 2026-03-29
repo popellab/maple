@@ -203,6 +203,7 @@ def _build_structured_results(
             "ppc_n_total": ppc_total,
         },
         "parameters": parameters,
+        "ppc_observables": joint_diag.get("ppc_observables", []),
     }
 
 
@@ -541,6 +542,12 @@ def run_comparison(
                     ppc_fns.append(fn)
                     ppc_obs.append(float(le.fit.median))
 
+            # Build observable names
+            ppc_obs_names = []
+            for target in comp_targets:
+                for entry in target.calibration.error_model:
+                    ppc_obs_names.append(f"{target.target_id}__{entry.name}")
+
             n_ppc = min(200, len(comp_samples.get(next(iter(comp_samples), ""), [])))
             if n_ppc > 0 and ppc_fns:
                 nuisance = {}
@@ -550,6 +557,7 @@ def run_comparison(
                             nuisance[p.name] = (p.prior.mu, p.prior.sigma)
                 rng = np.random.default_rng(42)
                 n_covered = 0
+                ppc_observables = []
                 for obs_idx, fn in enumerate(ppc_fns):
                     preds = []
                     for i in range(n_ppc):
@@ -564,13 +572,26 @@ def run_comparison(
                             preds.append(float(fn(pd)))
                         except Exception:
                             pass
+                    entry = {
+                        "name": (
+                            ppc_obs_names[obs_idx]
+                            if obs_idx < len(ppc_obs_names)
+                            else f"obs_{obs_idx}"
+                        ),
+                        "observed": ppc_obs[obs_idx],
+                    }
                     if len(preds) >= 10:
                         lo, hi = np.percentile(preds, [2.5, 97.5])
-                        if lo <= ppc_obs[obs_idx] <= hi:
+                        entry["post_median"] = float(np.median(preds))
+                        entry["post_ci95"] = [float(lo), float(hi)]
+                        entry["covered"] = bool(lo <= ppc_obs[obs_idx] <= hi)
+                        if entry["covered"]:
                             n_covered += 1
+                    ppc_observables.append(entry)
                 comp_diag["ppc_coverage"] = float(n_covered / len(ppc_fns)) if ppc_fns else 0
                 comp_diag["ppc_n_covered"] = n_covered
                 comp_diag["ppc_n_total"] = len(ppc_fns)
+                comp_diag["ppc_observables"] = ppc_observables
                 logger.info("    PPC: %d/%d covered", n_covered, len(ppc_fns))
 
         joint_diag["num_divergences"] += comp_diag.get("num_divergences", 0)
@@ -588,6 +609,10 @@ def run_comparison(
         joint_diag["ppc_n_total"] = joint_diag.get("ppc_n_total", 0) + comp_diag.get(
             "ppc_n_total", 0
         )
+        if "ppc_observables" in comp_diag:
+            if "ppc_observables" not in joint_diag:
+                joint_diag["ppc_observables"] = []
+            joint_diag["ppc_observables"].extend(comp_diag["ppc_observables"])
 
         comp_samples_list = {k: v for k, v in comp_samples.items()}
         for k, v in comp_samples_list.items():
