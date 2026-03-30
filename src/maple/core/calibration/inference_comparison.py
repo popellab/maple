@@ -424,62 +424,26 @@ def run_comparison(
         )
 
         has_ode = any(t.calibration.forward_model.type == "custom_ode" for t in comp_targets)
-        is_singleton = len(comp_targets) == 1 and not has_ode
 
         try:
-            if has_ode:
+            if has_ode or n_t == 1:
+                # NPE for ODE components and singletons (gives SBC diagnostics)
                 from maple.core.calibration.submodel_inference import (
                     run_component_npe,
                 )
 
-                logger.info("    (NPE — component has ODE targets)")
+                method = "NPE"
+                if has_ode:
+                    method += " (ODE)"
+                logger.info("    (%s)", method)
                 comp_samples, comp_diag = run_component_npe(
                     comp_prior_specs,
                     comp_targets,
                     parameter_groups=comp_groups,
                     num_posterior_samples=num_samples,
                 )
-            elif is_singleton:
-                from maple.core.calibration.yaml_to_prior import process_yaml
-
-                logger.info("    (single-target MCMC)")
-                # Find the YAML file for this target
-                target = comp_targets[0]
-                yf = None
-                for f in yaml_files:
-                    if yaml_contents.get(f.name, "").find(target.target_id) >= 0:
-                        yf = f
-                        break
-                if yf is None:
-                    logger.warning("    Could not find YAML for %s", target.target_id)
-                    continue
-
-                results = process_yaml(yf, priors_csv=priors_csv)
-                comp_samples = {}
-                comp_diag = {"num_divergences": 0, "per_param": {}}
-                for r in results:
-                    if "error" in r:
-                        continue
-                    pname = r["name"]
-                    if "param_samples" in r:
-                        comp_samples[pname] = np.array(r["param_samples"])
-                    else:
-                        best = r["best_dist"]
-                        if best.name == "lognormal":
-                            comp_samples[pname] = np.random.lognormal(
-                                np.log(best.median), best.params["sigma"], num_samples
-                            )
-                        else:
-                            comp_samples[pname] = np.full(num_samples, best.median)
-                    mcmc_diag = r.get("mcmc_diagnostics", {})
-                    comp_diag["num_divergences"] += mcmc_diag.get("num_divergences", 0)
-                    comp_diag["per_param"][pname] = {
-                        "r_hat": float(mcmc_diag.get("r_hat", 1.0)),
-                        "n_eff": float(mcmc_diag.get("n_eff", 0)),
-                        "contraction": float(mcmc_diag.get("contraction", 0)),
-                        "z_score": float(mcmc_diag.get("z_score", 0)),
-                    }
             else:
+                # Multi-target, no ODE: NUTS is fast and exact
                 from maple.core.calibration.submodel_inference import (
                     run_joint_inference,
                 )
