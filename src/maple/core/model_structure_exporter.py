@@ -111,6 +111,14 @@ class ModelStructureExporter:
                     "description": p.get("description", ""),
                 }
 
+        for c in ms.get("compartments", []):
+            name = c["name"]
+            if name not in species_units:
+                species_units[name] = {
+                    "units": c.get("volume_units", "milliliter"),
+                    "description": c.get("description", ""),
+                }
+
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w") as f:
             json.dump(species_units, f, indent=2)
