@@ -426,16 +426,13 @@ def run_comparison(
         has_ode = any(t.calibration.forward_model.type == "custom_ode" for t in comp_targets)
 
         try:
-            if has_ode or n_t == 1:
-                # NPE for ODE components and singletons (gives SBC diagnostics)
+            if has_ode:
+                # NPE for ODE components only (gives SBC diagnostics)
                 from maple.core.calibration.submodel_inference import (
                     run_component_npe,
                 )
 
-                method = "NPE"
-                if has_ode:
-                    method += " (ODE)"
-                logger.info("    (%s)", method)
+                logger.info("    (NPE — ODE)")
                 comp_samples, comp_diag = run_component_npe(
                     comp_prior_specs,
                     comp_targets,

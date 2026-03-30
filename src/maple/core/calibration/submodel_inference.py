@@ -1496,7 +1496,9 @@ def run_component_npe(
     x_obs_normed = (log_x_obs - x_mean) / x_std
     x_obs_tensor = torch.as_tensor(x_obs_normed)
 
-    log_post = posterior.sample((num_posterior_samples,), x=x_obs_tensor).numpy()
+    log_post = posterior.sample(
+        (num_posterior_samples,), x=x_obs_tensor, show_progress_bars=False
+    ).numpy()
     # Clip to prevent overflow — values beyond ±50 in log-space are unphysical
     log_post = np.clip(log_post, -50, 50)
     post_samples = np.exp(log_post)
@@ -1515,7 +1517,7 @@ def run_component_npe(
         ranks = np.zeros(n_sbc, dtype=int)
         for k in range(n_sbc):
             x_k = torch.as_tensor(x_test_normed[k : k + 1])
-            post_k = posterior.sample((n_sbc_posterior,), x=x_k).numpy()
+            post_k = posterior.sample((n_sbc_posterior,), x=x_k, show_progress_bars=False).numpy()
             ranks[k] = int(np.sum(post_k[:, j] < log_theta_test[k, j]))
         normalized = ranks / n_sbc_posterior
         ks_stat, ks_p = kstest(normalized, "uniform")
