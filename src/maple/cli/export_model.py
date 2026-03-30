@@ -63,8 +63,11 @@ Examples:
 
         exporter = ModelStructureExporter(str(model_file), model_type=model_type)
         exporter.export_to_json(str(args.output))
-
         print(f"✓ Model structure exported to {args.output}")
+
+        species_units_path = args.output.parent / "species_units.json"
+        ModelStructureExporter.export_species_units(str(args.output), str(species_units_path))
+        print(f"✓ Species units exported to {species_units_path}")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

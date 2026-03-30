@@ -6,6 +6,7 @@ This module exports the complete model structure (species, compartments,
 parameters, reactions) as JSON for use with ModelStructure query tools.
 """
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -79,3 +80,38 @@ class ModelStructureExporter:
 
         if result.returncode != 0:
             raise RuntimeError(f"MATLAB export failed: {result.stderr}")
+
+    @staticmethod
+    def export_species_units(model_structure_file: str, output_file: str) -> None:
+        """
+        Derive species_units.json from an exported model_structure.json.
+
+        Maps every species and parameter to its unit string and description,
+        producing the flat lookup used by qsp-hpc for Pint conversions.
+        """
+        ms_path = Path(model_structure_file)
+        out_path = Path(output_file)
+
+        with open(ms_path, "r") as f:
+            ms = json.load(f)
+
+        species_units: dict[str, dict[str, str]] = {}
+
+        for s in ms.get("species", []):
+            species_units[s["name"]] = {
+                "units": s.get("units", "dimensionless"),
+                "description": s.get("description", ""),
+            }
+
+        for p in ms.get("parameters", []):
+            name = p["name"]
+            if name not in species_units:
+                species_units[name] = {
+                    "units": p.get("units", "dimensionless"),
+                    "description": p.get("description", ""),
+                }
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w") as f:
+            json.dump(species_units, f, indent=2)
+            f.write("\n")
