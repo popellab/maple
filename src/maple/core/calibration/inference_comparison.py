@@ -497,6 +497,7 @@ def run_comparison(
             ppc_fns = []
             ppc_obs = []
             ppc_obs_ci = []
+            ppc_obs_fits = []  # Store fit info for bootstrap sampling
             comp_tls = build_target_likelihoods(comp_targets, comp_prior_specs)
             for target, tl_entry in zip(comp_targets, comp_tls):
                 fns = build_numpy_forward_fns(target)
@@ -509,13 +510,16 @@ def run_comparison(
 
                         d = _lognorm(s=fit.params["sigma"], scale=fit.median)
                         ppc_obs_ci.append([float(d.ppf(0.025)), float(d.ppf(0.975))])
+                        ppc_obs_fits.append(("lognormal", fit.median, fit.params["sigma"]))
                     elif fit.cv and fit.cv > 0:
                         sd = fit.median * fit.cv
                         ppc_obs_ci.append(
                             [float(fit.median - 1.96 * sd), float(fit.median + 1.96 * sd)]
                         )
+                        ppc_obs_fits.append(("normal", fit.median, sd))
                     else:
                         ppc_obs_ci.append(None)
+                        ppc_obs_fits.append(None)
 
             # Build observable names
             ppc_obs_names = []
@@ -574,7 +578,7 @@ def run_comparison(
                     }
                     if obs_idx < len(ppc_obs_ci) and ppc_obs_ci[obs_idx]:
                         entry["obs_ci95"] = ppc_obs_ci[obs_idx]
-                    # Prior predictive CI
+                    # Prior predictive samples + CI
                     pp = prior_preds_all[obs_idx]
                     pp_valid = [v for v in pp if np.isfinite(v) and v > 0]
                     if len(pp_valid) >= 10:
@@ -583,13 +587,27 @@ def run_comparison(
                             float(np.percentile(pp_valid, 2.5)),
                             float(np.percentile(pp_valid, 97.5)),
                         ]
-                    if len(preds) >= 10:
-                        lo, hi = np.percentile(preds, [2.5, 97.5])
-                        entry["post_median"] = float(np.median(preds))
+                        entry["prior_samples"] = [float(v) for v in pp_valid]
+                    # Posterior predictive samples + CI
+                    preds_valid = [v for v in preds if np.isfinite(v) and v > 0]
+                    if len(preds_valid) >= 10:
+                        lo, hi = np.percentile(preds_valid, [2.5, 97.5])
+                        entry["post_median"] = float(np.median(preds_valid))
                         entry["post_ci95"] = [float(lo), float(hi)]
+                        entry["post_samples"] = [float(v) for v in preds_valid]
                         entry["covered"] = bool(lo <= ppc_obs[obs_idx] <= hi)
                         if entry["covered"]:
                             n_covered += 1
+                    # Observed bootstrap samples from fit distribution
+                    if obs_idx < len(ppc_obs_fits) and ppc_obs_fits[obs_idx]:
+                        fit_type, fit_med, fit_param = ppc_obs_fits[obs_idx]
+                        if fit_type == "lognormal":
+                            obs_samps = rng.lognormal(np.log(fit_med), fit_param, size=n_ppc)
+                        else:  # normal
+                            obs_samps = rng.normal(fit_med, fit_param, size=n_ppc)
+                        obs_samps_valid = [float(v) for v in obs_samps if np.isfinite(v) and v > 0]
+                        if obs_samps_valid:
+                            entry["obs_samples"] = obs_samps_valid
                     ppc_observables.append(entry)
                 comp_diag["ppc_coverage"] = float(n_covered / len(ppc_fns)) if ppc_fns else 0
                 comp_diag["ppc_n_covered"] = n_covered
