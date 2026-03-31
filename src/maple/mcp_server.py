@@ -399,6 +399,7 @@ def validate_target(
     yaml_path: str,
     priors_csv: str,
     papers_dir: str | None = None,
+    model_structure_json: str | None = None,
 ) -> str:
     """Validate a SubmodelTarget or CalibrationTarget YAML file.
 
@@ -413,6 +414,8 @@ def validate_target(
         papers_dir: Optional directory containing source PDFs in
             subdirectories named by source_tag (e.g., papers/Smith2020/).
             If not provided, defaults to ``<yaml_dir>/papers/``.
+        model_structure_json: Optional path to model_structure.json for
+            parameter unit validation against the QSP model.
 
     Returns:
         Validation report with pass/fail status and details.
@@ -428,13 +431,27 @@ def validate_target(
 
     report_lines = [f"# Validation Report: {path.name}\n"]
 
+    # ── Load model structure if provided ──
+    model_structure = None
+    if model_structure_json:
+        try:
+            from maple.core.model_structure import ModelStructure
+
+            model_structure = ModelStructure.from_json(Path(model_structure_json))
+        except Exception as e:
+            report_lines.append(f"WARNING: Failed to load model_structure: {e}\n")
+
     # ── Detect target type ──
     is_submodel = "target_id" in data and "calibration" in data
     is_calibration = "calibration_target_id" in data or "observable" in data
 
     if is_submodel:
         report_lines.append("**Type:** SubmodelTarget\n")
-        report_lines.extend(_validate_submodel_full(path, priors_csv=Path(priors_csv)))
+        report_lines.extend(
+            _validate_submodel_full(
+                path, priors_csv=Path(priors_csv), model_structure=model_structure
+            )
+        )
     elif is_calibration:
         report_lines.append("**Type:** CalibrationTarget\n")
         report_lines.extend(_validate_calibration(data))
@@ -454,7 +471,7 @@ def validate_target(
     return "\n".join(report_lines)
 
 
-def _validate_submodel_full(yaml_path: Path, priors_csv: Path) -> list[str]:
+def _validate_submodel_full(yaml_path: Path, priors_csv: Path, model_structure=None) -> list[str]:
     """Run SubmodelTarget schema validation + MCMC prior derivation."""
     lines = []
 
@@ -467,7 +484,10 @@ def _validate_submodel_full(yaml_path: Path, priors_csv: Path) -> list[str]:
 
         with open(yaml_path) as f:
             data = yaml.safe_load(f)
-        target = SubmodelTarget.model_validate(data)
+        context = {}
+        if model_structure is not None:
+            context["model_structure"] = model_structure
+        target = SubmodelTarget.model_validate(data, context=context or None)
         lines.append("PASS: Schema validation succeeded.\n")
         lines.append(f"- target_id: `{target.target_id}`")
         for p in target.calibration.parameters:
