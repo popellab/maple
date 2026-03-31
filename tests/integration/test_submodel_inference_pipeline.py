@@ -29,27 +29,26 @@ pytestmark = pytest.mark.skipif(not HAS_JAX, reason="JAX/NumPyro not installed")
 # Shared source_relevance block (valid for all test targets)
 # =============================================================================
 
-_SOURCE_RELEVANCE = """\
-source_relevance:
-  indication_match: proxy
-  indication_match_justification: >
-    Test data used as proxy for model context. Measurement is from a related
-    but not identical experimental system.
-  species_source: human
-  species_target: human
-  source_quality: primary_human_in_vitro
-  perturbation_type: physiological_baseline
-  perturbation_relevance: >
-    Baseline measurement under physiological conditions with no external
-    perturbation applied. Directly applicable to model parameter.
-  tme_compatibility: moderate
-  tme_compatibility_notes: >
-    In vitro system approximates the in vivo biology but lacks full tissue
-    context including stromal interactions and immune components.
-  measurement_directness: direct
-  temporal_resolution: endpoint_pair
-  experimental_system: in_vitro_primary
-"""
+_SOURCE_RELEVANCE_FIELDS = """\
+  source_relevance:
+    indication_match: proxy
+    indication_match_justification: >
+      Test data used as proxy for model context. Measurement is from a related
+      but not identical experimental system.
+    species_source: human
+    species_target: human
+    source_quality: primary_human_in_vitro
+    perturbation_type: physiological_baseline
+    perturbation_relevance: >
+      Baseline measurement under physiological conditions with no external
+      perturbation applied. Directly applicable to model parameter.
+    tme_compatibility: moderate
+    tme_compatibility_notes: >
+      In vitro system approximates the in vivo biology but lacks full tissue
+      context including stromal interactions and immune components.
+    measurement_directness: direct
+    temporal_resolution: endpoint_pair
+    experimental_system: in_vitro_primary"""
 
 
 # =============================================================================
@@ -74,6 +73,7 @@ primary_data_source:
   doi: "10.1038/test.001"
   source_tag: Test2024a
   title: "Test paper for EC50"
+{_SOURCE_RELEVANCE_FIELDS}
 
 secondary_data_sources: []
 
@@ -127,7 +127,6 @@ calibration:
             return rng.lognormal(mean=mu, sigma=sigma, size=n_bootstrap)
   identifiability_notes: "Single parameter, directly observed."
 
-{_SOURCE_RELEVANCE}
 """
 
 
@@ -154,6 +153,7 @@ primary_data_source:
   doi: "10.1083/test.003"
   source_tag: Test2024c
   title: "Test paper for transmigration"
+{_SOURCE_RELEVANCE_FIELDS}
 
 secondary_data_sources: []
 
@@ -231,7 +231,6 @@ calibration:
     Two parameters from single observation point. Partially degenerate:
     prior information helps resolve d_crit vs n_hill.
 
-{_SOURCE_RELEVANCE}
 """
 
 
@@ -257,6 +256,7 @@ primary_data_source:
   doi: "10.1234/test.004a"
   source_tag: Test2024d
   title: "Test paper A for shared parameter"
+{_SOURCE_RELEVANCE_FIELDS}
 
 secondary_data_sources: []
 
@@ -310,7 +310,6 @@ calibration:
             return np.exp(rng.normal(np.log(median), log_sd / np.sqrt(n), n_bootstrap))
   identifiability_notes: "Single parameter, monotonic transform."
 
-{_SOURCE_RELEVANCE}
 """
 
 SHARED_TARGET_B = """\
@@ -331,6 +330,24 @@ primary_data_source:
   doi: "10.1234/test.004b"
   source_tag: Test2024e
   title: "Test paper B for shared parameter"
+  source_relevance:
+    indication_match: exact
+    indication_match_justification: >
+      Direct measurement from the same cell type and disease context as the model.
+      No cross-indication translation needed.
+    species_source: human
+    species_target: human
+    source_quality: primary_human_in_vitro
+    perturbation_type: physiological_baseline
+    perturbation_relevance: >
+      Baseline steady-state measurement. No perturbation applied.
+    tme_compatibility: high
+    tme_compatibility_notes: >
+      In vitro system closely matches the model context. Minimal translation
+      uncertainty expected.
+    measurement_directness: single_inversion
+    temporal_resolution: snapshot_or_equilibrium
+    experimental_system: in_vitro_primary
 
 secondary_data_sources: []
 
@@ -389,25 +406,6 @@ calibration:
             n = int(sample_size)
             return np.exp(rng.normal(np.log(median), log_sd / np.sqrt(n), n_bootstrap))
   identifiability_notes: "k_shared identifiable from steady-state concentration given known production rate."
-
-source_relevance:
-  indication_match: exact
-  indication_match_justification: >
-    Direct measurement from the same cell type and disease context as the model.
-    No cross-indication translation needed.
-  species_source: human
-  species_target: human
-  source_quality: primary_human_in_vitro
-  perturbation_type: physiological_baseline
-  perturbation_relevance: >
-    Baseline steady-state measurement. No perturbation applied.
-  tme_compatibility: high
-  tme_compatibility_notes: >
-    In vitro system closely matches the model context. Minimal translation
-    uncertainty expected.
-  measurement_directness: single_inversion
-  temporal_resolution: snapshot_or_equilibrium
-  experimental_system: in_vitro_primary
 """
 
 
@@ -711,12 +709,11 @@ class TestAnalyticalPosterior:
                 median=obs_value,
                 cv=0.3,
             ),
+            sigma_trans=sigma_trans,
         )
 
         tl = TargetLikelihood(
             target_id="test",
-            sigma_trans=sigma_trans,
-            sigma_breakdown={},
             entries=[entry],
         )
 
@@ -818,6 +815,7 @@ primary_data_source:
   doi: "10.1234/test.005"
   source_tag: Test2024f
   title: "Test paper for exponential growth"
+{_SOURCE_RELEVANCE_FIELDS}
 
 secondary_data_sources: []
 
@@ -888,7 +886,6 @@ calibration:
             return np.exp(rng.normal(np.log(median), log_sd / np.sqrt(n), n_bootstrap))
   identifiability_notes: "Single parameter from time-course, well-identified."
 
-{_SOURCE_RELEVANCE}
 """
 
 # =============================================================================
@@ -914,6 +911,7 @@ primary_data_source:
   doi: "10.1234/test.006"
   source_tag: Test2024g
   title: "Test paper for custom ODE"
+{_SOURCE_RELEVANCE_FIELDS}
 
 secondary_data_sources: []
 
@@ -1054,7 +1052,6 @@ calibration:
     Two parameters from two time points. k_activate dominates early dynamics,
     k_prolif dominates later growth. Should be identifiable with informative priors.
 
-{_SOURCE_RELEVANCE}
 """
 
 
@@ -1155,6 +1152,7 @@ primary_data_source:
   doi: "10.1234/test.006"
   source_tag: Test2024g
   title: "Test paper for custom ODE"
+{_SOURCE_RELEVANCE_FIELDS}
 
 secondary_data_sources: []
 
@@ -1300,7 +1298,6 @@ calibration:
     k_activate is the parameter of interest. k_prolif is a nuisance parameter
     needed for the ODE dynamics but not part of the QSP model.
 
-{_SOURCE_RELEVANCE}
 """
 
 

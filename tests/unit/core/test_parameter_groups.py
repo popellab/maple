@@ -323,6 +323,20 @@ def test_hierarchical_sampling_produces_grouped_params():
             "doi": "10.1234/test",
             "source_tag": "Test2024",
             "title": "Test",
+            "source_relevance": {
+                "indication_match": "exact",
+                "indication_match_justification": "Test justification for source relevance with exact indication match for this test.",
+                "species_source": "human",
+                "species_target": "human",
+                "source_quality": "primary_human_in_vitro",
+                "perturbation_type": "physiological_baseline",
+                "perturbation_relevance": "Baseline measurement under physiological conditions directly applicable.",
+                "tme_compatibility": "high",
+                "tme_compatibility_notes": "In vitro system closely matches target biology for this test.",
+                "measurement_directness": "direct",
+                "temporal_resolution": "endpoint_pair",
+                "experimental_system": "in_vitro_primary",
+            },
         },
         "secondary_data_sources": [],
         "inputs": [
@@ -379,20 +393,6 @@ def test_hierarchical_sampling_produces_grouped_params():
                 }
             ],
             "identifiability_notes": "Direct observation",
-        },
-        "source_relevance": {
-            "indication_match": "exact",
-            "indication_match_justification": "Test justification for source relevance with exact indication match for this test.",
-            "species_source": "human",
-            "species_target": "human",
-            "source_quality": "primary_human_in_vitro",
-            "perturbation_type": "physiological_baseline",
-            "perturbation_relevance": "Baseline measurement under physiological conditions directly applicable.",
-            "tme_compatibility": "high",
-            "tme_compatibility_notes": "In vitro system closely matches target biology for this test.",
-            "measurement_directness": "direct",
-            "temporal_resolution": "endpoint_pair",
-            "experimental_system": "in_vitro_primary",
         },
     }
 

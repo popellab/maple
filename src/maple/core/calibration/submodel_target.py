@@ -965,6 +965,12 @@ class PrimaryDataSource(BaseModel):
     authors: Optional[List[str]] = Field(default=None, description="Author list")
     year: Optional[int] = Field(default=None, description="Publication year")
     source_tag: str = Field(description="Short identifier for referencing (e.g., 'Smith2023')")
+    source_relevance: SourceRelevanceAssessment = Field(
+        description=(
+            "Structured assessment of how well this source's data translates to the target model. "
+            "Captures indication match, source quality, perturbation context, and TME compatibility."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_doi_or_pmid(self) -> "PrimaryDataSource":
@@ -992,12 +998,10 @@ class SecondaryDataSource(BaseModel):
         default=None,
         description="What this source contributed",
     )
-    source_quality: Optional[SourceQuality] = Field(
-        default=None,
+    source_relevance: SourceRelevanceAssessment = Field(
         description=(
-            "Quality tier of this secondary source. Important when secondary sources "
-            "provide quantitative values (e.g., half-lives, cell densities). "
-            "Flag non_peer_reviewed sources like Wikipedia."
+            "Structured assessment of how well this source's data translates to the target model. "
+            "Captures indication match, source quality, perturbation context, and TME compatibility."
         ),
     )
 
@@ -1015,7 +1019,7 @@ class SecondaryDataSource(BaseModel):
     @model_validator(mode="after")
     def warn_non_peer_reviewed_secondary(self) -> "SecondaryDataSource":
         """Warn if secondary source is non-peer-reviewed."""
-        if self.source_quality == SourceQuality.NON_PEER_REVIEWED:
+        if self.source_relevance.source_quality == SourceQuality.NON_PEER_REVIEWED:
             warnings.warn(
                 f"Secondary source '{self.source_tag}' is non-peer-reviewed.\n"
                 f"If this source provides quantitative values used in calibration, "
@@ -1023,7 +1027,7 @@ class SecondaryDataSource(BaseModel):
                 UserWarning,
             )
         # Also warn if URL suggests non-peer-reviewed but source_quality not set
-        if self.url and not self.source_quality:
+        if self.url and self.source_relevance.source_quality is None:
             non_peer_domains = ["wikipedia.org", "reddit.com", "quora.com", "stackexchange.com"]
             if any(domain in self.url.lower() for domain in non_peer_domains):
                 warnings.warn(
@@ -1184,14 +1188,6 @@ class SubmodelTarget(BaseModel):
         description="Experimental context for the target"
     )
 
-    # Source relevance assessment (REQUIRED)
-    source_relevance: SourceRelevanceAssessment = Field(
-        description=(
-            "Structured assessment of how well the source data translates to the target model. "
-            "Captures indication match, source quality, perturbation context, and TME compatibility."
-        ),
-    )
-
     # Study interpretation
     study_interpretation: str = Field(
         description="Scientific interpretation of how the study data informs the model"
@@ -1224,6 +1220,23 @@ class SubmodelTarget(BaseModel):
         default=None,
         description="Reasoning effort level used during extraction (e.g., 'high')",
     )
+
+    # -------------------------------------------------------------------------
+    # HELPERS
+    # -------------------------------------------------------------------------
+
+    def _all_source_relevances(self) -> list[tuple[str, "SourceRelevanceAssessment"]]:
+        """Return (source_tag, source_relevance) for primary + all secondary sources."""
+        result = [(self.primary_data_source.source_tag, self.primary_data_source.source_relevance)]
+        if self.secondary_data_sources:
+            for s in self.secondary_data_sources:
+                result.append((s.source_tag, s.source_relevance))
+        return result
+
+    @property
+    def source_relevance_map(self) -> dict[str, "SourceRelevanceAssessment"]:
+        """Map source_tag -> SourceRelevanceAssessment for all sources."""
+        return dict(self._all_source_relevances())
 
     # -------------------------------------------------------------------------
     # VALIDATORS
@@ -3008,133 +3021,113 @@ class SubmodelTarget(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_quality_peer_reviewed(self) -> "SubmodelTarget":
-        """Warn about non-peer-reviewed primary sources (Wikipedia, preprints)."""
-        if self.source_relevance.source_quality == SourceQuality.NON_PEER_REVIEWED:
-            warnings.warn(
-                f"Primary source quality is 'non_peer_reviewed' for target '{self.target_id}'.\n"
-                "This includes Wikipedia, preprints, and unreviewed sources.\n\n"
-                "Recommended actions:\n"
-                "  1. Replace with peer-reviewed primary literature if possible\n"
-                "  2. Document rationale in key_study_limitations\n"
-                "  3. Translation sigma inflation will be applied automatically during prior construction",
-                UserWarning,
-            )
-        return self
-
-    @model_validator(mode="after")
-    def validate_secondary_sources_quality(self) -> "SubmodelTarget":
-        """Warn about non-peer-reviewed secondary sources providing quantitative values."""
-        if not self.secondary_data_sources:
-            return self
-
-        for source in self.secondary_data_sources:
-            if source.source_quality == SourceQuality.NON_PEER_REVIEWED:
+        """Warn about non-peer-reviewed sources (Wikipedia, preprints)."""
+        for tag, sr in self._all_source_relevances():
+            if sr.source_quality == SourceQuality.NON_PEER_REVIEWED:
                 # Check if this source is referenced in any input
-                source_used_for_values = False
-                for inp in self.inputs:
-                    if inp.source_ref == source.source_tag:
-                        source_used_for_values = True
-                        break
-
-                if source_used_for_values:
-                    warnings.warn(
-                        f"Secondary source '{source.source_tag}' is non-peer-reviewed "
-                        f"AND provides values used in calibration.\n"
-                        f"This is a significant reliability concern. Consider:\n"
-                        f"  1. Finding a peer-reviewed source for these values\n"
-                        f"  2. Documenting in key_study_limitations\n"
-                        f"  3. Widening the prior to reflect additional uncertainty",
-                        UserWarning,
-                    )
-
+                used_for_values = any(inp.source_ref == tag for inp in self.inputs)
+                severity = "AND provides values used in calibration" if used_for_values else ""
+                warnings.warn(
+                    f"Source '{tag}' quality is 'non_peer_reviewed' {severity} "
+                    f"for target '{self.target_id}'.\n"
+                    "This includes Wikipedia, preprints, and unreviewed sources.\n\n"
+                    "Recommended actions:\n"
+                    "  1. Replace with peer-reviewed source if possible\n"
+                    "  2. Document rationale in key_study_limitations\n"
+                    "  3. Translation sigma inflation will be applied automatically",
+                    UserWarning,
+                )
         return self
 
     @model_validator(mode="after")
     def warn_cross_indication_extrapolation(self) -> "SubmodelTarget":
-        """Warn about cross-indication extrapolation.
+        """Warn about cross-indication extrapolation per source.
 
         Translation uncertainty is computed deterministically downstream
         from source_relevance fields, not specified manually.
         """
-        sr = self.source_relevance
-        if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
-            warnings.warn(
-                f"Cross-indication extrapolation: indication_match='{sr.indication_match.value}'. "
-                f"Translation sigma inflation will be applied automatically during prior construction.",
-                UserWarning,
-            )
+        for tag, sr in self._all_source_relevances():
+            if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
+                warnings.warn(
+                    f"Cross-indication extrapolation in source '{tag}': "
+                    f"indication_match='{sr.indication_match.value}'. "
+                    f"Translation sigma inflation will be applied automatically.",
+                    UserWarning,
+                )
         return self
 
     @model_validator(mode="after")
     def validate_pharmacological_perturbation_justification(self) -> "SubmodelTarget":
         """Flag pharmacological perturbation without justification."""
-        sr = self.source_relevance
-        if sr.perturbation_type == PerturbationType.PHARMACOLOGICAL:
-            if not sr.perturbation_relevance:
-                from maple.core.calibration.exceptions import MissingFieldError
+        for tag, sr in self._all_source_relevances():
+            if sr.perturbation_type == PerturbationType.PHARMACOLOGICAL:
+                if not sr.perturbation_relevance:
+                    from maple.core.calibration.exceptions import MissingFieldError
 
-                raise MissingFieldError(
-                    "Perturbation type is 'pharmacological' but perturbation_relevance "
-                    "is not provided.\n\n"
-                    "When using drug-induced measurements to estimate physiological parameters, "
-                    "you must explain:\n"
-                    "  - Whether the value represents an upper/lower bound or typical value\n"
-                    "  - Whether scaling or adjustment is needed\n"
-                    "  - How supraphysiological drug concentrations affect interpretation"
-                )
+                    raise MissingFieldError(
+                        f"Source '{tag}': perturbation type is 'pharmacological' but "
+                        "perturbation_relevance is not provided.\n\n"
+                        "When using drug-induced measurements to estimate physiological parameters, "
+                        "you must explain:\n"
+                        "  - Whether the value represents an upper/lower bound or typical value\n"
+                        "  - Whether scaling or adjustment is needed\n"
+                        "  - How supraphysiological drug concentrations affect interpretation"
+                    )
         return self
 
     @model_validator(mode="after")
     def validate_genetic_perturbation_justification(self) -> "SubmodelTarget":
         """Flag genetic perturbation without justification."""
-        sr = self.source_relevance
-        if sr.perturbation_type == PerturbationType.GENETIC:
-            if not sr.perturbation_relevance:
-                from maple.core.calibration.exceptions import MissingFieldError
+        for tag, sr in self._all_source_relevances():
+            if sr.perturbation_type == PerturbationType.GENETIC:
+                if not sr.perturbation_relevance:
+                    from maple.core.calibration.exceptions import MissingFieldError
 
-                raise MissingFieldError(
-                    "Perturbation type is 'genetic_perturbation' but perturbation_relevance "
-                    "is not provided.\n\n"
-                    "When using KO/knockdown/overexpression data to estimate physiological "
-                    "parameters, you must explain:\n"
-                    "  - How the genetic perturbation relates to the wild-type parameter\n"
-                    "  - Whether the measurement provides bounds or direct estimates\n"
-                    "  - Compensatory mechanisms that may affect interpretation"
-                )
+                    raise MissingFieldError(
+                        f"Source '{tag}': perturbation type is 'genetic_perturbation' but "
+                        "perturbation_relevance is not provided.\n\n"
+                        "When using KO/knockdown/overexpression data to estimate physiological "
+                        "parameters, you must explain:\n"
+                        "  - How the genetic perturbation relates to the wild-type parameter\n"
+                        "  - Whether the measurement provides bounds or direct estimates\n"
+                        "  - Compensatory mechanisms that may affect interpretation"
+                    )
         return self
 
     @model_validator(mode="after")
     def validate_low_tme_compatibility_notes(self) -> "SubmodelTarget":
         """Require documentation for low TME compatibility."""
-        sr = self.source_relevance
-        if sr.tme_compatibility == TMECompatibility.LOW:
-            if not sr.tme_compatibility_notes:
-                from maple.core.calibration.exceptions import MissingFieldError
+        for tag, sr in self._all_source_relevances():
+            if sr.tme_compatibility == TMECompatibility.LOW:
+                if not sr.tme_compatibility_notes:
+                    from maple.core.calibration.exceptions import MissingFieldError
 
-                raise MissingFieldError(
-                    "TME compatibility is 'low' but tme_compatibility_notes is not provided.\n\n"
-                    "Document the specific TME differences and their expected impact:\n"
-                    "  - Stromal density differences\n"
-                    "  - Immune infiltration patterns\n"
-                    "  - Chemokine/cytokine milieu\n"
-                    "  - Expected direction and magnitude of bias"
-                )
+                    raise MissingFieldError(
+                        f"Source '{tag}': TME compatibility is 'low' but "
+                        "tme_compatibility_notes is not provided.\n\n"
+                        "Document the specific TME differences and their expected impact:\n"
+                        "  - Stromal density differences\n"
+                        "  - Immune infiltration patterns\n"
+                        "  - Chemokine/cytokine milieu\n"
+                        "  - Expected direction and magnitude of bias"
+                    )
         return self
 
     @model_validator(mode="after")
     def warn_cross_species_extrapolation(self) -> "SubmodelTarget":
-        """Warn about cross-species extrapolation.
+        """Warn about cross-species extrapolation per source.
 
         Translation uncertainty is computed deterministically downstream
         from source_relevance fields, not specified manually.
         """
-        sr = self.source_relevance
-        if sr.species_source != sr.species_target:
-            warnings.warn(
-                f"Cross-species extrapolation: {sr.species_source} → {sr.species_target}. "
-                f"Translation sigma inflation will be applied automatically during prior construction.",
-                UserWarning,
-            )
+        for tag, sr in self._all_source_relevances():
+            if sr.species_source != sr.species_target:
+                warnings.warn(
+                    f"Cross-species extrapolation in source '{tag}': "
+                    f"{sr.species_source} → {sr.species_target}. "
+                    f"Translation sigma inflation will be applied automatically.",
+                    UserWarning,
+                )
         return self
 
     # NOTE: validate_prior_reflects_translation_uncertainty was removed —
@@ -3201,62 +3194,6 @@ class SubmodelTarget(BaseModel):
             raise ObservableConfigError.from_errors(sv_errors)
 
         return self
-
-    def _compute_confidence_score(self) -> float:
-        """
-        Compute overall confidence score based on source relevance factors.
-
-        Returns a score from 0.0 to 1.0 where:
-        - 1.0 = Perfect match (exact indication, human clinical, no perturbation)
-        - 0.5 = Moderate confidence (related indication, animal data)
-        - <0.3 = Low confidence (proxy/unrelated, non-peer-reviewed)
-        """
-        sr = self.source_relevance
-        score = 1.0
-
-        # Indication match penalty
-        match_penalties = {
-            IndicationMatch.EXACT: 1.0,
-            IndicationMatch.RELATED: 0.8,
-            IndicationMatch.PROXY: 0.5,
-            IndicationMatch.UNRELATED: 0.2,
-        }
-        score *= match_penalties.get(sr.indication_match, 0.5)
-
-        # Source quality penalty
-        quality_penalties = {
-            SourceQuality.PRIMARY_HUMAN_CLINICAL: 1.0,
-            SourceQuality.PRIMARY_HUMAN_IN_VITRO: 0.9,
-            SourceQuality.PRIMARY_ANIMAL_IN_VIVO: 0.8,
-            SourceQuality.PRIMARY_ANIMAL_IN_VITRO: 0.7,
-            SourceQuality.REVIEW: 0.6,
-            SourceQuality.TEXTBOOK: 0.5,
-            SourceQuality.NON_PEER_REVIEWED: 0.3,
-        }
-        score *= quality_penalties.get(sr.source_quality, 0.5)
-
-        # Species penalty
-        if sr.species_source != sr.species_target:
-            score *= 0.8
-
-        # TME penalty for low compatibility
-        if sr.tme_compatibility == TMECompatibility.LOW:
-            score *= 0.5
-        elif sr.tme_compatibility == TMECompatibility.MODERATE:
-            score *= 0.8
-
-        # Perturbation penalty
-        if sr.perturbation_type == PerturbationType.PHARMACOLOGICAL:
-            score *= 0.8
-        elif sr.perturbation_type == PerturbationType.GENETIC:
-            score *= 0.7
-
-        return round(score, 2)
-
-    @property
-    def confidence_score(self) -> float:
-        """Computed confidence score based on source relevance factors."""
-        return self._compute_confidence_score()
 
 
 # =============================================================================

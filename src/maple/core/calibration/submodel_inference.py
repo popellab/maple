@@ -72,6 +72,8 @@ class ErrorModelEntry:
     sigma: float  # log-space sigma (lognormal) or linear SD (normal)
     family: str  # "lognormal" or "normal"
     fit: DistFit  # full fit result for diagnostics
+    sigma_trans: float = 0.0  # per-entry translation sigma
+    sigma_trans_breakdown: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -79,9 +81,65 @@ class TargetLikelihood:
     """All error model entries for one SubmodelTarget."""
 
     target_id: str
-    sigma_trans: float  # translation sigma from source_relevance
-    sigma_breakdown: dict  # per-axis breakdown for provenance
     entries: list[ErrorModelEntry] = field(default_factory=list)
+
+
+# =============================================================================
+# Per-measurement translation sigma
+# =============================================================================
+
+
+def resolve_per_measurement_sigma(
+    target: "SubmodelTarget",
+    uses_inputs: list[str] | None,
+) -> tuple[float, dict[str, float]]:
+    """Compute translation sigma for one error model entry.
+
+    1. Collect source_refs for each input in uses_inputs
+    2. Deduplicate by source_tag (same paper = correlated gap, count once)
+    3. Compute sigma per unique source via compute_translation_sigma()
+    4. Combine in quadrature: sqrt(sum(sigma_i^2))
+
+    Returns (total_sigma, {source_tag: sigma} breakdown).
+    """
+    sr_map = target.source_relevance_map
+
+    if not uses_inputs:
+        # Fallback: use primary source
+        primary_sr = target.primary_data_source.source_relevance
+        sigma, _ = compute_translation_sigma(primary_sr)
+        return sigma, {target.primary_data_source.source_tag: sigma}
+
+    # Map input names to their source_refs
+    input_by_name = {inp.name: inp for inp in target.inputs}
+    unique_tags = set()
+    for inp_name in uses_inputs:
+        inp = input_by_name.get(inp_name)
+        if inp and inp.source_ref:
+            unique_tags.add(inp.source_ref)
+
+    if not unique_tags:
+        # No source_refs found — fall back to primary
+        primary_sr = target.primary_data_source.source_relevance
+        sigma, _ = compute_translation_sigma(primary_sr)
+        return sigma, {target.primary_data_source.source_tag: sigma}
+
+    # Compute per-source sigma, combine in quadrature
+    per_source = {}
+    for tag in unique_tags:
+        sr = sr_map.get(tag)
+        if sr is None:
+            continue
+        sigma, _ = compute_translation_sigma(sr)
+        per_source[tag] = sigma
+
+    if not per_source:
+        return 0.0, {}
+
+    import numpy as np
+
+    total = float(np.sqrt(sum(s**2 for s in per_source.values())))
+    return total, per_source
 
 
 # =============================================================================
@@ -773,16 +831,13 @@ def build_target_likelihoods(
                     f"not found in priors CSV. Available: {sorted(prior_specs.keys())}"
                 )
 
-        # Translation sigma
-        sigma_trans, breakdown = compute_translation_sigma(target.source_relevance)
-
         # Forward functions
         forward_fns = _build_forward_fns(target, reference_db)
 
         # Inputs dict for bootstrap
         inputs_dict = {inp.name: inp.value for inp in target.inputs}
 
-        # Build entries
+        # Build entries with per-measurement translation sigma
         entries = []
         for j, entry in enumerate(target.calibration.error_model):
             dist_fit = _run_bootstrap(entry, inputs_dict)
@@ -799,6 +854,11 @@ def build_target_likelihoods(
                 sigma = dist_fit.params.get("sigma", dist_fit.cv * dist_fit.median)
                 family = "normal"
 
+            # Per-measurement translation sigma from sources of its inputs
+            entry_sigma_trans, entry_sigma_breakdown = resolve_per_measurement_sigma(
+                target, entry.uses_inputs
+            )
+
             entries.append(
                 ErrorModelEntry(
                     forward_fn=forward_fns[j],
@@ -806,14 +866,14 @@ def build_target_likelihoods(
                     sigma=sigma,
                     family=family,
                     fit=dist_fit,
+                    sigma_trans=entry_sigma_trans,
+                    sigma_trans_breakdown=entry_sigma_breakdown,
                 )
             )
 
         likelihoods.append(
             TargetLikelihood(
                 target_id=target.target_id,
-                sigma_trans=sigma_trans,
-                sigma_breakdown=breakdown,
                 entries=entries,
             )
         )
@@ -949,14 +1009,14 @@ def submodel_joint_model(prior_specs, target_likelihoods, parameter_groups=None)
             numpyro.factor(f"valid_{site_name}", jnp.where(valid, 0.0, -jnp.inf))
 
             if entry.family == "lognormal":
-                sigma_total = jnp.sqrt(entry.sigma**2 + tl.sigma_trans**2)
+                sigma_total = jnp.sqrt(entry.sigma**2 + entry.sigma_trans**2)
                 numpyro.sample(
                     site_name,
                     dist.LogNormal(jnp.log(safe_predicted), sigma_total),
                     obs=entry.value,
                 )
             else:  # normal
-                sd_total = jnp.sqrt(entry.sigma**2 + (entry.value * tl.sigma_trans) ** 2)
+                sd_total = jnp.sqrt(entry.sigma**2 + (entry.value * entry.sigma_trans) ** 2)
                 numpyro.sample(
                     site_name,
                     dist.Normal(safe_predicted, sd_total),

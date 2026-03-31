@@ -350,8 +350,18 @@ def process_yaml(yaml_path: Path, priors_csv: Path) -> list[dict]:
     except Exception as e:
         return [{"name": first_name, "error": f"MCMC inference failed: {e}"}]
 
-    # Translation sigma (shared across parameters for this target)
-    trans_sigma, breakdown = compute_translation_sigma(target.source_relevance)
+    # Translation sigma: collect per-entry, report the max for diagnostics
+    from maple.core.calibration.submodel_inference import resolve_per_measurement_sigma
+
+    entry_sigmas = []
+    for entry in target.calibration.error_model:
+        s, bd = resolve_per_measurement_sigma(target, entry.uses_inputs)
+        entry_sigmas.append((s, bd))
+    if entry_sigmas:
+        # Pick the entry with the largest sigma for reporting
+        trans_sigma, breakdown = max(entry_sigmas, key=lambda x: x[0])
+    else:
+        trans_sigma, breakdown = 0.0, {}
 
     # Fit candidate distributions to each non-nuisance parameter's marginal posterior
     results = []
@@ -675,11 +685,19 @@ def process_targets(
         **mcmc_kwargs,
     )
 
-    # 5. Collect translation sigmas for provenance
+    # 5. Collect translation sigmas for provenance (max per-entry per target)
+    from maple.core.calibration.submodel_inference import resolve_per_measurement_sigma
+
     translation_sigmas = {}
     for target in targets:
-        sigma, breakdown = compute_translation_sigma(target.source_relevance)
-        translation_sigmas[target.target_id] = (sigma, breakdown)
+        entry_sigmas = [
+            resolve_per_measurement_sigma(target, entry.uses_inputs)
+            for entry in target.calibration.error_model
+        ]
+        if entry_sigmas:
+            translation_sigmas[target.target_id] = max(entry_sigmas, key=lambda x: x[0])
+        else:
+            translation_sigmas[target.target_id] = (0.0, {})
 
     # 6. Parameterize posteriors
     mcmc_config = {

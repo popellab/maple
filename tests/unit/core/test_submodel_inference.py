@@ -98,6 +98,7 @@ def _make_algebraic_target(
             "doi": "10.1234/test",
             "source_tag": "Test2024",
             "title": "Test paper",
+            "source_relevance": DEFAULT_SOURCE_RELEVANCE,
         },
         "secondary_data_sources": [],
         "inputs": [
@@ -149,7 +150,6 @@ def _make_algebraic_target(
             ],
             "identifiability_notes": "Single parameter, directly observed.",
         },
-        "source_relevance": DEFAULT_SOURCE_RELEVANCE,
     }
 
 
@@ -340,13 +340,13 @@ class TestBuildTargetLikelihoods:
 
         tl = likelihoods[0]
         assert tl.target_id == "test_target"
-        assert tl.sigma_trans >= 0.15  # floor
         assert len(tl.entries) == 1
 
         entry = tl.entries[0]
         assert entry.family == "lognormal"
         assert entry.value > 0
         assert entry.sigma > 0
+        assert entry.sigma_trans >= 0.15  # floor sigma
 
     def test_missing_parameter_raises(self):
         import warnings
@@ -370,6 +370,147 @@ class TestBuildTargetLikelihoods:
 
         with pytest.raises(ValueError, match="not found in priors CSV"):
             build_target_likelihoods([target], prior_specs)
+
+
+# =============================================================================
+# Tests: resolve_per_measurement_sigma
+# =============================================================================
+
+
+class TestResolvePerMeasurementSigma:
+    """Test per-measurement translation sigma resolution."""
+
+    def _make_target(self, secondary_sources=None):
+        """Build a minimal SubmodelTarget with configurable sources."""
+        import warnings
+
+        from maple.core.calibration.submodel_target import SubmodelTarget
+
+        primary_sr = {
+            **DEFAULT_SOURCE_RELEVANCE,
+            "species_source": "human",
+        }
+
+        data = _make_algebraic_target(param_name="k_test")
+        data["primary_data_source"]["source_relevance"] = primary_sr
+
+        if secondary_sources:
+            data["secondary_data_sources"] = secondary_sources
+        else:
+            data["secondary_data_sources"] = []
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return SubmodelTarget(**data)
+
+    def test_single_source_all_inputs(self):
+        """All inputs from primary → sigma equals primary's translation sigma."""
+        from maple.core.calibration.submodel_inference import (
+            resolve_per_measurement_sigma,
+        )
+        from maple.core.calibration.yaml_to_prior import compute_translation_sigma
+
+        target = self._make_target()
+        primary_sr = target.primary_data_source.source_relevance
+        expected_sigma, _ = compute_translation_sigma(primary_sr)
+
+        sigma, breakdown = resolve_per_measurement_sigma(
+            target, target.calibration.error_model[0].uses_inputs
+        )
+        assert abs(sigma - expected_sigma) < 1e-6
+        assert len(breakdown) == 1  # one unique source
+
+    def test_same_source_not_double_counted(self):
+        """Two inputs from the same source should count once, not twice."""
+        from maple.core.calibration.submodel_inference import (
+            resolve_per_measurement_sigma,
+        )
+        from maple.core.calibration.yaml_to_prior import compute_translation_sigma
+
+        target = self._make_target()
+        primary_sr = target.primary_data_source.source_relevance
+        expected_sigma, _ = compute_translation_sigma(primary_sr)
+
+        # uses_inputs has two inputs, both from same source_ref
+        uses = [
+            inp.name
+            for inp in target.inputs
+            if inp.source_ref == target.primary_data_source.source_tag
+        ]
+        assert len(uses) >= 2  # obs_mean and obs_sd both from Test2024
+
+        sigma, breakdown = resolve_per_measurement_sigma(target, uses)
+        assert abs(sigma - expected_sigma) < 1e-6  # NOT sqrt(2) * expected
+
+    def test_two_sources_quadrature(self):
+        """Inputs from two different sources combine in quadrature."""
+        import warnings
+
+        import numpy as np
+
+        from maple.core.calibration.submodel_inference import (
+            resolve_per_measurement_sigma,
+        )
+        from maple.core.calibration.submodel_target import SubmodelTarget
+        from maple.core.calibration.yaml_to_prior import compute_translation_sigma
+
+        mouse_sr = {
+            **DEFAULT_SOURCE_RELEVANCE,
+            "species_source": "mouse",
+        }
+
+        data = _make_algebraic_target(param_name="k_test")
+        data["primary_data_source"]["source_relevance"] = DEFAULT_SOURCE_RELEVANCE
+        data["secondary_data_sources"] = [
+            {
+                "doi": "10.5678/mouse",
+                "source_tag": "Mouse2024",
+                "title": "Test paper",
+                "source_relevance": mouse_sr,
+            }
+        ]
+        # Add an input from the secondary source
+        data["inputs"].append(
+            {
+                "name": "mouse_val",
+                "value": 5.0,
+                "units": "1/day",
+                "input_type": "direct_measurement",
+                "source_ref": "Mouse2024",
+                "source_location": "Table 1",
+                "value_snippet": "value of 5.0",
+            }
+        )
+        # Point error model at both sources
+        data["calibration"]["error_model"][0]["uses_inputs"] = ["obs_mean", "mouse_val"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            target = SubmodelTarget(**data)
+
+        sigma_primary, _ = compute_translation_sigma(target.primary_data_source.source_relevance)
+        sigma_secondary, _ = compute_translation_sigma(
+            target.secondary_data_sources[0].source_relevance
+        )
+        expected = float(np.sqrt(sigma_primary**2 + sigma_secondary**2))
+
+        sigma, breakdown = resolve_per_measurement_sigma(target, ["obs_mean", "mouse_val"])
+        assert abs(sigma - expected) < 1e-6
+        assert len(breakdown) == 2  # two unique sources
+
+    def test_no_uses_inputs_falls_back_to_primary(self):
+        """Entry with uses_inputs=None falls back to primary source."""
+        from maple.core.calibration.submodel_inference import (
+            resolve_per_measurement_sigma,
+        )
+        from maple.core.calibration.yaml_to_prior import compute_translation_sigma
+
+        target = self._make_target()
+        primary_sr = target.primary_data_source.source_relevance
+        expected_sigma, _ = compute_translation_sigma(primary_sr)
+
+        sigma, breakdown = resolve_per_measurement_sigma(target, None)
+        assert abs(sigma - expected_sigma) < 1e-6
 
 
 # =============================================================================
@@ -410,12 +551,11 @@ class TestSubmodelJointModel:
                 median=2.0,
                 cv=0.3,
             ),
+            sigma_trans=0.15,
         )
 
         tl = TargetLikelihood(
             target_id="test",
-            sigma_trans=0.15,
-            sigma_breakdown={"indication": 0.0},
             entries=[entry],
         )
 
@@ -473,12 +613,11 @@ class TestSubmodelJointModel:
                 median=2.0,
                 cv=0.3,
             ),
+            sigma_trans=0.15,
         )
 
         tl = TargetLikelihood(
             target_id="nan_test",
-            sigma_trans=0.15,
-            sigma_breakdown={},
             entries=[entry],
         )
 
