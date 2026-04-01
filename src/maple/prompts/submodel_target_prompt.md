@@ -612,26 +612,31 @@ experimental_context:
   species: human
   system: in_vitro_primary_cells
 
-source_relevance:
-  indication_match: related
-  indication_match_justification: |
-    Human CD8+ T cells from healthy donors used to inform PDAC model.
-    T cell proliferation kinetics are conserved, but tumor-specific
-    factors (immunosuppression, antigen load) not captured.
-  species_source: human
-  species_target: human
-  source_quality: primary_human_in_vitro
-  perturbation_type: physiological_baseline
-  perturbation_relevance: |
-    Anti-CD3/CD28 stimulation is a standard activation protocol
-    that recapitulates TCR signaling without antigen specificity.
-  tme_compatibility: moderate
-  tme_compatibility_notes: |
-    In vitro expansion does not capture immunosuppressive TME of PDAC.
-    Expect proliferation rates to be upper bounds for in vivo behavior.
-  measurement_directness: direct
-  temporal_resolution: endpoint_pair
-  experimental_system: in_vitro_primary
+primary_data_source:
+  doi: "10.xxxx/example"
+  source_tag: Smith2023
+  title: "Example paper"
+  year: 2023
+  source_relevance:
+    indication_match: related
+    indication_match_justification: |
+      Human CD8+ T cells from healthy donors used to inform PDAC model.
+      T cell proliferation kinetics are conserved, but tumor-specific
+      factors (immunosuppression, antigen load) not captured.
+    species_source: human
+    species_target: human
+    source_quality: primary_human_in_vitro
+    perturbation_type: physiological_baseline
+    perturbation_relevance: |
+      Anti-CD3/CD28 stimulation is a standard activation protocol
+      that recapitulates TCR signaling without antigen specificity.
+    tme_compatibility: moderate
+    tme_compatibility_notes: |
+      In vitro expansion does not capture immunosuppressive TME of PDAC.
+      Expect proliferation rates to be upper bounds for in vivo behavior.
+    measurement_directness: direct
+    temporal_resolution: endpoint_pair
+    experimental_system: in_vitro_primary
 
 study_interpretation: "T cell expansion provides proliferation rate"
 key_assumptions:
@@ -661,9 +666,9 @@ Document mismatches in `key_study_limitations`.
 
 ---
 
-## Source Relevance Assessment (REQUIRED)
+## Source Relevance Assessment (REQUIRED, per-source)
 
-Every target MUST include a `source_relevance` block evaluating how well the source data translates to the target model.
+Every data source (`primary_data_source` and each `secondary_data_sources` entry) MUST include a `source_relevance` block evaluating how well that source's data translates to the target model. Translation sigma is computed per-measurement by combining the source-level sigmas of the inputs it uses (in quadrature, deduplicated by source).
 
 ### Indication Match
 
@@ -710,20 +715,28 @@ Every target MUST include a `source_relevance` block evaluating how well the sou
 ### Example
 
 ```yaml
-source_relevance:
-  indication_match: proxy
-  indication_match_justification: |
-    Using B16 melanoma MDSC data as proxy for PDAC. MDSCs recruited via
-    similar mechanisms but melanoma has different stromal density.
-  species_source: mouse
-  species_target: human
-  source_quality: primary_animal_in_vivo
-  perturbation_type: physiological_baseline
-  tme_compatibility: low
-  tme_compatibility_notes: |
-    Melanoma is T cell-permissive; PDAC has dense desmoplastic stroma.
-    Expect order-of-magnitude differences in recruitment rates.
-  estimated_translation_uncertainty_fold: 30.0
+primary_data_source:
+  doi: "10.xxxx/example"
+  source_tag: Jones2021
+  title: "MDSC recruitment in melanoma"
+  year: 2021
+  source_relevance:
+    indication_match: proxy
+    indication_match_justification: |
+      Using B16 melanoma MDSC data as proxy for PDAC. MDSCs recruited via
+      similar mechanisms but melanoma has different stromal density.
+    species_source: mouse
+    species_target: human
+    source_quality: primary_animal_in_vivo
+    perturbation_type: physiological_baseline
+    perturbation_relevance: "Baseline tumor-bearing state, no drug treatment."
+    tme_compatibility: low
+    tme_compatibility_notes: |
+      Melanoma is T cell-permissive; PDAC has dense desmoplastic stroma.
+      Expect order-of-magnitude differences in recruitment rates.
+    measurement_directness: direct
+    temporal_resolution: endpoint_pair
+    experimental_system: animal_in_vivo
 ```
 
 ---

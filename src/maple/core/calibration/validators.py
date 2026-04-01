@@ -90,8 +90,11 @@ def fuzzy_match(str1: str, str2: str, threshold: float = 0.75) -> bool:
     if not str1 or not str2:
         return False
 
-    s1 = str1.lower().strip()
-    s2 = str2.lower().strip()
+    import re as _re
+
+    # Strip HTML tags (CrossRef sometimes returns <sup>, <sub>, etc.)
+    s1 = _re.sub(r"<[^>]+>", "", str1).lower().strip()
+    s2 = _re.sub(r"<[^>]+>", "", str2).lower().strip()
 
     similarity = SequenceMatcher(None, s1, s2).ratio()
     return similarity >= threshold
