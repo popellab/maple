@@ -645,6 +645,36 @@ class AlgebraicModel(BaseForwardModelSpec):
         "Example: return np.log(2) / params['k'] for predicting t_half from k."
     )
 
+    @model_validator(mode="after")
+    def lint_jax_traceability(self) -> "AlgebraicModel":
+        """Warn if forward model code contains Python if/while statements.
+
+        These cause JAX TracerBoolConversionError during numpyro MCMC because
+        JAX traces through the function and cannot convert traced arrays to
+        Python bools.  Use ``jnp.where()`` instead.
+        """
+        import ast
+        import textwrap
+
+        try:
+            tree = ast.parse(textwrap.dedent(self.code))
+        except SyntaxError:
+            return self
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.If, ast.While)):
+                kind = "if" if isinstance(node, ast.If) else "while"
+                cond_src = ast.get_source_segment(self.code, node.test) or "<condition>"
+                warnings.warn(
+                    f"forward_model.code contains Python `{kind}` "
+                    f"(line {node.lineno}: `{cond_src}`) which is not JAX-traceable "
+                    f"and will cause TracerBoolConversionError during MCMC. "
+                    f"Use jnp.where() or remove the branch.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        return self
+
 
 class DirectFitModel(BaseForwardModelSpec):
     """Direct curve fitting (no ODE): dose-response curves, titrations.
@@ -3192,6 +3222,104 @@ class SubmodelTarget(BaseModel):
             from maple.core.calibration.exceptions import ObservableConfigError
 
             raise ObservableConfigError.from_errors(sv_errors)
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_snippets_against_pdfs(self, info: ValidationInfo) -> "SubmodelTarget":
+        """Validate value_snippets and table_excerpts against source PDFs.
+
+        Requires context:
+            papers_dir: Path to directory containing source PDFs
+
+        When papers_dir is provided, each direct_measurement input's snippet
+        is fuzzy-matched against the extracted PDF text.  Failures raise
+        ValueError so the extraction retry loop can re-attempt.
+
+        Skipped silently when papers_dir is not in context (e.g., when loading
+        existing YAMLs outside the extraction pipeline).
+        """
+        if not info.context or "papers_dir" not in info.context:
+            return self
+
+        papers_dir = info.context["papers_dir"]
+        # validate_snippets_in_file expects a YAML path, but we already have
+        # the parsed object.  Use the in-memory validation path instead.
+        from maple.core.calibration.snippet_validator import (
+            load_paper_texts,
+        )
+        from maple.core.calibration.validators import fuzzy_find_snippet_in_text
+
+        # Collect source tags and metadata
+        source_tags = {self.primary_data_source.source_tag}
+        source_metadata = {
+            self.primary_data_source.source_tag: {
+                "doi": self.primary_data_source.doi,
+                "url": None,
+            }
+        }
+        if self.secondary_data_sources:
+            for src in self.secondary_data_sources:
+                source_tags.add(src.source_tag)
+                source_metadata[src.source_tag] = {
+                    "doi": src.doi,
+                    "url": getattr(src, "url", None),
+                }
+
+        paper_data = load_paper_texts(source_tags, source_metadata, papers_dir)
+
+        errors = []
+        skip_types = {"reference_value", "derived_arithmetic", "unit_conversion"}
+
+        for inp in self.inputs:
+            if inp.input_type in skip_types:
+                continue
+            if not inp.value_snippet and not inp.table_excerpt:
+                continue
+
+            tag = inp.source_ref
+            if tag not in paper_data:
+                continue
+
+            text, source_type = paper_data[tag]
+
+            # Check value_snippet
+            if inp.value_snippet:
+                found, score, _ = fuzzy_find_snippet_in_text(inp.value_snippet, text, threshold=0.7)
+                if not found:
+                    errors.append(
+                        f"Input '{inp.name}': value_snippet not found in "
+                        f"{tag} [{source_type}] (best score: {score:.2f}). "
+                        f"Snippet may be hallucinated or paraphrased — "
+                        f"use verbatim text from the paper."
+                    )
+
+            # Check table_excerpt fields
+            if inp.table_excerpt:
+                te = inp.table_excerpt
+                for field_name, threshold in [
+                    ("table_id", 0.7),
+                    ("column", 0.7),
+                    ("value", 0.7),
+                    ("row", 0.6),
+                ]:
+                    field_val = getattr(te, field_name, None)
+                    if not field_val:
+                        continue
+                    found, score, _ = fuzzy_find_snippet_in_text(
+                        str(field_val), text, threshold=threshold
+                    )
+                    if not found:
+                        errors.append(
+                            f"Input '{inp.name}': table_excerpt.{field_name}="
+                            f"'{field_val}' not found in {tag} [{source_type}] "
+                            f"(best score: {score:.2f})."
+                        )
+
+        if errors:
+            from maple.core.calibration.exceptions import SnippetNotInSourceError
+
+            raise SnippetNotInSourceError.from_errors(errors)
 
         return self
 
