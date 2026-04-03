@@ -285,33 +285,31 @@ The preferred way to create SubmodelTarget YAMLs is interactively via the MCP se
 7. Call `validate_target` after each major section to catch errors early
 8. Iterate until validation passes
 
-### Batch Extraction (CLI)
+### Batch Extraction (`maple.extraction`)
 
-For bulk extraction without interactive refinement:
+For extracting many parameters at once, use the staged pipeline in `maple.extraction`. This replaces the old `qsp-extract` CLI with a more capable multi-stage workflow. See the README for the full pipeline description.
 
-```bash
-# Extract submodel targets (requires model context files)
-qsp-extract targets.csv \
-  --type submodel_target \
-  --model-structure model_structure.json \
-  --model-context model_context.txt \
-  --output-dir metadata-storage
-
-# Preview prompts without API call
-qsp-extract targets.csv \
-  --type submodel_target \
-  --model-structure model_structure.json \
-  --model-context model_context.txt \
-  --output-dir metadata-storage \
-  --preview-prompts
+```python
+from maple.extraction import (
+    make_agents, run_lit_search, run_assess, run_plan_review,
+    run_complete, run_derivation_review, run_validate, run_stage,
+    collect_missing_pdfs, summarize_digitizations,
+    write_assessment_report, write_dois_md,
+)
 ```
+
+**Key modules:**
+- `maple.extraction.pipeline` — schemas, prompts, agents, stage functions
+- `maple.extraction` — re-exports everything
 
 **Input CSV format:**
 ```csv
-target_id,parameters,notes
-psc_proliferation,k_apsc_prolif,Focus on activated PSCs
-psc_death,k_apsc_death,
+target_id,parameters,cancer_type,notes
+k_IL2_sec,k_IL2_sec,PDAC,"Per-cell IL-2 secretion rate. Search for: ELISA, single-cell secretion rates."
+k_vas_growth,k_vas_growth,PDAC,"Rate law: dK/dt = k_vas_growth * C_total * VEGF/(VEGF+VEGF_50). Search for: MVD growth kinetics."
 ```
+
+**Stages:** lit search → PDF collection → paper assessment → plan review → digitization → extraction → derivation review → validation. Each stage caches per-target; delete a cache file to rerun that stage for that target.
 
 ## CalibrationTarget Schema
 
@@ -378,17 +376,7 @@ python scripts/validate_calibration_target.py --skip-doi \
 
 ### LLM Extraction
 
-```bash
-qsp-extract targets.csv \
-  --type calibration_target \
-  --output-dir metadata-storage
-
-# Preview prompts without API call
-qsp-extract targets.csv \
-  --type calibration_target \
-  --output-dir metadata-storage \
-  --preview-prompts
-```
+CalibrationTarget extraction uses the interactive MCP workflow (see README). The staged batch pipeline (`maple.extraction`) currently supports SubmodelTarget extraction only.
 
 **Input CSV format:**
 ```csv
@@ -521,8 +509,10 @@ src/maple/
 │   ├── resource_utils.py              # Package resource access
 │   ├── unit_registry.py               # Shared Pint UnitRegistry
 │   └── workflow_orchestrator.py       # Main orchestrator
+├── extraction/
+│   ├── __init__.py                    # Re-exports pipeline components
+│   └── pipeline.py                    # Staged batch extraction pipeline
 ├── cli/
-│   ├── extract.py                     # qsp-extract entry point
 │   ├── export_model.py                # qsp-export-model entry point
 │   └── interactive.py                 # Interactive target selection
 └── prompts/                           # LLM instruction prompts
@@ -555,6 +545,7 @@ pytest
 
 ### CLI Entry Points
 
-- `qsp-extract` — Run extraction workflows (calibration_target or submodel_target)
 - `qsp-export-model` — Export SimBiology model structure to JSON
 - `maple-yaml-to-prior` — Convert SubmodelTarget YAMLs to priors via joint NumPyro MCMC (requires `--priors CSV`)
+
+For batch extraction, use the staged pipeline via `maple.extraction` (see README).

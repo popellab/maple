@@ -60,7 +60,6 @@ Repository = "https://github.com/popellab/maple"
 "Bug Tracker" = "https://github.com/popellab/maple/issues"
 
 [project.scripts]
-qsp-extract = "maple.cli.extract:main"
 qsp-export-model = "maple.cli.export_model:main"
 maple-mcp = "maple.mcp_server:main"
 maple-yaml-to-prior = "maple.core.calibration.yaml_to_prior:main"
