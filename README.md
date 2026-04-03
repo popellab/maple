@@ -97,82 +97,6 @@ There's also a **CalibrationTarget** schema for clinical/in vivo observables (bi
 
 ---
 
-## LLM-assisted extraction
-
-MAPLE works with any AI tool that can run Python and access your files. There are two ways to connect it:
-
-### MCP server (coding agents)
-
-For Claude Code, Codex, Cursor, and other MCP-compatible agents. Add to `.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "maple": {
-      "command": "python",
-      "args": ["-m", "maple.mcp_server"]
-    }
-  }
-}
-```
-
-### Python API (chat UIs)
-
-For Claude Cowork, ChatGPT with Code Interpreter, or any environment that can `pip install` and run Python. The same tools are available as plain functions:
-
-```python
-from maple.mcp_server import extract_target, validate_target, run_joint_inference
-
-# Load the extraction guide
-guide = extract_target("submodel_target")
-
-# Validate a target YAML
-report = validate_target("path/to/target.yaml", "pdac_priors.csv")
-
-# Run joint inference
-report = run_joint_inference("pdac_priors.csv", "submodel_targets/")
-```
-
-### Tools
-
-| Tool | Purpose |
-|------|---------|
-| `extract_target(target_type)` | Load the full extraction guide (schema, workflow, enum values, hard rules) |
-| `validate_target(yaml_path, priors_csv)` | Schema validation + NumPyro MCMC prior derivation + snippet verification |
-| `run_joint_inference(priors_csv, submodel_dir)` | Joint MCMC across all targets with diagnostic report |
-| `compare_inference(priors_csv, submodel_dir)` | Single-target vs joint inference comparison |
-| `verify_dois(dois)` | Verify DOIs resolve via CrossRef, return metadata |
-| `fetch_papers_from_zotero(dois)` | Copy PDFs from Zotero's local storage into paper directories |
-
-### Typical workflow
-
-> **Agent** and **You** labels indicate who drives each step.
-
-1. **You** — Ask the agent to extract a parameter (e.g., *"use the MAPLE tool to extract k_IL6_sec"*)
-2. **Agent** — Loads the extraction guide (`extract_target`)
-3. **Agent** — Investigates the parameter in your model code: units, mechanistic role, Hill function inputs, interactions with other parameters
-4. **Agent** — Searches literature for quantitative data that constrains the parameter; verifies DOIs via CrossRef
-5. **You** — Add papers to Zotero; agent calls `fetch_papers_from_zotero` to pull PDFs
-6. **Agent** — Reads the paper. If figures contain richer data (scatter plots, dose-response curves), asks you to digitize with WebPlotDigitizer
-7. **Agent** — Builds the SubmodelTarget YAML incrementally, validating at each step
-8. **You** — Review inputs, forward model, and error model. Check that values match the paper, assumptions are justified, and the model makes sense for the data
-9. **Agent** — Runs `validate_target` — fixes schema, MCMC, or snippet errors
-10. Iterate steps 7-9 until validation passes
-
-For extracting many parameters at once, see the [batch extraction pipeline](#batch-extraction-pipeline) below.
-
-### Built-in safeguards
-
-Pydantic validators catch common extraction failures automatically:
-
-- **Anti-hallucination** — extracted values must appear in `value_snippet`; snippets are verified against paper text via Europe PMC / Unpaywall
-- **Unit validation** — all unit strings checked against Pint
-- **Code validation** — forward model and observation code syntax and execution checks
-- **DOI verification** — CrossRef resolution and metadata matching
-- **Invisible characters** — catches zero-width spaces and other PDF copy-paste artifacts
-
----
-
 ## Batch extraction pipeline
 
 For extracting many parameters at once, MAPLE supports a staged batch pipeline that automates the multi-step workflow across a set of targets. Each stage caches its results per-target, so you can rerun any stage for any subset without redoing work.
@@ -322,6 +246,80 @@ lit_search_agent, assess_agent, plan_review_agent, complete_agent, derivation_re
 ```
 
 See the [PDAC model repo](https://github.com/jeliason/pdac-build/blob/main/scripts/staged_extraction.py) for a complete working example.
+
+---
+
+## Interactive extraction (single target)
+
+For extracting one parameter at a time with an AI coding agent. MAPLE works with any AI tool that can run Python and access your files.
+
+### MCP server (coding agents)
+
+For Claude Code, Codex, Cursor, and other MCP-compatible agents. Add to `.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "maple": {
+      "command": "python",
+      "args": ["-m", "maple.mcp_server"]
+    }
+  }
+}
+```
+
+### Python API (chat UIs)
+
+For Claude Cowork, ChatGPT with Code Interpreter, or any environment that can `pip install` and run Python. The same tools are available as plain functions:
+
+```python
+from maple.mcp_server import extract_target, validate_target, run_joint_inference
+
+# Load the extraction guide
+guide = extract_target("submodel_target")
+
+# Validate a target YAML
+report = validate_target("path/to/target.yaml", "pdac_priors.csv")
+
+# Run joint inference
+report = run_joint_inference("pdac_priors.csv", "submodel_targets/")
+```
+
+### Tools
+
+| Tool | Purpose |
+|------|---------|
+| `extract_target(target_type)` | Load the full extraction guide (schema, workflow, enum values, hard rules) |
+| `validate_target(yaml_path, priors_csv)` | Schema validation + NumPyro MCMC prior derivation + snippet verification |
+| `run_joint_inference(priors_csv, submodel_dir)` | Joint MCMC across all targets with diagnostic report |
+| `compare_inference(priors_csv, submodel_dir)` | Single-target vs joint inference comparison |
+| `verify_dois(dois)` | Verify DOIs resolve via CrossRef, return metadata |
+| `fetch_papers_from_zotero(dois)` | Copy PDFs from Zotero's local storage into paper directories |
+
+### Typical workflow
+
+> **Agent** and **You** labels indicate who drives each step.
+
+1. **You** — Ask the agent to extract a parameter (e.g., *"use the MAPLE tool to extract k_IL6_sec"*)
+2. **Agent** — Loads the extraction guide (`extract_target`)
+3. **Agent** — Investigates the parameter in your model code: units, mechanistic role, Hill function inputs, interactions with other parameters
+4. **Agent** — Searches literature for quantitative data that constrains the parameter; verifies DOIs via CrossRef
+5. **You** — Add papers to Zotero; agent calls `fetch_papers_from_zotero` to pull PDFs
+6. **Agent** — Reads the paper. If figures contain richer data (scatter plots, dose-response curves), asks you to digitize with WebPlotDigitizer
+7. **Agent** — Builds the SubmodelTarget YAML incrementally, validating at each step
+8. **You** — Review inputs, forward model, and error model. Check that values match the paper, assumptions are justified, and the model makes sense for the data
+9. **Agent** — Runs `validate_target` — fixes schema, MCMC, or snippet errors
+10. Iterate steps 7-9 until validation passes
+
+### Built-in safeguards
+
+Pydantic validators catch common extraction failures automatically:
+
+- **Anti-hallucination** — extracted values must appear in `value_snippet`; snippets are verified against paper text via Europe PMC / Unpaywall
+- **Unit validation** — all unit strings checked against Pint
+- **Code validation** — forward model and observation code syntax and execution checks
+- **DOI verification** — CrossRef resolution and metadata matching
+- **Invisible characters** — catches zero-width spaces and other PDF copy-paste artifacts
 
 ---
 
