@@ -399,8 +399,10 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap) -> np.ndarray:
 
 The framework derives median, SD, and CI95 from the samples, and infers the likelihood family (lognormal/gamma/inv-gamma) via AIC. Choose the bootstrap distribution to match the data-generating process:
 - `rng.normal(mean, sd / np.sqrt(sample_size), n_bootstrap)` for mean +/- SD data
-- `rng.lognormal(np.log(mean), sd / np.sqrt(sample_size), n_bootstrap)` for positive quantities
+- Lognormal for positive quantities (see correct parametrization below)
 - `rng.poisson(count, n_bootstrap)` for count data
+
+**Lognormal parametrization (IMPORTANT):** When bootstrapping positive quantities (rates, half-lives, concentrations, cell counts), convert CV to lognormal sigma using the exact formula `sigma_ln = sqrt(log(1 + cv^2))`, NOT the approximation `sigma ≈ cv`. The approximation diverges at CV > 0.3 (e.g., at CV=1.0 it overestimates sigma by 20%). Also apply the mean-bias correction `mu_ln = log(mean) - sigma_ln^2/2` so that `E[X] = mean` exactly.
 
 All inputs are plain floats. Unit metadata is in the YAML schema for documentation.
 
@@ -409,7 +411,10 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
     import numpy as np
     mean = inputs['half_life_mean']
     sd = inputs['half_life_sd']
-    return rng.lognormal(np.log(mean), sd / mean / np.sqrt(sample_size), n_bootstrap)
+    cv = sd / mean
+    sigma_ln = np.sqrt(np.log(1 + cv**2))
+    mu_ln = np.log(mean) - sigma_ln**2 / 2
+    return rng.lognormal(mu_ln, sigma_ln / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ### Example: Inferring rate from half-life (`algebraic` fallback)
@@ -438,7 +443,9 @@ error_model:
           t_half_sd = inputs['half_life_sd']
           # Lognormal bootstrap: half-lives are positive
           cv = t_half_sd / t_half
-          return rng.lognormal(np.log(t_half), cv / np.sqrt(sample_size), n_bootstrap)
+          sigma_ln = np.sqrt(np.log(1 + cv**2))
+          mu_ln = np.log(t_half) - sigma_ln**2 / 2
+          return rng.lognormal(mu_ln, sigma_ln / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ### No Hardcoded Values
@@ -474,7 +481,9 @@ inputs:
 def derive_observation(inputs, sample_size, rng, n_bootstrap):
     import numpy as np
     cv = inputs['assumed_cv']
-    return rng.lognormal(np.log(inputs['mean']), cv / np.sqrt(sample_size), n_bootstrap)
+    sigma_ln = np.sqrt(np.log(1 + cv**2))
+    mu_ln = np.log(inputs['mean']) - sigma_ln**2 / 2
+    return rng.lognormal(mu_ln, sigma_ln / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ---
@@ -601,7 +610,9 @@ calibration:
             sd = inputs['final_cells_sd']
             # Lognormal bootstrap for positive cell counts
             cv = sd / mean
-            return rng.lognormal(np.log(mean), cv / np.sqrt(sample_size), n_bootstrap)
+            sigma_ln = np.sqrt(np.log(1 + cv**2))
+            mu_ln = np.log(mean) - sigma_ln**2 / 2
+            return rng.lognormal(mu_ln, sigma_ln / np.sqrt(sample_size), n_bootstrap)
       observable:
         type: identity
         state_variables: [T_cells]

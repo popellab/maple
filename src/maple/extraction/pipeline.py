@@ -1447,7 +1447,9 @@ async def run_complete(
 
     target_data = result.output.model_dump(mode="json", exclude_none=True)
     ms = ModelStructure.from_json(model_structure_path)
-    SubmodelTarget.model_validate(target_data, context={"model_structure": ms})
+    SubmodelTarget.model_validate(
+        target_data, context={"model_structure": ms, "papers_dir": papers_dir}
+    )
 
     with open(output_file, "w") as f:
         yaml.dump(target_data, f, default_flow_style=False, sort_keys=False)
@@ -1552,6 +1554,12 @@ def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> No
     output_file = target_dir / f"{t['target_id']}_{t['cancer_type']}_deriv001.yaml"
 
     if not output_file.exists():
+        return
+
+    # Skip if already promoted to calibration_targets/
+    dest = Path("calibration_targets/submodel_targets") / output_file.name
+    if dest.exists():
+        print(f"  [{t['target_id']}] SKIP (already in {dest.parent.name}/)")
         return
 
     # Unit validation
