@@ -211,41 +211,7 @@ Mechanical validation per target:
 
 ### Example script
 
-The pipeline is used via a thin config script in your model repo:
-
-```python
-# scripts/staged_extraction.py
-from pathlib import Path
-from functools import partial
-
-from maple.extraction import (
-    collect_missing_pdfs, make_agents, run_assess, run_complete,
-    run_derivation_review, run_lit_search, run_plan_review,
-    run_stage, run_validate, summarize_digitizations,
-    write_assessment_report, write_dois_md,
-)
-
-# Config — edit these for your project
-TARGETS_CSV = Path("notes/targets.csv")
-MODEL_STRUCTURE = Path("model_structure.json")
-MODEL_CONTEXT = Path("model_context.txt")
-WORK_DIR = Path("work/staged_extraction")
-ZOTERO_STORAGE = Path("~/Zotero/storage").expanduser()
-PRIORS_CSV = Path("parameters/priors.csv")
-MODEL = "gpt-5.1"
-TARGET_RANGE = (0, 20)  # which rows of targets CSV to process
-
-# Setup
-model_context = MODEL_CONTEXT.read_text().strip()
-lit_search_agent, assess_agent, plan_review_agent, complete_agent, derivation_review_agent = make_agents(MODEL, MAX_RETRIES=7)
-
-# Run stages interactively (each stage caches per-target)
-# Stage 1: Lit search → Stage 1b: PDF fetch → Stage 2: Assess
-# → Stage 2b: Plan review → Digitization → Stage 3: Extract
-# → Stage 3b: Derivation review → Stage 3c: Validate
-```
-
-See the [PDAC model repo](https://github.com/jeliason/pdac-build/blob/main/scripts/staged_extraction.py) for a complete working example.
+Copy [`examples/staged_extraction.py`](examples/staged_extraction.py) into your model repo and edit the config section at the top (paths, model name, target range). The script is designed to be run interactively in a Jupyter/IPython notebook or copy-pasted into a REPL stage by stage.
 
 ---
 
