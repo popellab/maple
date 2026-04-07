@@ -268,19 +268,63 @@ def build_parameter_context(parameters: str, model_structure_path: Path) -> str:
     return builder.format_parameter_context(parameters, model_structure)
 
 
-def collect_papers(papers_dir: Path) -> tuple[list[BinaryContent], list[str]]:
+def _extract_pdf_text(pdf_path: Path) -> str:
+    """Extract text from PDF using pdftotext (poppler), falling back to pypdf."""
+    import shutil
+    import subprocess as _sp
+
+    if shutil.which("pdftotext"):
+        try:
+            result = _sp.run(
+                ["pdftotext", str(pdf_path), "-"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout
+        except Exception:
+            pass
+
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(pdf_path))
+        return "\n".join(p.extract_text() or "" for p in reader.pages)
+    except Exception:
+        return ""
+
+
+def collect_papers(
+    papers_dir: Path, *, text_only: bool = False
+) -> tuple[list[BinaryContent], list[str]]:
+    """Collect papers from a directory as binary PDFs and/or extracted text.
+
+    Args:
+        papers_dir: Directory containing PDFs (flat or in subdirs).
+        text_only: If True, extract text from PDFs instead of sending binary.
+            Avoids context overflow with large PDFs. Loses figure images but
+            retains tables and captions.
+    """
     if not papers_dir.exists():
         return [], []
 
-    file_parts = []
+    file_parts: list[BinaryContent] = []
+    text_parts: list[str] = []
+
     for pdf in sorted(papers_dir.glob("**/*.pdf")):
         size_mb = pdf.stat().st_size / (1024 * 1024)
         if size_mb > 45:
             print(f"    Warning: {pdf.name} is {size_mb:.1f}MB, skipping (>45MB)")
             continue
-        file_parts.append(pdf_to_binary(pdf))
 
-    text_parts = []
+        if text_only:
+            text = _extract_pdf_text(pdf)
+            if text.strip():
+                text_parts.append(f"--- {pdf.name} ---\n{text}\n")
+        else:
+            file_parts.append(pdf_to_binary(pdf))
+
     for ext in ("*.txt", "*.md"):
         for f in sorted(papers_dir.glob(ext)):
             text_parts.append(f"--- {f.name} ---\n{f.read_text()}\n")
@@ -404,11 +448,66 @@ def write_dois_md(targets: list[dict], lit_results: list[dict], output_path: Pat
     print(f"  wrote {output_path}")
 
 
+def report_digitization_preflight(targets: list[dict]) -> None:
+    """Report which targets have pending vs complete digitizations before stage 3.
+
+    Prints a summary of targets missing required digitizations and those ready
+    to proceed. Does not block extraction — informational only.
+    """
+    print("\n" + "=" * 60)
+    print("Stage 3 Pre-flight: Digitization Status")
+    print("=" * 60)
+
+    missing_digs = []
+    ready = []
+    for t in targets:
+        target_dir = t["dir"]
+        assess_path = target_dir / "assessment.json"
+        output_file = target_dir / f"{t['target_id']}_{t['cancer_type']}_deriv001.yaml"
+        if output_file.exists():
+            ready.append((t["target_id"], "cached"))
+            continue
+        if not assess_path.exists():
+            continue
+        with open(assess_path) as f:
+            assess_data = json.load(f)
+        plan = assess_data.get("extraction_plan", {})
+        if not plan.get("papers"):
+            continue
+        required = plan.get("digitizations_needed", [])
+        if not required:
+            ready.append((t["target_id"], "no digitization needed"))
+            continue
+        digitized_dir = target_dir / "digitized"
+        missing = []
+        for dig_spec in required:
+            tag = dig_spec.split("/", 1)[0].strip()
+            tag_dir = digitized_dir / tag
+            if not tag_dir.is_dir() or not list(tag_dir.glob("*.csv")):
+                missing.append(dig_spec)
+        if missing:
+            missing_digs.append((t["target_id"], missing))
+        else:
+            ready.append((t["target_id"], "digitizations complete"))
+
+    if missing_digs:
+        print(f"\n  MISSING DIGITIZATIONS ({len(missing_digs)} targets):")
+        for tid, missing in missing_digs:
+            print(f"    {tid}: {', '.join(missing)}")
+
+    print(f"\n  READY ({len(ready)} targets)")
+    print()
+
+
 def summarize_digitizations(work_dir: Path, output_path: Path | None = None) -> None:
     """Print and optionally write a prioritized summary of all pending digitization requests."""
     items = []
+    promoted_dir = Path("calibration_targets/submodel_targets")
     for assessment_path in sorted(work_dir.glob("*/assessment.json")):
         target = assessment_path.parent.name
+        # Skip targets already promoted
+        if promoted_dir.is_dir() and list(promoted_dir.glob(f"{target}_*_deriv*.yaml")):
+            continue
         with open(assessment_path) as f:
             data = json.load(f)
 
@@ -465,10 +564,55 @@ def summarize_digitizations(work_dir: Path, output_path: Path | None = None) -> 
                 if pdf_link:
                     break
 
+            # Check digitized dir for per-figure completion
+            digitized_dir = assessment_path.parent / "digitized"
+            tag_dig_dir = digitized_dir / tag
+
             for d in p.get("data", []):
                 if d.get("needs_digitization"):
                     dig_key = f"{p['source_tag']}/{d['location']}"
                     in_plan_dig = dig_key in plan_digs
+
+                    # Check if a CSV matching any figure identifier exists
+                    done = False
+                    if tag_dig_dir.is_dir():
+                        # Extract figure IDs from location
+                        # e.g. "Figure 7A,B" -> check for "7a" or "7b"
+                        # "Fig S1H–S1K" -> check for "s1h" or "s1k"
+                        loc = d["location"].lower()
+                        for prefix in (
+                            "supplementary figure ",
+                            "supplementary fig. ",
+                            "supplementary fig ",
+                            "supplementary ",
+                            "figure ",
+                            "fig. ",
+                            "fig ",
+                        ):
+                            loc = loc.replace(prefix, "")
+                        # Split on delimiters
+                        parts = [p.strip() for p in re.split(r"[–\-,;&]\s*", loc) if p.strip()]
+                        # Expand single-letter suffixes using the base from the first part
+                        # e.g. ["7a", "b"] -> ["7a", "7b"]
+                        fig_ids = []
+                        base = ""
+                        for part in parts:
+                            if re.match(r".*\d", part):
+                                # Has digits — this is a full ID like "7a" or "s1h"
+                                base = re.match(r"(.*\d)", part).group(1)
+                                fig_ids.append(part)
+                            elif len(part) <= 2 and base:
+                                # Single letter suffix like "b" — prepend base
+                                fig_ids.append(base + part)
+                            else:
+                                fig_ids.append(part)
+
+                        csv_names = [f.name.lower() for f in tag_dig_dir.glob("*.csv")]
+                        for fig_id in fig_ids:
+                            if fig_id and any(fig_id in name for name in csv_names):
+                                done = True
+                                break
+
                     items.append(
                         {
                             "target": target,
@@ -483,6 +627,7 @@ def summarize_digitizations(work_dir: Path, output_path: Path | None = None) -> 
                             "in_plan_dig": in_plan_dig,
                             "role": role,
                             "pdf_link": pdf_link,
+                            "done": done,
                         }
                     )
 
@@ -500,24 +645,53 @@ def summarize_digitizations(work_dir: Path, output_path: Path | None = None) -> 
     plan_items = [i for i in items if i["in_plan"]]
     other_items = [i for i in items if not i["in_plan"]]
 
+    plan_done = sum(1 for i in plan_items if i.get("done"))
+    plan_pending = len(plan_items) - plan_done
+
     lines = []
     lines.append(f"# Digitization Summary\n")
-    lines.append(f"**{len(items)} total** ({len(plan_items)} in extraction plan)\n")
+    lines.append(
+        f"**{len(items)} total** ({len(plan_items)} in extraction plan: "
+        f"{plan_done} done, {plan_pending} pending)\n"
+    )
 
     if plan_items:
-        lines.append(f"## In Extraction Plan ({len(plan_items)})\n")
-        for i in plan_items:
-            is_required = i["in_plan_dig"] or i["priority"] == "critical"
-            req = " **[REQUIRED]**" if is_required else ""
-            title_str = f" — *{i['title']}*" if i["title"] else ""
-            lines.append(
-                f"- **[{i['target']}]** {i['source']}{title_str} {i['location']}{req} ({i['priority']})"
-            )
-            lines.append(f"  - {i['desc']}")
-            if i["justification"]:
-                lines.append(f"  - Why: {i['justification']}")
-            if i["hints"]:
-                lines.append(f"  - How: {i['hints']}")
+        # Show pending first, then done
+        pending = [i for i in plan_items if not i.get("done")]
+        done = [i for i in plan_items if i.get("done")]
+
+        if pending:
+            critical = [i for i in pending if i["in_plan_dig"] or i["priority"] == "critical"]
+            other_pending = [i for i in pending if i not in critical]
+
+            def _fmt_pending(items_list: list) -> None:
+                for i in items_list:
+                    title_str = f" — *{i['title']}*" if i["title"] else ""
+                    lines.append(
+                        f"- **[{i['target']}]** {i['source']}{title_str} {i['location']} ({i['priority']})"
+                    )
+                    lines.append(f"  - {i['desc']}")
+                    if i["justification"]:
+                        lines.append(f"  - Why: {i['justification']}")
+                    if i["hints"]:
+                        lines.append(f"  - How: {i['hints']}")
+                    lines.append("")
+
+            if critical:
+                lines.append(f"## Pending — Critical ({len(critical)})\n")
+                _fmt_pending(critical)
+
+            if other_pending:
+                lines.append(f"## Pending — Helpful / Optional ({len(other_pending)})\n")
+                _fmt_pending(other_pending)
+
+        if done:
+            lines.append(f"## Done ({len(done)})\n")
+            for i in done:
+                title_str = f" — *{i['title']}*" if i["title"] else ""
+                lines.append(
+                    f"- ~~**[{i['target']}]** {i['source']}{title_str} {i['location']}~~ ✓"
+                )
             lines.append("")
 
     if other_items:
@@ -625,6 +799,30 @@ def fetch_pdfs(candidates: list[dict], papers_dir: Path, zotero_storage: Path) -
     return not_found
 
 
+def _resolve_pmc_urls(dois: list[str]) -> list[str]:
+    """Resolve DOIs to PMC full-text URLs where available, else doi.org."""
+    import urllib.request
+
+    urls = []
+    for doi in dois:
+        try:
+            api_url = (
+                f"https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+                f"?query=DOI:{doi}&format=json&resultType=lite"
+            )
+            with urllib.request.urlopen(api_url, timeout=5) as resp:
+                data = json.loads(resp.read())
+            results = data.get("resultList", {}).get("result", [])
+            pmcid = results[0].get("pmcid") if results else None
+            if pmcid:
+                urls.append(f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/")
+                continue
+        except Exception:
+            pass
+        urls.append(f"https://doi.org/{doi}")
+    return urls
+
+
 def collect_missing_pdfs(
     targets: list[dict],
     lit_results: list[dict],
@@ -668,9 +866,12 @@ def collect_missing_pdfs(
             break
 
         if resp == "b":
-            # Open in browser for manual Zotero Connector download
-            urls = [f"https://doi.org/{doi}" for doi in unique_dois]
-            print(f"  Opening {len(urls)} DOIs in browser...")
+            # Try PMC (free full text) first, fall back to doi.org
+            urls = _resolve_pmc_urls(unique_dois)
+            n_pmc = sum(1 for u in urls if "pmc.ncbi" in u)
+            print(
+                f"  Opening {len(urls)} articles ({n_pmc} via PMC, {len(urls)-n_pmc} via doi.org)..."
+            )
             subprocess.run(["open"] + urls)
             input("  Press Enter after saving with Zotero Connector...")
 
@@ -824,6 +1025,7 @@ Assess whether the attached paper(s) contain quantitative data suitable for cali
 
 **Parameters:** {parameters}
 **Cancer type:** {cancer_type}
+{notes_section}
 
 ## Model Context
 
@@ -1204,56 +1406,9 @@ async def run_plan_review(
     with open(review_path, "w") as f:
         json.dump(review.model_dump(), f, indent=2)
 
-    # Apply actions
     actions = {"proceed": 0, "switch_to_alt": 0, "rerun_lit_search": 0, "defer": 0}
     for r in review.reviews:
         actions[r.verdict] += 1
-
-        if r.verdict == "switch_to_alt" and r.replacement_plan:
-            target_dir = work_dir / r.target
-            assessment_path = target_dir / "assessment.json"
-            if assessment_path.exists():
-                with open(assessment_path) as f:
-                    assessment = json.load(f)
-                old_plan = assessment["extraction_plan"]
-                assessment["extraction_plan"] = r.replacement_plan.model_dump()
-                # Move old plan to alternatives
-                alts = assessment.get("alternative_plans", [])
-                alts.append(old_plan)
-                assessment["alternative_plans"] = alts
-                with open(assessment_path, "w") as f:
-                    json.dump(assessment, f, indent=2)
-                plan_tags = ", ".join(r.replacement_plan.papers[:3])
-                print(f"  [{r.target}] SWITCHED to: {plan_tags}")
-
-        elif r.verdict == "rerun_lit_search":
-            # Delete lit search and assessment caches
-            target_dir = work_dir / r.target
-            for cache_file in ["lit_search_results.json", "assessment.json", "assessment.md"]:
-                (target_dir / cache_file).unlink(missing_ok=True)
-            # Append notes to targets.csv
-            if r.lit_search_notes and targets_csv.exists():
-                rows = []
-                with open(targets_csv, encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    fieldnames = reader.fieldnames
-                    for row in reader:
-                        if row["target_id"] == r.target:
-                            existing = row.get("notes", "")
-                            row["notes"] = (
-                                f"{existing} RERUN: {r.lit_search_notes}"
-                                if existing
-                                else f"RERUN: {r.lit_search_notes}"
-                            )
-                        rows.append(row)
-                with open(targets_csv, "w", encoding="utf-8", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerows(rows)
-            print(f"  [{r.target}] RERUN lit search: {r.lit_search_notes[:80]}")
-
-        elif r.verdict == "defer":
-            print(f"  [{r.target}] DEFERRED: {r.reason[:80]}")
 
     print(
         f"\n  Plan review: {actions['proceed']} proceed, {actions['switch_to_alt']} switched, "
@@ -1262,6 +1417,67 @@ async def run_plan_review(
     print(f"\n  {review.summary}")
 
     return review
+
+
+def apply_plan_swaps(reviews: list, work_dir: Path) -> None:
+    """Apply plan swap verdicts: replace primary extraction plan with alternative.
+
+    Modifies assessment.json for each swapped target.
+    """
+    for r in reviews:
+        if r.verdict != "switch_to_alt" or not r.replacement_plan:
+            continue
+        target_dir = work_dir / r.target
+        assessment_path = target_dir / "assessment.json"
+        if not assessment_path.exists():
+            continue
+        with open(assessment_path) as f:
+            assessment = json.load(f)
+        old_plan = assessment["extraction_plan"]
+        assessment["extraction_plan"] = r.replacement_plan.model_dump()
+        alts = assessment.get("alternative_plans", [])
+        alts.append(old_plan)
+        assessment["alternative_plans"] = alts
+        with open(assessment_path, "w") as f:
+            json.dump(assessment, f, indent=2)
+        plan_tags = ", ".join(r.replacement_plan.papers[:3])
+        print(f"  [{r.target}] SWITCHED to: {plan_tags}")
+
+
+def apply_lit_search_reruns(reviews: list, work_dir: Path, targets_csv: Path) -> None:
+    """Apply rerun_lit_search verdicts: clear caches and append notes to targets CSV.
+
+    Side effects:
+    - Deletes lit_search_results.json and assessment.json for each rerun target
+    - Appends RERUN notes to the target's row in targets_csv
+    """
+    for r in reviews:
+        if r.verdict != "rerun_lit_search":
+            continue
+        # Delete caches
+        target_dir = work_dir / r.target
+        for cache_file in ["lit_search_results.json", "assessment.json", "assessment.md"]:
+            (target_dir / cache_file).unlink(missing_ok=True)
+        # Append notes to targets.csv
+        if r.lit_search_notes and targets_csv.exists():
+            rows = []
+            with open(targets_csv, encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                fieldnames = reader.fieldnames
+                for row in reader:
+                    if row["target_id"] == r.target:
+                        existing = row.get("notes", "")
+                        row["notes"] = (
+                            f"{existing} RERUN: {r.lit_search_notes}"
+                            if existing
+                            else f"RERUN: {r.lit_search_notes}"
+                        )
+                    rows.append(row)
+            with open(targets_csv, "w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+        print(f"  [{r.target}] RERUN lit search: {r.lit_search_notes[:80]}")
 
 
 # ===========================================================================
@@ -1319,7 +1535,7 @@ async def run_assess(
         with open(assessment_path) as f:
             return json.load(f)
 
-    file_parts, text_parts = collect_papers(target_dir / "papers")
+    file_parts, text_parts = collect_papers(target_dir / "papers", text_only=True)
     if not file_parts and not text_parts:
         print(f"  [{t['target_id']}] no papers, skipping")
         return None
@@ -1330,6 +1546,9 @@ async def run_assess(
     if text_parts:
         paper_text_section = "## Paper Content (text)\n\n" + "\n\n".join(text_parts)
 
+    notes = t.get("notes", "")
+    notes_section = f"**Extraction guidance:** {notes}" if notes else ""
+
     prompt = ASSESS_PROMPT.format(
         parameters=t["parameters"],
         cancer_type=t["cancer_type"],
@@ -1337,6 +1556,7 @@ async def run_assess(
         parameter_context=parameter_context,
         prior_context_section=prior_context_section,
         paper_text_section=paper_text_section,
+        notes_section=notes_section,
     )
 
     user_prompt: list = list(file_parts) + [prompt]
@@ -1370,6 +1590,26 @@ async def run_complete(
     if not assessment_path.exists():
         print(f"  [{t['target_id']}] no assessment, skipping")
         return None
+
+    # Report missing digitizations but don't block extraction
+    with open(assessment_path) as _af:
+        _assess = json.load(_af)
+    plan = _assess.get("extraction_plan", {})
+    required_digs = plan.get("digitizations_needed", [])
+    if required_digs:
+        digitized_dir = target_dir / "digitized"
+        missing_digs = []
+        for dig_spec in required_digs:
+            parts = dig_spec.split("/", 1)
+            tag = parts[0].strip()
+            tag_dir = digitized_dir / tag
+            if not tag_dir.is_dir() or not list(tag_dir.glob("*.csv")):
+                missing_digs.append(dig_spec)
+        if missing_digs:
+            print(
+                f"  [{t['target_id']}] WARNING — {len(missing_digs)} digitization(s) pending: "
+                + ", ".join(missing_digs)
+            )
 
     with open(assessment_path) as f:
         assessment_data = json.load(f)
@@ -1447,9 +1687,7 @@ async def run_complete(
 
     target_data = result.output.model_dump(mode="json", exclude_none=True)
     ms = ModelStructure.from_json(model_structure_path)
-    SubmodelTarget.model_validate(
-        target_data, context={"model_structure": ms, "papers_dir": papers_dir}
-    )
+    SubmodelTarget.model_validate(target_data, context={"model_structure": ms})
 
     with open(output_file, "w") as f:
         yaml.dump(target_data, f, default_flow_style=False, sort_keys=False)

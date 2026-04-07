@@ -28,7 +28,10 @@ from maple.extraction.pipeline import (
     run_validate,
     run_stage,
     # Helpers
+    apply_lit_search_reruns,  # Clear caches + append RERUN notes to targets CSV
+    apply_plan_swaps,  # Replace primary extraction plan with reviewer's alternative
     collect_missing_pdfs,
+    report_digitization_preflight,  # Print which targets have pending digitizations
     fetch_pdfs,
     summarize_digitizations,
     write_assessment_report,
@@ -57,8 +60,12 @@ __all__ = [
     "run_derivation_review",
     "run_validate",
     "run_stage",
+    # Helpers — plan review side effects (called explicitly by the pipeline script)
+    "apply_lit_search_reruns",
+    "apply_plan_swaps",
     # Helpers
     "collect_missing_pdfs",
+    "report_digitization_preflight",
     "fetch_pdfs",
     "summarize_digitizations",
     "write_assessment_report",
