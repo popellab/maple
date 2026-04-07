@@ -9,7 +9,7 @@ This module implements the SubmodelTarget schema that separates:
 
 import warnings
 from enum import Enum
-from typing import Annotated, List, Literal, Optional, Union
+from typing import Annotated, Any, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
@@ -673,6 +673,15 @@ class AlgebraicModel(BaseForwardModelSpec):
                     UserWarning,
                     stacklevel=2,
                 )
+            elif isinstance(node, ast.IfExp):
+                cond_src = ast.get_source_segment(self.code, node.test) or "<condition>"
+                warnings.warn(
+                    f"forward_model.code contains inline ternary `x if {cond_src} else y` "
+                    f"(line {node.lineno}) which is not JAX-traceable. "
+                    f"Use jnp.where(condition, if_true, if_false) instead.",
+                    UserWarning,
+                    stacklevel=2,
+                )
         return self
 
 
@@ -1131,7 +1140,12 @@ class SubmodelCultureConditions(BaseModel):
 
 
 class ExperimentalContext(BaseModel):
-    """Experimental context for the submodel target."""
+    """Experimental context for the submodel target.
+
+    NOTE: Only contains species, system, cell_lines, cell_types, culture_conditions,
+    and indication. Fields like study_interpretation, key_assumptions, and
+    key_study_limitations are TOP-LEVEL fields on SubmodelTarget, NOT nested here.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1149,6 +1163,25 @@ class ExperimentalContext(BaseModel):
         default=None, description="Culture conditions"
     )
     indication: Optional[str] = Field(default=None, description="Disease indication (PDAC, etc.)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_misplaced_fields(cls, data: Any) -> Any:
+        """Give actionable error when fields are nested here instead of top-level."""
+        if isinstance(data, dict):
+            misplaced = {
+                "study_interpretation",
+                "key_assumptions",
+                "key_study_limitations",
+            }
+            found = misplaced & set(data.keys())
+            if found:
+                raise ValueError(
+                    f"Fields {found} are top-level SubmodelTarget fields, "
+                    f"NOT nested inside experimental_context. "
+                    f"Move them out of experimental_context to the root level."
+                )
+        return data
 
 
 # =============================================================================
@@ -2504,12 +2537,24 @@ class SubmodelTarget(BaseModel):
         errors = []
 
         def _extract_family_name(full_name: str) -> str:
-            """Extract likely family name from 'Given Family' or 'Family, Given' format."""
+            """Extract family name for CrossRef comparison.
+
+            Expects family name only (e.g., 'Zhang', 'Wilson', 'den Braber').
+            Also handles legacy formats: 'Family, Given' or 'Given Family'.
+            """
             full_name = full_name.strip()
             if "," in full_name:
                 return full_name.split(",")[0].strip()
+            # If it's a single word, return as-is (expected case)
             parts = full_name.split()
-            return parts[-1] if parts else full_name
+            if len(parts) == 1:
+                return parts[0]
+            # Multi-word: if last token is a short initial, it's "Family I" format
+            last = parts[-1].rstrip(".")
+            if len(last) <= 2 and last.isupper() and len(parts) > 1:
+                return " ".join(parts[:-1])
+            # Otherwise assume "Given Family" format
+            return parts[-1]
 
         def check_doi_source(
             doi: str,
@@ -2636,6 +2681,38 @@ class SubmodelTarget(BaseModel):
             from maple.core.calibration.exceptions import UnitParsingError
 
             raise UnitParsingError.from_errors(errors)
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_non_nuisance_params_in_model(self, info: ValidationInfo) -> "SubmodelTarget":
+        """Validate that non-nuisance calibration parameters exist in the QSP model.
+
+        Parameters marked nuisance=False (or nuisance not set) are QSP model
+        parameters that must exist in model_structure. Parameters not found are
+        likely invented by the extraction agent and should be marked nuisance=True
+        with an inline prior, or removed.
+
+        Requires context:
+            model_structure: ModelStructure instance
+        """
+        if not info.context or "model_structure" not in info.context:
+            return self
+
+        model_structure = info.context["model_structure"]
+        model_params = {p.name for p in model_structure.parameters}
+
+        missing = []
+        for param in self.calibration.parameters:
+            if not param.nuisance and param.name not in model_params:
+                missing.append(param.name)
+
+        if missing:
+            raise ValueError(
+                f"Non-nuisance parameter(s) not found in QSP model: {missing}. "
+                f"These must either exist in model_structure.json as real QSP parameters, "
+                f"or be marked nuisance=True with an inline prior."
+            )
 
         return self
 

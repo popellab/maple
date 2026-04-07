@@ -188,15 +188,47 @@ def _ad_test_samples(
 
 
 def fit_distributions(samples: np.ndarray) -> list[DistFit]:
-    """Fit lognormal, gamma, and inverse-gamma to positive samples.
+    """Fit candidate distributions to bootstrap samples.
+
+    Always tries Normal. For all-positive samples, also tries lognormal,
+    gamma, and inverse-gamma. AIC selects the best fit.
 
     Returns list of DistFit sorted by AIC (best first).
     """
-    positive = samples[samples > 0]
-    if len(positive) < 100:
+    if len(samples) < 100:
         return []
 
     fits = []
+
+    # --- Normal (always attempted) ---
+    mu_n = np.mean(samples)
+    sig_n = np.std(samples, ddof=1)
+    if sig_n > 0:
+        ll = np.sum(stats.norm.logpdf(samples, loc=mu_n, scale=sig_n))
+        aic = -2 * ll + 2 * 2
+        ad, crit = _ad_test_samples(
+            samples,
+            lambda x: stats.norm.cdf(x, loc=mu_n, scale=sig_n),
+            "normal",
+        )
+        fits.append(
+            DistFit(
+                name="normal",
+                params={"mu": mu_n, "sigma": sig_n},
+                aic=aic,
+                ad_stat=ad,
+                ad_crit_5pct=crit,
+                ad_pass=ad < crit,
+                median=mu_n,
+                cv=abs(sig_n / mu_n) if mu_n != 0 else float("inf"),
+            )
+        )
+
+    # Positive-only distributions require sufficient positive mass
+    positive = samples[samples > 0]
+    if len(positive) < 100:
+        fits.sort(key=lambda f: f.aic)
+        return fits
 
     # --- Lognormal ---
     log_s = np.log(positive)

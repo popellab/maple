@@ -1000,22 +1000,22 @@ def submodel_joint_model(prior_specs, target_likelihoods, parameter_groups=None)
 
             site_name = f"obs_{tl.target_id}_{j}" if len(tl.entries) > 1 else f"obs_{tl.target_id}"
 
-            # Guard against NaN/non-positive predictions from solver failures
-            # (e.g. diffrax hitting max_steps with extreme parameter draws).
-            # Replace with a safe dummy value and assign -inf log-probability
-            # so NUTS rejects the sample.
-            valid = jnp.isfinite(predicted) & (predicted > 0)
-            safe_predicted = jnp.where(valid, predicted, 1.0)
-            numpyro.factor(f"valid_{site_name}", jnp.where(valid, 0.0, -jnp.inf))
-
+            # Guard against NaN predictions from solver failures.
+            # For lognormal likelihoods, also require predicted > 0.
             if entry.family == "lognormal":
+                valid = jnp.isfinite(predicted) & (predicted > 0)
+                safe_predicted = jnp.where(valid, predicted, 1.0)
+                numpyro.factor(f"valid_{site_name}", jnp.where(valid, 0.0, -jnp.inf))
                 sigma_total = jnp.sqrt(entry.sigma**2 + entry.sigma_trans**2)
                 numpyro.sample(
                     site_name,
                     dist.LogNormal(jnp.log(safe_predicted), sigma_total),
                     obs=entry.value,
                 )
-            else:  # normal
+            else:  # normal — predicted can be any finite value
+                valid = jnp.isfinite(predicted)
+                safe_predicted = jnp.where(valid, predicted, 0.0)
+                numpyro.factor(f"valid_{site_name}", jnp.where(valid, 0.0, -jnp.inf))
                 sd_total = jnp.sqrt(entry.sigma**2 + (entry.value * entry.sigma_trans) ** 2)
                 numpyro.sample(
                     site_name,

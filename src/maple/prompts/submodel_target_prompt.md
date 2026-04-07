@@ -465,22 +465,22 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
     return rng.lognormal(np.log(inputs['mean']), 0.3 / np.sqrt(sample_size), n_bootstrap)
 ```
 
-**Correct:**
+**Correct:** extract the CV from the paper's reported variability (e.g., SD/mean from error bars, IQR/median, or replicate scatter). Do NOT use "assumed" in input names — the validator rejects inputs with "assumed" because they indicate fabricated data rather than extracted measurements.
 ```yaml
 inputs:
-  - name: assumed_cv
+  - name: biological_cv_half_life
     value: 0.3
     units: dimensionless
     input_type: reference_value
-    rationale: "Assumed 30% CV based on typical biological variability"
+    rationale: "CV of 30% derived from reported SD/mean in Table 2 across n=6 subjects"
     source_ref: Smith2020
-    source_location: "Methods"
-    value_snippet: "..."
+    source_location: "Table 2"
+    value_snippet: "half-life 4.2 ± 1.3 days (mean ± SD, n=6)"
 ```
 ```python
 def derive_observation(inputs, sample_size, rng, n_bootstrap):
     import numpy as np
-    cv = inputs['assumed_cv']
+    cv = inputs['biological_cv_half_life']
     sigma_ln = np.sqrt(np.log(1 + cv**2))
     mu_ln = np.log(inputs['mean']) - sigma_ln**2 / 2
     return rng.lognormal(mu_ln, sigma_ln / np.sqrt(sample_size), n_bootstrap)
@@ -618,6 +618,11 @@ calibration:
         state_variables: [T_cells]
 
   identifiability_notes: "k_pro identifiable from fold-expansion; death rate not separable"
+
+# NOTE: The following fields are all TOP-LEVEL (not nested inside each other):
+#   experimental_context, study_interpretation, key_assumptions,
+#   key_study_limitations, primary_data_source, secondary_data_sources
+# Do NOT nest study_interpretation inside experimental_context — they are siblings.
 
 experimental_context:
   species: human
@@ -765,7 +770,18 @@ The schema automatically validates:
 - AlgebraicModel forward prediction matches data scale
 - Values appear in their `value_snippet` (catches hallucinations)
 - Units strings are valid (validated with Pint)
-- DOIs resolve via CrossRef
+- DOIs resolve via CrossRef; first author family name is compared.
+  Use family name only in authors list (e.g., `["Zhang"]` not `["Zhang J"]` or `["Jianfeng Zhang"]`).
+- Input names must NOT contain "assumed" — use descriptive names based on what was measured
+- `study_interpretation` must be a top-level field, NOT nested inside `experimental_context`
+- Non-nuisance parameters must exist in the QSP model (model_structure.json). If a parameter
+  is NOT a real QSP model parameter (e.g., a nuisance scaling factor, Hill coefficient, or
+  experimental condition), mark it `nuisance: true` with an inline `prior` block.
+- Forward model code must NOT use Python `if`/`else`/ternary (`x if cond else y`) on
+  param-dependent values — these cause JAX TracerBoolConversionError during MCMC.
+  Use `jnp.where(condition, if_true, if_false)` or restructure to avoid branching.
+  For guard clauses (e.g., avoiding division by zero), use `np.maximum(denominator, 1e-30)`
+  instead of `if denominator > 0`.
 - `reference_ref` values exist in the reference database
 - Structured model ParameterRole fields resolve to a parameter, input, reference, or numeric literal
 
