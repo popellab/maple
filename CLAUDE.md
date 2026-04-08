@@ -6,15 +6,13 @@ Developer guide for Claude Code when working with this repository.
 
 ## Overview
 
-MAPLE (Model-Aware Parameterization from Literature Evidence) provides tools for extracting QSP calibration targets from scientific literature and producing informative priors via joint Bayesian inference.
+MAPLE (Model-Aware Parameterization from Literature Evidence) provides schemas, validation, and extraction tooling for QSP calibration targets from scientific literature.
 
-**Two extraction workflows:**
-- **SubmodelTarget**: In vitro / preclinical data with self-contained forward models (ODE or algebraic) → joint MCMC inference (NumPyro) → marginals + Gaussian copula priors
+**Two target schemas:**
+- **SubmodelTarget**: In vitro / preclinical data with self-contained forward models (ODE or algebraic)
 - **CalibrationTarget**: Clinical / in vivo observables requiring full model simulation context, with Monte Carlo distribution derivation
 
-**Two-stage calibration:**
-- **Stage 1** (this repo): SubmodelTargets → joint MCMC (NumPyro/NUTS) → `submodel_priors.yaml` (marginals + copula)
-- **Stage 2** (qsp-sbi): CalibrationTargets + copula priors → SBI (SNPE-C) with SimBiology → final posterior
+**Inference lives in [qsp-inference](https://github.com/jeliason/qsp-inference)** — maple owns the data infrastructure (schemas, validators, extraction pipeline), while qsp-inference owns the statistical interpretation (MCMC, SBI, parameter audit).
 
 ## Installation
 
@@ -22,9 +20,6 @@ MAPLE (Model-Aware Parameterization from Literature Evidence) provides tools for
 git clone https://github.com/popellab/maple.git
 cd maple
 pip install -e .
-
-# For joint inference pipeline (NumPyro/JAX)
-pip install -e ".[inference]"
 ```
 
 ## SubmodelTarget Schema
@@ -247,7 +242,7 @@ source_relevance:
 | `tme_compatibility` | TME similarity | `low` for PDAC if source is T cell-permissive tumor |
 | `measurement_directness` | How directly was the parameter measured? | `proxy_observable` adds most uncertainty |
 
-Translation sigma is computed from all 8 axes (added in quadrature, floor of 0.15) and applied inside the likelihood during joint inference. See `yaml_to_prior.py:compute_translation_sigma()` for the full rubric.
+Translation sigma is computed from all 8 axes (added in quadrature, floor of 0.15) and applied inside the likelihood during joint inference. See `qsp_inference.submodel.prior:compute_translation_sigma()` in [qsp-inference](https://github.com/jeliason/qsp-inference) for the full rubric.
 
 ### Interactive Extraction (MCP Server)
 
@@ -268,11 +263,11 @@ The preferred way to create SubmodelTarget YAMLs is interactively via the MCP se
 **MCP tools:**
 
 - `extract_target(target_type)` — Loads the full extraction guide: multi-step workflow, prompt template, valid enum values, and hard rules. Call this before starting any extraction session.
-- `validate_target(yaml_path, priors_csv, papers_dir)` — Runs schema validation (Pydantic), prior derivation via NumPyro MCMC (bootstrap + forward model + distribution fitting + translation sigma), and snippet verification against source PDFs. `priors_csv` is required (e.g., `parameters/pdac_priors.csv`).
-- `run_joint_inference(priors_csv, submodel_dir)` — Runs joint MCMC across all targets in a directory and returns a diagnostic report.
-- `compare_inference(priors_csv, submodel_dir)` — Compares single-target vs joint inference across all SubmodelTargets.
+- `validate_target(yaml_path, priors_csv, papers_dir)` — Runs schema validation (Pydantic) and snippet verification against source PDFs. `priors_csv` is required (e.g., `parameters/pdac_priors.csv`).
 - `verify_dois(dois)` — Verifies DOIs resolve via CrossRef and returns metadata.
 - `fetch_papers_from_zotero(dois)` — Fetches PDFs from Zotero for given DOIs into the papers directory.
+
+> **Note:** Inference tools (`run_joint_inference`, `compare_inference`) have moved to [qsp-inference](https://github.com/jeliason/qsp-inference).
 
 **Typical workflow:**
 
@@ -386,88 +381,7 @@ cd8_tumor_density,CD8+ T cell density in primary tumor,CD8_T,tumor.primary,Treat
 
 ## Submodel Prior Inference
 
-Joint Bayesian inference across SubmodelTargets using NumPyro. Located in `submodel_inference.py` and `posterior_parameterizer.py`.
-
-### Pipeline
-
-```
-pdac_priors.csv (broad starting priors)
-    + SubmodelTarget YAMLs (data + forward models)
-    + parameter_groups.yaml (optional hierarchical structure)
-    → build joint NumPyro model:
-        - independent priors from CSV (non-grouped params)
-        - hierarchical priors for grouped params: k_base + tau + deltas
-        - forward models: structured algebraic, exec(algebraic code), analytical ODE, or diffrax ODE
-        - likelihoods with translation sigma in observation noise
-        - NaN guard: solver failures → -inf log-prob → NUTS rejects sample
-    → MCMC (NUTS, dense_mass=True, chain_method="vectorized")
-    → fit marginal distributions per parameter
-    → fit Gaussian copula (correlation matrix)
-    → output: submodel_priors.yaml (marginals + copula + group hyperparameters for Stage 2)
-```
-
-### Usage (Python)
-
-```python
-from maple.core.calibration.yaml_to_prior import process_targets
-
-result = process_targets(
-    priors_csv=Path("pdac_priors.csv"),
-    yaml_paths=[Path("target1.yaml"), Path("target2.yaml")],
-    output_dir=Path("priors/"),
-    plot=True,
-)
-```
-
-### CLI Usage
-
-```bash
-# Joint inference across all submodel targets
-maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ --output priors/ --plot
-
-# With reference database and CSV export
-maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ \
-    --output priors/ --export-csv updated_priors.csv --reference-db reference_values.yaml
-```
-
-### Output Format
-
-```yaml
-# submodel_priors.yaml
-metadata:
-  n_targets: 10
-  n_parameters: 13
-  n_samples: 20000
-
-parameters:
-  - name: k_apsc_prolif
-    marginal:
-      distribution: lognormal
-      mu: -0.31
-      sigma: 0.85
-      median: 0.733
-      cv: 0.95
-    source_targets: [psc_proliferation_PDAC_deriv001]
-
-copula:
-  type: gaussian
-  parameters: [k_apsc_prolif, k_apsc_death]
-  correlation:
-    - [1.0, -0.42]
-    - [-0.42, 1.0]
-```
-
-### Key Design
-
-- **Translation sigma in likelihood**: Per-target source relevance maps to a translation σ applied inside the likelihood during MCMC (not post-hoc). MCMC naturally upweights more relevant sources.
-- **Shared parameters**: Parameters with the same name across targets are sampled once and reused.
-- **Likelihood family inferred**: Bootstrap samples are fit with lognormal/gamma/inv-gamma; best by AIC determines the likelihood type.
-- **JAX-traceable**: All forward models must use `np.*` functions (mapped to `jax.numpy`). No `scipy`, no branching on parameter values.
-- **ODE support**: Analytical closed-form solutions for `exponential_growth`, `first_order_decay`, `saturation`, `two_state`, `logistic`. Numerical integration via diffrax (`Tsit5`) for `michaelis_menten` and `custom_ode`. Custom observables (e.g., `A/(Q+A)`) are exec'd with `jnp`.
-- **NaN guard**: Forward functions that return NaN (e.g., diffrax solver failure from extreme MCMC proposals) trigger a `-inf` log-probability via `numpyro.factor`, causing NUTS to reject the proposal rather than crashing.
-- **Hierarchical parameter groups**: Optional `parameter_groups.yaml` declares groups of related parameters (e.g., CAF subtype death rates) that share a latent base rate with per-member deviations. Sampling: `k_base ~ LogNormal(mu, sigma)`, `tau ~ HalfNormal(sigma_tau)`, `delta_i ~ Normal(mu_i, sigma_i)`, `k_i = k_base * exp(delta_i)`. Members with target data get pulled by observations; members without data shrink toward the group mean (partial pooling). `base_prior` is optional — when omitted, derived at runtime from CSV priors of members (recommended). Per-member `delta_prior` encodes biological ordering (e.g., quiescent cells biased toward lower death rates). See `parameter_groups.py` for the schema.
-- **Compilation cache**: JAX persistent compilation cache at `~/.cache/maple/jax_compilation_cache/`. First run compiles the full model; subsequent runs with the same structure load instantly.
-- **diffrax compatibility**: Uses `chain_method="vectorized"` (not `pmap`) to avoid diffrax `RESULTS` closure conversion bug on Apple Silicon. `NoProgressMeter()` and `max_steps=512` for faster compilation.
+**Moved to [qsp-inference](https://github.com/jeliason/qsp-inference).** Joint Bayesian inference (NumPyro MCMC, NPE, parameter audit) now lives in the `qsp_inference.submodel` package. Maple provides the schemas (`SubmodelTarget`, `SourceRelevanceAssessment`) that qsp-inference consumes.
 
 ## Package Structure
 
@@ -477,21 +391,15 @@ src/maple/
 │   ├── calibration/
 │   │   ├── submodel_target.py         # SubmodelTarget schema
 │   │   ├── calibration_target_models.py  # CalibrationTarget schema
-│   │   ├── parameter_groups.py        # Hierarchical parameter group schema + loader
-│   │   ├── submodel_inference.py      # Joint NumPyro MCMC inference
-│   │   ├── inference_comparison.py    # Single-target vs joint inference comparison
-│   │   ├── posterior_parameterizer.py # Marginal fitting + Gaussian copula
-│   │   ├── yaml_to_prior.py          # Orchestrator + CLI
-│   │   ├── julia_translator.py        # YAML → Julia/Turing.jl (legacy)
 │   │   ├── code_validator.py          # Python code validation
 │   │   ├── enums.py                   # Shared enums
 │   │   ├── exceptions.py              # Validation error hierarchy
 │   │   ├── experimental_context.py    # ExperimentalContext model
 │   │   ├── observable.py              # Observable models
 │   │   ├── scenario.py                # Scenario models
-│   │   ├── shared_models.py           # Shared Pydantic models
-│   │   ├── submodel_utils.py          # Submodel utilities
-│   │   └── validators.py              # Validation functions
+│   │   ├── shared_models.py           # Shared Pydantic models (SourceRelevanceAssessment, etc.)
+│   │   ├── snippet_validator.py       # Snippet-in-paper verification
+│   │   └── validators.py              # DOI, fuzzy matching, value validation
 │   ├── tools/
 │   │   └── view_figure.py             # Figure extraction tool
 │   ├── workflow/
@@ -546,6 +454,5 @@ pytest
 ### CLI Entry Points
 
 - `qsp-export-model` — Export SimBiology model structure to JSON
-- `maple-yaml-to-prior` — Convert SubmodelTarget YAMLs to priors via joint NumPyro MCMC (requires `--priors CSV`)
 
 For batch extraction, use the staged pipeline via `maple.extraction` (see README).
