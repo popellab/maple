@@ -16,13 +16,14 @@ MAPLE fits into a two-stage calibration pipeline:
 
 | Stage | Input | Method | Output |
 |-------|-------|--------|--------|
-| **1** (this repo) | Literature data + self-contained forward models | Joint MCMC (NumPyro/NUTS) | `submodel_priors.yaml` (marginals + copula) |
-| **2** ([qsp-sbi](https://github.com/popellab/qsp-sbi)) | Copula priors + clinical data + full QSP simulator | SBI (SNPE-C) | Final posterior |
+| **1a** (this repo) | Scientific literature | LLM extraction + Pydantic validation | SubmodelTarget / CalibrationTarget YAMLs |
+| **1b** ([qsp-inference](https://github.com/jeliason/qsp-inference)) | SubmodelTarget YAMLs + priors CSV | Joint MCMC (NumPyro/NUTS) | `submodel_priors.yaml` (marginals + copula) |
+| **2** ([qsp-inference](https://github.com/jeliason/qsp-inference)) | Copula priors + clinical data + full QSP simulator | SBI (SNPE-C) | Final posterior |
 
 ## Quick start
 
 ```bash
-pip install maple-qsp[inference]   # includes NumPyro/JAX
+pip install maple-qsp
 ```
 
 MAPLE works with any AI tool that can access your files and run Python — coding agents (Claude Code, Codex, Cursor) via [MCP](#setup), or chat UIs with code execution (Claude Cowork, ChatGPT with Code Interpreter) via the [Python API](#python-api). From your model repo, ask the agent to extract a parameter:
@@ -31,10 +32,11 @@ MAPLE works with any AI tool that can access your files and run Python — codin
 
 The agent loads the extraction guide, investigates the parameter in your model code (units, mechanistic role, Hill function inputs), searches literature for constraining data, verifies DOIs, fetches PDFs from Zotero, and then extracts the SubmodelTarget YAML with validation at each step. The agent drives the workflow and tells you what to do at each step (e.g., add a paper to Zotero, digitize a figure). Your job is to verify that extracted inputs match the paper, that the agent isn't making up assumptions, and that the forward and error models make sense for the parameter and data source.
 
-Once you have targets, run joint inference:
+Once you have targets, run joint inference via [qsp-inference](https://github.com/jeliason/qsp-inference):
 
-```bash
-maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ --output priors/ --plot
+```python
+from qsp_inference.submodel.prior import process_targets
+result = process_targets(priors_csv="pdac_priors.csv", yaml_paths=["target1.yaml", "target2.yaml"])
 ```
 
 ---
@@ -205,7 +207,6 @@ A single LLM call reviews all completed derivations for scientific soundness:
 
 Mechanical validation per target:
 - SubmodelTarget schema validation against model_structure.json
-- MCMC prior derivation (NumPyro/NUTS)
 - Snippet-in-paper verification
 - Passing targets are copied to `calibration_targets/submodel_targets/`
 
@@ -239,16 +240,13 @@ For Claude Code, Codex, Cursor, and other MCP-compatible agents. Add to `.claude
 For Claude Cowork, ChatGPT with Code Interpreter, or any environment that can `pip install` and run Python. The same tools are available as plain functions:
 
 ```python
-from maple.mcp_server import extract_target, validate_target, run_joint_inference
+from maple.mcp_server import extract_target, validate_target
 
 # Load the extraction guide
 guide = extract_target("submodel_target")
 
 # Validate a target YAML
 report = validate_target("path/to/target.yaml", "pdac_priors.csv")
-
-# Run joint inference
-report = run_joint_inference("pdac_priors.csv", "submodel_targets/")
 ```
 
 ### Tools
@@ -256,11 +254,11 @@ report = run_joint_inference("pdac_priors.csv", "submodel_targets/")
 | Tool | Purpose |
 |------|---------|
 | `extract_target(target_type)` | Load the full extraction guide (schema, workflow, enum values, hard rules) |
-| `validate_target(yaml_path, priors_csv)` | Schema validation + NumPyro MCMC prior derivation + snippet verification |
-| `run_joint_inference(priors_csv, submodel_dir)` | Joint MCMC across all targets with diagnostic report |
-| `compare_inference(priors_csv, submodel_dir)` | Single-target vs joint inference comparison |
+| `validate_target(yaml_path, priors_csv)` | Schema validation + snippet verification |
 | `verify_dois(dois)` | Verify DOIs resolve via CrossRef, return metadata |
 | `fetch_papers_from_zotero(dois)` | Copy PDFs from Zotero's local storage into paper directories |
+
+> Inference tools (`run_joint_inference`, `compare_inference`) have moved to [qsp-inference](https://github.com/jeliason/qsp-inference).
 
 ### Typical workflow
 
