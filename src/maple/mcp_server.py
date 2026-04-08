@@ -471,7 +471,7 @@ def validate_target(
 
 
 def _validate_submodel_full(yaml_path: Path, priors_csv: Path, model_structure=None) -> list[str]:
-    """Run SubmodelTarget schema validation + MCMC prior derivation."""
+    """Run SubmodelTarget schema validation."""
     lines = []
 
     # Schema validation
@@ -495,26 +495,6 @@ def _validate_submodel_full(yaml_path: Path, priors_csv: Path, model_structure=N
     except Exception as e:
         lines.append(f"FAIL: Schema validation failed.\n```\n{e}\n```\n")
         return lines
-
-    # Full prior derivation via MCMC
-    lines.append("## Prior Derivation\n")
-    try:
-        from maple.core.calibration.yaml_to_prior import format_report, process_yaml
-
-        results = process_yaml(yaml_path, priors_csv=priors_csv)
-        errors = [r for r in results if "error" in r]
-        successes = [r for r in results if "error" not in r]
-        if errors and not successes:
-            lines.append(f"FAIL: {errors[0]['error']}\n")
-        else:
-            lines.append("PASS: Prior derivation succeeded.\n")
-            lines.append("```")
-            for result in results:
-                lines.append(format_report(result))
-                lines.append("")
-            lines.append("```\n")
-    except Exception as e:
-        lines.append(f"WARNING: Prior derivation failed: {e}\n")
 
     return lines
 
@@ -567,177 +547,6 @@ def _validate_snippets_real(yaml_path: Path, papers_dir: Path | None) -> list[st
         lines.append(f"WARNING: Snippet validation failed: {e}")
 
     return lines
-
-
-@mcp.tool()
-def run_joint_inference(
-    priors_csv: str,
-    submodel_dir: str,
-    output_dir: str | None = None,
-    glob_pattern: str = "*_PDAC_deriv*.yaml",
-    num_warmup: int = 1000,
-    num_samples: int = 5000,
-    num_chains: int = 4,
-) -> str:
-    """Run joint MCMC inference across all SubmodelTarget YAMLs in a directory.
-
-    Loads starting priors from the CSV (read-only — does NOT modify it),
-    runs NumPyro NUTS across all targets jointly, fits marginal distributions,
-    computes Gaussian copula for correlated parameters, and returns a
-    diagnostic report.
-
-    Outputs submodel_priors.yaml to output_dir if provided.
-
-    Args:
-        priors_csv: Path to base priors CSV (e.g., parameters/pdac_priors.csv).
-            Read-only — never modified.
-        submodel_dir: Directory containing SubmodelTarget YAML files.
-        output_dir: Optional directory for submodel_priors.yaml output.
-        glob_pattern: Glob pattern to match YAML files in submodel_dir.
-        num_warmup: NUTS warmup iterations per chain.
-        num_samples: Post-warmup samples per chain.
-        num_chains: Number of MCMC chains.
-
-    Returns:
-        Diagnostic report with per-parameter marginals, contraction,
-        copula correlations, and MCMC convergence diagnostics.
-    """
-    from maple.core.calibration.yaml_to_prior import process_targets
-
-    yaml_dir = Path(submodel_dir)
-    if not yaml_dir.exists():
-        return f"Directory not found: {submodel_dir}"
-
-    yamls = sorted(yaml_dir.glob(glob_pattern))
-    if not yamls:
-        return f"No YAML files matching '{glob_pattern}' in {submodel_dir}"
-
-    csv_path = Path(priors_csv)
-    if not csv_path.exists():
-        return f"Priors CSV not found: {priors_csv}"
-
-    out = Path(output_dir) if output_dir else None
-
-    result = process_targets(
-        priors_csv=csv_path,
-        yaml_paths=yamls,
-        output_dir=out,
-        plot=False,
-        num_warmup=num_warmup,
-        num_samples=num_samples,
-        num_chains=num_chains,
-    )
-
-    return _format_joint_report(result, yamls)
-
-
-def _format_joint_report(result: dict, yaml_paths: list[Path]) -> str:
-    """Format joint inference result as a markdown report."""
-    lines = ["# Joint Inference Report\n"]
-
-    # Metadata
-    meta = result.get("metadata", {})
-    lines.append(f"**Targets:** {meta.get('n_targets', '?')}")
-    lines.append(f"**Parameters:** {meta.get('n_parameters', '?')}")
-    lines.append(f"**Samples:** {meta.get('n_samples', '?')}")
-    lines.append(
-        f"**MCMC:** {meta.get('num_warmup', '?')} warmup, "
-        f"{meta.get('num_samples', '?')} samples, "
-        f"{meta.get('num_chains', '?')} chains"
-    )
-    lines.append("")
-
-    # Target files
-    lines.append("## Targets\n")
-    for p in yaml_paths:
-        lines.append(f"- `{p.name}`")
-    lines.append("")
-
-    # Per-parameter marginals
-    lines.append("## Parameter Marginals\n")
-    lines.append(
-        f"| {'Parameter':<30} | {'Distribution':<12} | "
-        f"{'Median':>10} | {'CV':>6} | {'Source Targets'} |"
-    )
-    lines.append(f"|{'-'*30}:|{'-'*12}:|{'-'*10}:|{'-'*6}:|{'-'*40}|")
-
-    for p in result.get("parameters", []):
-        m = p["marginal"]
-        sources = ", ".join(p.get("source_targets", []))
-        lines.append(
-            f"| `{p['name']:<28}` | {m['distribution']:<12} | "
-            f"{m['median']:>10.4g} | {m['cv']:>6.2f} | {sources} |"
-        )
-    lines.append("")
-
-    # Translation sigmas
-    trans = result.get("translation_sigma", {})
-    if trans:
-        lines.append("## Translation Sigmas\n")
-        for target_id, info in trans.items():
-            breakdown = info.get("breakdown", {})
-            breakdown_str = ", ".join(f"{k}=+{v:.2f}" for k, v in breakdown.items() if v > 0)
-            lines.append(f"- **{target_id}**: total={info['total']:.3f} ({breakdown_str})")
-        lines.append("")
-
-    # Copula
-    copula = result.get("copula")
-    if copula:
-        lines.append("## Gaussian Copula (significant correlations)\n")
-        params = copula["parameters"]
-        corr = copula["correlation"]
-        lines.append(f"**Participants:** {len(params)} parameters\n")
-        # Show off-diagonal entries above threshold
-        pairs = []
-        for i in range(len(params)):
-            for j in range(i + 1, len(params)):
-                r = corr[i][j]
-                if abs(r) > 0.05:
-                    pairs.append((params[i], params[j], r))
-        if pairs:
-            pairs.sort(key=lambda x: -abs(x[2]))
-            lines.append(f"| {'Param A':<25} | {'Param B':<25} | {'r':>6} |")
-            lines.append(f"|{'-'*25}:|{'-'*25}:|{'-'*6}:|")
-            for a, b, r in pairs:
-                lines.append(f"| `{a:<23}` | `{b:<23}` | {r:>+.3f} |")
-        else:
-            lines.append("No significant pairwise correlations above threshold.")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-@mcp.tool()
-def compare_inference(
-    priors_csv: str,
-    submodel_dir: str,
-    glob_pattern: str = "*_PDAC_deriv*.yaml",
-    num_samples: int = 4000,
-) -> str:
-    """Run component-wise NPE inference across all SubmodelTargets.
-
-    Finds connected components of targets, runs NPE on each via scipy
-    simulation + sbi neural posterior estimation. Produces a comparison
-    report with per-parameter contraction, tension detection, and
-    diagnostics.
-
-    Args:
-        priors_csv: Path to base priors CSV (read-only).
-        submodel_dir: Directory containing SubmodelTarget YAML files.
-        glob_pattern: Glob pattern for YAML files.
-        num_samples: Number of posterior samples per component.
-
-    Returns:
-        Markdown comparison report.
-    """
-    from maple.core.calibration.inference_comparison import run_comparison
-
-    return run_comparison(
-        priors_csv=priors_csv,
-        submodel_dir=submodel_dir,
-        glob_pattern=glob_pattern,
-        num_samples=num_samples,
-    )
 
 
 # ---------------------------------------------------------------------------

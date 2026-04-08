@@ -1451,10 +1451,19 @@ class SubmodelTarget(BaseModel):
         Catches typos like source_pool: "circulating_cd8" when the input is
         named "circulating_cd8_count".
         """
-        from maple.core.calibration.submodel_utils import STRUCTURED_ALGEBRAIC_TYPES
+        _STRUCTURED_ALGEBRAIC_TYPES = {
+            "steady_state_density",
+            "steady_state_fraction",
+            "steady_state_concentration",
+            "steady_state_ratio",
+            "steady_state_proliferation_index",
+            "batch_accumulation",
+            "direct_fit",
+            "power_law",
+        }
 
         model = self.calibration.model
-        if model.type not in STRUCTURED_ALGEBRAIC_TYPES:
+        if model.type not in _STRUCTURED_ALGEBRAIC_TYPES:
             return self
 
         param_names = {p.name for p in self.calibration.parameters}

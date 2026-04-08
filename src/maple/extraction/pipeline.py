@@ -389,22 +389,6 @@ def generate_digitization_readme(assessment: dict, digitized_dir: Path) -> None:
         print(f"  wrote {readme_path}")
 
 
-def validate_prior_derivation(yaml_path: Path, priors_csv: Path) -> tuple[bool, str]:
-    """Run MCMC prior derivation on a SubmodelTarget YAML. Returns (success, report)."""
-    from maple.core.calibration.yaml_to_prior import format_report, process_yaml
-
-    results = process_yaml(yaml_path, priors_csv=priors_csv)
-    errors = [r for r in results if "error" in r]
-    successes = [r for r in results if "error" not in r]
-
-    lines = []
-    for result in results:
-        lines.append(format_report(result))
-    report = "\n".join(lines)
-
-    return (len(errors) == 0 and len(successes) > 0), report
-
-
 def validate_snippets(yaml_path: Path, papers_dir: Path | None) -> tuple[bool, str]:
     """Run snippet-in-paper validation. Returns (success, report)."""
     from maple.core.calibration.snippet_validator import validate_snippets_in_file
@@ -1811,12 +1795,7 @@ def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> No
         print(f"  [{t['target_id']}] Unit FAIL: {e}")
         unit_ok = False
 
-    # Prior derivation
-    try:
-        prior_ok, prior_report = validate_prior_derivation(output_file, priors_csv)
-    except Exception as e:
-        print(f"  [{t['target_id']}] Prior ERROR: {e}")
-        prior_ok, prior_report = False, str(e)
+    prior_ok = True  # Prior derivation moved to qsp-inference
 
     # Snippet validation
     try:
