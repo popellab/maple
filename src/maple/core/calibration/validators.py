@@ -90,8 +90,11 @@ def fuzzy_match(str1: str, str2: str, threshold: float = 0.75) -> bool:
     if not str1 or not str2:
         return False
 
-    s1 = str1.lower().strip()
-    s2 = str2.lower().strip()
+    import re as _re
+
+    # Strip HTML tags (CrossRef sometimes returns <sup>, <sub>, etc.)
+    s1 = _re.sub(r"<[^>]+>", "", str1).lower().strip()
+    s2 = _re.sub(r"<[^>]+>", "", str2).lower().strip()
 
     similarity = SequenceMatcher(None, s1, s2).ratio()
     return similarity >= threshold
@@ -907,6 +910,14 @@ def normalize_text_for_matching(text: str) -> str:
 
     result = text
 
+    # Decode escaped Unicode sequences (e.g., \u00b1 → ±) that LLMs sometimes
+    # write instead of the actual character
+    result = re.sub(
+        r"\\u([0-9a-fA-F]{4})",
+        lambda m: chr(int(m.group(1), 16)),
+        result,
+    )
+
     # Remove LaTeX super/subscripts: ^{+} -> +, _{2} -> 2
     result = re.sub(r"\^{([^}]*)}", r"\1", result)
     result = re.sub(r"_{([^}]*)}", r"\1", result)
@@ -953,8 +964,15 @@ def normalize_text_for_matching(text: str) -> str:
     # This catches cases where superscripts become space-separated in extracted text
     result = re.sub(r"(cm|mm|m|kg|mg|g|ml|l)\s+(\d)", r"\1\2", result, flags=re.IGNORECASE)
 
+    # Strip PDF font encoding artifacts (CID /H-codes from Wiley/Elsevier PDFs).
+    # These are opaque glyph references (e.g., /H11006 = ±, /H9278 = φ) that vary
+    # across publishers. Stripping them entirely is safer than mapping individually,
+    # since the snippet side won't contain them.
+    result = re.sub(r"/H\d{4,5}", " ", result)
+
     # Normalize plus-minus variations: "+/-" and "±" both -> "+-"
     result = result.replace("±", "+-")
+    result = result.replace("⫾", "+-")  # U+2AFE (pdftotext variant)
     result = result.replace("+/-", "+-")
     result = result.replace("+/−", "+-")  # unicode minus
 
@@ -1038,11 +1056,43 @@ def fuzzy_find_snippet_in_text(
     best_match = None
     window_size = int(snippet_len * 1.2)
 
-    # Sample positions to avoid O(n*m) complexity on long documents
-    step = 1 if len(text_norm) < 10000 else max(1, snippet_len // 3)
+    # Two-phase search for long documents:
+    # Phase 1: Find candidate regions using shared n-gram anchors
+    # Phase 2: Fine-grained sliding window around each anchor
+    if len(text_norm) > 10000:
+        # Build set of 8-grams from snippet
+        ngram_len = min(8, snippet_len // 2)
+        snippet_ngrams = {
+            snippet_norm[i : i + ngram_len]
+            for i in range(0, len(snippet_norm) - ngram_len + 1, ngram_len)
+        }
+        # Find all positions in text where any snippet n-gram occurs
+        candidate_positions = set()
+        for ng in snippet_ngrams:
+            start = 0
+            while True:
+                pos = text_norm.find(ng, start)
+                if pos == -1:
+                    break
+                # Add a window around this position
+                region_start = max(0, pos - snippet_len)
+                candidate_positions.add(region_start)
+                start = pos + 1
 
-    for i in range(0, len(text_norm) - snippet_len + 1, step):
-        window = text_norm[i : i + window_size]
+        # Also sample uniformly to avoid missing regions with no shared n-grams
+        uniform_step = max(1, snippet_len // 2)
+        for i in range(0, len(text_norm) - snippet_len + 1, uniform_step):
+            candidate_positions.add(i)
+
+        search_positions = sorted(candidate_positions)
+    else:
+        search_positions = range(0, len(text_norm) - snippet_len + 1)
+
+    for i in search_positions:
+        if i + window_size > len(text_norm):
+            window = text_norm[i : i + snippet_len]
+        else:
+            window = text_norm[i : i + window_size]
         score = SequenceMatcher(None, snippet_norm, window).ratio()
         if score > best_score:
             best_score = score

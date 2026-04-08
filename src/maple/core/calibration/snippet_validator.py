@@ -30,7 +30,29 @@ from maple.core.calibration.validators import fuzzy_find_snippet_in_text
 
 
 def extract_text_from_pdf(pdf_path: Path) -> str:
-    """Extract text from a local PDF file using pypdf."""
+    """Extract text from a local PDF file.
+
+    Prefers ``pdftotext`` (poppler) which handles two-column layouts correctly,
+    falling back to pypdf if pdftotext is not installed.
+    """
+    import shutil
+    import subprocess
+
+    # Prefer pdftotext (poppler) — handles multi-column PDFs without interleaving
+    if shutil.which("pdftotext"):
+        try:
+            result = subprocess.run(
+                ["pdftotext", str(pdf_path), "-"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return re.sub(r"\s+", " ", result.stdout).strip()
+        except Exception:
+            pass  # fall through to pypdf
+
+    # Fallback: pypdf
     try:
         from pypdf import PdfReader
 
@@ -93,12 +115,33 @@ def extract_pmid_from_url(url: Optional[str]) -> Optional[str]:
 
 
 def find_paper_pdf(source_tag: str, papers_dir: Path) -> Optional[Path]:
-    """Find the first PDF in papers_dir/<source_tag>/."""
+    """Find a PDF matching source_tag in papers_dir/<source_tag>/ or flat in papers_dir/.
+
+    Checks subdirectory first, then falls back to matching the source_tag
+    (e.g. "Ganusov2014") against filenames in the flat papers_dir.
+    """
+    # Prefer subdirectory layout: papers_dir/<source_tag>/*.pdf
     paper_dir = papers_dir / source_tag
-    if not paper_dir.is_dir():
-        return None
-    pdfs = list(paper_dir.glob("*.pdf"))
-    return pdfs[0] if pdfs else None
+    if paper_dir.is_dir():
+        pdfs = list(paper_dir.glob("*.pdf"))
+        if pdfs:
+            return pdfs[0]
+
+    # Fallback: match source_tag components against flat PDFs in papers_dir
+    # Extract author and year from tag like "Ganusov2014" or "denBraber2012"
+    m = re.match(r"([A-Za-z]+)(\d{4})", source_tag)
+    if m and papers_dir.is_dir():
+        author = m.group(1).lower()
+        year = m.group(2)
+        for pdf in papers_dir.glob("*.pdf"):
+            name_lower = pdf.name.lower()
+            # Strip spaces (including non-breaking \xa0), hyphens for multi-word authors
+            # e.g., "den\xa0Braber" or "Vukmanovic-Stejic" → "denbraber", "vukmanovicstejic"
+            name_collapsed = name_lower.replace(" ", "").replace("\xa0", "").replace("-", "")
+            if (author in name_lower or author in name_collapsed) and year in name_lower:
+                return pdf
+
+    return None
 
 
 def load_paper_texts(
@@ -227,6 +270,12 @@ def validate_snippets_in_file(
                 f"{inp.name} figure_excerpt ({fe.figure_id}: "
                 f"value={fe.value}) — MANUAL REVIEW REQUIRED"
             )
+
+        # Skip snippet validation for reference_value and derived_arithmetic inputs —
+        # these are unit conversions, assumed CVs, etc. where no verbatim quote exists
+        if inp.input_type in ("reference_value", "derived_arithmetic", "unit_conversion"):
+            skipped.append(f"{inp.name} ({inp.input_type} — snippet validation skipped)")
+            continue
 
         if not has_snippet and not has_table:
             if has_figure:

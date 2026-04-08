@@ -399,8 +399,10 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap) -> np.ndarray:
 
 The framework derives median, SD, and CI95 from the samples, and infers the likelihood family (lognormal/gamma/inv-gamma) via AIC. Choose the bootstrap distribution to match the data-generating process:
 - `rng.normal(mean, sd / np.sqrt(sample_size), n_bootstrap)` for mean +/- SD data
-- `rng.lognormal(np.log(mean), sd / np.sqrt(sample_size), n_bootstrap)` for positive quantities
+- Lognormal for positive quantities (see correct parametrization below)
 - `rng.poisson(count, n_bootstrap)` for count data
+
+**Lognormal parametrization (IMPORTANT):** When bootstrapping positive quantities (rates, half-lives, concentrations, cell counts), convert CV to lognormal sigma using the exact formula `sigma_ln = sqrt(log(1 + cv^2))`, NOT the approximation `sigma ≈ cv`. The approximation diverges at CV > 0.3 (e.g., at CV=1.0 it overestimates sigma by 20%). Also apply the mean-bias correction `mu_ln = log(mean) - sigma_ln^2/2` so that `E[X] = mean` exactly.
 
 All inputs are plain floats. Unit metadata is in the YAML schema for documentation.
 
@@ -409,7 +411,10 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
     import numpy as np
     mean = inputs['half_life_mean']
     sd = inputs['half_life_sd']
-    return rng.lognormal(np.log(mean), sd / mean / np.sqrt(sample_size), n_bootstrap)
+    cv = sd / mean
+    sigma_ln = np.sqrt(np.log(1 + cv**2))
+    mu_ln = np.log(mean) - sigma_ln**2 / 2
+    return rng.lognormal(mu_ln, sigma_ln / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ### Example: Inferring rate from half-life (`algebraic` fallback)
@@ -438,7 +443,9 @@ error_model:
           t_half_sd = inputs['half_life_sd']
           # Lognormal bootstrap: half-lives are positive
           cv = t_half_sd / t_half
-          return rng.lognormal(np.log(t_half), cv / np.sqrt(sample_size), n_bootstrap)
+          sigma_ln = np.sqrt(np.log(1 + cv**2))
+          mu_ln = np.log(t_half) - sigma_ln**2 / 2
+          return rng.lognormal(mu_ln, sigma_ln / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ### No Hardcoded Values
@@ -458,23 +465,25 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
     return rng.lognormal(np.log(inputs['mean']), 0.3 / np.sqrt(sample_size), n_bootstrap)
 ```
 
-**Correct:**
+**Correct:** extract the CV from the paper's reported variability (e.g., SD/mean from error bars, IQR/median, or replicate scatter). Do NOT use "assumed" in input names — the validator rejects inputs with "assumed" because they indicate fabricated data rather than extracted measurements.
 ```yaml
 inputs:
-  - name: assumed_cv
+  - name: biological_cv_half_life
     value: 0.3
     units: dimensionless
     input_type: reference_value
-    rationale: "Assumed 30% CV based on typical biological variability"
+    rationale: "CV of 30% derived from reported SD/mean in Table 2 across n=6 subjects"
     source_ref: Smith2020
-    source_location: "Methods"
-    value_snippet: "..."
+    source_location: "Table 2"
+    value_snippet: "half-life 4.2 ± 1.3 days (mean ± SD, n=6)"
 ```
 ```python
 def derive_observation(inputs, sample_size, rng, n_bootstrap):
     import numpy as np
-    cv = inputs['assumed_cv']
-    return rng.lognormal(np.log(inputs['mean']), cv / np.sqrt(sample_size), n_bootstrap)
+    cv = inputs['biological_cv_half_life']
+    sigma_ln = np.sqrt(np.log(1 + cv**2))
+    mu_ln = np.log(inputs['mean']) - sigma_ln**2 / 2
+    return rng.lognormal(mu_ln, sigma_ln / np.sqrt(sample_size), n_bootstrap)
 ```
 
 ---
@@ -601,37 +610,49 @@ calibration:
             sd = inputs['final_cells_sd']
             # Lognormal bootstrap for positive cell counts
             cv = sd / mean
-            return rng.lognormal(np.log(mean), cv / np.sqrt(sample_size), n_bootstrap)
+            sigma_ln = np.sqrt(np.log(1 + cv**2))
+            mu_ln = np.log(mean) - sigma_ln**2 / 2
+            return rng.lognormal(mu_ln, sigma_ln / np.sqrt(sample_size), n_bootstrap)
       observable:
         type: identity
         state_variables: [T_cells]
 
   identifiability_notes: "k_pro identifiable from fold-expansion; death rate not separable"
 
+# NOTE: The following fields are all TOP-LEVEL (not nested inside each other):
+#   experimental_context, study_interpretation, key_assumptions,
+#   key_study_limitations, primary_data_source, secondary_data_sources
+# Do NOT nest study_interpretation inside experimental_context — they are siblings.
+
 experimental_context:
   species: human
   system: in_vitro_primary_cells
 
-source_relevance:
-  indication_match: related
-  indication_match_justification: |
-    Human CD8+ T cells from healthy donors used to inform PDAC model.
-    T cell proliferation kinetics are conserved, but tumor-specific
-    factors (immunosuppression, antigen load) not captured.
-  species_source: human
-  species_target: human
-  source_quality: primary_human_in_vitro
-  perturbation_type: physiological_baseline
-  perturbation_relevance: |
-    Anti-CD3/CD28 stimulation is a standard activation protocol
-    that recapitulates TCR signaling without antigen specificity.
-  tme_compatibility: moderate
-  tme_compatibility_notes: |
-    In vitro expansion does not capture immunosuppressive TME of PDAC.
-    Expect proliferation rates to be upper bounds for in vivo behavior.
-  measurement_directness: direct
-  temporal_resolution: endpoint_pair
-  experimental_system: in_vitro_primary
+primary_data_source:
+  doi: "10.xxxx/example"
+  source_tag: Smith2023
+  title: "Example paper"
+  year: 2023
+  source_relevance:
+    indication_match: related
+    indication_match_justification: |
+      Human CD8+ T cells from healthy donors used to inform PDAC model.
+      T cell proliferation kinetics are conserved, but tumor-specific
+      factors (immunosuppression, antigen load) not captured.
+    species_source: human
+    species_target: human
+    source_quality: primary_human_in_vitro
+    perturbation_type: physiological_baseline
+    perturbation_relevance: |
+      Anti-CD3/CD28 stimulation is a standard activation protocol
+      that recapitulates TCR signaling without antigen specificity.
+    tme_compatibility: moderate
+    tme_compatibility_notes: |
+      In vitro expansion does not capture immunosuppressive TME of PDAC.
+      Expect proliferation rates to be upper bounds for in vivo behavior.
+    measurement_directness: direct
+    temporal_resolution: endpoint_pair
+    experimental_system: in_vitro_primary
 
 study_interpretation: "T cell expansion provides proliferation rate"
 key_assumptions:
@@ -661,9 +682,9 @@ Document mismatches in `key_study_limitations`.
 
 ---
 
-## Source Relevance Assessment (REQUIRED)
+## Source Relevance Assessment (REQUIRED, per-source)
 
-Every target MUST include a `source_relevance` block evaluating how well the source data translates to the target model.
+Every data source (`primary_data_source` and each `secondary_data_sources` entry) MUST include a `source_relevance` block evaluating how well that source's data translates to the target model. Translation sigma is computed per-measurement by combining the source-level sigmas of the inputs it uses (in quadrature, deduplicated by source).
 
 ### Indication Match
 
@@ -710,20 +731,28 @@ Every target MUST include a `source_relevance` block evaluating how well the sou
 ### Example
 
 ```yaml
-source_relevance:
-  indication_match: proxy
-  indication_match_justification: |
-    Using B16 melanoma MDSC data as proxy for PDAC. MDSCs recruited via
-    similar mechanisms but melanoma has different stromal density.
-  species_source: mouse
-  species_target: human
-  source_quality: primary_animal_in_vivo
-  perturbation_type: physiological_baseline
-  tme_compatibility: low
-  tme_compatibility_notes: |
-    Melanoma is T cell-permissive; PDAC has dense desmoplastic stroma.
-    Expect order-of-magnitude differences in recruitment rates.
-  estimated_translation_uncertainty_fold: 30.0
+primary_data_source:
+  doi: "10.xxxx/example"
+  source_tag: Jones2021
+  title: "MDSC recruitment in melanoma"
+  year: 2021
+  source_relevance:
+    indication_match: proxy
+    indication_match_justification: |
+      Using B16 melanoma MDSC data as proxy for PDAC. MDSCs recruited via
+      similar mechanisms but melanoma has different stromal density.
+    species_source: mouse
+    species_target: human
+    source_quality: primary_animal_in_vivo
+    perturbation_type: physiological_baseline
+    perturbation_relevance: "Baseline tumor-bearing state, no drug treatment."
+    tme_compatibility: low
+    tme_compatibility_notes: |
+      Melanoma is T cell-permissive; PDAC has dense desmoplastic stroma.
+      Expect order-of-magnitude differences in recruitment rates.
+    measurement_directness: direct
+    temporal_resolution: endpoint_pair
+    experimental_system: animal_in_vivo
 ```
 
 ---
@@ -741,7 +770,18 @@ The schema automatically validates:
 - AlgebraicModel forward prediction matches data scale
 - Values appear in their `value_snippet` (catches hallucinations)
 - Units strings are valid (validated with Pint)
-- DOIs resolve via CrossRef
+- DOIs resolve via CrossRef; first author family name is compared.
+  Use family name only in authors list (e.g., `["Zhang"]` not `["Zhang J"]` or `["Jianfeng Zhang"]`).
+- Input names must NOT contain "assumed" — use descriptive names based on what was measured
+- `study_interpretation` must be a top-level field, NOT nested inside `experimental_context`
+- Non-nuisance parameters must exist in the QSP model (model_structure.json). If a parameter
+  is NOT a real QSP model parameter (e.g., a nuisance scaling factor, Hill coefficient, or
+  experimental condition), mark it `nuisance: true` with an inline `prior` block.
+- Forward model code must NOT use Python `if`/`else`/ternary (`x if cond else y`) on
+  param-dependent values — these cause JAX TracerBoolConversionError during MCMC.
+  Use `jnp.where(condition, if_true, if_false)` or restructure to avoid branching.
+  For guard clauses (e.g., avoiding division by zero), use `np.maximum(denominator, 1e-30)`
+  instead of `if denominator > 0`.
 - `reference_ref` values exist in the reference database
 - Structured model ParameterRole fields resolve to a parameter, input, reference, or numeric literal
 

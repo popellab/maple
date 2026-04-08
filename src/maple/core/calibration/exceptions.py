@@ -284,6 +284,28 @@ class SnippetValueMismatchError(CalibrationReferenceError):
         return cls(message, details=errors)
 
 
+class SnippetNotInSourceError(CalibrationReferenceError):
+    """Quoted snippet text not found in the source PDF.
+
+    Anti-hallucination check: the value_snippet or table_excerpt text claimed
+    to come from a paper must actually appear (fuzzy-matched) in the PDF.
+    Failures indicate the extraction model fabricated or heavily paraphrased
+    the quote.
+    """
+
+    category = "hallucination"
+
+    @classmethod
+    def from_errors(cls, errors: List[str]) -> "SnippetNotInSourceError":
+        message = (
+            "Snippet-in-PDF validation failed (possible hallucination):\n  - "
+            + "\n  - ".join(errors)
+            + "\n\nEnsure value_snippet and table_excerpt text are verbatim "
+            "quotes from the source paper, not paraphrases."
+        )
+        return cls(message, details=errors)
+
+
 class InputReferenceError(CalibrationReferenceError):
     """A uses_inputs or input_ref references an input name that doesn't exist."""
 

@@ -16,13 +16,14 @@ MAPLE fits into a two-stage calibration pipeline:
 
 | Stage | Input | Method | Output |
 |-------|-------|--------|--------|
-| **1** (this repo) | Literature data + self-contained forward models | Joint MCMC (NumPyro/NUTS) | `submodel_priors.yaml` (marginals + copula) |
-| **2** ([qsp-sbi](https://github.com/popellab/qsp-sbi)) | Copula priors + clinical data + full QSP simulator | SBI (SNPE-C) | Final posterior |
+| **1a** (this repo) | Scientific literature | LLM extraction + Pydantic validation | SubmodelTarget / CalibrationTarget YAMLs |
+| **1b** ([qsp-inference](https://github.com/jeliason/qsp-inference)) | SubmodelTarget YAMLs + priors CSV | Joint MCMC (NumPyro/NUTS) | `submodel_priors.yaml` (marginals + copula) |
+| **2** ([qsp-inference](https://github.com/jeliason/qsp-inference)) | Copula priors + clinical data + full QSP simulator | SBI (SNPE-C) | Final posterior |
 
 ## Quick start
 
 ```bash
-pip install maple-qsp[inference]   # includes NumPyro/JAX
+pip install maple-qsp
 ```
 
 MAPLE works with any AI tool that can access your files and run Python — coding agents (Claude Code, Codex, Cursor) via [MCP](#setup), or chat UIs with code execution (Claude Cowork, ChatGPT with Code Interpreter) via the [Python API](#python-api). From your model repo, ask the agent to extract a parameter:
@@ -31,10 +32,11 @@ MAPLE works with any AI tool that can access your files and run Python — codin
 
 The agent loads the extraction guide, investigates the parameter in your model code (units, mechanistic role, Hill function inputs), searches literature for constraining data, verifies DOIs, fetches PDFs from Zotero, and then extracts the SubmodelTarget YAML with validation at each step. The agent drives the workflow and tells you what to do at each step (e.g., add a paper to Zotero, digitize a figure). Your job is to verify that extracted inputs match the paper, that the agent isn't making up assumptions, and that the forward and error models make sense for the parameter and data source.
 
-Once you have targets, run joint inference:
+Once you have targets, run joint inference via [qsp-inference](https://github.com/jeliason/qsp-inference):
 
-```bash
-maple-yaml-to-prior --priors pdac_priors.csv submodel_targets/ --output priors/ --plot
+```python
+from qsp_inference.submodel.prior import process_targets
+result = process_targets(priors_csv="pdac_priors.csv", yaml_paths=["target1.yaml", "target2.yaml"])
 ```
 
 ---
@@ -97,9 +99,126 @@ There's also a **CalibrationTarget** schema for clinical/in vivo observables (bi
 
 ---
 
-## LLM-assisted extraction
+## Batch extraction pipeline
 
-MAPLE works with any AI tool that can run Python and access your files. There are two ways to connect it:
+For extracting many parameters at once, MAPLE supports a staged batch pipeline that automates the multi-step workflow across a set of targets. Each stage caches its results per-target, so you can rerun any stage for any subset without redoing work.
+
+### Pipeline stages
+
+```
+Stage 1    Lit search          Web search for papers per target (parallel)
+Stage 1b   PDF collection      Zotero DOI lookup + interactive fetch loop
+Stage 2    Paper assessment     Read PDFs, assess data quality (parallel)
+Stage 2b   Plan review          Single LLM call reviewing all plans together
+           Digitization summary Prioritized list of figures to digitize
+  --- human digitization step (WebPlotDigitizer) ---
+Stage 3    Extract              Assemble SubmodelTarget YAMLs (parallel)
+Stage 3b   Derivation review    Single LLM call checking scientific soundness
+Stage 3c   Validate             MCMC prior derivation + unit checks + snippet matching
+```
+
+### How it works
+
+**Input**: a CSV listing target parameters:
+```csv
+target_id,parameters,cancer_type,notes
+k_IL2_sec,k_IL2_sec,PDAC,"Per-cell IL-2 secretion rate. Search for: ELISA, single-cell secretion rates."
+k_vas_growth,k_vas_growth,PDAC,"Rate law: dK/dt = k_vas_growth * C_total * VEGF/(VEGF+VEGF_50). Search for: MVD growth kinetics."
+```
+
+The `notes` field guides the lit search agent. Include rate laws, search terms, and context about what kind of data would constrain the parameter. Richer notes produce better search results.
+
+**Per-target caching**: each target gets a directory (`work/staged_extraction/{target_id}/`) with independently cached files:
+- `lit_search_results.json` (stage 1)
+- `assessment.json` (stage 2)
+- `{target_id}_*_deriv001.yaml` (stage 3)
+
+To rerun a specific stage for a specific target, delete its cache file. Other targets and stages are untouched.
+
+### Lit search (stage 1)
+
+An LLM agent with web search finds 3-5 papers per target with quantitative data matching the parameter's model role. Each candidate includes:
+- DOI (validated against CrossRef)
+- Relevance summary and mapping concerns
+- Jointly constrainable parameters (other QSP params the paper could also constrain)
+
+Notes in the targets CSV matter. A terse note like "angiogenesis rate" may return nothing, while a note including the rate law and specific search terms ("MVD growth kinetics, vascular doubling times") finds relevant papers.
+
+### PDF collection (stage 1b)
+
+PDFs are fetched from Zotero's local SQLite database by exact DOI lookup (case-insensitive). An interactive loop handles missing papers:
+1. Auto-fetch from Zotero storage
+2. Copy missing DOIs to clipboard for Zotero "Add by Identifier"
+3. Press Enter to re-fetch, 'b' to open in browser for manual download, 's' to skip
+4. Final summary of still-missing papers with clickable DOI links
+
+### Paper assessment (stage 2)
+
+Each paper is read (PDF attached to the LLM) and assessed for:
+- Data availability and location (table, text, or figure)
+- Mapping quality to the model parameter
+- Digitization need and priority (`critical` / `helpful` / `optional` / `not_needed`)
+- Paper role: `standalone`, `required_for_derivation`, `alternative`, or `validation_only`
+- Forward model suggestion and jointly constrainable parameters
+
+The output is an **extraction plan**: the minimal set of papers (and specific figures/tables) needed for one complete derivation, plus alternative plans.
+
+### Plan review (stage 2b)
+
+A single LLM call reviews all extraction plans together, checking for:
+- Proxy measurements when direct data exists in an alternative
+- Small sample sizes when larger datasets are available
+- Excessive digitization burden when simpler alternatives exist
+- Empty plans that need lit search reruns
+
+Verdicts: `proceed`, `switch_to_alt` (swaps the plan in assessment.json), `rerun_lit_search` (deletes caches, appends search guidance to targets CSV), or `defer`.
+
+### Digitization
+
+After plan review, a prioritized digitization summary shows which figures need WebPlotDigitizer treatment. Items are ranked:
+- **[REQUIRED]**: in the extraction plan and critical priority
+- By priority: critical > helpful > optional
+- Extraction plan items vs alternatives/validation
+
+Place WPD CSV exports in `work/staged_extraction/{target_id}/digitized/{source_tag}/`. The pipeline reads these automatically during extraction.
+
+### Extraction (stage 3)
+
+The LLM assembles a SubmodelTarget YAML following the extraction plan. It sees:
+- The extraction plan with explicit "FOLLOW THIS" instructions
+- Plan review reasoning for why this plan was chosen
+- Paper PDFs (filtered to plan papers only to avoid context overflow)
+- Digitized data CSVs
+- Parameter context from model_structure.json
+- Prior sanity check (current median/sigma)
+
+Output is validated against the SubmodelTarget schema before writing.
+
+### Derivation review (stage 3b)
+
+A single LLM call reviews all completed derivations for scientific soundness:
+- Forward model appropriateness
+- Input data fidelity and unit conversions
+- Biological plausibility
+- Derivation logic (circular reasoning, proxy assumptions)
+- Cross-target consistency (contradictory assumptions, redundant constraints)
+
+### Validation (stage 3c)
+
+Mechanical validation per target:
+- SubmodelTarget schema validation against model_structure.json
+- Snippet-in-paper verification
+- Passing targets are copied to `calibration_targets/submodel_targets/`
+
+### Example script
+
+Copy [`examples/staged_extraction.py`](examples/staged_extraction.py) into your model repo and edit the config section at the top (paths, model name, target range). The script is designed to be run interactively in a Jupyter/IPython notebook or copy-pasted into a REPL stage by stage.
+
+---
+
+## Interactive extraction (single target)
+
+For extracting one parameter at a time with an AI coding agent. MAPLE works with any AI tool that can run Python and access your files.
 
 ### MCP server (coding agents)
 
@@ -121,16 +240,13 @@ For Claude Code, Codex, Cursor, and other MCP-compatible agents. Add to `.claude
 For Claude Cowork, ChatGPT with Code Interpreter, or any environment that can `pip install` and run Python. The same tools are available as plain functions:
 
 ```python
-from maple.mcp_server import extract_target, validate_target, run_joint_inference
+from maple.mcp_server import extract_target, validate_target
 
 # Load the extraction guide
 guide = extract_target("submodel_target")
 
 # Validate a target YAML
 report = validate_target("path/to/target.yaml", "pdac_priors.csv")
-
-# Run joint inference
-report = run_joint_inference("pdac_priors.csv", "submodel_targets/")
 ```
 
 ### Tools
@@ -138,11 +254,11 @@ report = run_joint_inference("pdac_priors.csv", "submodel_targets/")
 | Tool | Purpose |
 |------|---------|
 | `extract_target(target_type)` | Load the full extraction guide (schema, workflow, enum values, hard rules) |
-| `validate_target(yaml_path, priors_csv)` | Schema validation + NumPyro MCMC prior derivation + snippet verification |
-| `run_joint_inference(priors_csv, submodel_dir)` | Joint MCMC across all targets with diagnostic report |
-| `compare_inference(priors_csv, submodel_dir)` | Single-target vs joint inference comparison |
+| `validate_target(yaml_path, priors_csv)` | Schema validation + snippet verification |
 | `verify_dois(dois)` | Verify DOIs resolve via CrossRef, return metadata |
 | `fetch_papers_from_zotero(dois)` | Copy PDFs from Zotero's local storage into paper directories |
+
+> Inference tools (`run_joint_inference`, `compare_inference`) have moved to [qsp-inference](https://github.com/jeliason/qsp-inference).
 
 ### Typical workflow
 
@@ -158,8 +274,6 @@ report = run_joint_inference("pdac_priors.csv", "submodel_targets/")
 8. **You** — Review inputs, forward model, and error model. Check that values match the paper, assumptions are justified, and the model makes sense for the data
 9. **Agent** — Runs `validate_target` — fixes schema, MCMC, or snippet errors
 10. Iterate steps 7-9 until validation passes
-
-There's also a batch extraction CLI (`qsp-extract`) that sends a full paper to an LLM in one shot, but the interactive approach produces better results — the forward model parameterization and error model design usually need iteration.
 
 ### Built-in safeguards
 

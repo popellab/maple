@@ -238,13 +238,13 @@ def compute(params, inputs):
             "species": "human",
             "system": "in_vitro",
         },
-        "source_relevance": make_source_relevance(),
         "study_interpretation": "Test interpretation of the study data",
         "key_assumptions": ["Assumption 1 for testing"],
         "primary_data_source": {
             "doi": "10.1234/test",
             "title": "Test Paper",
             "source_tag": "Test2023",
+            "source_relevance": make_source_relevance(),
         },
         "secondary_data_sources": [],
     }
@@ -436,13 +436,13 @@ def compute(params, inputs):
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
                 "doi": "10.1234/test",
                 "title": "Test Paper",
                 "source_tag": "Test2023",
+                "source_relevance": make_source_relevance(),
             },
             "secondary_data_sources": [],
         }
@@ -517,13 +517,13 @@ def compute(params, inputs):
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
                 "doi": "10.1234/test",
                 "title": "Test Paper",
                 "source_tag": "Test2023",
+                "source_relevance": make_source_relevance(),
             },
             "secondary_data_sources": [],
         }
@@ -786,13 +786,13 @@ class TestValidateParameterRoles:
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
                 "doi": "10.1234/test",
                 "title": "Test Paper",
                 "source_tag": "Test2023",
+                "source_relevance": make_source_relevance(),
             },
             "secondary_data_sources": [],
         }
@@ -872,13 +872,13 @@ class TestValidateParameterRoles:
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
                 "doi": "10.1234/test",
                 "title": "Test Paper",
                 "source_tag": "Test2023",
+                "source_relevance": make_source_relevance(),
             },
             "secondary_data_sources": [],
         }
@@ -1235,13 +1235,13 @@ class TestValidateSpanOrdering:
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
                 "doi": "10.1234/test",
                 "title": "Test Paper",
                 "source_tag": "Test2023",
+                "source_relevance": make_source_relevance(),
             },
             "secondary_data_sources": [],
         }
@@ -1320,13 +1320,13 @@ class TestValidateSpanOrdering:
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
                 "doi": "10.1234/test",
                 "title": "Test Paper",
                 "source_tag": "Test2023",
+                "source_relevance": make_source_relevance(),
             },
             "secondary_data_sources": [],
         }
@@ -1483,13 +1483,13 @@ class TestValidateODEModelRequirements:
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
                 "doi": "10.1234/test",
                 "title": "Test Paper",
                 "source_tag": "Test2023",
+                "source_relevance": make_source_relevance(),
             },
             "secondary_data_sources": [],
         }
@@ -1568,13 +1568,13 @@ class TestValidateODEModelRequirements:
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
                 "doi": "10.1234/test",
                 "title": "Test Paper",
                 "source_tag": "Test2023",
+                "source_relevance": make_source_relevance(),
             },
             "secondary_data_sources": [],
         }
@@ -1666,13 +1666,13 @@ class TestValidateODEModelRequirements:
                 "species": "human",
                 "system": "in_vitro",
             },
-            "source_relevance": make_source_relevance(),
             "study_interpretation": "Test interpretation",
             "key_assumptions": ["Test assumption"],
             "primary_data_source": {
                 "doi": "10.1234/test",
                 "title": "Test Paper",
                 "source_tag": "Test2023",
+                "source_relevance": make_source_relevance(),
             },
             "secondary_data_sources": [],
         }
@@ -1699,8 +1699,8 @@ class TestWarnCrossSpeciesExtrapolation:
         data = make_algebraic_target(
             input_value=10.0,
         )
-        data["source_relevance"]["species_source"] = "mouse"
-        data["source_relevance"]["species_target"] = "human"
+        data["primary_data_source"]["source_relevance"]["species_source"] = "mouse"
+        data["primary_data_source"]["source_relevance"]["species_target"] = "human"
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -1716,8 +1716,8 @@ class TestWarnCrossSpeciesExtrapolation:
         data = make_algebraic_target(
             input_value=10.0,
         )
-        data["source_relevance"]["species_source"] = "human"
-        data["source_relevance"]["species_target"] = "human"
+        data["primary_data_source"]["source_relevance"]["species_source"] = "human"
+        data["primary_data_source"]["source_relevance"]["species_target"] = "human"
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -1742,8 +1742,8 @@ class TestWarnCrossIndicationExtrapolation:
         data = make_algebraic_target(
             input_value=10.0,
         )
-        data["source_relevance"]["indication_match"] = "proxy"
-        data["source_relevance"][
+        data["primary_data_source"]["source_relevance"]["indication_match"] = "proxy"
+        data["primary_data_source"]["source_relevance"][
             "indication_match_justification"
         ] = "This is a proxy indication that requires adequate justification text for testing purposes."
 
@@ -1761,7 +1761,7 @@ class TestWarnCrossIndicationExtrapolation:
         data = make_algebraic_target(
             input_value=10.0,
         )
-        data["source_relevance"]["indication_match"] = "exact"
+        data["primary_data_source"]["source_relevance"]["indication_match"] = "exact"
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -1787,8 +1787,8 @@ class TestValidatePerturbationJustification:
             input_value=10.0,
         )
         # Set pharmacological perturbation without justification
-        data["source_relevance"]["perturbation_type"] = "pharmacological"
-        del data["source_relevance"]["perturbation_relevance"]
+        data["primary_data_source"]["source_relevance"]["perturbation_type"] = "pharmacological"
+        del data["primary_data_source"]["source_relevance"]["perturbation_relevance"]
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
@@ -1802,8 +1802,8 @@ class TestValidatePerturbationJustification:
             input_value=10.0,
         )
         # Set pharmacological perturbation with justification
-        data["source_relevance"]["perturbation_type"] = "pharmacological"
-        data["source_relevance"]["perturbation_relevance"] = (
+        data["primary_data_source"]["source_relevance"]["perturbation_type"] = "pharmacological"
+        data["primary_data_source"]["source_relevance"]["perturbation_relevance"] = (
             "The drug-induced response reflects the same biological pathway being modeled, "
             "as the mechanism of action directly targets the parameter being estimated."
         )

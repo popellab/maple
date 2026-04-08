@@ -33,7 +33,6 @@ jobs:
 
     - name: Test CLI commands are available
       run: |
-        qsp-extract --help
         qsp-export-model --help
 
   lint:
