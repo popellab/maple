@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from maple.core.calibration.parameter_groups import (
+    CascadeCut,
     DeltaPrior,
     GroupMember,
     GroupPrior,
@@ -173,6 +174,102 @@ def test_config_all_grouped_params():
     assert config.get_group_for_param("a").group_id == "g1"
     assert config.get_group_for_param("c").group_id == "g2"
     assert config.get_group_for_param("z") is None
+
+
+# =============================================================================
+# Cascade cut schema tests
+# =============================================================================
+
+
+def test_cascade_cut_schema_valid():
+    """Minimal valid cascade cut config."""
+    config = ParameterGroupsConfig(
+        cascade_cuts=[
+            CascadeCut(
+                parameter="IL1_50",
+                upstream=["target_a", "target_b"],
+                reason="Test reason",
+            )
+        ]
+    )
+    assert config.cascade_cut_params == {"IL1_50"}
+    assert config.get_upstream_targets("IL1_50") == ["target_a", "target_b"]
+    assert config.get_upstream_targets("nonexistent") == []
+
+
+def test_cascade_cut_rejects_duplicate_param():
+    """Same parameter in two cascade cuts should fail."""
+    with pytest.raises(Exception, match="multiple cascade_cuts"):
+        ParameterGroupsConfig(
+            cascade_cuts=[
+                CascadeCut(parameter="IL1_50", upstream=["t1"]),
+                CascadeCut(parameter="IL1_50", upstream=["t2"]),
+            ]
+        )
+
+
+def test_cascade_cut_rejects_group_overlap():
+    """Cascade cut parameter that is also a group member should fail."""
+    with pytest.raises(Exception, match="cascade_cut and a member"):
+        ParameterGroupsConfig(
+            groups=[
+                ParameterGroup(
+                    group_id="g1",
+                    base_prior=GroupPrior(distribution="lognormal", mu=0, sigma=1),
+                    between_member_sd=GroupPrior(distribution="half_normal", sigma=0.3),
+                    members=[
+                        GroupMember(name="IL1_50", units="nM"),
+                        GroupMember(name="IL1_50_other", units="nM"),
+                    ],
+                )
+            ],
+            cascade_cuts=[
+                CascadeCut(parameter="IL1_50", upstream=["target_a"]),
+            ],
+        )
+
+
+def test_cascade_cut_empty_upstream_rejected():
+    """Upstream must have at least 1 entry."""
+    with pytest.raises(Exception):
+        CascadeCut(parameter="IL1_50", upstream=[])
+
+
+def test_cascade_cut_params_property():
+    """cascade_cut_params returns the correct set."""
+    config = ParameterGroupsConfig(
+        cascade_cuts=[
+            CascadeCut(parameter="a", upstream=["t1"]),
+            CascadeCut(parameter="b", upstream=["t2"]),
+        ]
+    )
+    assert config.cascade_cut_params == {"a", "b"}
+
+
+def test_cascade_cut_yaml_roundtrip():
+    """Round-trip: write YAML with cascade_cuts, load it, validate."""
+    data = {
+        "groups": [],
+        "cascade_cuts": [
+            {
+                "parameter": "IL1_50",
+                "upstream": ["target_a", "target_b"],
+                "reason": "Test reason",
+            },
+            {
+                "parameter": "k_iCAF_to_myCAF",
+                "upstream": ["target_c"],
+            },
+        ],
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(data, f)
+        f.flush()
+        config = load_parameter_groups(Path(f.name))
+
+    assert len(config.cascade_cuts) == 2
+    assert config.cascade_cut_params == {"IL1_50", "k_iCAF_to_myCAF"}
+    assert config.cascade_cuts[0].upstream == ["target_a", "target_b"]
 
 
 # =============================================================================

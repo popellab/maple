@@ -202,6 +202,34 @@ class ParameterGroup(BaseModel):
         )
 
 
+class CascadeCut(BaseModel):
+    """A parameter bridge to sever between components.
+
+    Instead of merging components that share this parameter during BFS,
+    the upstream component's posterior becomes the downstream component's
+    prior for this parameter. Enables staged inference where NUTS-compatible
+    targets run first and feed into ODE components via NPE.
+
+    The cascade parameter still belongs to both components' parameter sets —
+    it just doesn't cause BFS to merge them. After the upstream component
+    runs, its posterior for this parameter is fitted as a lognormal and
+    injected as the downstream component's prior (replacing the CSV prior).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    parameter: str = Field(description="QSP parameter name that bridges two components")
+    upstream: list[str] = Field(
+        min_length=1,
+        description="Target IDs whose component is authoritative for this parameter. "
+        "Their posterior becomes the downstream prior.",
+    )
+    reason: str = Field(
+        default="",
+        description="Why this cut was made (documentation only)",
+    )
+
+
 class ParameterGroupsConfig(BaseModel):
     """Top-level config for parameter_groups.yaml."""
 
@@ -210,6 +238,12 @@ class ParameterGroupsConfig(BaseModel):
     groups: list[ParameterGroup] = Field(
         default_factory=list,
         description="List of hierarchical parameter groups",
+    )
+    cascade_cuts: list[CascadeCut] = Field(
+        default_factory=list,
+        description="Parameter bridges to sever between components. "
+        "Each cut splits a mega-component and propagates the upstream "
+        "posterior as the downstream prior for that parameter.",
     )
 
     @model_validator(mode="after")
@@ -226,10 +260,43 @@ class ParameterGroupsConfig(BaseModel):
                 seen[member.name] = group.group_id
         return self
 
+    @model_validator(mode="after")
+    def _validate_no_duplicate_cascade_params(self):
+        """Ensure no parameter appears in multiple cascade cuts."""
+        seen: set[str] = set()
+        for cut in self.cascade_cuts:
+            if cut.parameter in seen:
+                raise ValueError(f"Parameter '{cut.parameter}' appears in multiple cascade_cuts")
+            seen.add(cut.parameter)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_no_cascade_group_overlap(self):
+        """Cascade cut parameters must not also be group members.
+
+        Hierarchical sampling and cascade prior injection conflict — a
+        parameter can't simultaneously be pooled with group siblings and
+        receive an injected posterior from an upstream stage.
+        """
+        grouped = self.all_grouped_params
+        for cut in self.cascade_cuts:
+            if cut.parameter in grouped:
+                group = self.get_group_for_param(cut.parameter)
+                raise ValueError(
+                    f"Parameter '{cut.parameter}' is both a cascade_cut and a member "
+                    f"of group '{group.group_id}'. Remove it from one or the other."
+                )
+        return self
+
     @property
     def all_grouped_params(self) -> set[str]:
         """Set of all parameter names across all groups."""
         return {m.name for g in self.groups for m in g.members}
+
+    @property
+    def cascade_cut_params(self) -> set[str]:
+        """Set of parameter names that are cascade cuts."""
+        return {c.parameter for c in self.cascade_cuts}
 
     def get_group_for_param(self, param_name: str) -> Optional[ParameterGroup]:
         """Return the group containing this parameter, or None."""
@@ -237,6 +304,13 @@ class ParameterGroupsConfig(BaseModel):
             if param_name in group.member_names:
                 return group
         return None
+
+    def get_upstream_targets(self, param_name: str) -> list[str]:
+        """Return upstream target IDs for a cascade cut parameter, or []."""
+        for cut in self.cascade_cuts:
+            if cut.parameter == param_name:
+                return cut.upstream
+        return []
 
 
 # =============================================================================

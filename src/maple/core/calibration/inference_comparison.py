@@ -163,10 +163,10 @@ def _build_structured_results(
 
         diag = joint_diag.get("per_param", {}).get(pname)
         mcmc_diag = None
-        if diag:
+        if diag and "n_eff" in diag and "r_hat" in diag:
             mcmc_diag = {
-                "n_eff": round(float(diag.get("n_eff", 0))),
-                "r_hat": round(float(diag.get("r_hat", 0)), 4),
+                "n_eff": round(float(diag["n_eff"])),
+                "r_hat": round(float(diag["r_hat"]), 4),
             }
 
         param_entry = {"prior": prior, "joint": joint}
@@ -207,23 +207,62 @@ def _build_structured_results(
     }
 
 
-def _find_components(targets, param_groups):
-    """Find connected components of targets linked by shared params or groups.
+def _lightweight_parse(raw_yaml_or_dict: str | dict) -> dict | None:
+    """Extract target_id and QSP parameter names without Pydantic.
 
-    Returns list of dicts: [{"params": set[str], "targets": list[SubmodelTarget]}]
+    Accepts either a raw YAML string or an already-parsed dict.
+
+    Returns dict with 'target_id' and 'qsp_params' (set of non-nuisance param
+    names), or None if parsing fails.
+    """
+    if isinstance(raw_yaml_or_dict, dict):
+        data = raw_yaml_or_dict
+    else:
+        import yaml
+
+        try:
+            data = yaml.safe_load(raw_yaml_or_dict)
+        except Exception:
+            return None
+    if not isinstance(data, dict):
+        return None
+    target_id = data.get("target_id")
+    cal = data.get("calibration", {})
+    params = cal.get("parameters", [])
+    qsp_params = set()
+    for p in params:
+        if not p.get("nuisance", False):
+            qsp_params.add(p["name"])
+    return {"target_id": target_id, "qsp_params": qsp_params}
+
+
+def _find_components_lightweight(
+    lightweight_targets: list[dict],
+    param_groups,
+    cascade_cut_params: frozenset[str] = frozenset(),
+) -> list[dict]:
+    """Find connected components using lightweight target data.
+
+    Args:
+        lightweight_targets: List of dicts from _lightweight_parse, each with
+            'target_id', 'qsp_params', and 'filename'.
+        param_groups: Optional ParameterGroupsConfig.
+        cascade_cut_params: Parameter names that should NOT merge components
+            during BFS. Each component still includes these params in its
+            ``params`` set, but the BFS does not follow edges through them.
+
+    Returns list of dicts: [{"params": set[str], "target_filenames": list[str]}]
     """
     from collections import defaultdict, deque
 
     # Build param -> target mapping (QSP params only)
     param_to_targets = defaultdict(list)
     target_to_params = {}
-    for t in targets:
-        t_params = set()
-        for p in t.calibration.parameters:
-            if not p.nuisance:
-                t_params.add(p.name)
-                param_to_targets[p.name].append(t)
-        target_to_params[id(t)] = t_params
+    for lt in lightweight_targets:
+        fname = lt["filename"]
+        target_to_params[fname] = lt["qsp_params"]
+        for p in lt["qsp_params"]:
+            param_to_targets[p].append(fname)
 
     # Build group membership edges
     group_edges = defaultdict(set)  # param -> set of group-linked params
@@ -239,24 +278,32 @@ def _find_components(targets, param_groups):
         all_params |= param_groups.all_grouped_params
 
     # BFS to find connected components
+    # Cascade cut params are added to comp_params when encountered but do NOT
+    # propagate the BFS to other targets/groups — they act as severed edges.
+    # They are NOT marked visited so they can appear in multiple components.
     visited = set()
     components = []
     for start_p in sorted(all_params):
-        if start_p in visited:
+        if start_p in visited or start_p in cascade_cut_params:
             continue
         comp_params = set()
-        comp_targets_set = set()
+        comp_filenames = set()
         queue = deque([start_p])
         while queue:
             p = queue.popleft()
+            if p in cascade_cut_params:
+                # Include in this component but don't mark visited (so other
+                # components can also claim it) and don't propagate edges.
+                comp_params.add(p)
+                continue
             if p in visited:
                 continue
             visited.add(p)
             comp_params.add(p)
             # Link via shared targets
-            for t in param_to_targets.get(p, []):
-                comp_targets_set.add(id(t))
-                for p2 in target_to_params[id(t)]:
+            for fname in param_to_targets.get(p, []):
+                comp_filenames.add(fname)
+                for p2 in target_to_params[fname]:
                     if p2 not in visited:
                         queue.append(p2)
             # Link via group membership
@@ -264,10 +311,218 @@ def _find_components(targets, param_groups):
                 if p2 not in visited:
                     queue.append(p2)
 
-        comp_targets = [t for t in targets if id(t) in comp_targets_set]
-        components.append({"params": comp_params, "targets": comp_targets})
+        components.append({"params": comp_params, "target_filenames": sorted(comp_filenames)})
 
     return components
+
+
+# =============================================================================
+# Cascade cuts — staged inference DAG
+# =============================================================================
+
+
+def _build_stage_dag(
+    components: list[dict],
+    cascade_cuts: list,
+    lightweight_targets: list[dict],
+) -> tuple[list[list[int]], dict[str, dict]]:
+    """Build a DAG of component stages from cascade cuts.
+
+    For each cascade cut, the component containing the upstream targets
+    gets a directed edge to every other component that references the
+    cut parameter. Components are then topologically sorted into stages.
+
+    Args:
+        components: From ``_find_components_lightweight``, each with
+            ``params`` (set[str]) and ``target_filenames`` (list[str]).
+        cascade_cuts: List of ``CascadeCut`` objects.
+        lightweight_targets: For mapping target_id → component index.
+
+    Returns:
+        stages: List of lists of component indices, topologically sorted.
+            ``stages[0]`` has no upstream dependencies, etc.
+        cascade_edges: ``{param_name: {"upstream_comp": int, "downstream_comps": [int]}}``
+
+    Raises:
+        ValueError: If a cycle is detected or upstream targets are not found.
+    """
+    from collections import defaultdict, deque
+
+    if not cascade_cuts:
+        return [list(range(len(components)))], {}
+
+    # Map target_id → component index
+    target_id_to_comp: dict[str, int] = {}
+    for lt in lightweight_targets:
+        tid = lt["target_id"]
+        fname = lt["filename"]
+        for ci, comp in enumerate(components):
+            if fname in comp["target_filenames"]:
+                target_id_to_comp[tid] = ci
+                break
+
+    # Build cascade edges
+    cascade_edges: dict[str, dict] = {}
+    adj: dict[int, set[int]] = defaultdict(set)  # upstream → {downstream}
+    in_degree: dict[int, int] = {i: 0 for i in range(len(components))}
+
+    for cut in cascade_cuts:
+        # Find upstream component (must contain ALL listed upstream targets)
+        upstream_comps = set()
+        for tid in cut.upstream:
+            if tid not in target_id_to_comp:
+                raise ValueError(
+                    f"Cascade cut for '{cut.parameter}': upstream target "
+                    f"'{tid}' not found in any component"
+                )
+            upstream_comps.add(target_id_to_comp[tid])
+        if len(upstream_comps) != 1:
+            raise ValueError(
+                f"Cascade cut for '{cut.parameter}': upstream targets "
+                f"must all be in the same component, but found components "
+                f"{upstream_comps}"
+            )
+        upstream_ci = upstream_comps.pop()
+
+        # Find downstream components (all others that have this param)
+        downstream_cis = []
+        for ci, comp in enumerate(components):
+            if ci != upstream_ci and cut.parameter in comp["params"]:
+                downstream_cis.append(ci)
+
+        cascade_edges[cut.parameter] = {
+            "upstream_comp": upstream_ci,
+            "downstream_comps": downstream_cis,
+        }
+
+        for dci in downstream_cis:
+            adj[upstream_ci].add(dci)
+            in_degree[dci] = in_degree.get(dci, 0) + 1
+
+    # Topological sort (Kahn's algorithm)
+    queue = deque(ci for ci in range(len(components)) if in_degree.get(ci, 0) == 0)
+    stages: list[list[int]] = []
+    processed = set()
+
+    while queue:
+        # All nodes with in_degree 0 form the current stage
+        current_stage = sorted(queue)
+        queue.clear()
+        stages.append(current_stage)
+        for ci in current_stage:
+            processed.add(ci)
+            for dci in adj.get(ci, set()):
+                in_degree[dci] -= 1
+                if in_degree[dci] == 0:
+                    queue.append(dci)
+
+    if len(processed) < len(components):
+        unprocessed = set(range(len(components))) - processed
+        raise ValueError(
+            f"Cycle detected in cascade cuts: components {unprocessed} " f"form a dependency cycle"
+        )
+
+    return stages, cascade_edges
+
+
+def _posterior_to_prior_spec(
+    samples: np.ndarray,
+    param_name: str,
+    original_spec,
+) -> object:
+    """Convert posterior samples to a PriorSpec for downstream injection.
+
+    Fits distributions to the samples and converts the best fit to a
+    lognormal PriorSpec (the universal prior format for QSP parameters).
+
+    Args:
+        samples: 1D array of posterior samples.
+        param_name: Parameter name.
+        original_spec: Original PriorSpec from CSV (for units).
+
+    Returns:
+        PriorSpec with lognormal distribution fitted to the posterior.
+    """
+    from maple.core.calibration.submodel_inference import PriorSpec
+    from maple.core.calibration.yaml_to_prior import fit_distributions
+
+    fits = fit_distributions(samples)
+    if not fits:
+        logger.warning(
+            "Cascade: could not fit distribution to %s, using original prior",
+            param_name,
+        )
+        return original_spec
+
+    best = fits[0]
+    if best.name == "lognormal":
+        mu = best.params["mu"]
+        sigma = best.params["sigma"]
+    else:
+        # Convert any distribution to lognormal approximation via moments
+        log_samples = np.log(samples[samples > 0])
+        if len(log_samples) < 10:
+            logger.warning(
+                "Cascade: too few positive samples for %s, using original prior",
+                param_name,
+            )
+            return original_spec
+        mu = float(np.mean(log_samples))
+        sigma = float(np.std(log_samples))
+
+    return PriorSpec(
+        name=param_name,
+        distribution="lognormal",
+        units=original_spec.units,
+        mu=mu,
+        sigma=max(sigma, 0.01),  # floor to prevent degenerate priors
+    )
+
+
+def _cascade_invalidation(
+    comp_cache_info: list[dict],
+    cascade_edges: dict[str, dict],
+) -> None:
+    """Propagate cache invalidation through the cascade DAG.
+
+    If an upstream component has no cache, all downstream components
+    must also be invalidated (their priors depend on the upstream posterior).
+    """
+    from collections import deque
+
+    if not cascade_edges:
+        return
+
+    # Build forward adjacency from cascade edges
+    adj: dict[int, set[int]] = {}
+    for edge_info in cascade_edges.values():
+        uci = edge_info["upstream_comp"]
+        if uci not in adj:
+            adj[uci] = set()
+        adj[uci].update(edge_info["downstream_comps"])
+
+    # Find initially invalidated components (cache miss)
+    invalidated = set()
+    for i, cci in enumerate(comp_cache_info):
+        if cci["cached"] is None:
+            invalidated.add(i)
+
+    # BFS forward through DAG
+    queue = deque(invalidated)
+    while queue:
+        ci = queue.popleft()
+        for dci in adj.get(ci, set()):
+            if dci not in invalidated:
+                invalidated.add(dci)
+                cache_path = comp_cache_info[dci]["cache_path"]
+                if cache_path.exists():
+                    cache_path.unlink()
+                    logger.info(
+                        "Cascade-invalidated cache: %s",
+                        cache_path.name,
+                    )
+                comp_cache_info[dci]["cached"] = None
+                queue.append(dci)
 
 
 def run_comparison(
@@ -276,6 +531,7 @@ def run_comparison(
     glob_pattern: str = "*_PDAC_deriv*.yaml",
     num_samples: int = 4000,
     parameter_groups_path: str | Path | None = None,
+    invalidate_params: list[str] | None = None,
 ) -> str:
     """Run component-wise NPE inference, return comparison report.
 
@@ -285,6 +541,9 @@ def run_comparison(
         glob_pattern: Glob for YAML files.
         num_samples: Number of posterior samples per component.
         parameter_groups_path: Optional path to parameter_groups.yaml.
+        invalidate_params: Optional list of parameter names. Any cached
+            component containing at least one of these parameters will be
+            deleted and re-run.
 
     Returns:
         Markdown-formatted comparison report.
@@ -328,39 +587,35 @@ def run_comparison(
     csv_priors = load_priors_from_csv(priors_csv)
     cache = _cache_dir(submodel_dir)
 
-    # ── Load and parse all targets ──
-    targets = []
-    yaml_contents = {}  # {filename: raw_content} for cache hashing
+    # ── Lightweight parse: extract param names without Pydantic validation ──
+    yaml_contents: dict[str, str] = {}  # {filename: raw_content}
+    lightweight_targets: list[dict] = []
     for yf in yaml_files:
         try:
             raw = yf.read_text()
             yaml_contents[yf.name] = raw
-            data = yaml.safe_load(raw)
-            target = SubmodelTarget.model_validate(data)
-            targets.append(target)
+            lt = _lightweight_parse(raw)
+            if lt is not None:
+                lt["filename"] = yf.name
+                lightweight_targets.append(lt)
         except Exception as e:
-            logger.warning("Failed to load %s for joint: %s", yf.name, e)
+            logger.warning("Failed to read %s: %s", yf.name, e)
 
     all_param_names = set()
-    for t in targets:
-        for p in t.calibration.parameters:
-            if not p.nuisance:
-                all_param_names.add(p.name)
+    for lt in lightweight_targets:
+        all_param_names |= lt["qsp_params"]
     if param_groups:
         all_param_names |= param_groups.all_grouped_params
 
-    priors_content = priors_csv.read_text()
-    mcmc_config_str = f"npe:{num_samples}"
-    method_str = "npe"
-
     # ── Phase 1: Component-wise joint inference ──
-    # Find connected components (params linked by shared targets or group membership)
-    components = _find_components(targets, param_groups)
+    # Find connected components using lightweight data (no Pydantic needed)
+    cascade_cut_params = frozenset(param_groups.cascade_cut_params if param_groups else ())
+    components = _find_components_lightweight(lightweight_targets, param_groups, cascade_cut_params)
     logger.info(
         "Phase 1: %d components (largest: %d params, %d targets)",
         len(components),
         max(len(c["params"]) for c in components) if components else 0,
-        max(len(c["targets"]) for c in components) if components else 0,
+        max(len(c["target_filenames"]) for c in components) if components else 0,
     )
 
     joint_fits: dict[str, dict] = {}
@@ -368,285 +623,425 @@ def run_comparison(
     joint_samples_all: dict[str, list] = {}
 
     # Filter out components with no targets (e.g., group-only with no data)
-    active_components = [c for c in components if c["targets"]]
+    active_components = [c for c in components if c["target_filenames"]]
     logger.info("Phase 1: %d active components", len(active_components))
 
-    for ci, comp in enumerate(active_components):
-        comp_targets = comp["targets"]
+    # Invalidate cached components containing specified parameters
+    if invalidate_params:
+        invalidate_set = set(invalidate_params)
+        for comp in active_components:
+            if comp["params"] & invalidate_set:
+                comp_id = _compute_hash("\n".join(sorted(comp["params"])))
+                cache_file = cache / f"comp_{comp_id}.json"
+                if cache_file.exists():
+                    cache_file.unlink()
+                    logger.info(
+                        "Invalidated cache: %s (matched params: %s)",
+                        cache_file.name,
+                        comp["params"] & invalidate_set,
+                    )
+
+    # ── Pre-check caches to skip expensive Pydantic validation ──
+    # Cache is keyed only by component identity (sorted parameter names).
+    # No content hashing — results persist until manually invalidated via
+    # invalidate_params or by deleting .compare_cache/ files.
+    comp_cache_info: list[dict] = []
+    for comp in active_components:
         comp_params = comp["params"]
+        comp_id = _compute_hash("\n".join(sorted(comp_params)))
+        comp_cache_path = cache / f"comp_{comp_id}.json"
 
-        # Cache per component
-        comp_content = "".join(
-            yaml_contents.get(t.primary_data_source.source_tag + ".yaml", "") for t in comp_targets
+        comp_cache_info.append(
+            {
+                "comp": comp,
+                "comp_id": comp_id,
+                "cache_path": comp_cache_path,
+                "cached": _load_cache(comp_cache_path),
+            }
         )
-        # Fall back to target_id-based content hashing
-        if not comp_content:
-            comp_content = "|".join(sorted(t.target_id for t in comp_targets))
-        comp_hash = _compute_hash(comp_content, priors_content, mcmc_config_str, method_str)
-        comp_cache_path = cache / f"component_{ci}_{comp_hash}.json"
 
-        cached_comp = _load_cache(comp_cache_path)
-        if cached_comp is not None:
-            for k, v in cached_comp.get("fits", {}).items():
-                joint_fits[k] = v
-            comp_diag = cached_comp.get("diag", {})
+    # Only validate targets whose components have cache misses
+    filenames_needing_validation = set()
+    for cci in comp_cache_info:
+        if cci["cached"] is None:
+            filenames_needing_validation.update(cci["comp"]["target_filenames"])
+
+    # ── Build cascade stage DAG ──
+    if param_groups and param_groups.cascade_cuts:
+        stages, cascade_edges = _build_stage_dag(
+            active_components, param_groups.cascade_cuts, lightweight_targets
+        )
+        logger.info(
+            "Cascade: %d stages, %d cut params (%s)",
+            len(stages),
+            len(cascade_edges),
+            ", ".join(sorted(cascade_edges)),
+        )
+        # Propagate cache invalidation through the DAG
+        _cascade_invalidation(comp_cache_info, cascade_edges)
+        # Re-check which files need validation after cascade invalidation
+        filenames_needing_validation = set()
+        for cci in comp_cache_info:
+            if cci["cached"] is None:
+                filenames_needing_validation.update(cci["comp"]["target_filenames"])
+    else:
+        stages = [list(range(len(active_components)))]
+        cascade_edges = {}
+
+    n_cached = sum(1 for cci in comp_cache_info if cci["cached"] is not None)
+    n_total_targets = sum(len(c["target_filenames"]) for c in active_components)
+    logger.info(
+        "Cache: %d/%d components cached — validating %d/%d targets",
+        n_cached,
+        len(comp_cache_info),
+        len(filenames_needing_validation),
+        n_total_targets,
+    )
+
+    # ── Validate only the targets we actually need ──
+    validated_targets: dict[str, object] = {}  # {filename: SubmodelTarget}
+    for fname in filenames_needing_validation:
+        raw = yaml_contents[fname]
+        try:
+            data = yaml.safe_load(raw)
+            target = SubmodelTarget.model_validate(data)
+            validated_targets[fname] = target
+        except Exception as e:
+            logger.warning("Failed to validate %s: %s", fname, e)
+
+    # ── Staged execution ──
+    # Components run stage-by-stage. After each stage, cascade cut posteriors
+    # are fitted and injected as priors for downstream stages.
+    cascade_priors: dict[str, object] = {}  # param_name → PriorSpec from upstream
+
+    for stage_idx, stage_comp_indices in enumerate(stages):
+        if len(stages) > 1:
+            logger.info(
+                "Stage %d/%d: %d components",
+                stage_idx,
+                len(stages) - 1,
+                len(stage_comp_indices),
+            )
+
+        for ci in stage_comp_indices:
+            cci = comp_cache_info[ci]
+            comp = cci["comp"]
+            comp_params = comp["params"]
+            comp_cache_path = cci["cache_path"]
+
+            cached_comp = cci["cached"]
+            if cached_comp is not None:
+                for k, v in cached_comp.get("fits", {}).items():
+                    joint_fits[k] = v
+                comp_diag = cached_comp.get("diag", {})
+                joint_diag["num_divergences"] += comp_diag.get("num_divergences", 0)
+                for k, v in comp_diag.get("per_param", {}).items():
+                    joint_diag["per_param"][k] = v
+                for k, v in cached_comp.get("samples", {}).items():
+                    joint_samples_all[k] = v
+                # Forward PPC observables from cached components
+                if "ppc_observables" in comp_diag:
+                    if "ppc_observables" not in joint_diag:
+                        joint_diag["ppc_observables"] = []
+                    joint_diag["ppc_observables"].extend(comp_diag["ppc_observables"])
+                    joint_diag["ppc_n_total"] = joint_diag.get("ppc_n_total", 0) + comp_diag.get(
+                        "ppc_n_total", 0
+                    )
+                    joint_diag["ppc_n_covered"] = joint_diag.get(
+                        "ppc_n_covered", 0
+                    ) + comp_diag.get("ppc_n_covered", 0)
+                continue
+
+            # Resolve validated SubmodelTarget objects for this component
+            comp_targets = [
+                validated_targets[fname]
+                for fname in comp["target_filenames"]
+                if fname in validated_targets
+            ]
+            if not comp_targets:
+                logger.warning("  Component %d: no valid targets after validation", ci + 1)
+                continue
+
+            # Build prior specs for this component
+            comp_prior_specs = {k: v for k, v in csv_priors.items() if k in comp_params}
+
+            # Inject cascade priors from upstream stages
+            for pname in comp_params:
+                if pname in cascade_priors:
+                    comp_prior_specs[pname] = cascade_priors[pname]
+                    logger.info(
+                        "    Injected cascade prior for %s (mu=%.3f, sigma=%.3f)",
+                        pname,
+                        cascade_priors[pname].mu,
+                        cascade_priors[pname].sigma,
+                    )
+
+            # Find relevant parameter groups for this component
+            comp_groups = None
+            if param_groups:
+                from maple.core.calibration.parameter_groups import (
+                    ParameterGroupsConfig,
+                )
+
+                relevant = [
+                    g for g in param_groups.groups if any(m.name in comp_params for m in g.members)
+                ]
+                if relevant:
+                    comp_groups = ParameterGroupsConfig(groups=relevant)
+
+            n_p = len(comp_params)
+            n_t = len(comp_targets)
+            logger.info(
+                "  Component %d/%d: %d params, %d targets",
+                ci + 1,
+                len(comp_cache_info),
+                n_p,
+                n_t,
+            )
+
+            has_ode = any(t.calibration.forward_model.type == "custom_ode" for t in comp_targets)
+
+            try:
+                if has_ode:
+                    # NPE for ODE components only (gives SBC diagnostics)
+                    from maple.core.calibration.submodel_inference import (
+                        run_component_npe,
+                    )
+
+                    logger.info("    (NPE — ODE)")
+                    comp_samples, comp_diag = run_component_npe(
+                        comp_prior_specs,
+                        comp_targets,
+                        parameter_groups=comp_groups,
+                        num_posterior_samples=num_samples,
+                    )
+                else:
+                    # Multi-target, no ODE: NUTS is fast and exact
+                    from maple.core.calibration.submodel_inference import (
+                        run_joint_inference,
+                    )
+
+                    logger.info("    (joint MCMC — %d targets)", n_t)
+                    comp_samples, comp_diag = run_joint_inference(
+                        comp_prior_specs,
+                        comp_targets,
+                        parameter_groups=comp_groups,
+                        num_warmup=2000,
+                        num_samples=num_samples,
+                        num_chains=2,
+                    )
+            except Exception as e:
+                logger.warning("  Component %d failed: %s", ci + 1, e)
+                continue
+
+            # Fit distributions and accumulate
+            comp_fits = {}
+            for pname in sorted(comp_params):
+                if pname not in comp_samples:
+                    continue
+                fits = fit_distributions(comp_samples[pname])
+                if not fits:
+                    continue
+                best = fits[0]
+
+                if best.name == "lognormal":
+                    post_sigma = best.params["sigma"]
+                else:
+                    post_sigma = np.sqrt(np.log(1 + best.cv**2))
+
+                prior_sigma = csv_priors[pname].sigma if pname in csv_priors else 1.0
+                prior_mu = csv_priors[pname].mu if pname in csv_priors else 0.0
+                post_mu = np.log(best.median)
+
+                comp_fits[pname] = {
+                    "median": best.median,
+                    "cv": best.cv,
+                    "sigma": post_sigma,
+                    "dist": best.name,
+                    "contraction": _contraction(prior_sigma, post_sigma),
+                    "z_score": _z_score(prior_mu, post_mu, prior_sigma),
+                }
+                joint_fits[pname] = comp_fits[pname]
+
+            # Run PPC for non-NPE components (NPE does its own PPC internally)
+            if not has_ode and "ppc_coverage" not in comp_diag:
+                from maple.core.calibration.submodel_inference import (
+                    build_numpy_forward_fns,
+                    build_target_likelihoods,
+                )
+
+                ppc_fns = []
+                ppc_obs = []
+                ppc_obs_ci = []
+                ppc_obs_fits = []  # Store fit info for bootstrap sampling
+                comp_tls = build_target_likelihoods(comp_targets, comp_prior_specs)
+                for target, tl_entry in zip(comp_targets, comp_tls):
+                    fns = build_numpy_forward_fns(target)
+                    for fn, le in zip(fns, tl_entry.entries):
+                        ppc_fns.append(fn)
+                        fit = le.fit
+                        ppc_obs.append(float(fit.median))
+                        if fit.name == "lognormal" and "sigma" in fit.params:
+                            from scipy.stats import lognorm as _lognorm
+
+                            d = _lognorm(s=fit.params["sigma"], scale=fit.median)
+                            ppc_obs_ci.append([float(d.ppf(0.025)), float(d.ppf(0.975))])
+                            ppc_obs_fits.append(("lognormal", fit.median, fit.params["sigma"]))
+                        elif fit.cv and fit.cv > 0:
+                            sd = abs(fit.median) * fit.cv
+                            ppc_obs_ci.append(
+                                [float(fit.median - 1.96 * sd), float(fit.median + 1.96 * sd)]
+                            )
+                            ppc_obs_fits.append(("normal", fit.median, sd))
+                        else:
+                            ppc_obs_ci.append(None)
+                            ppc_obs_fits.append(None)
+
+                # Build observable names
+                ppc_obs_names = []
+                for target in comp_targets:
+                    for entry in target.calibration.error_model:
+                        ppc_obs_names.append(f"{target.target_id}__{entry.name}")
+
+                n_ppc = min(200, len(comp_samples.get(next(iter(comp_samples), ""), [])))
+                if n_ppc > 0 and ppc_fns:
+                    nuisance = {}
+                    for t in comp_targets:
+                        for p in t.calibration.parameters:
+                            if p.nuisance and p.prior:
+                                nuisance[p.name] = (p.prior.mu, p.prior.sigma)
+                    rng = np.random.default_rng(42)
+
+                    # Prior predictive (sample from CSV priors)
+                    prior_preds_all = [[] for _ in ppc_fns]
+                    for i in range(n_ppc):
+                        pd = {}
+                        for pn in comp_prior_specs:
+                            sp = comp_prior_specs[pn]
+                            pd[pn] = float(rng.lognormal(sp.mu, sp.sigma))
+                        for nn, (mu, sig) in nuisance.items():
+                            pd[nn] = float(rng.lognormal(mu, sig))
+                        for obs_idx, fn in enumerate(ppc_fns):
+                            try:
+                                prior_preds_all[obs_idx].append(float(fn(pd)))
+                            except Exception:
+                                pass
+
+                    n_covered = 0
+                    ppc_observables = []
+                    for obs_idx, fn in enumerate(ppc_fns):
+                        # Posterior predictive
+                        preds = []
+                        for i in range(n_ppc):
+                            pd = {
+                                pn: float(comp_samples[pn][i])
+                                for pn in comp_samples
+                                if i < len(comp_samples[pn])
+                            }
+                            for nn, (mu, sig) in nuisance.items():
+                                pd[nn] = float(rng.lognormal(mu, sig))
+                            try:
+                                preds.append(float(fn(pd)))
+                            except Exception:
+                                pass
+                        entry = {
+                            "name": (
+                                ppc_obs_names[obs_idx]
+                                if obs_idx < len(ppc_obs_names)
+                                else f"obs_{obs_idx}"
+                            ),
+                            "observed": ppc_obs[obs_idx],
+                        }
+                        if obs_idx < len(ppc_obs_ci) and ppc_obs_ci[obs_idx]:
+                            entry["obs_ci95"] = ppc_obs_ci[obs_idx]
+                        # Prior predictive samples + CI
+                        pp = prior_preds_all[obs_idx]
+                        pp_valid = [v for v in pp if np.isfinite(v) and v > 0]
+                        if len(pp_valid) >= 10:
+                            entry["prior_median"] = float(np.median(pp_valid))
+                            entry["prior_ci95"] = [
+                                float(np.percentile(pp_valid, 2.5)),
+                                float(np.percentile(pp_valid, 97.5)),
+                            ]
+                            entry["prior_samples"] = [float(v) for v in pp_valid]
+                        # Posterior predictive samples + CI
+                        preds_valid = [v for v in preds if np.isfinite(v) and v > 0]
+                        if len(preds_valid) >= 10:
+                            lo, hi = np.percentile(preds_valid, [2.5, 97.5])
+                            entry["post_median"] = float(np.median(preds_valid))
+                            entry["post_ci95"] = [float(lo), float(hi)]
+                            entry["post_samples"] = [float(v) for v in preds_valid]
+                            entry["covered"] = bool(lo <= ppc_obs[obs_idx] <= hi)
+                            if entry["covered"]:
+                                n_covered += 1
+                        # Observed bootstrap samples from fit distribution
+                        if obs_idx < len(ppc_obs_fits) and ppc_obs_fits[obs_idx]:
+                            fit_type, fit_med, fit_param = ppc_obs_fits[obs_idx]
+                            if fit_type == "lognormal":
+                                obs_samps = rng.lognormal(np.log(fit_med), fit_param, size=n_ppc)
+                            else:  # normal
+                                obs_samps = rng.normal(fit_med, fit_param, size=n_ppc)
+                            obs_samps_valid = [
+                                float(v) for v in obs_samps if np.isfinite(v) and v > 0
+                            ]
+                            if obs_samps_valid:
+                                entry["obs_samples"] = obs_samps_valid
+                        ppc_observables.append(entry)
+                    comp_diag["ppc_coverage"] = float(n_covered / len(ppc_fns)) if ppc_fns else 0
+                    comp_diag["ppc_n_covered"] = n_covered
+                    comp_diag["ppc_n_total"] = len(ppc_fns)
+                    comp_diag["ppc_observables"] = ppc_observables
+                    logger.info("    PPC: %d/%d covered", n_covered, len(ppc_fns))
+
             joint_diag["num_divergences"] += comp_diag.get("num_divergences", 0)
             for k, v in comp_diag.get("per_param", {}).items():
                 joint_diag["per_param"][k] = v
-            for k, v in cached_comp.get("samples", {}).items():
+            # Accumulate SBC results
+            if "sbc" in comp_diag:
+                if "sbc" not in joint_diag:
+                    joint_diag["sbc"] = {}
+                joint_diag["sbc"].update(comp_diag["sbc"])
+            # Accumulate PPC
+            joint_diag["ppc_n_covered"] = joint_diag.get("ppc_n_covered", 0) + comp_diag.get(
+                "ppc_n_covered", 0
+            )
+            joint_diag["ppc_n_total"] = joint_diag.get("ppc_n_total", 0) + comp_diag.get(
+                "ppc_n_total", 0
+            )
+            if "ppc_observables" in comp_diag:
+                if "ppc_observables" not in joint_diag:
+                    joint_diag["ppc_observables"] = []
+                joint_diag["ppc_observables"].extend(comp_diag["ppc_observables"])
+
+            comp_samples_list = {k: v for k, v in comp_samples.items()}
+            for k, v in comp_samples_list.items():
                 joint_samples_all[k] = v
-            continue
 
-        # Build prior specs for this component
-        comp_prior_specs = {k: v for k, v in csv_priors.items() if k in comp_params}
-
-        # Find relevant parameter groups for this component
-        comp_groups = None
-        if param_groups:
-            from maple.core.calibration.parameter_groups import (
-                ParameterGroupsConfig,
+            _save_cache(
+                comp_cache_path,
+                {
+                    "fits": comp_fits,
+                    "diag": comp_diag,
+                    "samples": comp_samples_list,
+                },
             )
 
-            relevant = [
-                g for g in param_groups.groups if any(m.name in comp_params for m in g.members)
-            ]
-            if relevant:
-                comp_groups = ParameterGroupsConfig(groups=relevant)
-
-        n_p = len(comp_params)
-        n_t = len(comp_targets)
-        logger.info(
-            "  Component %d/%d: %d params, %d targets",
-            ci + 1,
-            len(active_components),
-            n_p,
-            n_t,
-        )
-
-        has_ode = any(t.calibration.forward_model.type == "custom_ode" for t in comp_targets)
-
-        try:
-            if has_ode:
-                # NPE for ODE components only (gives SBC diagnostics)
-                from maple.core.calibration.submodel_inference import (
-                    run_component_npe,
-                )
-
-                logger.info("    (NPE — ODE)")
-                comp_samples, comp_diag = run_component_npe(
-                    comp_prior_specs,
-                    comp_targets,
-                    parameter_groups=comp_groups,
-                    num_posterior_samples=num_samples,
-                )
-            else:
-                # Multi-target, no ODE: NUTS is fast and exact
-                from maple.core.calibration.submodel_inference import (
-                    run_joint_inference,
-                )
-
-                logger.info("    (joint MCMC — %d targets)", n_t)
-                comp_samples, comp_diag = run_joint_inference(
-                    comp_prior_specs,
-                    comp_targets,
-                    parameter_groups=comp_groups,
-                    num_warmup=500,
-                    num_samples=num_samples,
-                    num_chains=1,
-                )
-        except Exception as e:
-            logger.warning("  Component %d failed: %s", ci + 1, e)
-            continue
-
-        # Fit distributions and accumulate
-        comp_fits = {}
-        for pname in sorted(comp_params):
-            if pname not in comp_samples:
-                continue
-            fits = fit_distributions(comp_samples[pname])
-            if not fits:
-                continue
-            best = fits[0]
-
-            if best.name == "lognormal":
-                post_sigma = best.params["sigma"]
-            else:
-                post_sigma = np.sqrt(np.log(1 + best.cv**2))
-
-            prior_sigma = csv_priors[pname].sigma if pname in csv_priors else 1.0
-            prior_mu = csv_priors[pname].mu if pname in csv_priors else 0.0
-            post_mu = np.log(best.median)
-
-            comp_fits[pname] = {
-                "median": best.median,
-                "cv": best.cv,
-                "sigma": post_sigma,
-                "dist": best.name,
-                "contraction": _contraction(prior_sigma, post_sigma),
-                "z_score": _z_score(prior_mu, post_mu, prior_sigma),
-            }
-            joint_fits[pname] = comp_fits[pname]
-
-        # Run PPC for non-NPE components (NPE does its own PPC internally)
-        if not has_ode and "ppc_coverage" not in comp_diag:
-            from maple.core.calibration.submodel_inference import (
-                build_numpy_forward_fns,
-                build_target_likelihoods,
-            )
-
-            ppc_fns = []
-            ppc_obs = []
-            ppc_obs_ci = []
-            ppc_obs_fits = []  # Store fit info for bootstrap sampling
-            comp_tls = build_target_likelihoods(comp_targets, comp_prior_specs)
-            for target, tl_entry in zip(comp_targets, comp_tls):
-                fns = build_numpy_forward_fns(target)
-                for fn, le in zip(fns, tl_entry.entries):
-                    ppc_fns.append(fn)
-                    fit = le.fit
-                    ppc_obs.append(float(fit.median))
-                    if fit.name == "lognormal" and "sigma" in fit.params:
-                        from scipy.stats import lognorm as _lognorm
-
-                        d = _lognorm(s=fit.params["sigma"], scale=fit.median)
-                        ppc_obs_ci.append([float(d.ppf(0.025)), float(d.ppf(0.975))])
-                        ppc_obs_fits.append(("lognormal", fit.median, fit.params["sigma"]))
-                    elif fit.cv and fit.cv > 0:
-                        sd = fit.median * fit.cv
-                        ppc_obs_ci.append(
-                            [float(fit.median - 1.96 * sd), float(fit.median + 1.96 * sd)]
-                        )
-                        ppc_obs_fits.append(("normal", fit.median, sd))
-                    else:
-                        ppc_obs_ci.append(None)
-                        ppc_obs_fits.append(None)
-
-            # Build observable names
-            ppc_obs_names = []
-            for target in comp_targets:
-                for entry in target.calibration.error_model:
-                    ppc_obs_names.append(f"{target.target_id}__{entry.name}")
-
-            n_ppc = min(200, len(comp_samples.get(next(iter(comp_samples), ""), [])))
-            if n_ppc > 0 and ppc_fns:
-                nuisance = {}
-                for t in comp_targets:
-                    for p in t.calibration.parameters:
-                        if p.nuisance and p.prior:
-                            nuisance[p.name] = (p.prior.mu, p.prior.sigma)
-                rng = np.random.default_rng(42)
-
-                # Prior predictive (sample from CSV priors)
-                prior_preds_all = [[] for _ in ppc_fns]
-                for i in range(n_ppc):
-                    pd = {}
-                    for pn in comp_prior_specs:
-                        sp = comp_prior_specs[pn]
-                        pd[pn] = float(rng.lognormal(sp.mu, sp.sigma))
-                    for nn, (mu, sig) in nuisance.items():
-                        pd[nn] = float(rng.lognormal(mu, sig))
-                    for obs_idx, fn in enumerate(ppc_fns):
-                        try:
-                            prior_preds_all[obs_idx].append(float(fn(pd)))
-                        except Exception:
-                            pass
-
-                n_covered = 0
-                ppc_observables = []
-                for obs_idx, fn in enumerate(ppc_fns):
-                    # Posterior predictive
-                    preds = []
-                    for i in range(n_ppc):
-                        pd = {
-                            pn: float(comp_samples[pn][i])
-                            for pn in comp_samples
-                            if i < len(comp_samples[pn])
-                        }
-                        for nn, (mu, sig) in nuisance.items():
-                            pd[nn] = float(rng.lognormal(mu, sig))
-                        try:
-                            preds.append(float(fn(pd)))
-                        except Exception:
-                            pass
-                    entry = {
-                        "name": (
-                            ppc_obs_names[obs_idx]
-                            if obs_idx < len(ppc_obs_names)
-                            else f"obs_{obs_idx}"
-                        ),
-                        "observed": ppc_obs[obs_idx],
-                    }
-                    if obs_idx < len(ppc_obs_ci) and ppc_obs_ci[obs_idx]:
-                        entry["obs_ci95"] = ppc_obs_ci[obs_idx]
-                    # Prior predictive samples + CI
-                    pp = prior_preds_all[obs_idx]
-                    pp_valid = [v for v in pp if np.isfinite(v) and v > 0]
-                    if len(pp_valid) >= 10:
-                        entry["prior_median"] = float(np.median(pp_valid))
-                        entry["prior_ci95"] = [
-                            float(np.percentile(pp_valid, 2.5)),
-                            float(np.percentile(pp_valid, 97.5)),
-                        ]
-                        entry["prior_samples"] = [float(v) for v in pp_valid]
-                    # Posterior predictive samples + CI
-                    preds_valid = [v for v in preds if np.isfinite(v) and v > 0]
-                    if len(preds_valid) >= 10:
-                        lo, hi = np.percentile(preds_valid, [2.5, 97.5])
-                        entry["post_median"] = float(np.median(preds_valid))
-                        entry["post_ci95"] = [float(lo), float(hi)]
-                        entry["post_samples"] = [float(v) for v in preds_valid]
-                        entry["covered"] = bool(lo <= ppc_obs[obs_idx] <= hi)
-                        if entry["covered"]:
-                            n_covered += 1
-                    # Observed bootstrap samples from fit distribution
-                    if obs_idx < len(ppc_obs_fits) and ppc_obs_fits[obs_idx]:
-                        fit_type, fit_med, fit_param = ppc_obs_fits[obs_idx]
-                        if fit_type == "lognormal":
-                            obs_samps = rng.lognormal(np.log(fit_med), fit_param, size=n_ppc)
-                        else:  # normal
-                            obs_samps = rng.normal(fit_med, fit_param, size=n_ppc)
-                        obs_samps_valid = [float(v) for v in obs_samps if np.isfinite(v) and v > 0]
-                        if obs_samps_valid:
-                            entry["obs_samples"] = obs_samps_valid
-                    ppc_observables.append(entry)
-                comp_diag["ppc_coverage"] = float(n_covered / len(ppc_fns)) if ppc_fns else 0
-                comp_diag["ppc_n_covered"] = n_covered
-                comp_diag["ppc_n_total"] = len(ppc_fns)
-                comp_diag["ppc_observables"] = ppc_observables
-                logger.info("    PPC: %d/%d covered", n_covered, len(ppc_fns))
-
-        joint_diag["num_divergences"] += comp_diag.get("num_divergences", 0)
-        for k, v in comp_diag.get("per_param", {}).items():
-            joint_diag["per_param"][k] = v
-        # Accumulate SBC results
-        if "sbc" in comp_diag:
-            if "sbc" not in joint_diag:
-                joint_diag["sbc"] = {}
-            joint_diag["sbc"].update(comp_diag["sbc"])
-        # Accumulate PPC
-        joint_diag["ppc_n_covered"] = joint_diag.get("ppc_n_covered", 0) + comp_diag.get(
-            "ppc_n_covered", 0
-        )
-        joint_diag["ppc_n_total"] = joint_diag.get("ppc_n_total", 0) + comp_diag.get(
-            "ppc_n_total", 0
-        )
-        if "ppc_observables" in comp_diag:
-            if "ppc_observables" not in joint_diag:
-                joint_diag["ppc_observables"] = []
-            joint_diag["ppc_observables"].extend(comp_diag["ppc_observables"])
-
-        comp_samples_list = {k: v for k, v in comp_samples.items()}
-        for k, v in comp_samples_list.items():
-            joint_samples_all[k] = v
-
-        _save_cache(
-            comp_cache_path,
-            {
-                "fits": comp_fits,
-                "diag": comp_diag,
-                "samples": comp_samples_list,
-            },
-        )
+        # After each stage: extract posteriors for cascade params and build
+        # priors for downstream stages
+        for param_name, edge_info in cascade_edges.items():
+            if edge_info["upstream_comp"] in stage_comp_indices:
+                if param_name in joint_samples_all:
+                    cascade_priors[param_name] = _posterior_to_prior_spec(
+                        np.array(joint_samples_all[param_name]),
+                        param_name,
+                        csv_priors[param_name],
+                    )
+                    logger.info(
+                        "  Cascade: %s posterior → prior (mu=%.3f, sigma=%.3f)",
+                        param_name,
+                        cascade_priors[param_name].mu,
+                        cascade_priors[param_name].sigma,
+                    )
 
     logger.info("Phase 1: done (%d params fitted)", len(joint_fits))
 
@@ -661,7 +1056,7 @@ def run_comparison(
         single_results=single_results,
         joint_diag=joint_diag,
         all_param_names=all_param_names,
-        n_targets=len(targets),
+        n_targets=len(lightweight_targets),
         num_samples=num_samples,
     )
     results_path = submodel_dir / "compare_inference_results.yaml"
@@ -673,7 +1068,7 @@ def run_comparison(
     lines = [
         "# Inference Comparison Report",
         "",
-        f"**Targets:** {len(targets)}",
+        f"**Targets:** {len(lightweight_targets)}",
         f"**Parameters:** {len(all_param_names)}",
         f"**Method:** Component-wise NPE ({num_samples} posterior samples)",
         "",
