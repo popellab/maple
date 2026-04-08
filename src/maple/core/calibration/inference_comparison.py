@@ -544,6 +544,28 @@ def _cascade_invalidation(
                 queue.append(dci)
 
 
+def _cleanup_orphaned_caches(cache_dir: Path, active_components: list[dict]) -> int:
+    """Delete cache files that don't match any active component.
+
+    When cascade cuts change the component structure, old mega-component
+    caches persist with stale results. This removes them so the aggregation
+    step doesn't load conflicting values.
+
+    Returns the number of orphaned files deleted.
+    """
+    active_hashes = set()
+    for comp in active_components:
+        active_hashes.add(_compute_hash("\n".join(sorted(comp["params"]))))
+    deleted = 0
+    for orphan in cache_dir.glob("comp_*.json"):
+        comp_hash = orphan.stem.replace("comp_", "")
+        if comp_hash not in active_hashes:
+            orphan.unlink()
+            logger.info("Deleted orphaned cache: %s", orphan.name)
+            deleted += 1
+    return deleted
+
+
 def run_comparison(
     priors_csv: str | Path,
     submodel_dir: str | Path,
@@ -659,6 +681,9 @@ def run_comparison(
                         cache_file.name,
                         comp["params"] & invalidate_set,
                     )
+
+    # ── Clean up orphaned caches ──
+    _cleanup_orphaned_caches(cache, active_components)
 
     # ── Pre-check caches to skip expensive Pydantic validation ──
     # Cache is keyed only by component identity (sorted parameter names).

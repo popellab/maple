@@ -223,3 +223,51 @@ def test_posterior_to_prior_spec_floor():
     result = _posterior_to_prior_spec(samples, "test", original)
 
     assert result.sigma >= 0.01
+
+
+# =============================================================================
+# Orphaned cache cleanup
+# =============================================================================
+
+
+def test_cleanup_orphaned_caches(tmp_path):
+    """Orphaned cache files (from old component structure) should be deleted."""
+    import json
+
+    from maple.core.calibration.inference_comparison import (
+        _cleanup_orphaned_caches,
+        _compute_hash,
+    )
+
+    cache_dir = tmp_path / ".compare_cache"
+    cache_dir.mkdir()
+
+    # Active components: {A, B} and {C}
+    active = [
+        {"params": {"A", "B"}, "target_filenames": ["t1.yaml"]},
+        {"params": {"C"}, "target_filenames": ["t2.yaml"]},
+    ]
+
+    # Create cache files: one matching {A, B}, one matching {C},
+    # and one orphan matching old mega-component {A, B, C}
+    for params in [{"A", "B"}, {"C"}, {"A", "B", "C"}]:
+        comp_hash = _compute_hash("\n".join(sorted(params)))
+        path = cache_dir / f"comp_{comp_hash}.json"
+        path.write_text(json.dumps({"fits": {}, "diag": {}, "samples": {}}))
+
+    assert len(list(cache_dir.glob("comp_*.json"))) == 3
+
+    deleted = _cleanup_orphaned_caches(cache_dir, active)
+
+    assert deleted == 1
+    remaining = list(cache_dir.glob("comp_*.json"))
+    assert len(remaining) == 2
+
+    # Verify the orphan ({A, B, C}) is gone
+    orphan_hash = _compute_hash("\n".join(sorted({"A", "B", "C"})))
+    assert not (cache_dir / f"comp_{orphan_hash}.json").exists()
+
+    # Verify active ones survive
+    for comp in active:
+        h = _compute_hash("\n".join(sorted(comp["params"])))
+        assert (cache_dir / f"comp_{h}.json").exists()
