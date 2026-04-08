@@ -399,6 +399,25 @@ def _build_stage_dag(
             adj[upstream_ci].add(dci)
             in_degree[dci] = in_degree.get(dci, 0) + 1
 
+    # Warn if multiple cascade params share the same upstream component —
+    # their posterior correlation will be lost (each gets an independent
+    # lognormal prior in the downstream). A joint copula-aware prior would
+    # be needed to preserve it.
+    upstream_to_params: dict[int, list[str]] = defaultdict(list)
+    for cut in cascade_cuts:
+        info = cascade_edges[cut.parameter]
+        if info["downstream_comps"]:
+            upstream_to_params[info["upstream_comp"]].append(cut.parameter)
+    for uci, params in upstream_to_params.items():
+        if len(params) > 1:
+            logger.warning(
+                "Cascade cuts %s share upstream component %d — their posterior "
+                "correlation will be lost in downstream priors. Consider a joint "
+                "copula-aware prior if these parameters are correlated.",
+                params,
+                uci,
+            )
+
     # Topological sort (Kahn's algorithm)
     queue = deque(ci for ci in range(len(components)) if in_degree.get(ci, 0) == 0)
     stages: list[list[int]] = []
