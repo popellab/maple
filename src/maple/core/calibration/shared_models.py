@@ -472,6 +472,12 @@ class Source(BaseModel):
     first_author: str = Field(description="First author last name")
     year: int = Field(description="Publication year")
     doi: Optional[str] = Field(None, description="DOI (or null)")
+    source_relevance: "ClinicalSourceRelevance" = Field(
+        description=(
+            "Structured assessment of how well this source's data translates to the target model. "
+            "Captures indication match, source quality, perturbation context, and TME compatibility."
+        ),
+    )
 
 
 class SecondarySource(BaseModel):
@@ -484,6 +490,12 @@ class SecondarySource(BaseModel):
     first_author: str = Field(description="First author last name")
     year: int = Field(description="Publication year")
     doi_or_url: Optional[str] = Field(None, description="DOI or URL (or null)")
+    source_relevance: "ClinicalSourceRelevance" = Field(
+        description=(
+            "Structured assessment of how well this source's data translates to the target model. "
+            "Captures indication match, source quality, perturbation context, and TME compatibility."
+        ),
+    )
 
 
 # ============================================================================
@@ -644,6 +656,97 @@ class DoseResponseData(BaseModel):
 # =============================================================================
 
 
+class ClinicalSourceRelevance(BaseModel):
+    """
+    Source relevance assessment for clinical/in vivo calibration targets.
+
+    Captures how well the source data translates to the target model for
+    clinical observables (biopsies, resections, blood draws). Omits the
+    measurement_directness, temporal_resolution, and experimental_system
+    axes used by SubmodelTarget (in vitro/preclinical data), since clinical
+    CalibrationTargets are always direct patient measurements.
+
+    Translation sigma is computed from the 5 core axes (indication, species,
+    source quality, perturbation, TME compatibility) added in quadrature.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Indication relevance
+    indication_match: IndicationMatch = Field(
+        description=(
+            "How well does the source indication match the target indication?\n"
+            "- exact: Same disease (e.g., PDAC data for PDAC model)\n"
+            "- related: Same organ or disease class (e.g., other pancreatic diseases)\n"
+            "- proxy: Different tissue used as mechanistic proxy (e.g., melanoma for PDAC)\n"
+            "- unrelated: No clear biological connection"
+        )
+    )
+    indication_match_justification: str = Field(
+        min_length=50,
+        description=(
+            "Justify the indication match rating. If PROXY or UNRELATED, explain "
+            "why this source is acceptable and what translation uncertainty is expected."
+        ),
+    )
+
+    # Species
+    species_source: str = Field(description="Species in the source study (human, mouse, rat, etc.)")
+    species_target: str = Field(
+        default="human", description="Target species for the model (usually 'human')"
+    )
+
+    # Source quality
+    source_quality: SourceQuality = Field(
+        description=(
+            "Quality tier of the primary data source.\n"
+            "IMPORTANT: 'non_peer_reviewed' includes Wikipedia, preprints, and "
+            "unreviewed sources. Avoid if possible; if used, document rationale."
+        )
+    )
+
+    # Perturbation context
+    perturbation_type: PerturbationType = Field(
+        description=(
+            "Type of experimental perturbation in the source study.\n"
+            "If 'pharmacological' or 'genetic_perturbation', explain in "
+            "perturbation_relevance how this relates to physiological parameter values."
+        )
+    )
+    perturbation_relevance: str = Field(
+        min_length=30,
+        description=(
+            "Explain relevance of the experimental perturbation to the physiological "
+            "parameter being estimated. Required even for physiological_baseline to "
+            "document the observational context."
+        ),
+    )
+
+    # TME compatibility
+    tme_compatibility: TMECompatibility = Field(
+        description=(
+            "Tumor microenvironment compatibility assessment.\n"
+            "- high: Source TME similar to target (e.g., both desmoplastic)\n"
+            "- moderate: Some TME differences that may affect values\n"
+            "- low: Major differences (e.g., T cell-permissive model for T cell-excluded tumor)"
+        ),
+    )
+    tme_compatibility_notes: str = Field(
+        min_length=30,
+        description=(
+            "Notes on TME differences and their expected impact on the observable. "
+            "E.g., 'Treatment-naive PDAC with characteristic desmoplastic, "
+            "immune-excluded TME matching model assumptions.'"
+        ),
+    )
+
+    # Computed (machine-populated, not user-facing)
+    validation_warnings: Optional[List[str]] = Field(
+        default=None,
+        description="Validation warnings generated by automated checks (populated by validators)",
+    )
+
+
 class SourceRelevanceAssessment(BaseModel):
     """
     Structured assessment of source-to-target relevance for calibration targets.
@@ -760,3 +863,8 @@ class SourceRelevanceAssessment(BaseModel):
         default=None,
         description="Validation warnings generated by automated checks (populated by validators)",
     )
+
+
+# Rebuild models that use forward references to ClinicalSourceRelevance
+Source.model_rebuild()
+SecondarySource.model_rebuild()
