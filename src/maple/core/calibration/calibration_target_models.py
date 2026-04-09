@@ -59,7 +59,6 @@ from maple.core.calibration.shared_models import (
     ModelingAssumption,
     SecondarySource,
     Source,
-    SourceRelevanceAssessment,
 )
 from maple.core.calibration.validators import (
     check_value_in_text,
@@ -455,14 +454,29 @@ class CalibrationTarget(BaseModel):
         default_factory=list, description="Secondary data sources (reference values, constants)"
     )
 
-    # --- Source relevance (optional for CalibrationTarget, required for SubmodelTarget) ---
-    source_relevance: Optional[SourceRelevanceAssessment] = Field(
-        default=None,
-        description=(
-            "Structured assessment of how well the source data translates to the target model. "
-            "Optional for CalibrationTarget (typically exact-match human clinical data). "
-            "Captures indication match, source quality, perturbation context, and TME compatibility."
-        ),
+    # --- Footer fields (metadata about the file, not LLM-generated) ---
+    calibration_target_id: Optional[str] = Field(
+        default=None, description="Unique calibration target identifier"
+    )
+    cancer_type: Optional[str] = Field(default=None, description="Cancer type (e.g., 'PDAC')")
+    tags: List[str] = Field(default_factory=list, description="Metadata tags")
+    derivation_id: Optional[str] = Field(default=None, description="Unique derivation identifier")
+    derivation_timestamp: Optional[str] = Field(
+        default=None, description="ISO timestamp of derivation"
+    )
+
+    # --- Extraction metadata (optional, recorded by extraction pipeline) ---
+    logfire_trace_id: Optional[str] = Field(
+        default=None, description="Logfire trace ID for extraction provenance"
+    )
+    extraction_model: Optional[str] = Field(
+        default=None, description="LLM model used for extraction"
+    )
+    extraction_reasoning_effort: Optional[str] = Field(
+        default=None, description="Reasoning effort level used during extraction"
+    )
+    exclusion_reason: Optional[str] = Field(
+        default=None, description="Reason this target was excluded from active use"
     )
 
     @classmethod
@@ -913,12 +927,15 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_source_quality_peer_reviewed(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag non-peer-reviewed sources."""
-        if self.source_relevance is None:
+        if self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
 
-        if self.source_relevance.source_quality == SourceQuality.NON_PEER_REVIEWED:
+        if (
+            self.primary_data_source.source_relevance.source_quality
+            == SourceQuality.NON_PEER_REVIEWED
+        ):
             warnings.warn(
                 "source_relevance.source_quality is 'non_peer_reviewed'. "
                 "Prefer peer-reviewed primary literature for calibration targets. "
@@ -931,12 +948,12 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def warn_cross_indication_extrapolation(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag proxy/unrelated indication extrapolation."""
-        if self.source_relevance is None:
+        if self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
 
-        sr = self.source_relevance
+        sr = self.primary_data_source.source_relevance
         if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
             warnings.warn(
                 f"Cross-indication extrapolation: indication_match='{sr.indication_match.value}'. "
@@ -949,12 +966,12 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_pharmacological_perturbation_justification(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag pharmacological perturbation without relevance explanation."""
-        if self.source_relevance is None:
+        if self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
 
-        sr = self.source_relevance
+        sr = self.primary_data_source.source_relevance
         if sr.perturbation_type == PerturbationType.PHARMACOLOGICAL:
             if not sr.perturbation_relevance:
                 warnings.warn(
@@ -969,12 +986,12 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_genetic_perturbation_justification(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag genetic perturbation without relevance explanation."""
-        if self.source_relevance is None:
+        if self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
 
-        sr = self.source_relevance
+        sr = self.primary_data_source.source_relevance
         if sr.perturbation_type == PerturbationType.GENETIC:
             if not sr.perturbation_relevance:
                 warnings.warn(
@@ -989,12 +1006,12 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_low_tme_compatibility_notes(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag low TME compatibility without documentation."""
-        if self.source_relevance is None:
+        if self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
 
-        sr = self.source_relevance
+        sr = self.primary_data_source.source_relevance
         if sr.tme_compatibility == TMECompatibility.LOW:
             if not sr.tme_compatibility_notes:
                 warnings.warn(
@@ -1008,12 +1025,12 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def warn_cross_species_extrapolation(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag cross-species extrapolation."""
-        if self.source_relevance is None:
+        if self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
 
-        sr = self.source_relevance
+        sr = self.primary_data_source.source_relevance
         if sr.species_source != sr.species_target:
             warnings.warn(
                 f"Cross-species extrapolation: {sr.species_source} → {sr.species_target}. "

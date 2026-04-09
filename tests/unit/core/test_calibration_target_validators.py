@@ -37,6 +37,19 @@ from pydantic import ValidationError
 from maple.core.calibration import CalibrationTarget, Observable
 
 
+DEFAULT_CLINICAL_SOURCE_RELEVANCE = {
+    "indication_match": "exact",
+    "indication_match_justification": "Human PDAC resection specimens with quantitative IHC, directly matching the model indication.",
+    "species_source": "human",
+    "species_target": "human",
+    "source_quality": "primary_human_clinical",
+    "perturbation_type": "physiological_baseline",
+    "perturbation_relevance": "Observational measurement of treatment-naive PDAC specimens; no experimental perturbation applied.",
+    "tme_compatibility": "high",
+    "tme_compatibility_notes": "Treatment-naive PDAC with characteristic desmoplastic, immune-excluded TME matching model assumptions.",
+}
+
+
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -173,6 +186,7 @@ def golden_calibration_target_data():
             "doi": "10.1000/test.2020.001",
             "first_author": "Smith",
             "year": 2020,
+            "source_relevance": DEFAULT_CLINICAL_SOURCE_RELEVANCE,
         },
         "secondary_data_sources": [],
     }
@@ -297,6 +311,7 @@ class TestCalibrationTargetValidators:
                     "first_author": "Jones",
                     "year": 2019,
                     "doi_or_url": "10.9999/invalid.secondary.doi",
+                    "source_relevance": DEFAULT_CLINICAL_SOURCE_RELEVANCE,
                 }
             ]
 
@@ -340,6 +355,7 @@ class TestCalibrationTargetValidators:
                     "first_author": "Jones",
                     "year": 2019,
                     "doi_or_url": "10.1000/secondary.2019.001",
+                    "source_relevance": DEFAULT_CLINICAL_SOURCE_RELEVANCE,
                 }
             ]
 
@@ -363,6 +379,7 @@ class TestCalibrationTargetValidators:
                 "first_author": "Database",
                 "year": 2023,
                 "doi_or_url": "https://example.com/reference-values",
+                "source_relevance": DEFAULT_CLINICAL_SOURCE_RELEVANCE,
             }
         ]
 
@@ -1526,6 +1543,7 @@ class TestRegressionBugsFromLogfire:
                     "first_author": "Jones",
                     "year": 2019,
                     "doi_or_url": "10.1000/secondary.2019.001",
+                    "source_relevance": DEFAULT_CLINICAL_SOURCE_RELEVANCE,
                 }
             ]
 

@@ -77,6 +77,7 @@ from maple.core.calibration.shared_models import (
     SecondarySource,
     Snippet,
     Source,
+    ClinicalSourceRelevance,
     SourceRelevanceAssessment,
     SubmodelInput,
     TrajectoryData,
@@ -195,6 +196,7 @@ __all__ = [
     "UncertaintyType",
     "TrajectoryData",
     "DoseResponseData",
+    "ClinicalSourceRelevance",
     "SourceRelevanceAssessment",
     # Validators
     "resolve_doi",
