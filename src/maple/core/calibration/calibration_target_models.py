@@ -11,6 +11,7 @@ See docs/calibration_target_design.md for full specification.
 
 import ast
 from enum import Enum
+from pathlib import Path
 from typing import List, Optional, Union
 
 import numpy as np
@@ -66,6 +67,21 @@ from maple.core.calibration.validators import (
     fuzzy_match,
     resolve_doi,
 )
+
+
+def _resolve_species_units(info: ValidationInfo) -> dict:
+    """Extract species_units dict from validation context.
+
+    Accepts context={'model_structure': ModelStructure or path}.
+    """
+    if not info.context or "model_structure" not in info.context:
+        raise ValueError("Validation context is required. Pass context={'model_structure': ...}")
+    ms = info.context["model_structure"]
+    if isinstance(ms, (str, Path)):
+        from maple.core.model_structure import ModelStructure
+
+        ms = ModelStructure.from_json(ms)
+    return ms.to_species_units()
 
 
 # ============================================================================
@@ -694,7 +710,7 @@ class CalibrationTarget(BaseModel):
         Validator: Check that observable code executes and returns correct units.
 
         Requires context:
-            species_units: Dict mapping species names to unit strings (from species_units.json)
+            model_structure: ModelStructure instance or path to model_structure.json
         """
         # Skip for IsolatedSystemTarget (uses submodel.observable instead)
         if type(self).__name__ == "IsolatedSystemTarget":
@@ -707,12 +723,7 @@ class CalibrationTarget(BaseModel):
         )
         import pint
 
-        # Get species_units from context
-        if not info.context:
-            raise ValueError(
-                "Validation context is required. Pass context={'species_units': {...}}"
-            )
-        species_units = info.context["species_units"]
+        species_units = _resolve_species_units(info)
 
         # Use CodeValidator for syntax and signature checks
         result = validate_code_block(
@@ -1395,18 +1406,13 @@ class CalibrationTarget(BaseModel):
         Validator: Check that observable.species exist in model.
 
         Requires context:
-            species_units: Dict mapping species names to unit strings (from species_units.json)
+            model_structure: ModelStructure instance or path to model_structure.json
         """
         # Skip for IsolatedSystemTarget (uses submodel.observable instead)
         if type(self).__name__ == "IsolatedSystemTarget":
             return self
 
-        # Get species_units from context
-        if not info.context:
-            raise ValueError(
-                "Validation context is required. Pass context={'species_units': {...}}"
-            )
-        species_units = info.context["species_units"]
+        species_units = _resolve_species_units(info)
         available_species = set(species_units.keys())
 
         # Check all observable species exist

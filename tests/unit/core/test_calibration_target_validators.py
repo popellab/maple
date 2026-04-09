@@ -43,14 +43,42 @@ from maple.core.calibration import CalibrationTarget, Observable
 
 
 @pytest.fixture
-def species_units():
-    """Minimal species_units for testing validators."""
-    return {
-        "V_T.C1": {"units": "cell", "description": "Tumor cells"},
-        "V_T.CD8": {"units": "cell", "description": "CD8+ T cells"},
-        "V_T.Treg": {"units": "cell", "description": "Regulatory T cells"},
-        "V_T.TGFb": {"units": "nanomolarity", "description": "TGF-beta concentration"},
-    }
+def model_structure():
+    """Minimal ModelStructure for testing validators."""
+    from maple.core.model_structure import ModelStructure, ModelSpecies
+
+    return ModelStructure(
+        species=[
+            ModelSpecies(
+                name="V_T.C1",
+                compartment="V_T",
+                base_name="C1",
+                units="cell",
+                description="Tumor cells",
+            ),
+            ModelSpecies(
+                name="V_T.CD8",
+                compartment="V_T",
+                base_name="CD8",
+                units="cell",
+                description="CD8+ T cells",
+            ),
+            ModelSpecies(
+                name="V_T.Treg",
+                compartment="V_T",
+                base_name="Treg",
+                units="cell",
+                description="Regulatory T cells",
+            ),
+            ModelSpecies(
+                name="V_T.TGFb",
+                compartment="V_T",
+                base_name="TGFb",
+                units="nanomolarity",
+                description="TGF-beta concentration",
+            ),
+        ],
+    )
 
 
 @pytest.fixture
@@ -188,11 +216,11 @@ class TestCalibrationTargetGolden:
     """Test that valid CalibrationTarget passes all validators."""
 
     def test_golden_yaml_passes_all_validators(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Test that golden YAML passes all 11 validators (including scale/control char)."""
         target = CalibrationTarget.model_validate(
-            golden_calibration_target_data, context={"species_units": species_units}
+            golden_calibration_target_data, context={"model_structure": model_structure}
         )
 
         assert target is not None
@@ -214,7 +242,7 @@ class TestCalibrationTargetValidators:
     """Tests for individual CalibrationTarget validators."""
 
     def test_observable_required_for_calibration_target(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """CalibrationTarget must have observable field - it's required for full model targets."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -222,23 +250,23 @@ class TestCalibrationTargetValidators:
         del data["observable"]
 
         with pytest.raises(ValidationError, match="observable"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_validate_doi_resolution_fails_on_invalid_doi(
-        self, mock_crossref_failure, species_units, golden_calibration_target_data
+        self, mock_crossref_failure, model_structure, golden_calibration_target_data
     ):
         """Validator should reject DOI that doesn't resolve."""
         data = copy.deepcopy(golden_calibration_target_data)
         data["primary_data_source"]["doi"] = "10.9999/invalid.doi"
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         assert "failed to resolve" in error_str
 
     def test_validate_secondary_doi_resolution_fails_on_invalid_doi(
-        self, species_units, golden_calibration_target_data
+        self, model_structure, golden_calibration_target_data
     ):
         """Validator should reject secondary source DOI that doesn't resolve."""
         # Mock primary DOI success but secondary DOI failure
@@ -273,14 +301,14 @@ class TestCalibrationTargetValidators:
             ]
 
             with pytest.raises(ValidationError) as exc_info:
-                CalibrationTarget.model_validate(data, context={"species_units": species_units})
+                CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
             error_str = str(exc_info.value)
             assert "failed to resolve" in error_str
             assert "jones_2019" in error_str or "Secondary source" in error_str
 
     def test_validate_secondary_title_match_fails_on_title_mismatch(
-        self, species_units, golden_calibration_target_data
+        self, model_structure, golden_calibration_target_data
     ):
         """Validator should reject secondary source with mismatched title."""
 
@@ -316,14 +344,14 @@ class TestCalibrationTargetValidators:
             ]
 
             with pytest.raises(ValidationError) as exc_info:
-                CalibrationTarget.model_validate(data, context={"species_units": species_units})
+                CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
             error_str = str(exc_info.value).lower()
             assert "title mismatch" in error_str or "mismatch" in error_str
             assert "jones_2019" in error_str or "secondary" in error_str
 
     def test_validate_secondary_source_url_skipped(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should skip URL validation for secondary sources (only DOIs)."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -339,12 +367,14 @@ class TestCalibrationTargetValidators:
         ]
 
         # Should pass - URL is not validated via CrossRef
-        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
         assert target is not None
         assert len(target.secondary_data_sources) == 1
 
     def test_validate_title_match_fails_on_title_mismatch(
-        self, species_units, golden_calibration_target_data
+        self, model_structure, golden_calibration_target_data
     ):
         """Validator should reject mismatched paper title."""
 
@@ -363,13 +393,13 @@ class TestCalibrationTargetValidators:
             data = copy.deepcopy(golden_calibration_target_data)
 
             with pytest.raises(ValidationError) as exc_info:
-                CalibrationTarget.model_validate(data, context={"species_units": species_units})
+                CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
             error_str = str(exc_info.value).lower()
             assert "title mismatch" in error_str or "mismatch" in error_str
 
     def test_validate_observable_code_units_fails_on_wrong_units(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject observable code with wrong output units."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -381,13 +411,13 @@ class TestCalibrationTargetValidators:
         )
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value).lower()
         assert "dimensionality mismatch" in error_str or "unit" in error_str
 
     def test_validate_derivation_code_fails_on_value_mismatch(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject when computed values don't match reported."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -395,13 +425,13 @@ class TestCalibrationTargetValidators:
         data["empirical_data"]["median"] = [200.0]
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value).lower()
         assert "does not match" in error_str and "median" in error_str
 
     def test_validate_source_refs_fails_on_undefined_source(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject input.source_ref that doesn't reference defined source."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -409,13 +439,13 @@ class TestCalibrationTargetValidators:
         data["empirical_data"]["inputs"][0]["source_ref"] = "nonexistent_source"
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         assert "not defined" in error_str.lower() and "nonexistent_source" in error_str
 
     def test_validate_input_values_in_snippets_fails_on_missing_value(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject inputs where value is not found in value_snippet."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -426,14 +456,14 @@ class TestCalibrationTargetValidators:
         ] = "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         assert "not found in value_snippet" in error_str or "SnippetValueMismatch" in error_str
         assert "999" in error_str
 
     def test_validate_input_values_in_snippets_passes_with_matching_value(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should pass when values are found in snippets."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -444,11 +474,13 @@ class TestCalibrationTargetValidators:
         ] = "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
 
         # Should pass
-        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
         assert target is not None
 
     def test_validate_input_values_in_snippets_handles_scientific_notation(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should find values in scientific notation format (Unicode superscripts)."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -460,11 +492,13 @@ class TestCalibrationTargetValidators:
         ] = "CD8+ T cell to tumor cell ratio: 1×10⁰ (mean from Figure 2)"
 
         # Should pass - Unicode superscript notation is handled
-        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
         assert target is not None
 
     def test_validate_input_values_in_snippets_handles_percentage(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should find percentage values (0.5 in snippet as 50%)."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -476,11 +510,13 @@ class TestCalibrationTargetValidators:
         ] = "The log-scale SD was 50% of the mean"
 
         # Should pass - percentage format is handled (0.5 matches "50%")
-        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
         assert target is not None
 
     def test_validate_input_values_in_snippets_fails_on_vector_missing_value(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject vector inputs where not all values are in snippet."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -497,14 +533,14 @@ class TestCalibrationTargetValidators:
         data["empirical_data"]["index_type"] = "time"
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         assert "not found in value_snippet" in error_str or "SnippetValueMismatch" in error_str
         assert "999" in error_str
 
     def test_validate_species_exist_fails_on_missing_species(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject species not in model."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -515,13 +551,13 @@ class TestCalibrationTargetValidators:
         ]
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         assert "not found in model" in error_str and "NonexistentSpecies" in error_str
 
     def test_validate_inputs_used_warns_on_unused_inputs(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should warn about unused inputs."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -538,14 +574,14 @@ class TestCalibrationTargetValidators:
 
         with pytest.warns(UserWarning, match="not used in distribution_code"):
             target = CalibrationTarget.model_validate(
-                data, context={"species_units": species_units}
+                data, context={"model_structure": model_structure}
             )
 
         assert target is not None
         assert len(target.empirical_data.assumptions) == 1
 
     def test_validate_observable_code_fails_on_scalar_return(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject observable code that returns a scalar instead of array."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -559,13 +595,13 @@ class TestCalibrationTargetValidators:
         )
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value).lower()
         assert "returned a scalar" in error_str or "time indexing" in error_str
 
     def test_validate_observable_code_fails_on_wrong_length_array(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject observable code that returns array with wrong length."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -581,13 +617,13 @@ class TestCalibrationTargetValidators:
         )
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value).lower()
         assert "wrong length" in error_str or "time series" in error_str
 
     def test_validate_clipping_suggests_lognormal(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should warn when distribution_code uses clipping."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -612,13 +648,13 @@ class TestCalibrationTargetValidators:
 
         with pytest.warns(UserWarning, match="clipping.*lognormal"):
             target = CalibrationTarget.model_validate(
-                data, context={"species_units": species_units}
+                data, context={"model_structure": model_structure}
             )
 
         assert target is not None
 
     def test_validate_large_variance_documented(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should warn when CV > 50% is not documented in limitations."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -682,13 +718,13 @@ class TestCalibrationTargetValidators:
 
         with pytest.warns(UserWarning, match="Large coefficient of variation"):
             target = CalibrationTarget.model_validate(
-                data, context={"species_units": species_units}
+                data, context={"model_structure": model_structure}
             )
 
         assert target is not None
 
     def test_validate_distribution_choice_for_size_data(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should warn when using normal distribution for size data."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -762,13 +798,13 @@ class TestCalibrationTargetValidators:
 
         with pytest.warns(UserWarning, match="normal distribution for size.*lognormal"):
             target = CalibrationTarget.model_validate(
-                data, context={"species_units": species_units}
+                data, context={"model_structure": model_structure}
             )
 
         assert target is not None
 
     def test_validate_conversion_factors_documented(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should warn when observable code has undocumented magic numbers."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -785,13 +821,13 @@ class TestCalibrationTargetValidators:
 
         with pytest.warns(UserWarning, match="numeric literals.*conversion factors"):
             target = CalibrationTarget.model_validate(
-                data, context={"species_units": species_units}
+                data, context={"model_structure": model_structure}
             )
 
         assert target is not None
 
     def test_validate_dimensionality_error(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should catch Pint DimensionalityError (e.g., day² → day)."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -807,10 +843,10 @@ class TestCalibrationTargetValidators:
         )
 
         with pytest.raises(ValidationError, match="unit error"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_validate_undefined_unit_error(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should catch Pint UndefinedUnitError for unknown units."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -826,10 +862,10 @@ class TestCalibrationTargetValidators:
         )
 
         with pytest.raises(ValidationError, match="unit error"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_validate_control_characters(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should catch control characters in text fields."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -837,10 +873,10 @@ class TestCalibrationTargetValidators:
         data["study_interpretation"] = "CD8+ T cell\x03 density in PDAC"  # ETX control character
 
         with pytest.raises(ValidationError, match="Control character"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_validate_hardcoded_constants_fails_on_inline_units(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject hardcoded numbers with units in observable code."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -856,10 +892,10 @@ class TestCalibrationTargetValidators:
         )
 
         with pytest.raises(ValidationError, match="Hardcoded numeric constants"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_validate_hardcoded_constants_passes_with_observable_constants(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should pass when constants are properly declared and accessed."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -886,19 +922,31 @@ class TestCalibrationTargetValidators:
         )
 
         # Should pass without error
-        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
         assert target is not None
 
     def test_validate_species_completeness_warns_on_missing_related_species(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should warn when measuring 'total' but missing related species."""
+        from maple.core.model_structure import ModelStructure, ModelSpecies
+
         data = copy.deepcopy(golden_calibration_target_data)
-        # Add CD8_exh to species_units for this test
-        species_units_extended = {
-            **species_units,
-            "V_T.CD8_exh": {"units": "cell", "description": "Exhausted CD8+ T cells"},
-        }
+        # Add CD8_exh to model structure for this test
+        ms_extended = ModelStructure(
+            species=list(model_structure.species)
+            + [
+                ModelSpecies(
+                    name="V_T.CD8_exh",
+                    compartment="V_T",
+                    base_name="CD8_exh",
+                    units="cell",
+                    description="Exhausted CD8+ T cells",
+                ),
+            ],
+        )
         # Change study_interpretation to mention "total" CD8 (validator checks study_interpretation, not description)
         data["study_interpretation"] = "Total CD8+ T cell to tumor cell ratio measured via IHC"
         # Only use V_T.CD8, missing V_T.CD8_exh
@@ -906,12 +954,12 @@ class TestCalibrationTargetValidators:
 
         with pytest.warns(UserWarning, match="CD8.*CD8_exh"):
             target = CalibrationTarget.model_validate(
-                data, context={"species_units": species_units_extended}
+                data, context={"model_structure": ms_extended}
             )
         assert target is not None
 
     def test_validate_support_fails_on_invalid_value(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should reject invalid support type."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -919,10 +967,10 @@ class TestCalibrationTargetValidators:
         data["observable"]["support"] = "invalid_support"
 
         with pytest.raises(ValidationError, match="support"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_support_field_accepts_valid_types(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Validator should accept all valid support types."""
         valid_support_types = [
@@ -939,7 +987,7 @@ class TestCalibrationTargetValidators:
 
             # Should not raise for valid support types
             target = CalibrationTarget.model_validate(
-                data, context={"species_units": species_units}
+                data, context={"model_structure": model_structure}
             )
             assert target.observable.support == support_type
 
@@ -953,7 +1001,7 @@ class TestVectorValuedCalibrationTarget:
     """Tests for vector-valued calibration target data (time-course, dose-response)."""
 
     def test_vector_calibration_target_passes_validation(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Test that vector-valued calibration target passes all validators."""
         from maple.core.calibration import IndexType
@@ -1032,7 +1080,9 @@ class TestVectorValuedCalibrationTarget:
             "    }"
         )
 
-        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
 
         assert target is not None
         assert len(target.empirical_data.median) == 4
@@ -1041,7 +1091,7 @@ class TestVectorValuedCalibrationTarget:
         assert target.empirical_data.index_unit == "day"
 
     def test_vector_input_length_mismatch_fails(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Test that vector input with wrong length fails validation."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -1073,10 +1123,10 @@ class TestVectorValuedCalibrationTarget:
         ]
 
         with pytest.raises(ValidationError, match="length"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_output_length_mismatch_fails(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Test that output arrays with different lengths fail validation."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -1096,10 +1146,10 @@ class TestVectorValuedCalibrationTarget:
         data["empirical_data"]["index_type"] = "time"
 
         with pytest.raises(ValidationError, match="(length mismatch|must be a list of 4)"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_index_fields_required_together(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Test that index_values requires index_unit and index_type."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -1117,10 +1167,10 @@ class TestVectorValuedCalibrationTarget:
         # Missing index_unit and index_type
 
         with pytest.raises(ValidationError, match="index_unit is required"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_scalar_data_requires_length_one(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Test that scalar data (no index_values) must have length-1 arrays."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -1132,10 +1182,10 @@ class TestVectorValuedCalibrationTarget:
         # No index_values set
 
         with pytest.raises(ValidationError, match="outputs must have length 1"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_ci95_wrong_inner_structure_fails(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Test that ci95 entries must be [lower, upper] pairs."""
         data = copy.deepcopy(golden_calibration_target_data)
@@ -1144,7 +1194,7 @@ class TestVectorValuedCalibrationTarget:
         data["empirical_data"]["ci95"] = [[0.3, 1.0, 2.7]]  # Wrong!
 
         with pytest.raises(ValidationError, match="\\[lower, upper\\] pair"):
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
 
 # ============================================================================
@@ -1161,7 +1211,7 @@ class TestRegressionBugsFromLogfire:
     """
 
     def test_inferred_estimate_skips_snippet_validation(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """REGRESSION: INFERRED_ESTIMATE inputs should skip snippet value check.
 
@@ -1225,12 +1275,14 @@ class TestRegressionBugsFromLogfire:
         data["empirical_data"]["ci95"] = [[0.355, 2.565]]
 
         # Should pass - inferred_estimate skips snippet validation
-        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
         assert target is not None
         assert target.empirical_data.inputs[0].input_type == InputType.INFERRED_ESTIMATE
 
     def test_snippet_error_suggests_inferred_estimate(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """REGRESSION: Snippet validation error should suggest inferred_estimate option.
 
@@ -1247,14 +1299,14 @@ class TestRegressionBugsFromLogfire:
         ] = "cultures maintained without losing viability"  # No 0.95 here
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         assert "not found in value_snippet" in error_str
         assert "inferred_estimate" in error_str  # NEW: suggests the alternative
 
     def test_figure_source_type_skips_snippet_validation(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Figure-sourced inputs should skip snippet value check.
 
@@ -1294,12 +1346,14 @@ class TestRegressionBugsFromLogfire:
         ]
 
         # Should pass - figure source_type skips snippet validation
-        target = CalibrationTarget.model_validate(data, context={"species_units": species_units})
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
         assert target is not None
         assert target.empirical_data.inputs[0].source_type == SourceType.FIGURE
 
     def test_snippet_error_mentions_figure_source_type(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """Snippet validation error should mention source_type='figure' as option.
 
@@ -1315,14 +1369,14 @@ class TestRegressionBugsFromLogfire:
         ] = "See Figure 3B for CD8 density across the cohort"
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         assert "not found in value_snippet" in error_str
         assert "source_type='figure'" in error_str
 
     def test_distribution_code_array_error_has_helpful_message(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """REGRESSION: "setting an array element with a sequence" error should explain fix.
 
@@ -1347,7 +1401,7 @@ class TestRegressionBugsFromLogfire:
         )
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         # Should include error context and guidance for missing keys
@@ -1356,7 +1410,7 @@ class TestRegressionBugsFromLogfire:
         assert "inputs" in error_str.lower() or "assumptions" in error_str.lower()
 
     def test_pint_quantity_missing_error_has_helpful_message(
-        self, species_units, golden_calibration_target_data, mock_crossref_success
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         """REGRESSION: "median_obs must be Pint Quantity" error should explain fix.
 
@@ -1380,7 +1434,7 @@ class TestRegressionBugsFromLogfire:
         )
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         assert "Pint Quantity" in error_str
@@ -1388,7 +1442,7 @@ class TestRegressionBugsFromLogfire:
         assert "reattach" in error_str.lower() or "units" in error_str.lower()
 
     def test_crossref_empty_title_skips_validation(
-        self, species_units, golden_calibration_target_data
+        self, model_structure, golden_calibration_target_data
     ):
         """REGRESSION: CrossRef returning empty title should skip validation, not fail.
 
@@ -1412,12 +1466,12 @@ class TestRegressionBugsFromLogfire:
 
             # Should pass - empty CrossRef title means we skip title validation
             target = CalibrationTarget.model_validate(
-                data, context={"species_units": species_units}
+                data, context={"model_structure": model_structure}
             )
             assert target is not None
 
     def test_doi_error_has_verification_link(
-        self, mock_crossref_failure, species_units, golden_calibration_target_data
+        self, mock_crossref_failure, model_structure, golden_calibration_target_data
     ):
         """REGRESSION: DOI resolution error should include verification URL.
 
@@ -1429,7 +1483,7 @@ class TestRegressionBugsFromLogfire:
         data["primary_data_source"]["doi"] = "10.9999/nonexistent.doi"
 
         with pytest.raises(ValidationError) as exc_info:
-            CalibrationTarget.model_validate(data, context={"species_units": species_units})
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value)
         assert "failed to resolve" in error_str
@@ -1437,7 +1491,7 @@ class TestRegressionBugsFromLogfire:
         assert "doi.org" in error_str.lower() or "verify" in error_str.lower()
 
     def test_secondary_crossref_empty_title_skips_validation(
-        self, species_units, golden_calibration_target_data
+        self, model_structure, golden_calibration_target_data
     ):
         """REGRESSION: Secondary source with empty CrossRef title should skip validation.
 
@@ -1477,7 +1531,7 @@ class TestRegressionBugsFromLogfire:
 
             # Should pass - empty CrossRef title means we skip title validation
             target = CalibrationTarget.model_validate(
-                data, context={"species_units": species_units}
+                data, context={"model_structure": model_structure}
             )
             assert target is not None
             assert len(target.secondary_data_sources) == 1

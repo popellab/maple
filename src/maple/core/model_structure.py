@@ -188,6 +188,23 @@ class ModelStructure(BaseModel):
         with open(path, "w") as f:
             json.dump(self.model_dump(), f, indent=2)
 
+    def to_species_units(self) -> dict[str, dict[str, str]]:
+        """Return flat {name: {units, description}} dict for backward compatibility.
+
+        Includes species, parameters, and compartments — the same format
+        as the legacy species_units.json.
+        """
+        result: dict[str, dict[str, str]] = {}
+        for s in self.species:
+            result[s.name] = {"units": s.units, "description": s.description}
+        for p in self.parameters:
+            if p.name not in result:
+                result[p.name] = {"units": p.units, "description": p.description}
+        for c in self.compartments:
+            if c.name not in result:
+                result[c.name] = {"units": c.volume_units, "description": c.description}
+        return result
+
     # =========================================================================
     # Basic queries
     # =========================================================================
