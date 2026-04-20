@@ -453,7 +453,7 @@ def validate_target(
         )
     elif is_calibration:
         report_lines.append("**Type:** CalibrationTarget\n")
-        report_lines.extend(_validate_calibration(data))
+        report_lines.extend(_validate_calibration(data, model_structure=model_structure))
     else:
         report_lines.append(
             "**Type:** Unknown (could not detect target_id or calibration_target_id)\n"
@@ -499,14 +499,17 @@ def _validate_submodel_full(yaml_path: Path, priors_csv: Path, model_structure=N
     return lines
 
 
-def _validate_calibration(data: dict) -> list[str]:
+def _validate_calibration(data: dict, model_structure=None) -> list[str]:
     """Run CalibrationTarget schema validation."""
     lines = []
     lines.append("## Schema Validation\n")
     try:
         from maple.core.calibration.calibration_target_models import CalibrationTarget
 
-        target = CalibrationTarget.model_validate(data)
+        context = {}
+        if model_structure is not None:
+            context["model_structure"] = model_structure
+        target = CalibrationTarget.model_validate(data, context=context or None)
         lines.append("PASS: Schema validation succeeded.\n")
         lines.append(f"- calibration_target_id: `{target.calibration_target_id}`")
         lines.append("")
