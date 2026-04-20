@@ -1781,12 +1781,25 @@ class CalibrationTarget(BaseModel):
         # Extract all names accessed from 'inputs' dict
         used_input_names = set()
 
+        # Pre-compute the set of candidate input names for string-constant lookup below.
+        candidate_names = {inp.name for inp in self.empirical_data.inputs} | {
+            a.name for a in self.empirical_data.assumptions
+        }
+
         class InputAccessVisitor(ast.NodeVisitor):
             def visit_Subscript(self, node):
                 # Look for inputs['name'] or inputs["name"]
                 if isinstance(node.value, ast.Name) and node.value.id == "inputs":
                     if isinstance(node.slice, ast.Constant):
                         used_input_names.add(node.slice.value)
+                self.generic_visit(node)
+
+            def visit_Constant(self, node):
+                # Accept string literals that match a defined input name — covers
+                # patterns like `names = ['fc_01', ...]` / `inputs[name]` / f-strings,
+                # where the static access via `inputs[<constant>]` is not directly visible.
+                if isinstance(node.value, str) and node.value in candidate_names:
+                    used_input_names.add(node.value)
                 self.generic_visit(node)
 
         # Parse distribution_code to find variable references
