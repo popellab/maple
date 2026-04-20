@@ -56,6 +56,7 @@ from maple.core.calibration.observable import (
 from maple.core.calibration.scenario import Scenario
 from maple.core.calibration.shared_models import (
     EstimateInput,
+    InputType,
     ModelingAssumption,
     SecondarySource,
     Source,
@@ -364,6 +365,126 @@ class CalibrationTargetEstimates(BaseModel):
                     f"sample_size length ({len(self.sample_size)}) must match "
                     f"index_values length ({len(self.index_values)})"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_derived_arithmetic_inputs(self) -> "CalibrationTargetEstimates":
+        """
+        Validate derived_arithmetic inputs: require formula + source_inputs,
+        check that source_inputs reference existing inputs, and verify that
+        evaluating the formula produces the declared value.
+
+        Also rejects formula/source_inputs on non-derived_arithmetic inputs.
+
+        Only scalar inputs are supported for derived_arithmetic (vector-valued
+        formulas would need element-wise evaluation, not currently implemented).
+        """
+        import math
+        import re
+
+        input_map = {inp.name: inp.value for inp in self.inputs}
+        errors = []
+
+        for inp in self.inputs:
+            if inp.input_type == InputType.DERIVED_ARITHMETIC:
+                if not inp.formula:
+                    errors.append(
+                        f"Input '{inp.name}' has input_type='derived_arithmetic' "
+                        f"but no formula provided."
+                    )
+                if not inp.source_inputs:
+                    errors.append(
+                        f"Input '{inp.name}' has input_type='derived_arithmetic' "
+                        f"but no source_inputs provided."
+                    )
+                if not inp.formula or not inp.source_inputs:
+                    continue
+
+                # Check all source_inputs exist
+                missing = [s for s in inp.source_inputs if s not in input_map]
+                if missing:
+                    errors.append(
+                        f"Input '{inp.name}': source_inputs {missing} not found in inputs."
+                    )
+                    continue
+
+                # Only scalar derivations supported
+                if isinstance(inp.value, list):
+                    errors.append(
+                        f"Input '{inp.name}': derived_arithmetic inputs must be scalar "
+                        f"(vector-valued formulas not supported). Declare one derived input "
+                        f"per index point instead."
+                    )
+                    continue
+                for s in inp.source_inputs:
+                    if isinstance(input_map[s], list):
+                        errors.append(
+                            f"Input '{inp.name}': source_input '{s}' is vector-valued; "
+                            f"derived_arithmetic formulas only support scalar sources."
+                        )
+                if any(isinstance(input_map[s], list) for s in inp.source_inputs):
+                    continue
+
+                # Evaluate formula in a safe namespace
+                namespace = {s: input_map[s] for s in inp.source_inputs}
+                safe_builtins = {
+                    "abs": abs,
+                    "min": min,
+                    "max": max,
+                    "log": math.log,
+                    "log2": math.log2,
+                    "log10": math.log10,
+                    "sqrt": math.sqrt,
+                    "exp": math.exp,
+                    "pi": math.pi,
+                }
+                namespace.update(safe_builtins)
+
+                try:
+                    formula_names = set(re.findall(r"\b([a-zA-Z_]\w*)\b", inp.formula))
+                    allowed_names = set(inp.source_inputs) | set(safe_builtins.keys())
+                    unknown = formula_names - allowed_names
+                    if unknown:
+                        errors.append(
+                            f"Input '{inp.name}': formula references unknown names "
+                            f"{unknown}. Only source_inputs and math functions "
+                            f"(abs, min, max, log, sqrt, exp) are allowed."
+                        )
+                        continue
+
+                    computed = eval(inp.formula, {"__builtins__": {}}, namespace)  # noqa: S307
+                    if inp.value == 0:
+                        if abs(computed) > 1e-10:
+                            errors.append(
+                                f"Input '{inp.name}': formula '{inp.formula}' "
+                                f"evaluates to {computed}, but declared value is 0."
+                            )
+                    elif abs(computed - inp.value) / abs(inp.value) > 0.01:
+                        errors.append(
+                            f"Input '{inp.name}': formula '{inp.formula}' evaluates to "
+                            f"{computed}, but declared value is {inp.value} (>1% mismatch)."
+                        )
+                except Exception as e:
+                    errors.append(
+                        f"Input '{inp.name}': formula '{inp.formula}' failed to evaluate: {e}"
+                    )
+            else:
+                # Non-derived_arithmetic inputs must not have formula/source_inputs
+                if inp.formula is not None:
+                    errors.append(
+                        f"Input '{inp.name}' has input_type='{inp.input_type.value}' but "
+                        f"a formula field. formula is only valid for derived_arithmetic inputs."
+                    )
+                if inp.source_inputs is not None:
+                    errors.append(
+                        f"Input '{inp.name}' has input_type='{inp.input_type.value}' but "
+                        f"a source_inputs field. source_inputs is only valid for "
+                        f"derived_arithmetic inputs."
+                    )
+
+        if errors:
+            raise ValueError("\n".join(errors))
+
         return self
 
 
@@ -1676,6 +1797,15 @@ class CalibrationTarget(BaseModel):
         except SyntaxError:
             # Already caught by validate_derivation_code
             pass
+
+        # Inputs referenced via source_inputs of a derived_arithmetic input are counted as
+        # used (they are consumed by the schema-level formula evaluator, not distribution_code).
+        # Derived_arithmetic inputs themselves may be accessed via f-strings or
+        # enumeration in distribution_code; we treat them as used if any
+        # derived_arithmetic input has a name matching the access pattern.
+        for inp in self.empirical_data.inputs:
+            if inp.input_type == InputType.DERIVED_ARITHMETIC and inp.source_inputs:
+                used_input_names.update(inp.source_inputs)
 
         # Check which defined inputs/assumptions are not used in distribution_code
         # Both EstimateInputs and ModelingAssumptions are merged into the inputs dict
