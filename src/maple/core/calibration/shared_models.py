@@ -48,6 +48,19 @@ class InputType(str, Enum):
     not expected to appear literally in the text.
     """
 
+    DERIVED_ARITHMETIC = "derived_arithmetic"
+    """Deterministic arithmetic derivation from other inputs.
+
+    Use when a value is calculated from extracted inputs via an explicit
+    formula (e.g., fold change = post / pre, slope * time, ratio of
+    measurements within the same patient). The formula is evaluated at
+    schema-validation time and checked against the declared value.
+
+    Requires ``formula`` and ``source_inputs`` fields on the Input.
+    Snippet/excerpt validation is skipped since the derived value does
+    not appear literally in the source text.
+    """
+
 
 class UncertaintyType(str, Enum):
     """Type of uncertainty measure reported in literature."""
@@ -185,6 +198,25 @@ class EstimateInput(BaseModel):
         ),
     )
 
+    # Derived-arithmetic fields
+    formula: Optional[str] = Field(
+        None,
+        description=(
+            "Arithmetic formula deriving this value from source_inputs. "
+            "Required for derived_arithmetic inputs. Use input names directly in the "
+            "expression (e.g., 'post_01 / pre_01', '3 * Gprime_stiff_kPa'). "
+            "The validator evaluates this against the source_inputs values and checks "
+            "it matches the declared value within 1%."
+        ),
+    )
+    source_inputs: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Names of other inputs used in the formula. Required for derived_arithmetic "
+            "inputs. All referenced names must exist as other inputs in the same target."
+        ),
+    )
+
     conversion_formula: Optional[str] = Field(
         None,
         description=(
@@ -290,7 +322,13 @@ class EstimateInput(BaseModel):
 
     @model_validator(mode="after")
     def require_one_snippet_form(self) -> "EstimateInput":
-        """At least one of value_snippet, table_excerpt, or figure_excerpt must be provided."""
+        """At least one of value_snippet, table_excerpt, or figure_excerpt must be provided.
+
+        Skipped for derived_arithmetic inputs, which carry their provenance in the
+        ``formula`` + ``source_inputs`` fields rather than a literal snippet/excerpt.
+        """
+        if self.input_type == InputType.DERIVED_ARITHMETIC:
+            return self
         if not any([self.value_snippet, self.table_excerpt, self.figure_excerpt]):
             raise ValueError(
                 f"Input '{self.name}': at least one of value_snippet, table_excerpt, or "
