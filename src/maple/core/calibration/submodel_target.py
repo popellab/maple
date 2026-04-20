@@ -22,7 +22,11 @@ from maple.core.calibration.enums import (
 )
 from maple.core.calibration.code_validator import find_accessed_params
 from maple.core.calibration.exceptions import DimensionalityMismatchError
-from maple.core.calibration.shared_models import SourceRelevanceAssessment
+from maple.core.calibration.shared_models import (
+    FigureExcerpt,
+    SourceRelevanceAssessment,
+    TableExcerpt,
+)
 
 
 # =============================================================================
@@ -73,61 +77,6 @@ class ObservableType(str, Enum):
 # =============================================================================
 # INPUTS
 # =============================================================================
-
-
-class TableExcerpt(BaseModel):
-    """
-    Structured excerpt from a table in a paper.
-
-    Use this instead of value_snippet when the value comes from a table,
-    where PDF text extraction produces unreadable concatenated rows.
-    External validators check that table_id, column, row, and value all
-    appear somewhere in the extracted paper text.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    table_id: str = Field(
-        description="Table identifier (e.g., 'Table 2', 'Supplementary Table S1')"
-    )
-    column: str = Field(description="Column header the value falls under")
-    row: str = Field(description="Row label/identifier")
-    value: str = Field(
-        description="Value as it appears in the table cell (e.g., '29 ± 10'). "
-        "Used for validation against extracted paper text."
-    )
-    context: str = Field(
-        description="Additional context (e.g., units in column header, table caption, "
-        "or surrounding text that clarifies the value)",
-    )
-
-
-class FigureExcerpt(BaseModel):
-    """
-    Structured excerpt from a figure in a paper.
-
-    Use this instead of value_snippet when the value is read from a figure
-    (e.g., scatter plots, bar charts, dose-response curves). Figure-derived
-    values cannot be validated by text matching, so inputs with figure_excerpt
-    are flagged for manual review instead of failing snippet validation.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    figure_id: str = Field(
-        description="Figure identifier (e.g., 'Figure 1C', 'Supplementary Figure S2A')"
-    )
-    value: str = Field(
-        description="Value as read from the figure (e.g., '~5', '2-5 range'). "
-        "Used for documentation; not validated by text matching."
-    )
-    description: str = Field(
-        description="What was read from the figure (e.g., 'highest data point in scatter plot at 16h')"
-    )
-    context: str = Field(
-        description="Additional context (e.g., figure caption text, axis labels, "
-        "or experimental conditions shown in the panel)",
-    )
 
 
 class Input(BaseModel):

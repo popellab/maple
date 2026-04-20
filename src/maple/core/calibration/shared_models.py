@@ -59,6 +59,61 @@ class UncertaintyType(str, Enum):
     IQR = "iqr"  # Interquartile range
 
 
+class TableExcerpt(BaseModel):
+    """
+    Structured excerpt from a table in a paper.
+
+    Use this instead of value_snippet when the value comes from a table,
+    where PDF text extraction produces unreadable concatenated rows.
+    External validators check that table_id, column, row, and value all
+    appear somewhere in the extracted paper text.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    table_id: str = Field(
+        description="Table identifier (e.g., 'Table 2', 'Supplementary Table S1')"
+    )
+    column: str = Field(description="Column header the value falls under")
+    row: str = Field(description="Row label/identifier")
+    value: str = Field(
+        description="Value as it appears in the table cell (e.g., '29 ± 10'). "
+        "Used for validation against extracted paper text."
+    )
+    context: str = Field(
+        description="Additional context (e.g., units in column header, table caption, "
+        "or surrounding text that clarifies the value)",
+    )
+
+
+class FigureExcerpt(BaseModel):
+    """
+    Structured excerpt from a figure in a paper.
+
+    Use this instead of value_snippet when the value is read from a figure
+    (e.g., scatter plots, bar charts, dose-response curves). Figure-derived
+    values cannot be validated by text matching, so inputs with figure_excerpt
+    are flagged for manual review instead of failing snippet validation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    figure_id: str = Field(
+        description="Figure identifier (e.g., 'Figure 1C', 'Supplementary Figure S2A')"
+    )
+    value: str = Field(
+        description="Value as read from the figure (e.g., '~5', '2-5 range'). "
+        "Used for documentation; not validated by text matching."
+    )
+    description: str = Field(
+        description="What was read from the figure (e.g., 'highest data point in scatter plot at 16h')"
+    )
+    context: str = Field(
+        description="Additional context (e.g., figure caption text, axis labels, "
+        "or experimental conditions shown in the panel)",
+    )
+
+
 class EstimateInput(BaseModel):
     """
     A literature-extracted input value for distribution derivation.
@@ -97,8 +152,24 @@ class EstimateInput(BaseModel):
     value_location: str = Field(
         description="Where the value appears in the source (e.g., 'Table 2', 'Figure 3A', 'Results p.5')"
     )
-    value_snippet: str = Field(
-        description="Exact text snippet from the source containing or supporting the value(s)"
+    value_snippet: Optional[str] = Field(
+        default=None,
+        description="Exact text snippet from the source containing or supporting the value(s). "
+        "Use table_excerpt when the value comes from a table, or figure_excerpt when the value "
+        "is digitized from a figure. At least one of value_snippet, table_excerpt, or "
+        "figure_excerpt must be provided.",
+    )
+    table_excerpt: Optional[TableExcerpt] = Field(
+        default=None,
+        description="Structured table excerpt when value comes from a table. "
+        "Preferred over value_snippet for table-sourced data because PDF text extraction "
+        "often produces unreadable concatenated rows.",
+    )
+    figure_excerpt: Optional[FigureExcerpt] = Field(
+        default=None,
+        description="Structured figure excerpt when value is digitized from a figure. "
+        "Figure-derived values are flagged for manual review instead of failing snippet "
+        "validation (since figure pixels are not in the PDF text layer).",
     )
 
     input_type: InputType = Field(
@@ -216,6 +287,16 @@ class EstimateInput(BaseModel):
         if isinstance(v, list) and len(v) == 0:
             raise ValueError("Vector-valued input cannot be an empty list")
         return v
+
+    @model_validator(mode="after")
+    def require_one_snippet_form(self) -> "EstimateInput":
+        """At least one of value_snippet, table_excerpt, or figure_excerpt must be provided."""
+        if not any([self.value_snippet, self.table_excerpt, self.figure_excerpt]):
+            raise ValueError(
+                f"Input '{self.name}': at least one of value_snippet, table_excerpt, or "
+                f"figure_excerpt must be provided for traceability."
+            )
+        return self
 
     @field_validator("conversion_formula")
     @classmethod
