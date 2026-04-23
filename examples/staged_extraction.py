@@ -3,20 +3,31 @@
 """
 Staged submodel target extraction pipeline.
 
-Multi-stage workflow with human touchpoints between stages:
+Workflow overview (each stage caches results — re-running skips completed work):
 
-  Stage 1   Lit search        Web search for papers per target (parallel)
-  Stage 1b  PDF collection    Zotero DOI lookup + interactive fetch loop
-  Stage 2   Paper assessment  Read PDFs, assess data quality (parallel)
-  Stage 2b  Plan review       Single LLM call reviewing all plans together
-            Digitization      Prioritized summary of figures to digitize
-  Stage 3   Extract           Assemble SubmodelTarget YAMLs (parallel)
-  Stage 3b  Derivation review Single LLM call checking scientific soundness
-  Stage 3c  Validate          MCMC prior derivation + unit checks + snippet matching
+  Stage 1  — Lit search:    Web search for papers matching each parameter
+  Stage 1b — DOIs:          Combine DOIs into a single file for Zotero import
+  Stage 1c — PDF fetch:     Interactive: fetch from Zotero, open in browser if missing
+  Stage 2  — Assess:        Read papers (text-extracted, not binary PDFs) and decide
+                            which have usable data, what needs digitization
+  Stage 2b — Plan review:   Single LLM call reviews ALL plans together for consistency,
+                            can swap plans or request lit search reruns
+  ── Human touchpoint ──    Digitize figures flagged in digitization_summary.md
+                            (place CSVs in work/<target>/digitized/<source_tag>/)
+  Stage 3  — Extract:       Assemble SubmodelTarget YAMLs from papers + digitized data.
+                            Snippet-in-PDF validation runs inline (retries on failure).
+                            Targets missing digitizations proceed anyway (warning only).
+  Stage 3b — Deriv review:  Single LLM call reviews ALL derivations for cross-target
+                            consistency, flags issues
+  Stage 3c — Validate:      Unit validation, MCMC prior derivation, snippet validation.
+                            Passing targets auto-copied to calibration_targets/submodel_targets/
 
-Each stage caches results per-target. To rerun a stage for a specific target,
-delete its cache file (e.g., lit_search_results.json, assessment.json, or the
-deriv YAML). Other targets and stages are untouched.
+Side effects to be aware of:
+  - apply_plan_swaps():         Modifies assessment.json (replaces primary with alt plan)
+  - apply_lit_search_reruns():  Deletes cached lit_search + assessment, appends RERUN
+                                notes to targets.csv
+  - summarize_digitizations():  Writes digitization_summary.md, optionally opens PDFs
+  - collect_missing_pdfs():     Interactive — copies DOIs to clipboard, opens browser
 
 Usage:
     # Run in a Jupyter/IPython notebook (needs top-level await):
@@ -34,8 +45,8 @@ Setup:
 import csv
 import json
 import sys
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 
 # Optional: Logfire instrumentation for pydantic-ai tracing
 # import logfire
@@ -43,15 +54,18 @@ from functools import partial
 # logfire.instrument_pydantic_ai()
 
 from maple.extraction import (
+    apply_lit_search_reruns,
+    apply_plan_swaps,
     collect_missing_pdfs,
     make_agents,
+    report_digitization_preflight,
     run_assess,
     run_complete,
     run_derivation_review,
     run_lit_search,
     run_plan_review,
     run_stage,
-    run_validate,
+    run_validate_all,
     summarize_digitizations,
     write_assessment_report,
     write_dois_md,
@@ -59,22 +73,22 @@ from maple.extraction import (
 
 
 # ===========================================================================
-# Config — edit these for your project
+# Config — edit these before running
 # ===========================================================================
 
-TARGETS_CSV = Path("notes/targets.csv")  # CSV with target_id, parameters, cancer_type, notes
-MODEL_STRUCTURE = Path("model_structure.json")  # Exported from qsp-export-model
-MODEL_CONTEXT = Path("model_context.txt")  # Free-text model description for LLM context
-WORK_DIR = Path("work/staged_extraction")  # Working directory (cached results go here)
-ZOTERO_STORAGE = Path("~/Zotero/storage").expanduser()  # Zotero local storage path
+TARGETS_CSV = Path("notes/targets.csv")  # Parameter targets to extract
+MODEL_STRUCTURE = Path("model_structure.json")  # QSP model structure (for unit validation)
+MODEL_CONTEXT = Path("model_context.txt")  # Model description for LLM prompts
+WORK_DIR = Path("work/staged_extraction")  # All intermediate files go here (gitignored)
+ZOTERO_STORAGE = Path("~/Zotero/storage").expanduser()
 PRIORS_CSV = Path("parameters/priors.csv")  # Current prior distributions CSV
 MODEL = "gpt-5.1"  # LLM model name (OpenAI Responses API)
 MAX_RETRIES = 7  # Max pydantic-ai retries per target
-TARGET_RANGE = (0, 20)  # (start, end) indices from targets CSV
+TARGET_RANGE = (0, None)  # (start, end) indices — set end=None for all
 
 
 # ===========================================================================
-# Setup
+# 0. Setup — load targets, create agents
 # ===========================================================================
 
 if not TARGETS_CSV.exists():
@@ -92,7 +106,6 @@ with open(TARGETS_CSV, encoding="utf-8") as f:
 
 start, end = TARGET_RANGE
 batch = all_targets[start:end]
-print(f"Batch: {len(batch)} targets (indices {start}-{(end or len(all_targets)) - 1})")
 
 targets = []
 for i, row in enumerate(batch, start=start):
@@ -115,7 +128,9 @@ lit_search_agent, assess_agent, plan_review_agent, complete_agent, derivation_re
 
 
 # ===========================================================================
-# Stage 1: Literature search (parallel)
+# Stage 1: Literature search
+# Each target gets a web search for papers with quantitative data.
+# Results cached in work/<target>/lit_search_results.json
 # ===========================================================================
 
 print("=" * 60)
@@ -136,19 +151,23 @@ for t in targets:
     with open(t["dir"] / "lit_search_results.json") as f:
         lit_results.append(json.load(f))
 
-# Stage 1b: Write combined DOIs file
+# Stage 1b: Combine all DOIs into one file for Zotero import
 print("\n" + "=" * 60)
 print("Stage 1b: DOIs for Zotero")
 print("=" * 60)
 
 write_dois_md(targets, lit_results, WORK_DIR / "dois.md")
 
-# Stage 1c: Fetch PDFs from Zotero (interactive)
+# Stage 1c: Fetch PDFs from Zotero storage, with browser fallback (interactive)
+# Side effects: copies DOIs to clipboard, opens Europe PMC URLs in browser
 collect_missing_pdfs(targets, lit_results, ZOTERO_STORAGE)
 
 
 # ===========================================================================
-# Stage 2: Assess papers (parallel)
+# Stage 2: Paper assessment
+# Reads papers as extracted text (not binary PDFs — avoids context overflow).
+# Decides: which papers are usable, what data they have, what needs digitization.
+# Results cached in work/<target>/assessment.json
 # ===========================================================================
 
 print("\n" + "=" * 60)
@@ -164,35 +183,58 @@ _assess = partial(
 )
 await run_stage(_assess, targets, "assess")
 
-# Write assessment reports + digitization READMEs
+# Write human-readable assessment reports + digitization README templates
 for t in targets:
     ap = t["dir"] / "assessment.json"
     if ap.exists():
         with open(ap) as f:
             write_assessment_report(t, json.load(f))
 
-# Stage 2b: Plan review (single call, all targets)
+
+# ===========================================================================
+# Stage 2b: Plan review
+# Single LLM call reviews ALL extraction plans together for cross-target
+# consistency. Can recommend: proceed, swap to alternative, rerun lit search.
+# Result cached in work/plan_review.json
+# ===========================================================================
+
 print("\n" + "=" * 60)
 print("Stage 2b: Plan Review")
 print("=" * 60)
 
-await run_plan_review(targets, WORK_DIR, plan_review_agent, TARGETS_CSV)
+plan_review_result = await run_plan_review(targets, WORK_DIR, plan_review_agent, TARGETS_CSV)
 
-# Regenerate digitization summary after any plan swaps
+# Apply plan review side effects (explicitly separated from the review itself):
+#   apply_plan_swaps:         Modifies assessment.json for swapped targets
+#   apply_lit_search_reruns:  Deletes cached lit/assessment, appends RERUN notes to targets.csv
+if plan_review_result:
+    apply_plan_swaps(plan_review_result.reviews, WORK_DIR)
+    apply_lit_search_reruns(plan_review_result.reviews, WORK_DIR, TARGETS_CSV)
+
+
+# ===========================================================================
+# Digitization summary + pre-flight
+# After this point, you should digitize any required figures before proceeding.
+# Place CSVs in work/<target>/digitized/<source_tag>/<fig_id>.csv
+# Re-run summarize_digitizations() to check progress.
+# ===========================================================================
+
+# Writes digitization_summary.md with pending/done status, optionally opens PDFs
 summarize_digitizations(WORK_DIR)
 
-# ---- PAUSE HERE ----
-# Review digitization_summary.md in WORK_DIR.
-# Digitize required figures with WebPlotDigitizer.
-# Place CSV exports in work/staged_extraction/{target_id}/digitized/{source_tag}/
-# Then continue to Stage 3.
+# Reports which targets have pending digitizations (informational, does not block)
+report_digitization_preflight(targets)
 
 
 # ===========================================================================
-# Stage 3: Extract SubmodelTarget YAMLs (parallel)
+# Stage 3: Assemble SubmodelTarget YAMLs
+# Sends binary PDFs (for figure reading) + digitized CSVs to the extraction agent.
+# Inline snippet-in-PDF validation catches hallucinated quotes (retries automatically).
+# Targets with missing digitizations proceed with a warning.
+# Results cached in work/<target>/<target_id>_<cancer_type>_deriv001.yaml
 # ===========================================================================
 
-print("\n" + "=" * 60)
+print("=" * 60)
 print(f"Stage 3: Assemble SubmodelTarget YAMLs ({len(targets)} targets)")
 print("=" * 60)
 
@@ -206,19 +248,33 @@ _complete = partial(
 )
 await run_stage(_complete, targets, "complete")
 
-# Stage 3b: Derivation review (single call, all targets)
+
+# ===========================================================================
+# Stage 3b: Derivation review
+# Single LLM call reviews ALL completed derivations for scientific soundness
+# and cross-target consistency (e.g., contradictory assumptions, unit mismatches).
+# Result cached in work/derivation_review.json + derivation_review.md
+# ===========================================================================
+
 print("\n" + "=" * 60)
 print("Stage 3b: Derivation Review")
 print("=" * 60)
 
 await run_derivation_review(targets, WORK_DIR, derivation_review_agent)
 
-# Stage 3c: Validate (sequential — MCMC is CPU-bound)
+
+# ===========================================================================
+# Stage 3c: Validate
+# Sequential (some checks are CPU-bound). For each target:
+#   1. Unit validation (parameter units match QSP model)
+#   2. Prior derivation check (delegated to qsp-inference)
+#   3. Snippet validation (checks value_snippets against PDF text)
+# Passing targets are auto-copied to calibration_targets/submodel_targets/
+# Already-promoted targets are skipped. A summary table + state counts prints at end.
+# ===========================================================================
+
 print("\n" + "=" * 60)
 print("Stage 3c: Validate SubmodelTargets")
 print("=" * 60)
 
-for t in targets:
-    run_validate(t, model_structure_path=MODEL_STRUCTURE, priors_csv=PRIORS_CSV)
-
-print(f"\nDone. {len(targets)} targets processed.")
+run_validate_all(targets, model_structure_path=MODEL_STRUCTURE, priors_csv=PRIORS_CSV)
