@@ -26,6 +26,7 @@ from maple.extraction.pipeline import (
     run_complete,
     run_derivation_review,
     run_validate,
+    run_validate_all,
     run_stage,
     # Helpers
     apply_lit_search_reruns,  # Clear caches + append RERUN notes to targets CSV
@@ -59,6 +60,7 @@ __all__ = [
     "run_complete",
     "run_derivation_review",
     "run_validate",
+    "run_validate_all",
     "run_stage",
     # Helpers — plan review side effects (called explicitly by the pipeline script)
     "apply_lit_search_reruns",
