@@ -1770,19 +1770,37 @@ async def run_derivation_review(
     return review
 
 
-def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> None:
-    """Stage 3b: Validate a completed SubmodelTarget (synchronous — MCMC is CPU-bound)."""
+def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> dict:
+    """Stage 3b: Validate a completed SubmodelTarget (synchronous — MCMC is CPU-bound).
+
+    Returns a status dict: {target_id, state, unit_ok, prior_ok, snippet_ok, promoted_to}.
+    state ∈ {'pass', 'fail', 'skip_missing', 'skip_promoted'}.
+    """
     target_dir = t["dir"]
     output_file = target_dir / f"{t['target_id']}_{t['cancer_type']}_deriv001.yaml"
 
     if not output_file.exists():
-        return
+        return {
+            "target_id": t["target_id"],
+            "state": "skip_missing",
+            "unit_ok": None,
+            "prior_ok": None,
+            "snippet_ok": None,
+            "promoted_to": None,
+        }
 
     # Skip if already promoted to calibration_targets/
     dest = Path("calibration_targets/submodel_targets") / output_file.name
     if dest.exists():
         print(f"  [{t['target_id']}] SKIP (already in {dest.parent.name}/)")
-        return
+        return {
+            "target_id": t["target_id"],
+            "state": "skip_promoted",
+            "unit_ok": None,
+            "prior_ok": None,
+            "snippet_ok": None,
+            "promoted_to": str(dest),
+        }
 
     # Unit validation
     try:
@@ -1814,16 +1832,60 @@ def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> No
     with open(val_report, "w") as f:
         f.write(f"Target: {t['target_id']}\nOutput: {output_file}\n\n")
         f.write(f"Unit validation: {'PASS' if unit_ok else 'FAIL'}\n\n")
-        f.write(f"Prior derivation: {'PASS' if prior_ok else 'FAIL'}\n{prior_report}\n\n")
+        f.write(f"Prior derivation: {'PASS' if prior_ok else 'FAIL'} (moved to qsp-inference)\n\n")
         f.write(f"Snippet validation: {'PASS' if snippet_ok else 'FAIL'}\n{snippet_report}\n")
 
     # Copy passing targets to submodel_targets/
+    promoted_to = None
     if all_pass:
         dest_dir = Path("calibration_targets/submodel_targets")
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / output_file.name
         shutil.copy2(output_file, dest)
         print(f"  [{t['target_id']}] -> {dest}")
+        promoted_to = str(dest)
+
+    return {
+        "target_id": t["target_id"],
+        "state": "pass" if all_pass else "fail",
+        "unit_ok": unit_ok,
+        "prior_ok": prior_ok,
+        "snippet_ok": snippet_ok,
+        "promoted_to": promoted_to,
+    }
+
+
+def run_validate_all(targets: list, *, model_structure_path: Path, priors_csv: Path) -> list:
+    """Run run_validate over every target and print a summary table.
+
+    Returns the list of per-target status dicts.
+    """
+    results = [
+        run_validate(t, model_structure_path=model_structure_path, priors_csv=priors_csv)
+        for t in targets
+    ]
+
+    def _fmt(v):
+        if v is None:
+            return "  - "
+        return " OK " if v else "FAIL"
+
+    print("\n" + "-" * 64)
+    print(f"{'target_id':<24} {'state':<14} unit prior snippet promoted")
+    print("-" * 64)
+    for r in results:
+        promoted = "yes" if r.get("promoted_to") else "-"
+        print(
+            f"{r['target_id']:<24} {r['state']:<14} "
+            f"{_fmt(r.get('unit_ok'))} {_fmt(r.get('prior_ok'))}  {_fmt(r.get('snippet_ok'))}     {promoted}"
+        )
+    counts: dict = {}
+    for r in results:
+        counts[r["state"]] = counts.get(r["state"], 0) + 1
+    summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+    print("-" * 64)
+    print(f"Done. {len(targets)} targets processed ({summary}).")
+    return results
 
 
 def write_assessment_report(t: dict, assessment: dict) -> None:
