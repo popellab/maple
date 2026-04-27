@@ -12,7 +12,7 @@ See docs/calibration_target_design.md for full specification.
 import ast
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -567,9 +567,36 @@ class CalibrationTarget(BaseModel):
         ),
     )
 
-    # --- Sources (LLM-generated) ---
-    primary_data_source: Source = Field(
-        description="Primary data source (the paper where this observable was measured)"
+    # --- Epistemic basis ---
+    epistemic_basis: Literal["literature", "mechanistic"] = Field(
+        default="literature",
+        description=(
+            "How this target's empirical_data is grounded.\n\n"
+            "- 'literature' (default): a primary publication directly measures the\n"
+            "  observable's distribution. Requires primary_data_source with a DOI;\n"
+            "  empirical_data.inputs values must appear in their value_snippets.\n"
+            "- 'mechanistic': encodes a soft prior from biological reasoning rather\n"
+            "  than a published measurement (e.g., 'untreated tumors do not\n"
+            "  spontaneously regress', 'PD-1 blockade increases T-cell killing\n"
+            "  capacity'). primary_data_source may be null. value_snippet checks are\n"
+            "  skipped. key_assumptions MUST contain the mechanistic rationale and\n"
+            "  describe the chosen distribution width. Distributions should be\n"
+            "  deliberately wide so the target nudges rather than dominates the\n"
+            "  likelihood. Live in calibration_targets/mechanistic/ to keep them\n"
+            "  visibly distinct from literature targets.\n\n"
+            "Note: 'mechanistic' is NOT a backdoor for unverified citations or\n"
+            "fabricated CIs — if a paper exists, use 'literature'."
+        ),
+    )
+
+    # --- Sources (LLM-generated, required for literature targets) ---
+    primary_data_source: Optional[Source] = Field(
+        default=None,
+        description=(
+            "Primary data source (the paper where this observable was measured). "
+            "Required when epistemic_basis='literature'; may be null when "
+            "epistemic_basis='mechanistic'."
+        ),
     )
     secondary_data_sources: List[SecondarySource] = Field(
         default_factory=list, description="Secondary data sources (reference values, constants)"
@@ -639,8 +666,29 @@ class CalibrationTarget(BaseModel):
         return cls(**{**headers.model_dump(), **content})
 
     @model_validator(mode="after")
+    def validate_epistemic_basis_consistency(self) -> "CalibrationTarget":
+        """Validator: literature targets require primary_data_source; mechanistic
+        targets MAY have one but typically do not.
+
+        Mechanistic targets must document their reasoning in key_assumptions —
+        we don't enforce the wording here, but key_assumptions is already
+        required to be non-empty by EmpiricalData / CalibrationTarget itself.
+        """
+        if self.epistemic_basis == "literature" and self.primary_data_source is None:
+            raise ValueError(
+                "epistemic_basis='literature' requires primary_data_source. "
+                "If this target encodes a soft prior from biological reasoning "
+                "rather than a published measurement, set "
+                "epistemic_basis='mechanistic' and document the rationale in "
+                "key_assumptions."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_doi_resolution(self) -> "CalibrationTarget":
         """Validator: Check that primary DOI resolves via CrossRef."""
+        if self.primary_data_source is None:
+            return self
         if self.primary_data_source.doi:
             metadata = resolve_doi(self.primary_data_source.doi)
             if metadata is None:
@@ -661,6 +709,8 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_title_match(self) -> "CalibrationTarget":
         """Validator: Check that paper title matches CrossRef metadata."""
+        if self.primary_data_source is None:
+            return self
         if self.primary_data_source.doi:
             metadata = resolve_doi(self.primary_data_source.doi)
             if metadata:
@@ -684,6 +734,8 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_first_author_match(self) -> "CalibrationTarget":
         """Validator: Check that first author matches CrossRef metadata."""
+        if self.primary_data_source is None:
+            return self
         if self.primary_data_source.doi and self.primary_data_source.first_author:
             metadata = resolve_doi(self.primary_data_source.doi)
             if metadata:
@@ -705,6 +757,8 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_year_match(self) -> "CalibrationTarget":
         """Validator: Check that publication year matches CrossRef metadata."""
+        if self.primary_data_source is None:
+            return self
         if self.primary_data_source.doi and self.primary_data_source.year:
             metadata = resolve_doi(self.primary_data_source.doi)
             if metadata:
@@ -1048,7 +1102,7 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_source_quality_peer_reviewed(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag non-peer-reviewed sources."""
-        if self.primary_data_source.source_relevance is None:
+        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
@@ -1069,7 +1123,7 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def warn_cross_indication_extrapolation(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag proxy/unrelated indication extrapolation."""
-        if self.primary_data_source.source_relevance is None:
+        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
@@ -1087,7 +1141,7 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_pharmacological_perturbation_justification(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag pharmacological perturbation without relevance explanation."""
-        if self.primary_data_source.source_relevance is None:
+        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
@@ -1107,7 +1161,7 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_genetic_perturbation_justification(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag genetic perturbation without relevance explanation."""
-        if self.primary_data_source.source_relevance is None:
+        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
@@ -1127,7 +1181,7 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_low_tme_compatibility_notes(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag low TME compatibility without documentation."""
-        if self.primary_data_source.source_relevance is None:
+        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
@@ -1146,7 +1200,7 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def warn_cross_species_extrapolation(self) -> "CalibrationTarget":
         """Validator (WARNING): Flag cross-species extrapolation."""
-        if self.primary_data_source.source_relevance is None:
+        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
@@ -1174,7 +1228,12 @@ class CalibrationTarget(BaseModel):
         - observable.inputs (SubmodelInput)
 
         Raises SnippetValueMismatchError if a value is not found in its snippet.
+
+        Skipped entirely for mechanistic targets — their inputs (when present)
+        encode mechanistic reasoning rather than literal paper-extracted values.
         """
+        if self.epistemic_basis == "mechanistic":
+            return self
 
         def check_inputs(inputs, location_prefix: str):
             """Helper to check value_snippet for a list of inputs."""
@@ -1450,7 +1509,9 @@ class CalibrationTarget(BaseModel):
         - observable.inputs (SubmodelInput)
         """
         # Build set of valid source tags from literature sources
-        valid_tags = {self.primary_data_source.source_tag}
+        valid_tags: set[str] = set()
+        if self.primary_data_source is not None:
+            valid_tags.add(self.primary_data_source.source_tag)
         valid_tags.update(s.source_tag for s in self.secondary_data_sources)
 
         def check_refs(inputs, location_prefix: str):
@@ -1493,7 +1554,9 @@ class CalibrationTarget(BaseModel):
             return self
 
         # Build set of valid literature source tags
-        valid_tags = {self.primary_data_source.source_tag}
+        valid_tags: set[str] = set()
+        if self.primary_data_source is not None:
+            valid_tags.add(self.primary_data_source.source_tag)
         valid_tags.update(s.source_tag for s in self.secondary_data_sources)
 
         # Get reference DB names from validation context (if available)
