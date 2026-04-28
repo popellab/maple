@@ -16,6 +16,11 @@ from maple.core.calibration.calibration_target_models import (
 from maple.core.calibration.submodel_target import (
     SubmodelTarget,
 )
+from maple.core.calibration.cross_scenario_target import (
+    CrossScenarioCalibrationTarget,
+    CrossScenarioInput,
+    CrossScenarioObservable,
+)
 
 # Enums
 from maple.core.calibration.enums import (
@@ -147,6 +152,9 @@ __all__ = [
     "CalibrationTargetFooters",
     "IndexType",
     "SubmodelTarget",
+    "CrossScenarioCalibrationTarget",
+    "CrossScenarioInput",
+    "CrossScenarioObservable",
     # Enums
     "Species",
     "MouseSubspecifier",
