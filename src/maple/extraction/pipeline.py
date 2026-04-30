@@ -483,12 +483,24 @@ def report_digitization_preflight(targets: list[dict]) -> None:
     print()
 
 
-def summarize_digitizations(work_dir: Path, output_path: Path | None = None) -> None:
-    """Print and optionally write a prioritized summary of all pending digitization requests."""
+def summarize_digitizations(
+    work_dir: Path,
+    output_path: Path | None = None,
+    target_ids: list[str] | set[str] | None = None,
+) -> None:
+    """Print and optionally write a prioritized summary of all pending digitization requests.
+
+    If ``target_ids`` is provided, only assessments whose directory name appears
+    in that collection are included. Pass the current run's target IDs to skip
+    stale work-dir leftovers from prior runs.
+    """
     items = []
     promoted_dir = Path("calibration_targets/submodel_targets")
+    target_filter = set(target_ids) if target_ids is not None else None
     for assessment_path in sorted(work_dir.glob("*/assessment.json")):
         target = assessment_path.parent.name
+        if target_filter is not None and target not in target_filter:
+            continue
         # Skip targets already promoted
         if promoted_dir.is_dir() and list(promoted_dir.glob(f"{target}_*_deriv*.yaml")):
             continue
