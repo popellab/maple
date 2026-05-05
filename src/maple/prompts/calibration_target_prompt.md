@@ -12,12 +12,28 @@ Extract **raw observables** from scientific literature for QSP model calibration
 
 A biological observable measured in a **specific experimental scenario**, used to calibrate QSP model parameters via Bayesian inference.
 
-**Critical concept:** Each observable has an **experimental context** (species, indication, compartment, system, treatment) that may differ from the **model context**.
+Each observable has an **experimental context** (species, indication, compartment, system, treatment) that may differ from the **model context**. Your job: find data that matches the model context, document the actual experimental context, and follow the strict matching requirements below.
 
-**Your task:**
-1. **Find data that matches the model context** (specified below) as closely as possible
-2. **Document the experimental context accurately** - mismatches will be quantified later via formal distance metrics
-3. Follow the strict matching requirements below
+---
+
+## Output YAML Structure
+
+You produce a single `CalibrationTarget` YAML with these top-level fields. **Required** unless marked optional.
+
+| Field | Type | Notes |
+|---|---|---|
+| `study_interpretation` | str | One-paragraph narrative: what is being measured, how the experimental context maps to the model, key methodological points |
+| `key_assumptions` | List[str] (≥1) | Biological + statistical assumptions made in extraction (e.g., cell-type equivalence, normal-distribution assumption) |
+| `key_study_limitations` | List[str] | Issues that bias estimates or limit generalizability (e.g., small cohort, figure-extracted values) |
+| `observable` | dict | How to compute the observable from QSP species. See "Observable" section below |
+| `experimental_context` | dict | The source paper's context: `{species, system, indication, treatment, stage, mouse_subspecifier?, cell_lines?, culture_conditions?, tissue_source?, assay_type?}` — describes WHERE the data came from, not the model target |
+| `scenario` | dict (optional) | Interventions + measurement timing. Omit if untreated baseline and no perturbations |
+| `empirical_data` | dict | Computed `median`, `ci95`, `units`, `sample_size`, `inputs[]`, `assumptions[]`, `distribution_code`. See "Empirical Data" section |
+| `primary_data_source` | dict | Single paper with verified DOI. See "Source Requirements". Required when `epistemic_basis: literature` (default) |
+| `secondary_data_sources` | List[dict] | Reference values / conversion-factor sources. Empty list OK |
+| `epistemic_basis` | `"literature"` (default) or `"mechanistic"` | Use `"mechanistic"` only for biological-invariant priors with no primary measurement (live in `calibration_targets/mechanistic/`); requires deliberately wide CIs and rationale in `key_assumptions`. Otherwise leave at default |
+
+The `experimental_context` block is REQUIRED — it documents where the data came from. The `Model Context (Target to Match)` section below describes the *target* you're matching against; `experimental_context` describes the *actual* source. They may legitimately differ (cross-species, proxy indication, etc.) — flag mismatches via the optional `primary_data_source.source_relevance` block.
 
 ---
 
@@ -62,12 +78,12 @@ A biological observable measured in a **specific experimental scenario**, used t
 - **Validation:** Title similarity must be ≥75% match with CrossRef
 
 ### 3. Code Must Execute Without Errors
-- `measurement_code` and `distribution_code` will both be executed with mock data
+- `observable.code` and `empirical_data.distribution_code` will both be executed with mock data
 - Syntax errors or runtime errors will cause validation failure
 - **Validation:** Code is executed with mock species data and Pint unit registry
 
-### 4. Measurement Code Units Must Match
-- `measurement_code` output units must match `empirical_data.units`
+### 4. Observable Code Units Must Match
+- `observable.code` output units must match `observable.units` and `empirical_data.units`
 - **Validation:** Pint dimensional analysis checks measurement code output
 
 ### 5. Computed Values Must Match Reported Values
@@ -88,8 +104,8 @@ A biological observable measured in a **specific experimental scenario**, used t
 - **No ungrounded constants allowed.** Do NOT use "modeling_assumption" — every numeric must trace to a specific reference DB entry or literature source.
 - **Validation:** Cross-reference checking against defined sources and reference DB entries
 
-### 8. Measurement Code Output Scale Must Match Calibration Target Scale
-- Ensure measurement_code output range is on the same scale as empirical_data
+### 8. Observable Code Output Scale Must Match Calibration Target Scale
+- Ensure `observable.code` output range is on the same scale as `empirical_data`
 - Example: Don't mix 0-1 ratios with 0-N scores - they must use consistent scaling
 - **Validation:** Code executed with mock data; output range compared to target range
 
@@ -98,21 +114,20 @@ A biological observable measured in a **specific experimental scenario**, used t
 - Common source: copying from PDFs or word processors with invisible formatting
 - **Validation:** All text fields scanned for control characters
 
-### 10. Population Aggregation (Optional)
+---
 
-Some clinical endpoints (ORR, median OS, 1-year OS, MPR rate) are population summary statistics that cannot be expressed as single-patient observables. Use `observable.aggregation` when the calibration target requires aggregating across a virtual patient cohort.
+## Optional Features
 
-**When to use:**
-- Overall response rate (ORR) — fraction of patients meeting RECIST criteria
-- Median overall survival (OS) / progression-free survival (PFS)
-- Landmark survival rates (e.g., 1-year OS)
-- Major pathological response (MPR) rate
+### Population Aggregation
 
-**Aggregation types:**
-- `response_rate`: Requires `threshold_code` defining per-patient binary classification
-- `median_time_to_event`: Observable code computes per-patient event times
-- `survival_rate`: Requires `time_point` and `time_unit`
-- `none`: Default, no aggregation (per-patient observable)
+Some clinical endpoints (ORR, median OS, 1-year OS, MPR rate) are population summary statistics, not per-patient observables. When the target requires aggregating across a virtual patient cohort, populate `observable.aggregation`:
+
+- `response_rate` — needs `threshold_code` for per-patient binary classification
+- `median_time_to_event` — observable code computes per-patient event times
+- `survival_rate` — needs `time_point` and `time_unit`
+- `none` (default) — per-patient observable, no aggregation
+
+`response_rate` / `survival_rate` aggregations warn if `support` ≠ `unit_interval`.
 
 **Example (ORR via RECIST):**
 ```yaml
@@ -133,47 +148,40 @@ observable:
           baseline = tumor[0]
           nadir = min(tumor)
           return (baseline - nadir) / baseline >= 0.3
-    rationale: "ORR requires classifying each virtual patient as responder/non-responder per RECIST 1.1 (>=30% decrease in longest diameter)"
+    rationale: "ORR per RECIST 1.1 (≥30% decrease in longest diameter)"
 ```
 
-**Validation:** `response_rate` and `survival_rate` aggregations warn if `support` is not `unit_interval`.
+### Source Relevance Assessment
 
-### 11. Source Relevance Assessment (Optional)
+When the source paper doesn't perfectly match the model context (different species, proxy indication, perturbation), populate `primary_data_source.source_relevance`:
 
-When the source data does not perfectly match the model context (different species, proxy indication, perturbed conditions), use `source_relevance` to formally document the translation quality.
-
-**When to use:**
-- Source indication is proxy or unrelated (e.g., melanoma data for PDAC model)
-- Cross-species data (e.g., mouse measurements for human model)
-- Pharmacological or genetic perturbation (drug-induced or knockout measurements)
-- Low TME compatibility (e.g., immunogenic tumor model for immunosuppressive PDAC)
-
-**When NOT needed:** Exact-match human clinical data for the target indication (the typical CalibrationTarget case).
-
-**Key fields:**
 | Field | Options |
 |---|---|
 | `indication_match` | `exact`, `related`, `proxy`, `unrelated` |
 | `source_quality` | `primary_human_clinical`, `primary_human_in_vitro`, `primary_animal_in_vivo`, `primary_animal_in_vitro`, `review_article`, `textbook`, `non_peer_reviewed` |
 | `perturbation_type` | `physiological_baseline`, `pathological_state`, `pharmacological`, `genetic_perturbation` |
 | `tme_compatibility` | `high`, `moderate`, `low` (optional, for immune/stromal parameters) |
-| `estimated_translation_uncertainty_fold` | 1.0-1000.0 (fold-uncertainty from source-to-target translation) |
+| `estimated_translation_uncertainty_fold` | 1.0–1000.0 |
+
+Skip when source is exact-match human clinical data for the target indication.
 
 **Example:**
 ```yaml
-source_relevance:
-  indication_match: proxy
-  indication_match_justification: "Melanoma TIL data used as proxy for PDAC. Both solid tumors with CD8 infiltration, but PDAC has denser stroma and more T cell exclusion."
-  species_source: human
-  species_target: human
-  source_quality: primary_human_clinical
-  perturbation_type: physiological_baseline
-  tme_compatibility: low
-  tme_compatibility_notes: "Melanoma is T cell-permissive; PDAC is T cell-excluded. Expect 10-100x overestimation of infiltration rates."
-  estimated_translation_uncertainty_fold: 10.0
+primary_data_source:
+  ...
+  source_relevance:
+    indication_match: proxy
+    indication_match_justification: "Melanoma TIL data used as proxy for PDAC. Both solid tumors with CD8 infiltration, but PDAC has denser stroma and more T cell exclusion."
+    species_source: human
+    species_target: human
+    source_quality: primary_human_clinical
+    perturbation_type: physiological_baseline
+    tme_compatibility: low
+    tme_compatibility_notes: "Melanoma is T cell-permissive; PDAC is T cell-excluded. Expect 10–100× overestimation of infiltration rates."
+    estimated_translation_uncertainty_fold: 10.0
 ```
 
-**Validation:** Warnings (not errors) flag insufficient uncertainty for proxy/cross-species data, missing perturbation relevance documentation, and non-peer-reviewed sources.
+Validation flags warnings (not errors) for: insufficient uncertainty on proxy/cross-species data, missing perturbation rationale, non-peer-reviewed sources.
 
 ---
 
@@ -216,50 +224,35 @@ Find observables that match this context as closely as possible. Document the ac
 
 ### Standard Deviation vs Standard Error of the Mean
 
-**CRITICAL:** When a paper reports mean ± value, you MUST determine whether the ± value is a **standard deviation (SD)** or a **standard error of the mean (SEM)**. Misidentifying SEM as SD underestimates population variability by a factor of √n, producing unrealistically narrow confidence intervals.
+When a paper reports `mean ± value`, you must determine whether the dispersion is **SD** or **SEM**. Misidentifying SEM as SD underestimates population variability by √n.
 
-**How to determine SD vs SEM:**
+**Detection (in order of preference):**
 
-1. **Check the paper text.** Look for explicit labels ("mean ± SD", "mean ± SEM", "mean ± SE") in tables, figure legends, methods section, or statistical methods.
+1. **Explicit label** in tables, figure legends, or methods ("mean ± SD", "mean ± SEM", "± SE").
+2. **√n test** across subgroups: compute `SD = ± × √n` for each group; if derived SDs are ~equal across groups, the ± values are SEMs.
+3. **CV plausibility test** for immune-cell / biomarker measurements: typical biological CV is 50–200%. If `CV = SD/mean < 20%`, the ± is almost certainly SEM.
+4. If still unresolved, state the ambiguity in `key_assumptions` and pick the more conservative interpretation (SD, wider distribution).
 
-2. **Apply the √n test.** If the paper reports ± values for multiple subgroups with similar biology:
-   - Compute SD = ± value × √n for each group
-   - If the derived SDs are approximately equal across groups, the ± values are SEMs
-   - If the ± values themselves are approximately equal across groups, they may be SDs
+**Encoding:**
 
-3. **Apply the biological plausibility (CV) test.** For immune cell densities, cell counts, and biomarker concentrations:
-   - CV = SD / mean. Typical biological CV is 50–200% for immune cell densities
-   - If treating ± as SD gives CV < 20%, it is almost certainly SEM
-   - If treating ± as SEM gives biologically plausible CV (50–200%), this confirms SEM
+| Identified as | Input name prefix | `dispersion_type` | In `distribution_code` |
+|---|---|---|---|
+| SD | `sd_*` | `sd` | use directly |
+| SEM | `sem_*` | `se` | convert: `sd = sem * np.sqrt(n)` |
 
-4. **Default assumption.** If NONE of the above resolves the ambiguity:
-   - Clinical papers and large-cohort studies (n > 30) more commonly report SEM
-   - Basic science papers more commonly report SD
-   - When uncertain, state the ambiguity explicitly in `key_assumptions`
+Always populate `dispersion_type_rationale` with your evidence (label, √n test arithmetic, or CV check).
 
-**When you identify the ± value as SEM:**
-- Name the input with `sem_` prefix (e.g., `sem_cd8_density`), NOT `sd_`
-- Set `dispersion_type: se` and provide `dispersion_type_rationale` explaining your evidence
-- Convert to SD in `distribution_code`: `sd = sem * np.sqrt(n)`
-- Document the determination in `key_assumptions`
-
-**When you identify the ± value as SD:**
-- Name the input with `sd_` prefix (e.g., `sd_cd8_density`)
-- Set `dispersion_type: sd` and provide `dispersion_type_rationale`
-- Use SD directly in `distribution_code` (no conversion needed)
-
-**Example (SEM identified via √n test):**
+**Example (SEM via √n test):**
 ```yaml
 inputs:
   - name: sem_cd8_density
     value: 15.0
     units: cell / millimeter**2
-    description: "SEM for CD8 density, identified via √n test"
     dispersion_type: se
     dispersion_type_rationale: |
-      Paper reports 227.7 ± 15.0 (n=368). SD = 15.0 × √368 = 287.7.
-      Second group: 220.1 ± 33.0 (n=76). SD = 33.0 × √76 = 287.7.
-      Identical SDs confirm these are SEMs. CV if SD would be 6.6% (implausible).
+      Paper reports 227.7 ± 15.0 (n=368) and 220.1 ± 33.0 (n=76).
+      Derived SDs = 287.7 and 287.7 — equal across groups → SEMs.
+      Treating as SD would give CV 6.6% (implausibly narrow for immune cell density).
 ```
 
 ### Ratio and Composite Targets
@@ -362,108 +355,98 @@ Provide a text description for each intervention including:
 - "Surgical resection on day 14, removing 90% of tumor burden"
 - "No intervention (natural disease progression)" → use empty list `[]`
 
-**Measurements** (at least ONE required):
+**Observable** (singular, required):
 
-Each measurement requires:
+The top-level `observable:` block describes a single experimental observable. (There is no `measurements:` array — exactly one observable per CalibrationTarget.) It contains:
 
-1. **measurement_description** (text) - Describes WHAT is being measured and HOW:
-   - Observable: What biological quantity
-   - Method: How it's measured (e.g., "via IHC", "by flow cytometry")
-   - Location: Where in the body
-   - Units: Expected units
-
-2. **measurement_species** (list) - Species accessed by measurement_code:
+1. **observable.species** (list) - Full model species accessed by `observable.code`:
    - Format: `['compartment.species']` (e.g., `['V_T.CD8', 'V_T.C1']`)
-   - Must match species names in model
+   - Must match species names in the model
 
-3. **measurement_constants** (list) - All conversion factors and reference values with units:
-   - **REQUIRED** for any numeric constant with units used in measurement_code
+2. **observable.constants** (list) - All conversion factors and reference values with units:
+   - **REQUIRED** for any numeric constant with units used in `observable.code`
    - Each constant requires: `name`, `value`, `units`, `biological_basis`, `source_type`, and source-specific fields
    - **source_type** must be one of:
      - `reference_db` → also provide `reference_db_name` (must match reference_values.yaml entry)
      - `derived_from_reference_db` → also provide `reference_db_names` list (each must match)
      - `literature` → also provide `source_tag` (must match a defined source in this target)
-   - **Never hardcode numbers with units** like `23.0 * ureg('mg/mL')` in measurement_code
+   - **Never hardcode numbers with units** like `23.0 * ureg('mg/mL')` in `observable.code`
    - **No "modeling_assumption" allowed** — every constant must trace to a verifiable source
    - Access in code via: `constants['constant_name']`
 
-4. **measurement_code** (executable Python) - Computes observable from species time series:
-   - Function signature: `compute_measurement(time, species_dict, ureg, constants)`
+3. **observable.code** (executable Python) - Computes the observable from species time series:
+   - Function signature: `compute_observable(time, species_dict, constants, ureg)`
    - `time`: numpy array with day units (Pint Quantity)
    - `species_dict`: dict mapping species names to numpy arrays (Pint Quantities, one value per timepoint)
+   - `constants`: dict mapping constant names to Pint Quantities (from `observable.constants`)
    - `ureg`: Pint UnitRegistry for conversions
-   - `constants`: dict mapping constant names to Pint Quantities (from measurement_constants)
-   - Must return Pint Quantity (scalar or array) with units matching `empirical_data.units`
+   - Must return Pint Quantity (scalar or array) with units matching `observable.units` and `empirical_data.units`
    - **IMPORTANT**: Do NOT hardcode numbers with units. Use `constants` dict for all conversion factors.
-   - **IMPORTANT**: Do NOT include time filtering logic. This function computes WHAT to measure. WHEN to measure is handled via threshold_description.
+   - **IMPORTANT**: Do NOT include time filtering logic. This function computes WHAT to measure. WHEN to measure is handled at the scenario/timepoint level.
 
-5. **support** (required) - Declares the mathematical support of the output:
+4. **observable.units** (str) - Pint-parseable units of the observable output. Must match both `observable.code` return units and `empirical_data.units`.
+
+5. **observable.support** (required) - Declares the mathematical support of the output:
    - `positive`: Output must be > 0 (densities, concentrations, volumes)
    - `non_negative`: Output must be ≥ 0 (counts)
    - `unit_interval`: Output must be in [0, 1] (fractions, proportions)
    - `positive_unbounded`: Output must be > 0, no upper bound (fold-changes, ratios)
    - `real`: Any real value (log-ratios, change scores)
 
-6. **threshold_description** (text) - Describes WHEN the measurement occurs:
-   - **What triggers measurement**: The biological or clinical event/condition that prompts observation
-   - **Timing context**: When in disease progression or treatment timeline
-   - **Avoid circular reasoning**: Don't define timing by the observable being measured (e.g., don't say "when tumor reaches X cm" if measuring tumor size)
-   - **Be specific about causality**: Distinguish between biological thresholds (disease progression) and clinical decisions (institutional protocols, symptom-triggered interventions)
+6. **observable.experimental_denominator** / **observable.model_denominator_species** (optional, for density/fraction observables): describe what the experiment normalizes by and which model species form the matching model-side denominator.
 
-**Example measurement (absolute density with stroma correction):**
+**Example observable (absolute density with stroma correction):**
 ```yaml
-measurements:
-  - measurement_description: "CD8+ T cell density per tumor tissue area via IHC, cells/mm²"
-    measurement_species: ['V_T.CD8', 'V_T.C1']
-    measurement_constants:
-      - name: area_per_cancer_cell
-        value: 2.27e-4
-        units: mm**2/cell
-        biological_basis: "From reference DB pdac_cancer_cell_diameter (17 μm) → π×(8.5 μm)² = 2.27e-4 mm²"
-        source_type: derived_from_reference_db
-        reference_db_names: [pdac_cancer_cell_diameter]
-      - name: stromal_fraction
-        value: 0.75
-        units: dimensionless
-        biological_basis: "PDAC tumors are highly desmoplastic with 60-90% stromal content. Reference DB consensus value 0.75."
-        source_type: reference_db
-        reference_db_name: pdac_stromal_fraction
-    measurement_code: |
-      def compute_measurement(time, species_dict, ureg, constants):
-          cd8 = species_dict['V_T.CD8']
-          c_cells = species_dict['V_T.C1']
-          area_per_cell = constants['area_per_cancer_cell']
-          stroma_frac = constants['stromal_fraction']
-          # Tissue area includes cancer cells AND stroma
-          tumor_area = c_cells * area_per_cell / (1 - stroma_frac)
-          return (cd8 / tumor_area).to('cell/mm**2')
-    support: positive
-    threshold_description: "At tumor resection"
-    experimental_denominator: "mm^2 of tumor tissue section (cancer cells + stroma)"
-    model_denominator_species: ['V_T.C1']
+observable:
+  code: |
+    def compute_observable(time, species_dict, constants, ureg):
+        cd8 = species_dict['V_T.CD8']
+        c_cells = species_dict['V_T.C1']
+        area_per_cell = constants['area_per_cancer_cell']
+        stroma_frac = constants['stromal_fraction']
+        # Tissue area includes cancer cells AND stroma
+        tumor_area = c_cells * area_per_cell / (1 - stroma_frac)
+        return (cd8 / tumor_area).to('cell/mm**2')
+  units: cell/mm**2
+  species: ['V_T.CD8', 'V_T.C1']
+  constants:
+    - name: area_per_cancer_cell
+      value: 2.27e-4
+      units: mm**2/cell
+      biological_basis: "From reference DB pdac_cancer_cell_diameter (17 μm) → π×(8.5 μm)² = 2.27e-4 mm²"
+      source_type: derived_from_reference_db
+      reference_db_names: [pdac_cancer_cell_diameter]
+    - name: stromal_fraction
+      value: 0.75
+      units: dimensionless
+      biological_basis: "PDAC tumors are highly desmoplastic with 60-90% stromal content. Reference DB consensus value 0.75."
+      source_type: reference_db
+      reference_db_name: pdac_stromal_fraction
+  support: positive
+  experimental_denominator: "mm^2 of tumor tissue section (cancer cells + stroma)"
+  model_denominator_species: ['V_T.C1']
 ```
 
-**Example measurement (dimensionless ratio — preferred when available):**
+**Example observable (dimensionless ratio — preferred when available):**
 ```yaml
-measurements:
-  - measurement_description: "Foxp3+ fraction of T cells (Foxp3+/CD3+) via IHC"
-    measurement_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
-    measurement_constants: []
-    measurement_code: |
-      def compute_measurement(time, species_dict, ureg, constants):
-          treg = species_dict['V_T.Treg']
-          total_t = (treg + species_dict['V_T.CD8'] + species_dict['V_T.Th']
-                     + species_dict['V_T.CD8_exh'] + species_dict['V_T.Th_exh'])
-          return (treg / total_t).to('dimensionless')
-    support: unit_interval
-    threshold_description: "At tumor resection"
-    experimental_denominator: "CD3+ T cells (all T cell subsets)"
-    model_denominator_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
+observable:
+  code: |
+    def compute_observable(time, species_dict, constants, ureg):
+        treg = species_dict['V_T.Treg']
+        total_t = (treg + species_dict['V_T.CD8'] + species_dict['V_T.Th']
+                   + species_dict['V_T.CD8_exh'] + species_dict['V_T.Th_exh'])
+        return (treg / total_t).to('dimensionless')
+  units: dimensionless
+  species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
+  constants: []
+  support: unit_interval
+  experimental_denominator: "CD3+ T cells (all T cell subsets)"
+  model_denominator_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
 ```
 
-**Key principles for measurement_code:**
+**Key principles for `observable.code`:**
 - Keep Pint units throughout calculation (see Pint Golden Rule below)
-- Access only species listed in `measurement_species`
+- Access only species listed in `observable.species`
 - Return Pint Quantity (typically array with one value per timepoint)
 - Do NOT include time filtering logic - compute over entire time series
 
@@ -472,15 +455,14 @@ measurements:
 **Data Flow (CRITICAL to understand):**
 
 1. **Paper reports** statistics (mean, SD, median, IQR, range, etc.) → Put these in `inputs[]`
-2. **distribution_code** uses inputs to run Monte Carlo → Produces median, IQR, CI95
+2. **distribution_code** uses inputs to run Monte Carlo → Produces median + CI95
 3. **empirical_data** contains the COMPUTED values (from step 2), NOT the paper's reported values
 
-**Example:** Paper reports "150 ± 25 cells/mm²" but doesn't report median/IQR/CI95:
+**Example:** Paper reports "150 ± 25 cells/mm²" but doesn't report median/CI95:
 - `inputs`: `[{name: "mean", value: 150}, {name: "sd", value: 25}]` ← Paper's values
 - `distribution_code`: Runs MC sampling from normal(150, 25)
-- `empirical_data.median`: 149.94 ← Computed from MC, matches code output
-- `empirical_data.iqr`: 33.59 ← Computed from MC, matches code output
-- `empirical_data.ci95`: [100.79, 199.35] ← Computed from MC
+- `empirical_data.median`: `[149.94]` ← Computed from MC, matches code output (length-1 list for scalar)
+- `empirical_data.ci95`: `[[100.79, 199.35]]` ← Computed from MC (list of `[lo, hi]` pairs)
 
 **Validation:** Code is executed and outputs must match declared median/ci95 within tolerance (1% for median, 10% for CI bounds due to Monte Carlo variance).
 
@@ -493,14 +475,12 @@ measurements:
 
 **IMPORTANT: What distribution_code is (and is NOT) for:**
 
-distribution_code is **STATISTICAL ONLY** - it converts literature values (mean ± SD) into
-sampling distributions. It should NEVER contain:
-- Model compartment volumes (V_T, V_C, V_P) - these belong in observable.code
-- Physical constants or conversion factors - these belong in observable.constants
-- ODE parameters or dynamics - these belong in submodel.code
+`distribution_code` is **STATISTICAL ONLY** — it converts literature values (mean ± SD) into sampling distributions. It should NEVER contain:
+- Model compartment volumes (V_T, V_C, V_P) → belong in `observable.code`
+- Physical constants or conversion factors → belong in `observable.constants`
+- ODE / dynamics — there is no ODE machinery on a CalibrationTarget; if your data needs ODE simulation to fit, it's a SubmodelTarget, not a CalibrationTarget
 
-**If you find yourself writing `V_T = 1.0 * ureg.milliliter` in distribution_code, STOP.**
-You're confusing statistical derivation with model simulation.
+If you find yourself writing `V_T = 1.0 * ureg.milliliter` in `distribution_code`, STOP — you're confusing statistical derivation with model simulation.
 
 **GOLDEN RULE: Reattach units immediately after sampling → units propagate naturally.**
 
@@ -554,7 +534,7 @@ def derive_distribution(inputs, ureg):
 
 ### Conversion Factors and Uncertainty Propagation
 
-When `measurement_code` includes conversion factors (cells → volume, IHC score → density, cellularity adjustments):
+When `observable.code` includes conversion factors (cells → volume, IHC score → density, cellularity adjustments):
 
 1. **Document all conversion assumptions in `key_assumptions`**
    - Cell sizes, tissue densities, cellularity fractions, spherical approximations
@@ -581,46 +561,71 @@ When `measurement_code` includes conversion factors (cells → volume, IHC score
 - **Verbatim snippets**: Exact quotes containing values (automatically verified)
 - **Secondary sources**: Reference values, conversion factors (can be multiple)
 
-### Sample Size Requirement
+### Sample Size
 
-You MUST extract the sample size (n) for each measurement. This is critical
-for proper uncertainty quantification and pooling across studies.
+`empirical_data.sample_size` (int or List[int]) and `empirical_data.sample_size_rationale` (str) are required. Look for `n =`, `N =`, figure legends, patient counts, replicate counts. If unreported, back-calculate from SD/SEM (if both given), or use a conservative type-based estimate and note the uncertainty in `sample_size_rationale`.
 
-**Look for:**
-- "n = X" or "N = X" in methods/results sections
-- Sample sizes in figure legends (e.g., "n=5 per group")
-- Patient/subject counts in study design
-- Number of samples/biopsies in clinical studies
-
-**Required fields in `empirical_data`:**
-- `sample_size`: int or List[int] - the numeric value(s)
-- `sample_size_rationale`: str - explanation of how sample size was determined
-
-**If sample size is not explicitly reported:**
-- Check figure error bars - if SEM is reported, can sometimes back-calculate n from SD/SEM
-- Note uncertainty in rationale: "Sample size not explicitly reported; n≈X inferred from methods"
-- Use conservative estimate based on study type
-
-**Example:**
+**Reference example with all `empirical_data` fields:**
 ```yaml
 empirical_data:
-  median: 149.94
-  iqr: 33.59
-  ci95: [100.79, 199.35]
+  median: [149.94]                       # List[float] — length 1 for scalar; matches index_values length for vector data
+  ci95: [[100.79, 199.35]]               # List[List[float]] — one [lo, hi] pair per index point
   units: cell / mm**2
   sample_size: 42
   sample_size_rationale: "n=42 patients with resected PDAC tumors, stated in Table 1"
+  inputs: [...]                           # List[EstimateInput] — paper-reported values used by distribution_code
+  assumptions: [...]                      # Optional List[ModelingAssumption] — values NOT from the paper but needed for computation (e.g., n_mc_samples=10000, assumed_cv when not reported); each requires a rationale
+  distribution_code: |
+    def derive_distribution(inputs, ureg):
+        ...
+        return {'median_obs': ..., 'ci95_lower': ..., 'ci95_upper': ...}
 ```
 
----
+There is **no `iqr` field** on `empirical_data`. `distribution_code` returns only `median_obs`, `ci95_lower`, `ci95_upper`.
 
-## Source Hierarchy
+### Experimental Context Block
 
-**Priority order (given that species/indication/compartment MUST match exactly):**
+`experimental_context` documents WHERE the source data came from. Required, even when source matches model context exactly. Common shape:
 
-1. **Ideal:** Exact match on all contexts (species, indication, compartment, system, treatment status)
-2. **Acceptable:** Core match (species/indication/compartment), minor variations in system or treatment (document differences)
-3. **Never:** Different species, indication, compartment, or in vitro data (violates strict requirements)
+```yaml
+experimental_context:
+  species: human                          # SOURCE species — may differ from model
+  system: clinical.resection              # how the data was obtained (clinical.resection, clinical.biopsy, in_vitro, etc.)
+  indication: PDAC                        # cancer/disease the source paper studied
+  treatment:
+    history: [treatment_naive]            # list — multiple histories possible
+    status: pre_treatment
+    specifier: null                       # optional drug name/class
+  stage:                                  # optional, for clinical contexts
+    extent: locally_advanced
+    burden: resectable
+  mouse_subspecifier: null                # only when species=mouse: orthotopic_KPC, GEMM, syngeneic_subq, etc.
+  cell_lines: null                        # for in_vitro / cell-line studies
+  culture_conditions: null                # for in_vitro studies (medium, duration_hours)
+  tissue_source: null                     # e.g., "fresh resection", "frozen biopsy", "FFPE"
+  assay_type: ELISA                       # IHC, flow_cytometry, ELISA, qPCR, scRNA-seq, etc.
+```
+
+The `Model Context (Target to Match)` section above describes the *target*; `experimental_context` describes the *actual* source. Mismatches are documented (not rejected) — flag them via `primary_data_source.source_relevance` (see "Optional Features").
+
+### Narrative Fields
+
+Three top-level narrative fields are required:
+
+- **`study_interpretation`** (str, ≥1 paragraph) — what observable is being measured, how the experimental context maps to the model, key methodological points. Focus on scientific interpretation, not assumptions/limitations.
+- **`key_assumptions`** (List[str], min 1 entry) — biological + statistical assumptions (e.g., `"CD8+ T cells include both effector and exhausted phenotypes"`, `"Normal distribution assumed for positive-only data"`, `"Mouse data assumed transferable to human with 5–10× rate reduction"`).
+- **`key_study_limitations`** (List[str], can be empty) — issues that bias estimates or limit generalizability (e.g., `"Single-center cohort (n~15)"`, `"Values estimated from figures, not tabulated data"`, `"Bulk CD3+ assay, not CD8-specific"`).
+
+### Epistemic Basis
+
+Default `epistemic_basis: literature` covers the standard case (a primary publication directly measures the observable). Use `epistemic_basis: mechanistic` ONLY for biological-invariant priors that cannot be tied to a primary measurement (e.g., "untreated tumors do not spontaneously regress"). Mechanistic targets:
+- May have `primary_data_source: null`
+- Skip `value_snippet` validation
+- Must include the mechanistic rationale in `key_assumptions`
+- Should use deliberately wide CIs so the target nudges rather than dominates the likelihood
+- Live in `calibration_targets/mechanistic/`, not the scenario directories
+
+`mechanistic` is NOT a backdoor for unverified citations. If a paper exists, use `literature`.
 
 ---
 
