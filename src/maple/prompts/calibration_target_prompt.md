@@ -62,12 +62,12 @@ A biological observable measured in a **specific experimental scenario**, used t
 - **Validation:** Title similarity must be ≥75% match with CrossRef
 
 ### 3. Code Must Execute Without Errors
-- `measurement_code` and `distribution_code` will both be executed with mock data
+- `observable.code` and `empirical_data.distribution_code` will both be executed with mock data
 - Syntax errors or runtime errors will cause validation failure
 - **Validation:** Code is executed with mock species data and Pint unit registry
 
-### 4. Measurement Code Units Must Match
-- `measurement_code` output units must match `empirical_data.units`
+### 4. Observable Code Units Must Match
+- `observable.code` output units must match `observable.units` and `empirical_data.units`
 - **Validation:** Pint dimensional analysis checks measurement code output
 
 ### 5. Computed Values Must Match Reported Values
@@ -88,8 +88,8 @@ A biological observable measured in a **specific experimental scenario**, used t
 - **No ungrounded constants allowed.** Do NOT use "modeling_assumption" — every numeric must trace to a specific reference DB entry or literature source.
 - **Validation:** Cross-reference checking against defined sources and reference DB entries
 
-### 8. Measurement Code Output Scale Must Match Calibration Target Scale
-- Ensure measurement_code output range is on the same scale as empirical_data
+### 8. Observable Code Output Scale Must Match Calibration Target Scale
+- Ensure `observable.code` output range is on the same scale as `empirical_data`
 - Example: Don't mix 0-1 ratios with 0-N scores - they must use consistent scaling
 - **Validation:** Code executed with mock data; output range compared to target range
 
@@ -362,108 +362,98 @@ Provide a text description for each intervention including:
 - "Surgical resection on day 14, removing 90% of tumor burden"
 - "No intervention (natural disease progression)" → use empty list `[]`
 
-**Measurements** (at least ONE required):
+**Observable** (singular, required):
 
-Each measurement requires:
+The top-level `observable:` block describes a single experimental observable. (There is no `measurements:` array — exactly one observable per CalibrationTarget.) It contains:
 
-1. **measurement_description** (text) - Describes WHAT is being measured and HOW:
-   - Observable: What biological quantity
-   - Method: How it's measured (e.g., "via IHC", "by flow cytometry")
-   - Location: Where in the body
-   - Units: Expected units
-
-2. **measurement_species** (list) - Species accessed by measurement_code:
+1. **observable.species** (list) - Full model species accessed by `observable.code`:
    - Format: `['compartment.species']` (e.g., `['V_T.CD8', 'V_T.C1']`)
-   - Must match species names in model
+   - Must match species names in the model
 
-3. **measurement_constants** (list) - All conversion factors and reference values with units:
-   - **REQUIRED** for any numeric constant with units used in measurement_code
+2. **observable.constants** (list) - All conversion factors and reference values with units:
+   - **REQUIRED** for any numeric constant with units used in `observable.code`
    - Each constant requires: `name`, `value`, `units`, `biological_basis`, `source_type`, and source-specific fields
    - **source_type** must be one of:
      - `reference_db` → also provide `reference_db_name` (must match reference_values.yaml entry)
      - `derived_from_reference_db` → also provide `reference_db_names` list (each must match)
      - `literature` → also provide `source_tag` (must match a defined source in this target)
-   - **Never hardcode numbers with units** like `23.0 * ureg('mg/mL')` in measurement_code
+   - **Never hardcode numbers with units** like `23.0 * ureg('mg/mL')` in `observable.code`
    - **No "modeling_assumption" allowed** — every constant must trace to a verifiable source
    - Access in code via: `constants['constant_name']`
 
-4. **measurement_code** (executable Python) - Computes observable from species time series:
-   - Function signature: `compute_measurement(time, species_dict, ureg, constants)`
+3. **observable.code** (executable Python) - Computes the observable from species time series:
+   - Function signature: `compute_observable(time, species_dict, constants, ureg)`
    - `time`: numpy array with day units (Pint Quantity)
    - `species_dict`: dict mapping species names to numpy arrays (Pint Quantities, one value per timepoint)
+   - `constants`: dict mapping constant names to Pint Quantities (from `observable.constants`)
    - `ureg`: Pint UnitRegistry for conversions
-   - `constants`: dict mapping constant names to Pint Quantities (from measurement_constants)
-   - Must return Pint Quantity (scalar or array) with units matching `empirical_data.units`
+   - Must return Pint Quantity (scalar or array) with units matching `observable.units` and `empirical_data.units`
    - **IMPORTANT**: Do NOT hardcode numbers with units. Use `constants` dict for all conversion factors.
-   - **IMPORTANT**: Do NOT include time filtering logic. This function computes WHAT to measure. WHEN to measure is handled via threshold_description.
+   - **IMPORTANT**: Do NOT include time filtering logic. This function computes WHAT to measure. WHEN to measure is handled at the scenario/timepoint level.
 
-5. **support** (required) - Declares the mathematical support of the output:
+4. **observable.units** (str) - Pint-parseable units of the observable output. Must match both `observable.code` return units and `empirical_data.units`.
+
+5. **observable.support** (required) - Declares the mathematical support of the output:
    - `positive`: Output must be > 0 (densities, concentrations, volumes)
    - `non_negative`: Output must be ≥ 0 (counts)
    - `unit_interval`: Output must be in [0, 1] (fractions, proportions)
    - `positive_unbounded`: Output must be > 0, no upper bound (fold-changes, ratios)
    - `real`: Any real value (log-ratios, change scores)
 
-6. **threshold_description** (text) - Describes WHEN the measurement occurs:
-   - **What triggers measurement**: The biological or clinical event/condition that prompts observation
-   - **Timing context**: When in disease progression or treatment timeline
-   - **Avoid circular reasoning**: Don't define timing by the observable being measured (e.g., don't say "when tumor reaches X cm" if measuring tumor size)
-   - **Be specific about causality**: Distinguish between biological thresholds (disease progression) and clinical decisions (institutional protocols, symptom-triggered interventions)
+6. **observable.experimental_denominator** / **observable.model_denominator_species** (optional, for density/fraction observables): describe what the experiment normalizes by and which model species form the matching model-side denominator.
 
-**Example measurement (absolute density with stroma correction):**
+**Example observable (absolute density with stroma correction):**
 ```yaml
-measurements:
-  - measurement_description: "CD8+ T cell density per tumor tissue area via IHC, cells/mm²"
-    measurement_species: ['V_T.CD8', 'V_T.C1']
-    measurement_constants:
-      - name: area_per_cancer_cell
-        value: 2.27e-4
-        units: mm**2/cell
-        biological_basis: "From reference DB pdac_cancer_cell_diameter (17 μm) → π×(8.5 μm)² = 2.27e-4 mm²"
-        source_type: derived_from_reference_db
-        reference_db_names: [pdac_cancer_cell_diameter]
-      - name: stromal_fraction
-        value: 0.75
-        units: dimensionless
-        biological_basis: "PDAC tumors are highly desmoplastic with 60-90% stromal content. Reference DB consensus value 0.75."
-        source_type: reference_db
-        reference_db_name: pdac_stromal_fraction
-    measurement_code: |
-      def compute_measurement(time, species_dict, ureg, constants):
-          cd8 = species_dict['V_T.CD8']
-          c_cells = species_dict['V_T.C1']
-          area_per_cell = constants['area_per_cancer_cell']
-          stroma_frac = constants['stromal_fraction']
-          # Tissue area includes cancer cells AND stroma
-          tumor_area = c_cells * area_per_cell / (1 - stroma_frac)
-          return (cd8 / tumor_area).to('cell/mm**2')
-    support: positive
-    threshold_description: "At tumor resection"
-    experimental_denominator: "mm^2 of tumor tissue section (cancer cells + stroma)"
-    model_denominator_species: ['V_T.C1']
+observable:
+  code: |
+    def compute_observable(time, species_dict, constants, ureg):
+        cd8 = species_dict['V_T.CD8']
+        c_cells = species_dict['V_T.C1']
+        area_per_cell = constants['area_per_cancer_cell']
+        stroma_frac = constants['stromal_fraction']
+        # Tissue area includes cancer cells AND stroma
+        tumor_area = c_cells * area_per_cell / (1 - stroma_frac)
+        return (cd8 / tumor_area).to('cell/mm**2')
+  units: cell/mm**2
+  species: ['V_T.CD8', 'V_T.C1']
+  constants:
+    - name: area_per_cancer_cell
+      value: 2.27e-4
+      units: mm**2/cell
+      biological_basis: "From reference DB pdac_cancer_cell_diameter (17 μm) → π×(8.5 μm)² = 2.27e-4 mm²"
+      source_type: derived_from_reference_db
+      reference_db_names: [pdac_cancer_cell_diameter]
+    - name: stromal_fraction
+      value: 0.75
+      units: dimensionless
+      biological_basis: "PDAC tumors are highly desmoplastic with 60-90% stromal content. Reference DB consensus value 0.75."
+      source_type: reference_db
+      reference_db_name: pdac_stromal_fraction
+  support: positive
+  experimental_denominator: "mm^2 of tumor tissue section (cancer cells + stroma)"
+  model_denominator_species: ['V_T.C1']
 ```
 
-**Example measurement (dimensionless ratio — preferred when available):**
+**Example observable (dimensionless ratio — preferred when available):**
 ```yaml
-measurements:
-  - measurement_description: "Foxp3+ fraction of T cells (Foxp3+/CD3+) via IHC"
-    measurement_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
-    measurement_constants: []
-    measurement_code: |
-      def compute_measurement(time, species_dict, ureg, constants):
-          treg = species_dict['V_T.Treg']
-          total_t = (treg + species_dict['V_T.CD8'] + species_dict['V_T.Th']
-                     + species_dict['V_T.CD8_exh'] + species_dict['V_T.Th_exh'])
-          return (treg / total_t).to('dimensionless')
-    support: unit_interval
-    threshold_description: "At tumor resection"
-    experimental_denominator: "CD3+ T cells (all T cell subsets)"
-    model_denominator_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
+observable:
+  code: |
+    def compute_observable(time, species_dict, constants, ureg):
+        treg = species_dict['V_T.Treg']
+        total_t = (treg + species_dict['V_T.CD8'] + species_dict['V_T.Th']
+                   + species_dict['V_T.CD8_exh'] + species_dict['V_T.Th_exh'])
+        return (treg / total_t).to('dimensionless')
+  units: dimensionless
+  species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
+  constants: []
+  support: unit_interval
+  experimental_denominator: "CD3+ T cells (all T cell subsets)"
+  model_denominator_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
 ```
 
-**Key principles for measurement_code:**
+**Key principles for `observable.code`:**
 - Keep Pint units throughout calculation (see Pint Golden Rule below)
-- Access only species listed in `measurement_species`
+- Access only species listed in `observable.species`
 - Return Pint Quantity (typically array with one value per timepoint)
 - Do NOT include time filtering logic - compute over entire time series
 
@@ -472,15 +462,14 @@ measurements:
 **Data Flow (CRITICAL to understand):**
 
 1. **Paper reports** statistics (mean, SD, median, IQR, range, etc.) → Put these in `inputs[]`
-2. **distribution_code** uses inputs to run Monte Carlo → Produces median, IQR, CI95
+2. **distribution_code** uses inputs to run Monte Carlo → Produces median + CI95
 3. **empirical_data** contains the COMPUTED values (from step 2), NOT the paper's reported values
 
-**Example:** Paper reports "150 ± 25 cells/mm²" but doesn't report median/IQR/CI95:
+**Example:** Paper reports "150 ± 25 cells/mm²" but doesn't report median/CI95:
 - `inputs`: `[{name: "mean", value: 150}, {name: "sd", value: 25}]` ← Paper's values
 - `distribution_code`: Runs MC sampling from normal(150, 25)
-- `empirical_data.median`: 149.94 ← Computed from MC, matches code output
-- `empirical_data.iqr`: 33.59 ← Computed from MC, matches code output
-- `empirical_data.ci95`: [100.79, 199.35] ← Computed from MC
+- `empirical_data.median`: `[149.94]` ← Computed from MC, matches code output (length-1 list for scalar)
+- `empirical_data.ci95`: `[[100.79, 199.35]]` ← Computed from MC (list of `[lo, hi]` pairs)
 
 **Validation:** Code is executed and outputs must match declared median/ci95 within tolerance (1% for median, 10% for CI bounds due to Monte Carlo variance).
 
@@ -554,7 +543,7 @@ def derive_distribution(inputs, ureg):
 
 ### Conversion Factors and Uncertainty Propagation
 
-When `measurement_code` includes conversion factors (cells → volume, IHC score → density, cellularity adjustments):
+When `observable.code` includes conversion factors (cells → volume, IHC score → density, cellularity adjustments):
 
 1. **Document all conversion assumptions in `key_assumptions`**
    - Cell sizes, tissue densities, cellularity fractions, spherical approximations
@@ -604,13 +593,20 @@ for proper uncertainty quantification and pooling across studies.
 **Example:**
 ```yaml
 empirical_data:
-  median: 149.94
-  iqr: 33.59
-  ci95: [100.79, 199.35]
+  median: [149.94]                        # List[float], length-1 for scalar; length matching index_values for vector
+  ci95: [[100.79, 199.35]]                # List[List[float]], one [lo, hi] pair per index point
   units: cell / mm**2
   sample_size: 42
   sample_size_rationale: "n=42 patients with resected PDAC tumors, stated in Table 1"
+  inputs: [...]                            # List[EstimateInput], paper-reported values used by distribution_code
+  assumptions: [...]                       # Optional; values not from the paper but needed for computation
+  distribution_code: |
+    def derive_distribution(inputs, ureg):
+        ...
+        return {'median_obs': ..., 'ci95_lower': ..., 'ci95_upper': ...}
 ```
+
+Note: there is **no `iqr` field** on `empirical_data`. The MC return dict from `distribution_code` only contains `median_obs`, `ci95_lower`, and `ci95_upper`.
 
 ---
 
