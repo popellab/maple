@@ -20,8 +20,61 @@ from typing import Optional
 
 import yaml
 
-from maple.core.calibration.submodel_target import SubmodelTarget
 from maple.core.calibration.validators import fuzzy_find_snippet_in_text
+
+
+class _AttrView:
+    """Lightweight dict→attribute adapter so snippet validation can read raw
+    dicts uniformly across SubmodelTarget and CalibrationTarget shapes without
+    invoking pydantic validators (CalibrationTarget validators require a
+    ``context={'model_structure': ...}`` that snippet validation does not need).
+    """
+
+    __slots__ = ("_d",)
+
+    def __init__(self, d):
+        self._d = d if isinstance(d, dict) else {}
+
+    def __getattr__(self, name):
+        v = self._d.get(name)
+        if isinstance(v, dict):
+            return _AttrView(v)
+        return v
+
+    def __bool__(self):
+        return bool(self._d)
+
+
+def _parse_target(data: dict):
+    """Read a YAML payload as either SubmodelTarget or CalibrationTarget.
+
+    Returns ``(target, inputs, primary_data_source, secondary_data_sources)``
+    using lightweight dict→attribute adapters. Avoids pydantic validation so
+    cal-mode YAMLs (which require a ModelStructure context) can be snippet-
+    validated outside of a full validation pipeline.
+
+    Discrimination is by shape: a YAML with both ``empirical_data`` and
+    ``calibration_target_id`` is treated as a CalibrationTarget, otherwise
+    SubmodelTarget.
+    """
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected a dict at YAML root, got {type(data).__name__}")
+
+    is_cal = "empirical_data" in data and "calibration_target_id" in data
+
+    if is_cal:
+        emp = data.get("empirical_data") or {}
+        raw_inputs = emp.get("inputs") or []
+    else:
+        raw_inputs = data.get("inputs") or []
+
+    inputs = [_AttrView(i) for i in raw_inputs]
+    primary = (
+        _AttrView(data.get("primary_data_source")) if data.get("primary_data_source") else None
+    )
+    secondary = [_AttrView(s) for s in (data.get("secondary_data_sources") or [])]
+    target = _AttrView(data)
+    return target, inputs, primary, secondary
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +267,8 @@ def validate_snippets_in_file(
     Parameters
     ----------
     yaml_path : Path
-        Path to a SubmodelTarget YAML file.
+        Path to a SubmodelTarget or CalibrationTarget YAML file. The schema is
+        auto-detected from the YAML payload shape.
     papers_dir : Path, optional
         Directory containing ``<source_tag>/`` subdirs with PDFs.
         If None, defaults to ``yaml_path.parent / "papers"``.
@@ -233,7 +287,7 @@ def validate_snippets_in_file(
     try:
         with open(yaml_path) as f:
             data = yaml.safe_load(f)
-        target = SubmodelTarget.model_validate(data)
+        target, inputs_list, primary, secondary = _parse_target(data)
     except Exception as e:
         return (False, [f"Failed to parse: {e}"], [], [], [])
 
@@ -241,24 +295,36 @@ def validate_snippets_in_file(
     source_tags = set()
     source_metadata: dict[str, dict] = {}
 
-    pri = target.primary_data_source
-    source_tags.add(pri.source_tag)
-    source_metadata[pri.source_tag] = {"doi": pri.doi, "url": None}
+    # CalibrationTarget allows primary_data_source=None (mechanistic basis); skip
+    # source loading entirely in that case — there is nothing to fuzzy-match against.
+    if primary is None and not secondary:
+        return (
+            True,
+            [],
+            [
+                "no primary_data_source (mechanistic / non-literature target — snippet validation skipped)"
+            ],
+            [],
+            [],
+        )
 
-    if target.secondary_data_sources:
-        for src in target.secondary_data_sources:
-            source_tags.add(src.source_tag)
-            source_metadata[src.source_tag] = {
-                "doi": src.doi,
-                "url": getattr(src, "url", None),
-            }
+    if primary is not None:
+        source_tags.add(primary.source_tag)
+        source_metadata[primary.source_tag] = {"doi": primary.doi, "url": None}
+
+    for src in secondary:
+        source_tags.add(src.source_tag)
+        source_metadata[src.source_tag] = {
+            "doi": src.doi,
+            "url": getattr(src, "url", None),
+        }
 
     # Load paper texts
     paper_data = load_paper_texts(source_tags, source_metadata, papers_dir)
 
     # Verify each input's snippet, table_excerpt, and/or figure_excerpt
     manual_review = []
-    for inp in target.inputs:
+    for inp in inputs_list:
         tag = inp.source_ref
         has_snippet = bool(inp.value_snippet)
         has_table = bool(inp.table_excerpt)
