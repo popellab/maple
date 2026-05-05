@@ -200,7 +200,8 @@ class CalibrationTargetEstimates(BaseModel):
             "These are the VALUES REPORTED IN THE PAPER (mean, SD, median, IQR, trajectories, etc.) "
             "that are used to DERIVE the distribution via Monte Carlo. "
             "Inputs can be scalar (broadcast to all index points) or vector-valued (same length as index_values).\n\n"
-            "NOTE: For inputs used in submodel or observable code, use submodel.inputs or observable.inputs instead."
+            "NOTE: These are values used by distribution_code, not by observable.code. "
+            "observable.code uses observable.constants for grounded reference values."
         )
     )
     assumptions: List[ModelingAssumption] = Field(
@@ -874,10 +875,6 @@ class CalibrationTarget(BaseModel):
         for const in self.observable.constants:
             _check_unit(const.units, f"observable.constants['{const.name}'].units")
 
-        # observable.inputs[*].units
-        for inp in self.observable.inputs:
-            _check_unit(inp.units, f"observable.inputs['{inp.name}'].units")
-
         # empirical_data.index_unit
         _check_unit(self.empirical_data.index_unit, "empirical_data.index_unit")
 
@@ -1100,17 +1097,17 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_source_quality_peer_reviewed(self) -> "CalibrationTarget":
-        """Validator (WARNING): Flag non-peer-reviewed sources."""
+    def validate_source_relevance_warnings(self) -> "CalibrationTarget":
+        """Emit warnings for source-relevance issues (non-peer-reviewed, cross-indication,
+        cross-species, low TME compatibility, perturbation without justification)."""
         if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
             return self
 
         import warnings
 
-        if (
-            self.primary_data_source.source_relevance.source_quality
-            == SourceQuality.NON_PEER_REVIEWED
-        ):
+        sr = self.primary_data_source.source_relevance
+
+        if sr.source_quality == SourceQuality.NON_PEER_REVIEWED:
             warnings.warn(
                 "source_relevance.source_quality is 'non_peer_reviewed'. "
                 "Prefer peer-reviewed primary literature for calibration targets. "
@@ -1118,98 +1115,35 @@ class CalibrationTarget(BaseModel):
                 UserWarning,
             )
 
-        return self
-
-    @model_validator(mode="after")
-    def warn_cross_indication_extrapolation(self) -> "CalibrationTarget":
-        """Validator (WARNING): Flag proxy/unrelated indication extrapolation."""
-        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
-            return self
-
-        import warnings
-
-        sr = self.primary_data_source.source_relevance
         if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
             warnings.warn(
                 f"Cross-indication extrapolation: indication_match='{sr.indication_match.value}'. "
-                f"Translation sigma inflation will be applied automatically during prior construction.",
+                "Translation sigma inflation will be applied automatically during prior construction.",
                 UserWarning,
             )
 
-        return self
-
-    @model_validator(mode="after")
-    def validate_pharmacological_perturbation_justification(self) -> "CalibrationTarget":
-        """Validator (WARNING): Flag pharmacological perturbation without relevance explanation."""
-        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
-            return self
-
-        import warnings
-
-        sr = self.primary_data_source.source_relevance
-        if sr.perturbation_type == PerturbationType.PHARMACOLOGICAL:
-            if not sr.perturbation_relevance:
-                warnings.warn(
-                    "source_relevance.perturbation_type is 'pharmacological' but "
-                    "perturbation_relevance is not provided. Document how the drug-induced "
-                    "measurement relates to the physiological parameter being estimated.",
-                    UserWarning,
-                )
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_genetic_perturbation_justification(self) -> "CalibrationTarget":
-        """Validator (WARNING): Flag genetic perturbation without relevance explanation."""
-        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
-            return self
-
-        import warnings
-
-        sr = self.primary_data_source.source_relevance
-        if sr.perturbation_type == PerturbationType.GENETIC:
-            if not sr.perturbation_relevance:
-                warnings.warn(
-                    "source_relevance.perturbation_type is 'genetic_perturbation' but "
-                    "perturbation_relevance is not provided. Document how the knockout/knockdown "
-                    "measurement relates to the wild-type parameter being estimated.",
-                    UserWarning,
-                )
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_low_tme_compatibility_notes(self) -> "CalibrationTarget":
-        """Validator (WARNING): Flag low TME compatibility without documentation."""
-        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
-            return self
-
-        import warnings
-
-        sr = self.primary_data_source.source_relevance
-        if sr.tme_compatibility == TMECompatibility.LOW:
-            if not sr.tme_compatibility_notes:
-                warnings.warn(
-                    "source_relevance.tme_compatibility is 'low' but tme_compatibility_notes "
-                    "is not provided. Document the TME differences and their expected impact.",
-                    UserWarning,
-                )
-
-        return self
-
-    @model_validator(mode="after")
-    def warn_cross_species_extrapolation(self) -> "CalibrationTarget":
-        """Validator (WARNING): Flag cross-species extrapolation."""
-        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
-            return self
-
-        import warnings
-
-        sr = self.primary_data_source.source_relevance
         if sr.species_source != sr.species_target:
             warnings.warn(
                 f"Cross-species extrapolation: {sr.species_source} → {sr.species_target}. "
-                f"Translation sigma inflation will be applied automatically during prior construction.",
+                "Translation sigma inflation will be applied automatically during prior construction.",
+                UserWarning,
+            )
+
+        if (
+            sr.perturbation_type in (PerturbationType.PHARMACOLOGICAL, PerturbationType.GENETIC)
+            and not sr.perturbation_relevance
+        ):
+            warnings.warn(
+                f"source_relevance.perturbation_type is '{sr.perturbation_type.value}' but "
+                "perturbation_relevance is not provided. Document how the perturbed "
+                "measurement relates to the physiological parameter being estimated.",
+                UserWarning,
+            )
+
+        if sr.tme_compatibility == TMECompatibility.LOW and not sr.tme_compatibility_notes:
+            warnings.warn(
+                "source_relevance.tme_compatibility is 'low' but tme_compatibility_notes "
+                "is not provided. Document the TME differences and their expected impact.",
                 UserWarning,
             )
 
@@ -1223,9 +1157,7 @@ class CalibrationTarget(BaseModel):
         in the source text. Handles multiple numeric formats (decimal, scientific,
         percentage, rounded variations).
 
-        Checks inputs in:
-        - empirical_data.inputs (EstimateInput)
-        - observable.inputs (SubmodelInput)
+        Checks inputs in empirical_data.inputs (EstimateInput).
 
         Raises SnippetValueMismatchError if a value is not found in its snippet.
 
@@ -1279,10 +1211,6 @@ class CalibrationTarget(BaseModel):
 
         # Check empirical_data.inputs
         check_inputs(self.empirical_data.inputs, "empirical_data")
-
-        # Check observable.inputs (if present and not IsolatedSystemTarget)
-        if type(self).__name__ != "IsolatedSystemTarget" and self.observable.inputs:
-            check_inputs(self.observable.inputs, "observable")
 
         return self
 
@@ -1502,12 +1430,7 @@ class CalibrationTarget(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_refs(self) -> "CalibrationTarget":
-        """Validator: Check all source_refs in inputs point to defined sources.
-
-        Checks source_refs in:
-        - empirical_data.inputs (EstimateInput)
-        - observable.inputs (SubmodelInput)
-        """
+        """Validator: Check all source_refs in empirical_data.inputs point to defined sources."""
         # Build set of valid source tags from literature sources
         valid_tags: set[str] = set()
         if self.primary_data_source is not None:
@@ -1527,10 +1450,6 @@ class CalibrationTarget(BaseModel):
 
         # Check empirical_data.inputs
         check_refs(self.empirical_data.inputs, "empirical_data")
-
-        # Check observable.inputs (if present and not IsolatedSystemTarget)
-        if type(self).__name__ != "IsolatedSystemTarget" and self.observable.inputs:
-            check_refs(self.observable.inputs, "observable")
 
         return self
 

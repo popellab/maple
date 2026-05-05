@@ -318,15 +318,6 @@ class Observable(BaseModel):
         description="List of geometric/modeling constants used in the observable code.",
     )
 
-    inputs: List[SubmodelInput] = Field(
-        default_factory=list,
-        description=(
-            "List of literature inputs used in the observable code.\n"
-            "Use for values that come from experimental papers and need provenance tracking.\n"
-            "For derived geometric/modeling constants, use the 'constants' field instead."
-        ),
-    )
-
     support: SupportType = Field(
         default="real",
         description=(
