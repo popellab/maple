@@ -22,7 +22,11 @@ from pydantic_ai import Agent, BinaryContent, WebSearchTool
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 from maple.core.calibration.submodel_target import SubmodelTarget
+from maple.core.calibration.calibration_target_models import CalibrationTarget
 from maple.core.model_structure import ModelStructure
+
+
+TargetKind = Literal["submodel", "cal"]
 
 
 # ===========================================================================
@@ -1234,13 +1238,97 @@ def build_complete_prompt(
     return base_prompt + extra
 
 
+def build_complete_prompt_cal(
+    t: dict,
+    model_context: str,
+    model_structure_path: Path,
+    assessment_json: str,
+    digitized_data_section: str,
+) -> str:
+    """Build stage 3 prompt for CalibrationTarget extraction.
+
+    Pulls model-context fields from the target row (populated by the caller from
+    its targets CSV): observable_description, model_species, model_indication,
+    model_compartment, model_system, model_treatment_history, model_stage_burden,
+    relevant_compartments. Falls back to "Not specified" / cancer_type for missing
+    values so partially-populated rows still produce a usable prompt.
+    """
+    from maple.core.prompts import build_calibration_target_prompt
+
+    ms = ModelStructure.from_json(model_structure_path)
+    all_species_units = ms.to_species_units()
+
+    relevant_compartments = t.get("relevant_compartments", "") or ""
+    if relevant_compartments and all_species_units:
+        comps = [c.strip() for c in relevant_compartments.split(",") if c.strip()]
+        filtered = {
+            sp: u
+            for sp, u in all_species_units.items()
+            if any(sp.startswith(f"{c}.") for c in comps)
+        }
+        species_text = (
+            "\n".join(f"- {sp}: {u}" for sp, u in sorted(filtered.items()))
+            if filtered
+            else "Not provided"
+        )
+    else:
+        species_text = (
+            "\n".join(f"- {sp}: {u}" for sp, u in sorted(all_species_units.items()))
+            if all_species_units
+            else "Not provided"
+        )
+
+    cancer_type = t.get("cancer_type", "") or "Not specified"
+    observable_description = (
+        t.get("observable_description") or t.get("description") or t.get("notes") or t["target_id"]
+    )
+
+    base_prompt = build_calibration_target_prompt(
+        observable_description=observable_description,
+        cancer_type=cancer_type,
+        model_species=t.get("model_species") or "Not specified",
+        model_indication=t.get("model_indication") or cancer_type,
+        model_compartment=t.get("model_compartment") or "Not specified",
+        model_system=t.get("model_system") or "Not specified",
+        model_treatment_history=t.get("model_treatment_history") or "Not specified",
+        model_stage_burden=t.get("model_stage_burden") or "Not specified",
+        model_species_with_units=species_text,
+        used_primary_studies=t.get("used_primary_studies", ""),
+        primary_source_title=t.get("primary_source_title", ""),
+    )
+
+    extra = (
+        "\n\n## Model Context\n\n"
+        + model_context
+        + "\n\n## Paper Assessment (from prior stage)\n\n"
+        + assessment_json
+    )
+    if digitized_data_section:
+        extra += f"\n{digitized_data_section}"
+
+    return base_prompt + extra
+
+
 # ===========================================================================
 # Agents (created once per config, reused across targets)
 # ===========================================================================
 
 
-def make_agents(model_name: str, max_retries: int) -> tuple[Agent, Agent, Agent, Agent, Agent]:
-    """Create the five pipeline agents. Returns (lit_search, assess, plan_review, complete, derivation_review)."""
+def make_agents(
+    model_name: str,
+    max_retries: int,
+    *,
+    target_kind: TargetKind = "submodel",
+) -> tuple[Agent, Agent, Agent, Agent, Agent]:
+    """Create the five pipeline agents. Returns (lit_search, assess, plan_review, complete, derivation_review).
+
+    target_kind switches the complete_agent's output_type:
+      "submodel" -> SubmodelTarget (default)
+      "cal"      -> CalibrationTarget
+    """
+    if target_kind not in ("submodel", "cal"):
+        raise ValueError(f"target_kind must be 'submodel' or 'cal', got {target_kind!r}")
+    complete_output_type = SubmodelTarget if target_kind == "submodel" else CalibrationTarget
     openai_model = make_model(model_name)
     settings = make_settings()
 
@@ -1285,7 +1373,7 @@ def make_agents(model_name: str, max_retries: int) -> tuple[Agent, Agent, Agent,
 
     complete_agent = Agent(
         openai_model,
-        output_type=SubmodelTarget,
+        output_type=complete_output_type,
         model_settings=settings,
         retries=max_retries,
     )
@@ -1574,8 +1662,9 @@ async def run_complete(
     model_structure_path: Path,
     priors_csv: Path,
     work_dir: Path,
+    target_kind: TargetKind = "submodel",
 ) -> Path | None:
-    """Stage 3: Assemble SubmodelTarget YAML."""
+    """Stage 3: Assemble target YAML (SubmodelTarget or CalibrationTarget)."""
     target_dir = t["dir"]
     output_file = target_dir / f"{t['target_id']}_{t['cancer_type']}_deriv001.yaml"
     assessment_path = target_dir / "assessment.json"
@@ -1621,7 +1710,10 @@ async def run_complete(
                 plan_review_reason = r.get("reason", "")
                 break
 
-    parameter_context = build_parameter_context(t["parameters"], model_structure_path)
+    if target_kind == "submodel":
+        parameter_context = build_parameter_context(t["parameters"], model_structure_path)
+    else:
+        parameter_context = ""
 
     digitized_data = read_digitized_data(target_dir / "digitized")
     digitized_section = f"\n## Digitized Figure Data\n\n{digitized_data}" if digitized_data else ""
@@ -1666,24 +1758,38 @@ async def run_complete(
     if text_parts:
         paper_text_section = "\n## Paper Content (text)\n\n" + "\n\n".join(text_parts)
 
-    prompt = build_complete_prompt(
-        parameters=t["parameters"],
-        cancer_type=t["cancer_type"],
-        target_id=t["target_id"],
-        model_context=model_context,
-        parameter_context=parameter_context,
-        assessment_json=json.dumps(assessment_data, indent=2),
-        digitized_data_section=digitized_section + paper_text_section,
-        priors_csv=priors_csv,
-        plan_review_reason=plan_review_reason,
-    )
+    if target_kind == "cal":
+        prompt = build_complete_prompt_cal(
+            t=t,
+            model_context=model_context,
+            model_structure_path=model_structure_path,
+            assessment_json=json.dumps(assessment_data, indent=2),
+            digitized_data_section=digitized_section + paper_text_section,
+        )
+        if plan_review_reason:
+            prompt += f"\n\n## Plan Review Note\n\n{plan_review_reason}\n"
+    else:
+        prompt = build_complete_prompt(
+            parameters=t["parameters"],
+            cancer_type=t["cancer_type"],
+            target_id=t["target_id"],
+            model_context=model_context,
+            parameter_context=parameter_context,
+            assessment_json=json.dumps(assessment_data, indent=2),
+            digitized_data_section=digitized_section + paper_text_section,
+            priors_csv=priors_csv,
+            plan_review_reason=plan_review_reason,
+        )
 
     user_prompt: list = list(file_parts) + [prompt]
     result = await complete_agent.run(user_prompt)
 
     target_data = result.output.model_dump(mode="json", exclude_none=True)
     ms = ModelStructure.from_json(model_structure_path)
-    SubmodelTarget.model_validate(target_data, context={"model_structure": ms})
+    if target_kind == "cal":
+        CalibrationTarget.model_validate(target_data, context={"model_structure": ms})
+    else:
+        SubmodelTarget.model_validate(target_data, context={"model_structure": ms})
 
     with open(output_file, "w") as f:
         yaml.dump(target_data, f, default_flow_style=False, sort_keys=False)
@@ -1782,8 +1888,25 @@ async def run_derivation_review(
     return review
 
 
-def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> dict:
-    """Stage 3b: Validate a completed SubmodelTarget (synchronous — MCMC is CPU-bound).
+def _promotion_dest_dir(t: dict, target_kind: TargetKind) -> Path:
+    """Where a passing target gets copied. Submodel targets always land under
+    calibration_targets/submodel_targets/. CalibrationTargets land under
+    calibration_targets/<scenario>/, taking the scenario from t['scenario'] or
+    t['model_treatment_history'] (fallback: 'general')."""
+    if target_kind == "submodel":
+        return Path("calibration_targets/submodel_targets")
+    scenario = t.get("scenario") or t.get("model_treatment_history") or "general"
+    return Path("calibration_targets") / scenario
+
+
+def run_validate(
+    t: dict,
+    *,
+    model_structure_path: Path,
+    priors_csv: Path,
+    target_kind: TargetKind = "submodel",
+) -> dict:
+    """Stage 3b: Validate a completed target (synchronous).
 
     Returns a status dict: {target_id, state, unit_ok, prior_ok, snippet_ok, promoted_to}.
     state ∈ {'pass', 'fail', 'skip_missing', 'skip_promoted'}.
@@ -1802,7 +1925,8 @@ def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> di
         }
 
     # Skip if already promoted to calibration_targets/
-    dest = Path("calibration_targets/submodel_targets") / output_file.name
+    dest_dir_ = _promotion_dest_dir(t, target_kind)
+    dest = dest_dir_ / output_file.name
     if dest.exists():
         print(f"  [{t['target_id']}] SKIP (already in {dest.parent.name}/)")
         return {
@@ -1819,7 +1943,10 @@ def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> di
         ms = ModelStructure.from_json(model_structure_path)
         with open(output_file) as f:
             data = yaml.safe_load(f)
-        SubmodelTarget.model_validate(data, context={"model_structure": ms})
+        if target_kind == "cal":
+            CalibrationTarget.model_validate(data, context={"model_structure": ms})
+        else:
+            SubmodelTarget.model_validate(data, context={"model_structure": ms})
         unit_ok = True
     except Exception as e:
         print(f"  [{t['target_id']}] Unit FAIL: {e}")
@@ -1847,10 +1974,10 @@ def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> di
         f.write(f"Prior derivation: {'PASS' if prior_ok else 'FAIL'} (moved to qsp-inference)\n\n")
         f.write(f"Snippet validation: {'PASS' if snippet_ok else 'FAIL'}\n{snippet_report}\n")
 
-    # Copy passing targets to submodel_targets/
+    # Copy passing targets to the kind-appropriate destination
     promoted_to = None
     if all_pass:
-        dest_dir = Path("calibration_targets/submodel_targets")
+        dest_dir = _promotion_dest_dir(t, target_kind)
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / output_file.name
         shutil.copy2(output_file, dest)
@@ -1867,13 +1994,24 @@ def run_validate(t: dict, *, model_structure_path: Path, priors_csv: Path) -> di
     }
 
 
-def run_validate_all(targets: list, *, model_structure_path: Path, priors_csv: Path) -> list:
+def run_validate_all(
+    targets: list,
+    *,
+    model_structure_path: Path,
+    priors_csv: Path,
+    target_kind: TargetKind = "submodel",
+) -> list:
     """Run run_validate over every target and print a summary table.
 
     Returns the list of per-target status dicts.
     """
     results = [
-        run_validate(t, model_structure_path=model_structure_path, priors_csv=priors_csv)
+        run_validate(
+            t,
+            model_structure_path=model_structure_path,
+            priors_csv=priors_csv,
+            target_kind=target_kind,
+        )
         for t in targets
     ]
 
