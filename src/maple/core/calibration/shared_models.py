@@ -411,10 +411,6 @@ class EstimateInput(BaseModel):
         return self
 
 
-# Backwards compatibility alias
-LiteratureInput = EstimateInput
-
-
 class ModelingAssumption(BaseModel):
     """
     An assumed value for computation that is not from literature.
@@ -558,20 +554,6 @@ class SubmodelInput(BaseModel):
         return self
 
 
-class KeyAssumption(BaseModel):
-    """
-    A single key assumption with its number and text.
-
-    Note: CalibrationTarget now uses a simpler `caveats: List[str]` field.
-    This class is kept for backward compatibility with ParameterMetadata and TestStatistic.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    number: int = Field(description="Assumption number (1, 2, 3, ...)")
-    text: str = Field(description="Assumption text")
-
-
 class WeightScore(BaseModel):
     """A rubric-based weight score with justification."""
 
@@ -591,7 +573,7 @@ class Source(BaseModel):
     first_author: str = Field(description="First author last name")
     year: int = Field(description="Publication year")
     doi: Optional[str] = Field(None, description="DOI (or null)")
-    source_relevance: "ClinicalSourceRelevance" = Field(
+    source_relevance: "SourceRelevanceAssessment" = Field(
         description=(
             "Structured assessment of how well this source's data translates to the target model. "
             "Captures indication match, source quality, perturbation context, and TME compatibility."
@@ -609,40 +591,12 @@ class SecondarySource(BaseModel):
     first_author: str = Field(description="First author last name")
     year: int = Field(description="Publication year")
     doi_or_url: Optional[str] = Field(None, description="DOI or URL (or null)")
-    source_relevance: "ClinicalSourceRelevance" = Field(
+    source_relevance: "SourceRelevanceAssessment" = Field(
         description=(
             "Structured assessment of how well this source's data translates to the target model. "
             "Captures indication match, source quality, perturbation context, and TME compatibility."
         ),
     )
-
-
-# ============================================================================
-# Provenance Models
-# ============================================================================
-
-
-class Snippet(BaseModel):
-    """A text snippet from a source paper."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    text: str = Field(description="Exact text from the paper")
-    source_tag: str = Field(
-        description="Reference to source (must match a source_tag in primary_data_source or secondary_data_sources)"
-    )
-    figure_or_table: Optional[str] = Field(
-        None, description="Figure/table reference (e.g., 'Figure 3A', 'Table 2')"
-    )
-
-
-class Validation(BaseModel):
-    """Validation metadata (auto-populated by validation suite)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    tags: List[str] = Field(default_factory=list, description="Validation tags")
-    validated_at: Optional[str] = Field(None, description="ISO timestamp of validation")
 
 
 # ============================================================================
@@ -687,183 +641,9 @@ class CultureConditions(BaseModel):
     )
 
 
-# ============================================================================
-# Multi-Point Data Models (for trajectories and dose-response)
-# ============================================================================
-
-
-class TrajectoryData(BaseModel):
-    """
-    Time-course data with multiple measurements over time.
-
-    Use this for kinetic experiments where the same observable is measured
-    at multiple time points (e.g., proliferation curves, cytokine kinetics).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    time_points: List[float] = Field(description="Time points at which measurements were taken")
-    time_unit: str = Field(description="Pint-parseable unit for time points (e.g., 'hour', 'day')")
-    values: List[float] = Field(
-        description="Measured values at each time point (same length as time_points)"
-    )
-    value_unit: str = Field(
-        description="Pint-parseable unit for values (e.g., 'cell', 'nanomolar')"
-    )
-    uncertainty: Optional[List[float]] = Field(
-        None,
-        description="Uncertainty at each time point (same length as time_points, or null)",
-    )
-    uncertainty_type: Optional[UncertaintyType] = Field(
-        None, description="Type of uncertainty measure"
-    )
-    n_replicates: Optional[int] = Field(
-        None, description="Number of replicates (if same for all time points)"
-    )
-    source_ref: Optional[str] = Field(None, description="Source reference tag for this data")
-    figure_or_table: Optional[str] = Field(
-        None, description="Figure/table reference (e.g., 'Figure 2A')"
-    )
-
-
-class DoseResponseData(BaseModel):
-    """
-    Dose-response data with measurements at multiple concentrations/doses.
-
-    Use this for experiments varying a single parameter (concentration, E:T ratio, etc.)
-    and measuring the response (e.g., killing curves, EC50 determination).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    doses: List[float] = Field(description="Dose/concentration values tested")
-    dose_unit: str = Field(description="Pint-parseable unit for doses (e.g., 'nanomolar', 'ng/mL')")
-    dose_parameter: str = Field(
-        description=(
-            "What is being varied (e.g., 'IL2_concentration', 'drug_concentration', "
-            "'ET_ratio', 'cell_density')"
-        )
-    )
-    responses: List[float] = Field(
-        description="Response values at each dose (same length as doses)"
-    )
-    response_unit: str = Field(
-        description="Pint-parseable unit for responses (e.g., 'dimensionless', 'percent')"
-    )
-    uncertainty: Optional[List[float]] = Field(
-        None,
-        description="Uncertainty at each dose (same length as doses, or null)",
-    )
-    uncertainty_type: Optional[UncertaintyType] = Field(
-        None, description="Type of uncertainty measure"
-    )
-    n_replicates: Optional[int] = Field(
-        None, description="Number of replicates (if same for all doses)"
-    )
-    time_point: Optional[float] = Field(
-        None, description="Time point at which dose-response was measured"
-    )
-    time_point_unit: Optional[str] = Field(None, description="Unit for time_point (e.g., 'hour')")
-    source_ref: Optional[str] = Field(None, description="Source reference tag for this data")
-    figure_or_table: Optional[str] = Field(
-        None, description="Figure/table reference (e.g., 'Figure 3B')"
-    )
-
-
 # =============================================================================
 # SOURCE RELEVANCE ASSESSMENT
 # =============================================================================
-
-
-class ClinicalSourceRelevance(BaseModel):
-    """
-    Source relevance assessment for clinical/in vivo calibration targets.
-
-    Captures how well the source data translates to the target model for
-    clinical observables (biopsies, resections, blood draws). Omits the
-    measurement_directness, temporal_resolution, and experimental_system
-    axes used by SubmodelTarget (in vitro/preclinical data), since clinical
-    CalibrationTargets are always direct patient measurements.
-
-    Translation sigma is computed from the 5 core axes (indication, species,
-    source quality, perturbation, TME compatibility) added in quadrature.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    # Indication relevance
-    indication_match: IndicationMatch = Field(
-        description=(
-            "How well does the source indication match the target indication?\n"
-            "- exact: Same disease (e.g., PDAC data for PDAC model)\n"
-            "- related: Same organ or disease class (e.g., other pancreatic diseases)\n"
-            "- proxy: Different tissue used as mechanistic proxy (e.g., melanoma for PDAC)\n"
-            "- unrelated: No clear biological connection"
-        )
-    )
-    indication_match_justification: str = Field(
-        min_length=50,
-        description=(
-            "Justify the indication match rating. If PROXY or UNRELATED, explain "
-            "why this source is acceptable and what translation uncertainty is expected."
-        ),
-    )
-
-    # Species
-    species_source: str = Field(description="Species in the source study (human, mouse, rat, etc.)")
-    species_target: str = Field(
-        default="human", description="Target species for the model (usually 'human')"
-    )
-
-    # Source quality
-    source_quality: SourceQuality = Field(
-        description=(
-            "Quality tier of the primary data source.\n"
-            "IMPORTANT: 'non_peer_reviewed' includes Wikipedia, preprints, and "
-            "unreviewed sources. Avoid if possible; if used, document rationale."
-        )
-    )
-
-    # Perturbation context
-    perturbation_type: PerturbationType = Field(
-        description=(
-            "Type of experimental perturbation in the source study.\n"
-            "If 'pharmacological' or 'genetic_perturbation', explain in "
-            "perturbation_relevance how this relates to physiological parameter values."
-        )
-    )
-    perturbation_relevance: str = Field(
-        min_length=30,
-        description=(
-            "Explain relevance of the experimental perturbation to the physiological "
-            "parameter being estimated. Required even for physiological_baseline to "
-            "document the observational context."
-        ),
-    )
-
-    # TME compatibility
-    tme_compatibility: TMECompatibility = Field(
-        description=(
-            "Tumor microenvironment compatibility assessment.\n"
-            "- high: Source TME similar to target (e.g., both desmoplastic)\n"
-            "- moderate: Some TME differences that may affect values\n"
-            "- low: Major differences (e.g., T cell-permissive model for T cell-excluded tumor)"
-        ),
-    )
-    tme_compatibility_notes: str = Field(
-        min_length=30,
-        description=(
-            "Notes on TME differences and their expected impact on the observable. "
-            "E.g., 'Treatment-naive PDAC with characteristic desmoplastic, "
-            "immune-excluded TME matching model assumptions.'"
-        ),
-    )
-
-    # Computed (machine-populated, not user-facing)
-    validation_warnings: Optional[List[str]] = Field(
-        default=None,
-        description="Validation warnings generated by automated checks (populated by validators)",
-    )
 
 
 class SourceRelevanceAssessment(BaseModel):
@@ -888,10 +668,10 @@ class SourceRelevanceAssessment(BaseModel):
         )
     )
     indication_match_justification: str = Field(
-        min_length=50,
         description=(
-            "Justify the indication match rating. If PROXY or UNRELATED, explain "
-            "why this source is acceptable and what translation uncertainty is expected."
+            "Justify the indication match rating. For exact matches, a one-line statement "
+            "is fine. If PROXY or UNRELATED, explain why this source is acceptable and "
+            "what translation uncertainty is expected."
         ),
     )
 
@@ -919,11 +699,11 @@ class SourceRelevanceAssessment(BaseModel):
         )
     )
     perturbation_relevance: str = Field(
-        min_length=30,
         description=(
             "Explain relevance of the experimental perturbation to the physiological "
-            "parameter being estimated. E.g., if using drug-induced death rates, explain "
-            "whether this represents an upper bound, typical value, or requires scaling."
+            "parameter being estimated. For physiological_baseline, a brief note is fine. "
+            "For pharmacological/genetic perturbations, explain whether this represents "
+            "an upper bound, typical value, or requires scaling."
         ),
     )
 
@@ -937,33 +717,39 @@ class SourceRelevanceAssessment(BaseModel):
         ),
     )
     tme_compatibility_notes: str = Field(
-        min_length=30,
         description=(
             "Notes on TME differences and their expected impact on the parameter. "
-            "E.g., 'EG7 thymoma is highly T cell-permissive; PDAC is T cell-excluded. "
-            "Expect 10-100x overestimation of infiltration rates.'"
+            "Brief is fine when tme_compatibility=high. For low/moderate, "
+            "describe the expected directional impact."
         ),
     )
 
-    # Measurement and system characterization (for translation sigma rubric)
-    measurement_directness: MeasurementDirectness = Field(
+    # Measurement and system characterization (for translation sigma rubric).
+    # Optional: required for SubmodelTarget (in vitro / preclinical), omitted for
+    # clinical CalibrationTargets since those are always direct patient measurements.
+    measurement_directness: Optional[MeasurementDirectness] = Field(
+        default=None,
         description=(
             "How many inferential steps between the raw measurement and the model parameter.\n"
             "- direct: trivial transform (unit conversion, ln2/x)\n"
             "- single_inversion: one kinetic/mechanistic model assumption\n"
             "- steady_state_inversion: inferred via balance equations with assumed rates\n"
-            "- proxy_observable: surrogate measurement (RNA for protein, IHC score for concentration)"
+            "- proxy_observable: surrogate measurement (RNA for protein, IHC score for concentration)\n"
+            "Omit (null) for clinical CalibrationTarget sources."
         ),
     )
-    temporal_resolution: TemporalResolution = Field(
+    temporal_resolution: Optional[TemporalResolution] = Field(
+        default=None,
         description=(
             "How well the temporal or dose structure constrains the parameter.\n"
             "- timecourse: >=3 timepoints/doses spanning the dynamic range\n"
             "- endpoint_pair: 2 timepoints or conditions\n"
-            "- snapshot_or_equilibrium: single timepoint or assumed steady state"
+            "- snapshot_or_equilibrium: single timepoint or assumed steady state\n"
+            "Omit (null) for clinical CalibrationTarget sources."
         ),
     )
-    experimental_system: ExperimentalSystem = Field(
+    experimental_system: Optional[ExperimentalSystem] = Field(
+        default=None,
         description=(
             "Biological fidelity of the experimental system. Distinct from source_quality "
             "(evidence reliability). Captures how well the experimental conditions "
@@ -973,7 +759,8 @@ class SourceRelevanceAssessment(BaseModel):
             "- ex_vivo: freshly isolated tissue\n"
             "- in_vitro_coculture: multi-cell-type culture\n"
             "- in_vitro_primary: primary cells in standard culture\n"
-            "- in_vitro_cell_line: immortalized cell lines"
+            "- in_vitro_cell_line: immortalized cell lines\n"
+            "Omit (null) for clinical CalibrationTarget sources."
         ),
     )
 
@@ -984,6 +771,6 @@ class SourceRelevanceAssessment(BaseModel):
     )
 
 
-# Rebuild models that use forward references to ClinicalSourceRelevance
+# Rebuild models that use forward references to SourceRelevanceAssessment
 Source.model_rebuild()
 SecondarySource.model_rebuild()

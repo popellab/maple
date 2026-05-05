@@ -12,7 +12,7 @@ Extract **raw observables** from scientific literature for QSP model calibration
 
 A biological observable measured in a **specific experimental scenario**, used to calibrate QSP model parameters via Bayesian inference.
 
-Each observable has an **experimental context** (species, indication, compartment, system, treatment) that may differ from the **model context**. Your job: find data that matches the model context, document the actual experimental context, and follow the strict matching requirements below.
+Each observable has an **experimental context** (species, indication, system, treatment) that may differ from the **model context**. Your job: find data that matches the model context, document the actual experimental context, and follow the strict matching requirements below.
 
 ---
 
@@ -26,14 +26,14 @@ You produce a single `CalibrationTarget` YAML with these top-level fields. **Req
 | `key_assumptions` | List[str] (≥1) | Biological + statistical assumptions made in extraction (e.g., cell-type equivalence, normal-distribution assumption) |
 | `key_study_limitations` | List[str] | Issues that bias estimates or limit generalizability (e.g., small cohort, figure-extracted values) |
 | `observable` | dict | How to compute the observable from QSP species. See "Observable" section below |
-| `experimental_context` | dict | The source paper's context: `{species, system, indication, treatment, stage, mouse_subspecifier?, cell_lines?, culture_conditions?, tissue_source?, assay_type?}` — describes WHERE the data came from, not the model target |
+| `experimental_context` | dict | The source paper's context: `{species, system, indication, treatment, stage?, mouse_subspecifier?, cell_lines?, culture_conditions?, tissue_source?, assay_type?}` — describes WHERE the data came from, not the model target |
 | `scenario` | dict (optional) | Interventions + measurement timing. Omit if untreated baseline and no perturbations |
 | `empirical_data` | dict | Computed `median`, `ci95`, `units`, `sample_size`, `inputs[]`, `assumptions[]`, `distribution_code`. See "Empirical Data" section |
 | `primary_data_source` | dict | Single paper with verified DOI. See "Source Requirements". Required when `epistemic_basis: literature` (default) |
 | `secondary_data_sources` | List[dict] | Reference values / conversion-factor sources. Empty list OK |
 | `epistemic_basis` | `"literature"` (default) or `"mechanistic"` | Use `"mechanistic"` only for biological-invariant priors with no primary measurement (live in `calibration_targets/mechanistic/`); requires deliberately wide CIs and rationale in `key_assumptions`. Otherwise leave at default |
 
-The `experimental_context` block is REQUIRED — it documents where the data came from. The `Model Context (Target to Match)` section below describes the *target* you're matching against; `experimental_context` describes the *actual* source. They may legitimately differ (cross-species, proxy indication, etc.) — flag mismatches via the optional `primary_data_source.source_relevance` block.
+The `experimental_context` block is REQUIRED — it documents where the data came from. The `Model Context (Target to Match)` section below describes the *target* you're matching against; `experimental_context` describes the *actual* source. They may legitimately differ (cross-species, proxy indication, etc.) — document mismatches via `primary_data_source.source_relevance` (required whenever a `primary_data_source` is provided).
 
 ---
 
@@ -45,11 +45,9 @@ The `experimental_context` block is REQUIRED — it documents where the data cam
 
 2. **Indication** - Use ONLY the exact cancer type specified (e.g., PDAC). NEVER substitute related cancers or pan-cancer data.
 
-3. **Compartment** - Use ONLY the exact compartment (e.g., tumor.primary, blood.peripheral). NEVER substitute serum for tissue or peripheral blood for tumor-infiltrating cells.
+3. **Source** - Use ONLY in vivo patient data (biopsies, resections, blood draws). NEVER use cell culture, organoids, or in vitro measurements.
 
-4. **Source** - Use ONLY in vivo patient data (biopsies, resections, blood draws). NEVER use cell culture, organoids, or in vitro measurements.
-
-5. **Measurement Type** - Use ONLY direct measurements with absolute units. NEVER use statistical effect sizes (hazard ratios, odds ratios) as calibration values. Fold-changes are acceptable ONLY when explicitly requested AND computed from paired pre/post data within the same patients (see "Fold-Change Targets" section below).
+4. **Measurement Type** - Use ONLY direct measurements with absolute units. NEVER use statistical effect sizes (hazard ratios, odds ratios) as calibration values. Fold-changes are acceptable ONLY when explicitly requested AND computed from paired pre/post data within the same patients (see "Fold-Change Targets" section below).
 
 **Acceptable flexibility (document mismatches):**
 - System (clinical.resection vs clinical.biopsy) - document timing differences
@@ -87,7 +85,7 @@ The `experimental_context` block is REQUIRED — it documents where the data cam
 - **Validation:** Pint dimensional analysis checks measurement code output
 
 ### 5. Computed Values Must Match Reported Values
-- `distribution_code` computed median/IQR/CI95 must match reported values within 1% tolerance
+- `distribution_code` computed median/CI95 must match reported values within 1% (median) and 10% (CI bounds) tolerance
 - **Validation:** Code is executed and outputs compared to reported statistics
 
 ### 6. Text Snippets Must Contain Declared Values
@@ -153,17 +151,15 @@ observable:
 
 ### Source Relevance Assessment
 
-When the source paper doesn't perfectly match the model context (different species, proxy indication, perturbation), populate `primary_data_source.source_relevance`:
+`primary_data_source.source_relevance` (and the same field on each `secondary_data_sources` entry) is **required** whenever a Source is provided. Even for exact-match human clinical data, fill the fields — the indication_match=`exact` / species_target=species_source / `tme_compatibility=high` path is the common case, not a skip:
 
 | Field | Options |
 |---|---|
 | `indication_match` | `exact`, `related`, `proxy`, `unrelated` |
 | `source_quality` | `primary_human_clinical`, `primary_human_in_vitro`, `primary_animal_in_vivo`, `primary_animal_in_vitro`, `review_article`, `textbook`, `non_peer_reviewed` |
 | `perturbation_type` | `physiological_baseline`, `pathological_state`, `pharmacological`, `genetic_perturbation` |
-| `tme_compatibility` | `high`, `moderate`, `low` (optional, for immune/stromal parameters) |
-| `estimated_translation_uncertainty_fold` | 1.0–1000.0 |
-
-Skip when source is exact-match human clinical data for the target indication.
+| `tme_compatibility` | `high`, `moderate`, `low` |
+| `validation_warnings` | List[str] — free-text caveats (e.g., "Values digitized from scatter plots; precision ±0.5%"). Optional but commonly used. |
 
 **Example:**
 ```yaml
@@ -178,10 +174,7 @@ primary_data_source:
     perturbation_type: physiological_baseline
     tme_compatibility: low
     tme_compatibility_notes: "Melanoma is T cell-permissive; PDAC is T cell-excluded. Expect 10–100× overestimation of infiltration rates."
-    estimated_translation_uncertainty_fold: 10.0
 ```
-
-Validation flags warnings (not errors) for: insufficient uncertainty on proxy/cross-species data, missing perturbation rationale, non-peer-reviewed sources.
 
 ---
 
@@ -189,7 +182,6 @@ Validation flags warnings (not errors) for: insufficient uncertainty on proxy/cr
 
 **Species:** {{MODEL_SPECIES}}
 **Indication:** {{MODEL_INDICATION}}
-**Compartment:** {{MODEL_COMPARTMENT}}
 **System:** {{MODEL_SYSTEM}}
 **Treatment history:** {{MODEL_TREATMENT_HISTORY}}
 **Stage/burden:** {{MODEL_STAGE_BURDEN}}
@@ -203,7 +195,7 @@ Find observables that match this context as closely as possible. Document the ac
 {{PRIMARY_SOURCE_TITLE}}
 1. Extract measurement with uncertainty (mean ± SD/SE, 95% CI, IQR, or range)
 2. Specify the experimental scenario (interventions + measurement timing/location)
-3. Document experimental context (species, compartment, system, treatment history, stage)
+3. Document experimental context (species, system, indication, treatment history, stage)
 4. Provide verbatim text snippets for all extracted values
 
 ---
@@ -464,8 +456,6 @@ observable:
 - `empirical_data.median`: `[149.94]` ← Computed from MC, matches code output (length-1 list for scalar)
 - `empirical_data.ci95`: `[[100.79, 199.35]]` ← Computed from MC (list of `[lo, hi]` pairs)
 
-**Validation:** Code is executed and outputs must match declared median/ci95 within tolerance (1% for median, 10% for CI bounds due to Monte Carlo variance).
-
 **Requirements:**
 - **Extract biological/experimental values via inputs** with source traceability
 - **Universal constants OK as literals**: percentiles (2.5, 25, 75, 97.5), mathematical constants (π, 2), MC sample sizes (10000)
@@ -504,7 +494,22 @@ def derive_distribution(inputs, ureg):
     }
 ```
 
-**Key principle:** Sampling strips units. Reattach immediately after, then units propagate through numpy operations (median, percentile, etc.).
+**Dimensionless / digitized-patient pattern.** When inputs are dimensionless magnitudes (e.g., individual patient values digitized from a figure), use `ureg('dimensionless')` to attach units after computing on raw magnitudes:
+
+```python
+def derive_distribution(inputs, ureg):
+    import numpy as np
+    rng = np.random.default_rng(42)
+    values = np.array([inputs[f'val_{i:02d}'].magnitude for i in range(1, 10)])
+    n = len(values)
+    boot_medians = [np.median(rng.choice(values, size=n, replace=True)) for _ in range(10000)]
+    dl = ureg('dimensionless')
+    return {
+        'median_obs': np.median(values) * dl,
+        'ci95_lower': np.percentile(boot_medians, 2.5) * dl,
+        'ci95_upper': np.percentile(boot_medians, 97.5) * dl,
+    }
+```
 
 ### Choosing Probability Distributions
 
@@ -545,12 +550,7 @@ When `observable.code` includes conversion factors (cells → volume, IHC score 
    - If cell size has reported uncertainty, propagate it through the calculation
    - **Example:** Sample cellularity from uniform(0.15, 0.35) rather than fixing at 0.25
 
-3. **Cite sources for conversion factors**
-   - Use `source_type: reference_db` or `source_type: derived_from_reference_db` for values from the curated reference database
-   - Use `source_type: literature` with a `source_tag` for values from papers (add paper to `secondary_data_sources`)
-   - **Never use ungrounded constants** — every numeric must trace to a specific reference DB entry or literature source
-
-4. **Assess impact of conversion uncertainty**
+3. **Assess impact of conversion uncertainty**
    - Note in `key_study_limitations` if conversion assumptions dominate uncertainty
    - **Example:** "Cellularity varies 10-50% in PDAC; assuming fixed 25% introduces unquantified error"
 
@@ -593,13 +593,13 @@ experimental_context:
   system: clinical.resection              # how the data was obtained (clinical.resection, clinical.biopsy, in_vitro, etc.)
   indication: PDAC                        # cancer/disease the source paper studied
   treatment:
-    history: [treatment_naive]            # list — multiple histories possible
-    status: pre_treatment
+    history: [treatment_naive]            # list — see TreatmentHistory enum
+    status: off_treatment                 # off_treatment | on_treatment
     specifier: null                       # optional drug name/class
   stage:                                  # optional, for clinical contexts
-    extent: locally_advanced
-    burden: resectable
-  mouse_subspecifier: null                # only when species=mouse: orthotopic_KPC, GEMM, syngeneic_subq, etc.
+    extent: resectable                    # resectable | borderline_resectable | locally_advanced | metastatic
+    burden: moderate                      # low | moderate | high
+  mouse_subspecifier: null                # only when species=mouse: wild_type | immunocompromised | transgenic
   cell_lines: null                        # for in_vitro / cell-line studies
   culture_conditions: null                # for in_vitro studies (medium, duration_hours)
   tissue_source: null                     # e.g., "fresh resection", "frozen biopsy", "FFPE"
@@ -626,6 +626,45 @@ Default `epistemic_basis: literature` covers the standard case (a primary public
 - Live in `calibration_targets/mechanistic/`, not the scenario directories
 
 `mechanistic` is NOT a backdoor for unverified citations. If a paper exists, use `literature`.
+
+**Worked mechanistic example** (from `tumor_diameter_fold_d90_gvax_vs_untreated`):
+
+```yaml
+epistemic_basis: mechanistic
+primary_data_source: null
+secondary_data_sources: []
+key_assumptions:
+  - >
+    Mechanistic prior on within-θ fold-of-fold (cancels shared baseline growth).
+    CI95 [0.70, 1.20] admits both modest growth suppression and no-effect baselines.
+  - >
+    Distribution: lognormal on the ratio. Composing two priors expands effective
+    uncertainty consistent with the wider CI95 here.
+empirical_data:
+  median: [0.95]
+  ci95: [[0.70, 1.20]]
+  units: dimensionless
+  sample_size: 1
+  sample_size_rationale: >
+    Mechanistic prior; sample_size=1 denotes a single soft-prior assertion.
+  inputs: []                            # no extracted values
+  assumptions: []
+  distribution_code: |
+    def derive_distribution(inputs, ureg):
+        import numpy as np
+        rng = np.random.default_rng(42)
+        lo, hi = 0.70, 1.20
+        mu = 0.5 * (np.log(lo) + np.log(hi))
+        sigma = (np.log(hi) - np.log(lo)) / (2.0 * 1.96)
+        samples = rng.lognormal(mu, sigma, 100000) * ureg('dimensionless')
+        return {
+            'median_obs': np.median(samples),
+            'ci95_lower': np.percentile(samples, 2.5),
+            'ci95_upper': np.percentile(samples, 97.5),
+        }
+```
+
+Note: `inputs: []` is allowed for mechanistic targets because the CI95 itself is the assertion. Numeric literals inside `distribution_code` (the CI bounds) are acceptable here only because they define the prior; they would be illegal in a literature target.
 
 ---
 
