@@ -1085,6 +1085,42 @@ multi-paper combination), include it in `alternative_plans`.
 """
 
 
+def _build_scenario_section(t: dict) -> str:
+    """Render the scenario block for a cal-mode prompt.
+
+    Reads two optional fields off the target dict:
+      - ``t['scenario']`` — short scenario name (used as a hint).
+      - ``t['scenario_yaml']`` — full scenario YAML contents as a string,
+        pre-resolved by the caller. This is the authoritative description
+        of the QSP trajectory; the prompts instruct the agent to derive
+        required data context from it rather than from hard-coded scenario
+        names. When absent, the section degrades to the bucket-level checks.
+
+    Caller responsibility (e.g., pdac-build's staged_extraction.py): resolve
+    the scenario name to a YAML string before invoking the stage. The
+    pipeline does not assume any directory layout for scenario YAMLs.
+    """
+    scenario = t.get("scenario") or ""
+    scenario_yaml = t.get("scenario_yaml") or ""
+    if not scenario and not scenario_yaml:
+        return ""
+    parts = ["## Scenario"]
+    if scenario:
+        parts.append(f"**Scenario name:** `{scenario}`")
+    if scenario_yaml:
+        parts.append(
+            "**Scenario YAML** (the authoritative QSP trajectory description "
+            "for this target — initial state, interventions, duration, "
+            "observable readout timepoint):"
+        )
+        parts.append("```yaml")
+        parts.append(scenario_yaml.rstrip())
+        parts.append("```")
+    else:
+        parts.append("_No scenario YAML provided; fall back to bucket-level checks._")
+    return "\n\n".join(parts)
+
+
 LIT_SEARCH_PROMPT_CAL = """\
 You are a scientific literature search assistant for quantitative systems pharmacology (QSP) model calibration.
 
@@ -1106,6 +1142,8 @@ mechanistic in-vitro experiment.
 ## Parameter Context (from model structure)
 
 {parameter_context}
+
+{scenario_section}
 
 {notes_section}
 
@@ -1131,6 +1169,41 @@ Search for **observations of the species in the matched bucket**. A "tumor-tissu
 TGFβ concentration in human PDAC at diagnosis" is satisfied by a homogenate /
 lysate / tissue ELISA in resected human PDAC specimens — NOT by a KPC mouse
 model, NOT by serum, NOT by an in-vitro stimulation experiment.
+
+## Scenario semantics (CRITICAL when present)
+
+The `scenario` field above (when set) anchors the data context to a specific
+QSP simulation trajectory. The scenario block below — when provided — is the
+authoritative specification of what trajectory the simulator runs for this
+target. It defines the initial state, any interventions/dosing, the simulated
+duration, and the timepoint at which the observable is evaluated. **Use it to
+determine what experimental context the paper must report.**
+
+Apply these scenario-derived rules in addition to the bucket-level checks
+above:
+
+- If the scenario describes a **pre-treatment / treatment-naive baseline**
+  (no on-study interventions before the observable is read out), reject mixed
+  cohorts that include any post-neoadjuvant, post-chemo, post-radiation, or
+  post-immunotherapy samples — even when the post-treatment fraction is
+  small (e.g., 10/36). The aggregate statistic from a mixed cohort is NOT a
+  baseline observation. If the paper reports the treatment-naive subset
+  separately, that subset is acceptable.
+
+- If the scenario describes an **on-treatment timepoint** (an intervention
+  precedes the observable readout), the paper must report data at that
+  treatment context and timepoint. Pre-treatment baselines and post-completion
+  follow-up samples fail the match. Different regimens fail the match unless
+  the target's notes authorize the substitution.
+
+- If the scenario describes **longitudinal disease progression**, the paper's
+  reported timepoint must be anchored to the scenario's trajectory.
+
+- If no scenario block is provided, fall back to the bucket-level checks above.
+
+When the scenario disagrees with `model_treatment_history` or
+`model_stage_burden`, the scenario takes precedence — it encodes the
+simulator state at which the observable will actually be evaluated.
 
 ## Requirements
 
@@ -1191,6 +1264,7 @@ model species suitable as a calibration target for these parameter(s):
 
 **Parameters / observable description:** {parameters}
 **Cancer type:** {cancer_type}
+{scenario_section}
 {notes_section}
 
 ## Model Context
@@ -1213,6 +1287,15 @@ For each paper, determine:
    concentration, density, count — not IHC score, not relative expression,
    not in-vitro stimulation response).
 2. **Does the observation context match the model bucket?** Check, in order:
+   - **`scenario` (when set)** — the dominant filter. The scenario block
+     (when provided alongside the target) describes the QSP trajectory and
+     the timepoint at which the observable is evaluated. Use it to derive
+     the required data context (treatment-naive vs on-treatment, timepoint,
+     regimen). Reject papers whose cohorts do not match this context. If
+     the paper's cohort is mixed and the matching subset is not reported
+     separately, the paper fails the scenario match. The scenario takes
+     precedence over `model_treatment_history` and `model_stage_burden`
+     when they conflict.
    - `model_indication` — strict-match preferred. Non-target indication is a
      proxy and must be flagged.
    - `model_compartment` — a tumor-tissue observable is NOT satisfied by a
@@ -1267,31 +1350,51 @@ For each target below, evaluate whether the primary extraction plan is the best
 option, or whether an alternative plan or a lit search rerun would be better.
 Consider, in priority order:
 
-1. **Indication match**: Does the paper report data in the target's
+1. **Scenario match (when scenario is set)**: The target's `scenario` field
+   anchors the data context to a QSP simulation trajectory and is the
+   dominant filter. The scenario block (when included with the target)
+   describes the trajectory in detail — initial state, interventions,
+   duration, and observable readout timepoint. Use it to determine the
+   required data context for each target.
+   - If the scenario describes a pre-treatment / treatment-naive baseline,
+     a paper whose cohort includes ANY post-treatment samples (even a
+     minority subset, e.g., 10 of 36) FAILS the scenario match unless the
+     paper reports the treatment-naive subset separately. Recommend
+     `rerun_lit_search`.
+   - If the scenario describes an on-treatment timepoint, the paper must
+     report data at the matching regimen and timepoint. Pre-treatment
+     baselines and different regimens fail the match unless the target's
+     notes authorize the substitution.
+   - If the scenario describes longitudinal disease progression, the
+     paper's reported timepoint must be anchored to the trajectory.
+   - When the scenario disagrees with `model_treatment_history` or
+     `model_stage_burden`, the scenario takes precedence.
+2. **Indication match**: Does the paper report data in the target's
    `model_indication`? Indication mismatches (e.g., NSCLC paper for a PDAC
    target) are first-class reasons to recommend `rerun_lit_search`, not
    `proceed`. PDAC-specific data is preferred and the "larger non-PDAC cohort
    beats tiny PDAC cohort" trade-off does NOT apply for cal-mode observables —
    indication mismatch dominates uncertainty.
-2. **Compartment match**: Tumor-tissue observable + serum/plasma source =
+3. **Compartment match**: Tumor-tissue observable + serum/plasma source =
    reject. Recommend rerun_lit_search.
-3. **Treatment-history / stage match**: At-diagnosis + post-neoadjuvant biopsy
+4. **Treatment-history / stage match**: At-diagnosis + post-neoadjuvant biopsy
    = reject. Recommend rerun_lit_search.
-4. **Species / system**: Human preferred. Mouse-PDAC for a human-PDAC observable
+5. **Species / system**: Human preferred. Mouse-PDAC for a human-PDAC observable
    is acceptable only when explicitly authorized by the target's notes column,
    AND only after `rerun_lit_search` has been tried at least once with stricter
    guidance.
-5. **Direct vs proxy**: Reject IHC scores, relative RNA expression, or
+6. **Direct vs proxy**: Reject IHC scores, relative RNA expression, or
    in-vitro-stimulation values when an absolute concentration / density exists
    in another paper.
-6. **Sample size**: n=2 case reports are weak; prefer cohort studies (n>10)
+7. **Sample size**: n=2 case reports are weak; prefer cohort studies (n>10)
    when both are in the matched bucket.
-7. **Digitization burden**: Lower is better, but never trade an indication
+8. **Digitization burden**: Lower is better, but never trade an indication
    match for fewer digitizations.
-8. **Empty plans / proxy-only plans**: If the primary plan has no papers, OR
-   has only one paper that is mismatched on indication/compartment/treatment,
-   recommend `rerun_lit_search` with concrete suggestions for what to search
-   differently (specific search terms, data types, indications).
+9. **Empty plans / proxy-only plans / scenario-mismatched plans**: If the
+   primary plan has no papers, OR has only one paper that is mismatched on
+   scenario/indication/compartment/treatment, recommend `rerun_lit_search`
+   with concrete suggestions for what to search differently (specific search
+   terms, data types, indications, treatment context).
 
 ## Targets
 
@@ -1667,6 +1770,8 @@ async def run_plan_review(
         summary = {
             "target_id": t["target_id"],
             "parameters": t["parameters"],
+            "scenario": t.get("scenario") or "",
+            "scenario_yaml": t.get("scenario_yaml") or "",
             "extraction_plan": assessment.get("extraction_plan", {}),
             "alternative_plans": assessment.get("alternative_plans", []),
             "overall_notes": assessment.get("overall_notes", ""),
@@ -1812,14 +1917,18 @@ async def run_lit_search(
 
     parameter_context = build_parameter_context(t["parameters"], model_structure_path)
     notes_section = f"## Additional Notes\n\n{t['notes']}" if t["notes"] else ""
+    scenario_section = _build_scenario_section(t)
 
     prompt_template = LIT_SEARCH_PROMPT_CAL if target_kind == "cal" else LIT_SEARCH_PROMPT
-    prompt = prompt_template.format(
+    fmt_kwargs = dict(
         parameters=t["parameters"],
         model_context=model_context,
         parameter_context=parameter_context,
         notes_section=notes_section,
     )
+    if target_kind == "cal":
+        fmt_kwargs["scenario_section"] = scenario_section
+    prompt = prompt_template.format(**fmt_kwargs)
 
     result = await lit_search_agent.run(prompt)
     result_dict = result.output.model_dump()
@@ -1863,9 +1972,10 @@ async def run_assess(
 
     notes = t.get("notes", "")
     notes_section = f"**Extraction guidance:** {notes}" if notes else ""
+    scenario_section = _build_scenario_section(t)
 
     prompt_template = ASSESS_PROMPT_CAL if target_kind == "cal" else ASSESS_PROMPT
-    prompt = prompt_template.format(
+    fmt_kwargs = dict(
         parameters=t["parameters"],
         cancer_type=t["cancer_type"],
         model_context=model_context,
@@ -1874,6 +1984,9 @@ async def run_assess(
         paper_text_section=paper_text_section,
         notes_section=notes_section,
     )
+    if target_kind == "cal":
+        fmt_kwargs["scenario_section"] = scenario_section
+    prompt = prompt_template.format(**fmt_kwargs)
 
     user_prompt: list = list(file_parts) + [prompt]
     result = await assess_agent.run(user_prompt)
