@@ -20,6 +20,7 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, BinaryContent, WebSearchTool
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from maple.core.calibration.submodel_target import SubmodelTarget
 from maple.core.calibration.calibration_target_models import CalibrationTarget
@@ -900,8 +901,50 @@ def collect_missing_pdfs(
                 print(f"    https://doi.org/{c['doi']}")
 
 
-def make_model(model_name: str) -> OpenAIResponsesModel:
-    return OpenAIResponsesModel(model_name)
+#: Per-HTTP-attempt read timeout for the OpenAI client, in seconds.
+#: gpt-5+ with high reasoning effort + tool-call validation feedback can
+#: occasionally enter a server-side reasoning rollout that exceeds the
+#: openai-python default of 600 s. When that happens, openai-python's two
+#: internal retries each silently re-hit the same hang, so a single
+#: ``Agent.run()`` call burns ~30 minutes (3 attempts × 600 s) before the
+#: ``APITimeoutError`` propagates as ``ModelAPIError("Request timed out.")``.
+#: A 5-minute cap aborts those wedges in the same wall-clock window where
+#: a healthy gpt-5.5 high-reasoning call returns (typically 30-150 s),
+#: making real failures observable to the caller in minutes instead of
+#: half-hours. See pydantic-ai #3268 for the underlying long-rollout
+#: motivation (background mode is the proper long-term fix).
+DEFAULT_OPENAI_HTTP_TIMEOUT_S: float = 300.0
+
+#: openai-python's default ``max_retries`` is 2, which compounds the wedge
+#: above (3 HTTP attempts per logical call). pydantic-ai already has its
+#: own structural retry loop (validation feedback) above the transport
+#: layer, so layering openai-python's blind transport retries on top
+#: gains nothing and just multiplies the wall-clock cost of a hang.
+DEFAULT_OPENAI_MAX_RETRIES: int = 0
+
+
+def make_model(
+    model_name: str,
+    *,
+    http_timeout_s: float = DEFAULT_OPENAI_HTTP_TIMEOUT_S,
+    openai_max_retries: int = DEFAULT_OPENAI_MAX_RETRIES,
+) -> OpenAIResponsesModel:
+    """Build an ``OpenAIResponsesModel`` with fail-fast HTTP transport settings.
+
+    The defaults override openai-python's stock ``timeout=600`` /
+    ``max_retries=2``, which together cap a single hung call at ~30 minutes
+    of silent waiting before the ``APITimeoutError`` surfaces. With these
+    defaults, a hung call aborts after ``http_timeout_s`` (default 300 s)
+    on the first try and propagates immediately to pydantic-ai's
+    structural retry layer.
+    """
+    import openai
+
+    client = openai.AsyncOpenAI(
+        timeout=http_timeout_s,
+        max_retries=openai_max_retries,
+    )
+    return OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
 
 
 def make_settings() -> OpenAIResponsesModelSettings:
