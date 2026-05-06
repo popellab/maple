@@ -875,6 +875,10 @@ class CalibrationTarget(BaseModel):
         for const in self.observable.constants:
             _check_unit(const.units, f"observable.constants['{const.name}'].units")
 
+        # observable.auxiliary_parameters[*].units
+        for aux in self.observable.auxiliary_parameters:
+            _check_unit(aux.units, f"observable.auxiliary_parameters['{aux.name}'].units")
+
         # empirical_data.index_unit
         _check_unit(self.empirical_data.index_unit, "empirical_data.index_unit")
 
@@ -944,6 +948,14 @@ class CalibrationTarget(BaseModel):
             constants = {}
             for const in self.observable.constants:
                 constants[const.name] = const.value * ureg(const.units)
+
+            # Inject mock values for auxiliary_parameters so observable.code
+            # validation can execute. Real values are sampled from a
+            # hierarchical prior at inference time (qsp-inference); maple's
+            # only concern here is that the code path runs without KeyError
+            # and produces output with the right units.
+            for aux in self.observable.auxiliary_parameters:
+                constants[aux.name] = 1.0 * ureg(aux.units)
 
             # Execute function
             local_scope = {"ureg": ureg, "np": np}

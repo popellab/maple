@@ -944,6 +944,91 @@ class TestCalibrationTargetValidators:
         )
         assert target is not None
 
+    def test_auxiliary_parameter_accessible_in_observable_code(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Observable code can reference an auxiliary parameter via the constants dict.
+
+        Auxiliary parameters are sampled per-simulation at inference time but at
+        schema-validation time maple injects a 1.0-magnitude stub of the right
+        units so observable.code can be exec'd and unit-checked.
+        """
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["auxiliary_parameters"] = [
+            {
+                "name": "f_serum_to_tumor",
+                "group": "serum_to_tumor",
+                "biological_basis": (
+                    "Serum:tumor concentration ratio for the cytokine; "
+                    "observable.code multiplies the model tumor concentration by "
+                    "this factor to predict the human serum concentration."
+                ),
+                "units": "dimensionless",
+            }
+        ]
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants, ureg):\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    f = constants['f_serum_to_tumor']\n"
+            "    ratio = (cd8 / tumor) * f\n"
+            "    return ratio.to(ureg.dimensionless)"
+        )
+
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        assert len(target.observable.auxiliary_parameters) == 1
+        aux = target.observable.auxiliary_parameters[0]
+        assert aux.name == "f_serum_to_tumor"
+        assert aux.group == "serum_to_tumor"
+        assert aux.units == "dimensionless"
+
+    def test_auxiliary_parameter_units_validated(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Bad pint units on an auxiliary parameter should fail validation."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["auxiliary_parameters"] = [
+            {
+                "name": "bad_aux",
+                "group": "test_group",
+                "biological_basis": (
+                    "Auxiliary parameter declared with a unit string that pint "
+                    "cannot parse, used as a regression test for unit validation."
+                ),
+                "units": "this_is_not_a_unit_string",
+            }
+        ]
+        with pytest.raises(ValidationError, match="auxiliary_parameters"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_auxiliary_parameter_biological_basis_min_length(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """biological_basis must be substantive (>=20 chars), like ObservableConstant."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["auxiliary_parameters"] = [
+            {
+                "name": "f_test",
+                "group": "test_group",
+                "biological_basis": "too short",
+                "units": "dimensionless",
+            }
+        ]
+        with pytest.raises(ValidationError):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_auxiliary_parameters_default_empty(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Existing cal targets without auxiliary_parameters keep working."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        assert target.observable.auxiliary_parameters == []
+
     def test_validate_species_completeness_warns_on_missing_related_species(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):

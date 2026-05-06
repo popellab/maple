@@ -271,6 +271,81 @@ class ObservableConstant(BaseModel):
         return self
 
 
+class AuxiliaryParameter(BaseModel):
+    """
+    A measurement-bridging parameter sampled per-simulation alongside the QSP
+    parameters during inference.
+
+    Auxiliary parameters encode the gap between what the literature reports and
+    what the model species directly is — e.g., a serum:tumor compartment ratio,
+    a cross-species translation factor, an IHC-score-to-concentration conversion.
+    They are accessed inside ``observable.code`` exactly like ``ObservableConstant``
+    entries (via the ``constants`` dict), but unlike constants they have a
+    *prior*, not a fixed value, and are jointly inferred with the QSP parameters
+    so the Bayesian update can absorb the bridging uncertainty.
+
+    Maple's role is purely declarative: it lets a calibration target name the
+    auxiliary parameters its observable consumes, the hierarchical group they
+    belong to, and the units they carry. Maple does NOT define how the prior
+    is structured, how groups are pooled, or how the parameter is sampled —
+    those concerns live in qsp-inference (which loads ``auxiliary_config.yaml``
+    and runs the hierarchical sampler at inference time).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(
+        description=(
+            "Variable name used in observable code to access this parameter. "
+            "Must be a valid Python identifier. Globally unique across all "
+            "calibration targets — the inference workflow merges by name "
+            "across cal targets, so two cal targets that reference the same "
+            "auxiliary parameter must declare it with the same name."
+        )
+    )
+
+    group: str = Field(
+        description=(
+            "Hierarchical group this parameter belongs to. The structural prior "
+            "(``base_prior``, ``member_deviation_sigma``) for the group is "
+            "declared in the inference workflow's ``auxiliary_config.yaml`` "
+            "(qsp-inference territory). Members of the same group are pooled "
+            "via a Normal(mu_g, tau_g) hierarchy at inference time. "
+            "Parameters without a meaningful hierarchy still get a group entry "
+            "(typically of size 1) so the inference machinery has a single "
+            "place to look up the prior."
+        )
+    )
+
+    biological_basis: str = Field(
+        min_length=20,
+        description=(
+            "REQUIRED rationale for why this calibration target needs this "
+            "auxiliary parameter — what gap between measurement and model "
+            "species it bridges, and how observable.code uses it. "
+            "Must be substantive (minimum 20 characters).\n\n"
+            "Examples:\n"
+            "- 'Serum:tumor concentration ratio for TGF-β1; observable.code "
+            "multiplies V_T.TGFb by this factor to predict the human plasma "
+            "TGF-β1 concentration reported by Friess1993.'\n"
+            "- 'IHC H-score to nM ArgI conversion factor; observable.code "
+            "multiplies the model V_T.ArgI by 1/c to compare to the IHC "
+            "H-score reported by Smith2020.'"
+        ),
+    )
+
+    units: str = Field(
+        default="dimensionless",
+        description=(
+            "Pint-parseable units of the auxiliary parameter as a Pint Quantity. "
+            "For pure compartment ratios or species translation factors, leave "
+            "as 'dimensionless'. For conversion factors, declare the source "
+            "and target units (e.g., 'nanomolar / dimensionless' for IHC-to-"
+            "concentration)."
+        ),
+    )
+
+
 class Observable(BaseModel):
     """
     Observable specification for CalibrationTarget (full model).
@@ -316,6 +391,18 @@ class Observable(BaseModel):
     constants: List[ObservableConstant] = Field(
         default_factory=list,
         description="List of geometric/modeling constants used in the observable code.",
+    )
+
+    auxiliary_parameters: List[AuxiliaryParameter] = Field(
+        default_factory=list,
+        description=(
+            "List of measurement-bridging parameters consumed by observable.code "
+            "alongside the fixed ``constants``. These are sampled per-simulation "
+            "from a hierarchical prior at inference time (qsp-inference) and "
+            "inferred jointly with the QSP parameters. Examples: serum:tumor "
+            "compartment ratio, cross-species translation factor, IHC-to-"
+            "concentration conversion. See AuxiliaryParameter for details."
+        ),
     )
 
     support: SupportType = Field(

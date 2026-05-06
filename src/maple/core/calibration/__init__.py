@@ -51,6 +51,7 @@ from maple.core.calibration.scenario import (
 # Observable models
 from maple.core.calibration.observable import (
     AggregationType,
+    AuxiliaryParameter,
     ConstantSourceType,
     Observable,
     ObservableConstant,
@@ -171,6 +172,7 @@ __all__ = [
     "Scenario",
     # Observable
     "AggregationType",
+    "AuxiliaryParameter",
     "ConstantSourceType",
     "PopulationAggregation",
     "Observable",
