@@ -180,6 +180,7 @@ class ProcessPromptsStep(WorkflowStep):
                 model_context_file=context.config.model_context_file,
                 reference_values_file=context.config.reference_values_file,
                 previous_extractions_dir=context.config.previous_extractions_dir,
+                auxiliary_config_file=getattr(context.config, "auxiliary_config_file", None),
             )
 
             # Process requests with streaming unpacker

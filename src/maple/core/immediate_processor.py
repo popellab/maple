@@ -41,6 +41,7 @@ class ImmediateRequestProcessor:
         model_context_file: Optional[Path] = None,
         reference_values_file: Optional[Path] = None,
         previous_extractions_dir: Optional[Path] = None,
+        auxiliary_config_file: Optional[Path] = None,
     ):
         """
         Initialize immediate request processor.
@@ -52,6 +53,12 @@ class ImmediateRequestProcessor:
             model_context_file: Optional path to model_context.txt for isolated system targets
             reference_values_file: Optional path to reference_values.yaml with curated constants
             previous_extractions_dir: Optional path to directory with previous extractions
+            auxiliary_config_file: Optional path to auxiliary_config.yaml declaring
+                measurement-bridging auxiliary parameter groups (consumed by
+                qsp-inference at calibration time). Threaded into the
+                CalibrationTargetPromptBuilder so the LLM sees which bridges are
+                available; submodel-target workflow ignores it (auxiliary
+                parameters are a CalibrationTarget-only concept).
         """
         self.base_dir = Path(base_dir)
         self.api_key = api_key
@@ -59,6 +66,7 @@ class ImmediateRequestProcessor:
         self.model_context_file = model_context_file
         self.reference_values_file = reference_values_file
         self.previous_extractions_dir = previous_extractions_dir
+        self.auxiliary_config_file = auxiliary_config_file
 
         # Setup logfire once (optional instrumentation for debugging)
         if LOGFIRE_AVAILABLE:
@@ -96,6 +104,7 @@ class ImmediateRequestProcessor:
                 species_units_file,
                 reasoning_effort,
                 reference_values_file=self.reference_values_file,
+                auxiliary_config_file=self.auxiliary_config_file,
             )
         elif workflow_type == "submodel_target":
             # Requires model_structure_file and model_context_file

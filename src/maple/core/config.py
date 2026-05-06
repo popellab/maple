@@ -69,6 +69,19 @@ class WorkflowConfig(BaseModel):
         description="Path to directory with previous extractions (avoids re-using sources)",
     )
 
+    # Auxiliary parameter group declarations for calibration targets
+    # (consumed by qsp-inference at calibration time; surfaced in the cal-target
+    # extraction prompt so the LLM knows which compartment / cross-species /
+    # measurement-scale bridges are available). Submodel-target workflow ignores
+    # this — auxiliary parameters are a CalibrationTarget-only concept.
+    auxiliary_config_file: Optional[Path] = Field(
+        default=None,
+        description=(
+            "Path to auxiliary_config.yaml declaring measurement-bridging "
+            "auxiliary parameter groups for cal-target extraction."
+        ),
+    )
+
     # Retry settings
     max_retries: int = Field(
         default=10,
