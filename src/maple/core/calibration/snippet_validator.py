@@ -14,6 +14,7 @@ directly::
 
 import json
 import re
+import unicodedata
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -21,6 +22,19 @@ from typing import Optional
 import yaml
 
 from maple.core.calibration.validators import fuzzy_find_snippet_in_text
+
+
+def _ascii_fold(s: str) -> str:
+    """Lower-case and strip combining diacritics so author names with accented
+    characters (e.g. ``Canè``, ``Müller``, ``Brügger``) match against
+    ASCII-only source tags (``Cane2023``, ``Muller2020``).
+
+    NFKD decomposition followed by ASCII-only encoding drops the combining
+    marks while preserving the base letters. The lower-case is applied
+    afterwards so the result is suitable for substring matching against
+    similarly-folded filenames.
+    """
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii").lower()
 
 
 class _AttrView:
@@ -184,14 +198,20 @@ def find_paper_pdf(source_tag: str, papers_dir: Path) -> Optional[Path]:
     # Extract author and year from tag like "Ganusov2014" or "denBraber2012"
     m = re.match(r"([A-Za-z]+)(\d{4})", source_tag)
     if m and papers_dir.is_dir():
-        author = m.group(1).lower()
+        author = _ascii_fold(m.group(1))
         year = m.group(2)
         for pdf in papers_dir.glob("*.pdf"):
-            name_lower = pdf.name.lower()
-            # Strip spaces (including non-breaking \xa0), hyphens for multi-word authors
-            # e.g., "den\xa0Braber" or "Vukmanovic-Stejic" → "denbraber", "vukmanovicstejic"
-            name_collapsed = name_lower.replace(" ", "").replace("\xa0", "").replace("-", "")
-            if (author in name_lower or author in name_collapsed) and year in name_lower:
+            # Apply the same NFKD + ASCII fold to the filename so accented
+            # author surnames (e.g. "Canè et al. - 2023 - ...pdf" matched
+            # against the "Cane2023" source_tag) resolve. Lowercasing alone
+            # would leave "è" untouched and miss the substring match. Strip
+            # spaces (including non-breaking \xa0) and hyphens after folding
+            # so multi-word / hyphenated surnames still hit the collapsed
+            # form (e.g. "den\xa0Braber" → "denbraber",
+            # "Vukmanovic-Stejic" → "vukmanovicstejic").
+            name_folded = _ascii_fold(pdf.name)
+            name_collapsed = name_folded.replace(" ", "").replace("-", "")
+            if (author in name_folded or author in name_collapsed) and year in name_folded:
                 return pdf
 
     return None
