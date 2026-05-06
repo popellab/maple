@@ -1121,6 +1121,69 @@ def _build_scenario_section(t: dict) -> str:
     return "\n\n".join(parts)
 
 
+def _format_auxiliary_groups_section(auxiliary_config_path: Path | None) -> str:
+    """Render the available compartment/measurement-bridge groups.
+
+    Returned text is injected into cal-mode prompts (lit_search, assess,
+    plan_review) so each stage knows which compartment / cross-species /
+    measurement-scale gaps are pre-authorized as acceptable via the
+    ``observable.auxiliary_parameters`` mechanism (qsp-inference side). When
+    no config is supplied, the section explicitly tells the agent that no
+    bridging is available — preserving the strict compartment-match rules.
+    """
+    fallback = (
+        "## Available Compartment / Measurement Bridges\n\n"
+        "No auxiliary parameter groups are declared for this run. "
+        "Compartment mismatches (e.g., serum vs tumor tissue) MUST be "
+        "rejected — there is no bridging mechanism available."
+    )
+    if auxiliary_config_path is None:
+        return fallback
+    p = Path(auxiliary_config_path)
+    if not p.exists():
+        return fallback
+    import yaml as _yaml
+
+    with open(p) as _f:
+        _data = _yaml.safe_load(_f) or {}
+    _groups = _data.get("groups", {}) or {}
+    if not _groups:
+        return fallback
+    lines = [
+        "## Available Compartment / Measurement Bridges",
+        "",
+        "The following auxiliary parameter groups are declared in "
+        "``auxiliary_config.yaml``. Sources whose compartment / measurement "
+        "scale is bridged by one of these groups are ACCEPTABLE — the "
+        "bridging factor will be inferred jointly with QSP parameters at "
+        "calibration time via ``observable.auxiliary_parameters``.",
+        "",
+    ]
+    for _name, _spec in _groups.items():
+        _desc = (_spec.get("description") or "").strip().replace("\n", " ")
+        _bp = _spec.get("base_prior") or {}
+        _dist = _bp.get("distribution", "?")
+        _mu = _bp.get("mu")
+        _sigma = _bp.get("sigma")
+        _tau = _spec.get("member_deviation_sigma")
+        _mu_str = f"{float(_mu):.4g}" if _mu is not None else "?"
+        _sigma_str = f"{float(_sigma):.4g}" if _sigma is not None else "?"
+        _tau_str = f"{float(_tau):.4g}" if _tau is not None else "?"
+        lines.append(
+            f"- `{_name}` ({_dist} base, mu={_mu_str}, sigma={_sigma_str}; "
+            f"member_deviation_sigma={_tau_str})\n  - {_desc}"
+        )
+    lines.append("")
+    lines.append(
+        "When a paper's measurement compartment / scale differs from the "
+        "model species but a matching auxiliary group exists, treat the "
+        "paper as ACCEPTABLE. The cal-target authoring stage will declare "
+        "the relevant ``observable.auxiliary_parameters`` member; the "
+        "inference workflow consumes the bridge."
+    )
+    return "\n".join(lines)
+
+
 LIT_SEARCH_PROMPT_CAL = """\
 You are a scientific literature search assistant for quantitative systems pharmacology (QSP) model calibration.
 
@@ -1147,6 +1210,8 @@ mechanistic in-vitro experiment.
 
 {notes_section}
 
+{auxiliary_groups_section}
+
 ## Critical: Match the model's observation context, not the parameter's mechanism
 
 The notes block above (and the targets CSV) carry the calibration context fields
@@ -1155,9 +1220,14 @@ that MUST match — typically:
 - `model_indication` (e.g., PDAC, NSCLC) — strict-match preferred; non-target
   indication is acceptable only as a last resort and must be flagged for an
   explicit translation_sigma.
-- `model_compartment` (e.g., V_T tumor tissue, V_C central/serum) — a tumor-tissue
-  observable is NOT satisfied by a serum/plasma measurement. Reject compartment
-  mismatches outright.
+- `model_compartment` (e.g., V_T tumor tissue, V_C central/serum) — by default,
+  compartment mismatches (e.g., a tumor-tissue observable satisfied by a
+  serum/plasma measurement) are REJECTED. The exception is when a matching
+  auxiliary parameter group is declared in the "Available Compartment /
+  Measurement Bridges" section below — those gaps are bridged by an
+  auxiliary parameter inferred jointly at calibration time, so sources in
+  the bridged compartment are ACCEPTABLE. Reject compartment mismatches
+  only when no matching bridge group is available.
 - `model_treatment_history` (e.g., treatment-naive at diagnosis, post-neoadjuvant)
   — a measurement at diagnosis is NOT satisfied by a post-treatment biopsy.
 - `model_stage_burden` (e.g., resectable vs metastatic) — match where possible.
@@ -1267,6 +1337,8 @@ model species suitable as a calibration target for these parameter(s):
 {scenario_section}
 {notes_section}
 
+{auxiliary_groups_section}
+
 ## Model Context
 
 {model_context}
@@ -1298,8 +1370,13 @@ For each paper, determine:
      when they conflict.
    - `model_indication` — strict-match preferred. Non-target indication is a
      proxy and must be flagged.
-   - `model_compartment` — a tumor-tissue observable is NOT satisfied by a
-     serum/plasma measurement. Reject compartment mismatches.
+   - `model_compartment` — by default, a tumor-tissue observable is NOT
+     satisfied by a serum/plasma measurement. The exception is when a
+     matching auxiliary parameter group is declared in the "Available
+     Compartment / Measurement Bridges" section below — those gaps are
+     bridged at calibration time and serum sources for tumor observables
+     are then ACCEPTABLE. Reject compartment mismatches only when no
+     matching bridge group is available.
    - `model_treatment_history` — at-diagnosis is not satisfied by a
      post-treatment biopsy.
    - `model_stage_burden` — match where possible.
@@ -1375,8 +1452,14 @@ Consider, in priority order:
    `proceed`. PDAC-specific data is preferred and the "larger non-PDAC cohort
    beats tiny PDAC cohort" trade-off does NOT apply for cal-mode observables —
    indication mismatch dominates uncertainty.
-3. **Compartment match**: Tumor-tissue observable + serum/plasma source =
-   reject. Recommend rerun_lit_search.
+3. **Compartment match**: by default, tumor-tissue observable + serum/plasma
+   source = reject and recommend rerun_lit_search. The exception is when a
+   matching auxiliary parameter group is declared in the "Available
+   Compartment / Measurement Bridges" section below — those gaps are
+   bridged via ``observable.auxiliary_parameters`` at calibration time, so
+   serum sources for tumor observables are ACCEPTABLE and should usually
+   recommend ``proceed`` (assuming other dimensions match). Reject
+   compartment mismatches only when no matching bridge group is available.
 4. **Treatment-history / stage match**: At-diagnosis + post-neoadjuvant biopsy
    = reject. Recommend rerun_lit_search.
 5. **Species / system**: Human preferred. Mouse-PDAC for a human-PDAC observable
@@ -1399,6 +1482,8 @@ Consider, in priority order:
 ## Targets
 
 {targets_json}
+
+{auxiliary_groups_section}
 
 ## Digitization Summary
 
@@ -1751,8 +1836,15 @@ async def run_plan_review(
     plan_review_agent: Agent,
     targets_csv: Path,
     target_kind: TargetKind = "submodel",
+    auxiliary_config_path: Path | None = None,
 ) -> PlanReviewResult | None:
-    """Stage 2b: Review all extraction plans and recommend actions."""
+    """Stage 2b: Review all extraction plans and recommend actions.
+
+    ``auxiliary_config_path`` is consumed only when ``target_kind == 'cal'``
+    and is surfaced in the prompt's "Available Compartment / Measurement
+    Bridges" section so the reviewer doesn't reject a serum-for-tumor plan
+    that the bridging mechanism makes acceptable.
+    """
     review_path = work_dir / "plan_review.json"
 
     if review_path.exists():
@@ -1774,6 +1866,12 @@ async def run_plan_review(
             "parameters": t["parameters"],
             "scenario": t.get("scenario") or "",
             "scenario_yaml": t.get("scenario_yaml") or "",
+            # Per-target authoring notes from the targets CSV (e.g., loosened
+            # bucket directives that authorize serum sources for tumor
+            # observables when bridged by an auxiliary group). Surfaced so
+            # plan-review reads the same authoring intent that lit-search /
+            # assess saw at earlier stages.
+            "notes": t.get("notes", ""),
             "extraction_plan": assessment.get("extraction_plan", {}),
             "alternative_plans": assessment.get("alternative_plans", []),
             "overall_notes": assessment.get("overall_notes", ""),
@@ -1810,10 +1908,15 @@ async def run_plan_review(
     dig_summary = dig_summary_path.read_text() if dig_summary_path.exists() else ""
 
     prompt_template = PLAN_REVIEW_PROMPT_CAL if target_kind == "cal" else PLAN_REVIEW_PROMPT
-    prompt = prompt_template.format(
+    fmt_kwargs = dict(
         targets_json=json.dumps(target_summaries, indent=2),
         digitization_summary=dig_summary,
     )
+    if target_kind == "cal":
+        fmt_kwargs["auxiliary_groups_section"] = _format_auxiliary_groups_section(
+            auxiliary_config_path
+        )
+    prompt = prompt_template.format(**fmt_kwargs)
 
     result = await plan_review_agent.run(prompt)
     review = result.output
@@ -1907,8 +2010,16 @@ async def run_lit_search(
     model_context: str,
     model_structure_path: Path,
     target_kind: TargetKind = "submodel",
+    auxiliary_config_path: Path | None = None,
 ) -> dict:
-    """Stage 1: Literature search for one target."""
+    """Stage 1: Literature search for one target.
+
+    ``auxiliary_config_path`` is consumed only when ``target_kind == 'cal'``
+    and is rendered into the prompt's "Available Compartment / Measurement
+    Bridges" section so the LLM knows which compartment / cross-species /
+    measurement-scale gaps are pre-authorized as acceptable via the
+    auxiliary-parameter mechanism. Submodel mode ignores it.
+    """
     target_dir = t["dir"]
     # Defensive: target dir is created at targets-list build time, but a user
     # may have cleared the cache between then and now. Recreate so the agent's
@@ -1934,6 +2045,9 @@ async def run_lit_search(
     )
     if target_kind == "cal":
         fmt_kwargs["scenario_section"] = scenario_section
+        fmt_kwargs["auxiliary_groups_section"] = _format_auxiliary_groups_section(
+            auxiliary_config_path
+        )
     prompt = prompt_template.format(**fmt_kwargs)
 
     result = await lit_search_agent.run(prompt)
@@ -1955,8 +2069,15 @@ async def run_assess(
     model_structure_path: Path,
     priors_csv: Path,
     target_kind: TargetKind = "submodel",
+    auxiliary_config_path: Path | None = None,
 ) -> dict | None:
-    """Stage 2: Assess papers for one target."""
+    """Stage 2: Assess papers for one target.
+
+    ``auxiliary_config_path`` is consumed only for ``target_kind == 'cal'`` —
+    it surfaces the available compartment / measurement-bridge groups so
+    the assessor doesn't pre-reject a serum source that the cal-target
+    extractor will later bridge via ``observable.auxiliary_parameters``.
+    """
     target_dir = t["dir"]
     target_dir.mkdir(parents=True, exist_ok=True)
     assessment_path = target_dir / "assessment.json"
@@ -1993,6 +2114,9 @@ async def run_assess(
     )
     if target_kind == "cal":
         fmt_kwargs["scenario_section"] = scenario_section
+        fmt_kwargs["auxiliary_groups_section"] = _format_auxiliary_groups_section(
+            auxiliary_config_path
+        )
     prompt = prompt_template.format(**fmt_kwargs)
 
     user_prompt: list = list(file_parts) + [prompt]
