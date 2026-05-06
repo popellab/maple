@@ -81,6 +81,7 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
         species_units_file: Optional[Path] = None,
         reasoning_effort: str = "high",
         reference_values_file: Optional[Path] = None,
+        auxiliary_config_file: Optional[Path] = None,
     ) -> List[Dict[str, Any]]:
         """
         Process calibration target inputs and generate prompts.
@@ -94,6 +95,13 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
             species_units_file: Optional JSON file mapping species -> units
             reasoning_effort: Reasoning effort level ("low", "medium", "high")
             reference_values_file: Optional YAML file with curated reference values
+            auxiliary_config_file: Optional YAML file declaring measurement-bridging
+                auxiliary parameter groups (consumed by qsp-inference at calibration
+                time). When provided, the prompt enumerates the available groups so
+                the LLM can declare ``observable.auxiliary_parameters`` for cal
+                targets that need compartment / cross-species / measurement-scale
+                bridging. Empty / missing config means the prompt instructs the
+                LLM not to use the auxiliary mechanism.
 
         Returns:
             List of prompt request dictionaries
@@ -116,6 +124,24 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
                 _ref_data = _yaml.safe_load(_f)
             reference_db_entries = _ref_data.get("values", [])
             reference_db = {v["name"]: float(v["value"]) for v in reference_db_entries}
+
+        # Load auxiliary parameter group declarations (qsp-inference side)
+        auxiliary_groups: Optional[List[Dict[str, Any]]] = None
+        if auxiliary_config_file and auxiliary_config_file.exists():
+            import yaml as _yaml
+
+            with open(auxiliary_config_file) as _f:
+                _aux_data = _yaml.safe_load(_f) or {}
+            _groups = _aux_data.get("groups", {}) or {}
+            auxiliary_groups = [
+                {
+                    "name": _name,
+                    "description": _spec.get("description", ""),
+                    "base_prior": _spec.get("base_prior", {}),
+                    "member_deviation_sigma": _spec.get("member_deviation_sigma"),
+                }
+                for _name, _spec in _groups.items()
+            ]
 
         requests = []
         with open(input_csv, "r", encoding="utf-8") as f:
@@ -174,6 +200,7 @@ class CalibrationTargetPromptBuilder(PromptBuilder):
                     or "None - this is the first extraction",
                     primary_source_title=primary_source_title,
                     reference_db_entries=reference_db_entries,
+                    auxiliary_groups=auxiliary_groups,
                 )
 
                 # Create prompt dict

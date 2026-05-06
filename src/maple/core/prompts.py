@@ -20,6 +20,7 @@ def build_calibration_target_prompt(
     used_primary_studies: str = "",
     primary_source_title: str = "",
     reference_db_entries: list[dict] | None = None,
+    auxiliary_groups: list[dict] | None = None,
 ) -> str:
     """
     Build calibration target extraction prompt with substitutions.
@@ -37,6 +38,13 @@ def build_calibration_target_prompt(
         used_primary_studies: Formatted list of already-used primary studies (optional)
         primary_source_title: Title of specific paper to extract from (optional, skips web search)
         reference_db_entries: List of reference value dicts with name, display_name, value, units, notes
+        auxiliary_groups: List of auxiliary-parameter group dicts with keys
+            ``name``, ``description``, ``base_prior`` (dict with ``distribution``,
+            ``mu``, ``sigma``), ``member_deviation_sigma``. Listed in the prompt
+            so the LLM knows which compartment / measurement bridges are
+            available (and only those — never invented). Pass ``None`` or an
+            empty list to render the prompt's auxiliary section as a no-op
+            placeholder.
 
     Returns:
         Complete prompt with all placeholders replaced
@@ -81,6 +89,35 @@ def build_calibration_target_prompt(
         prompt = prompt.replace("{{REFERENCE_DATABASE}}", "\n".join(lines))
     else:
         prompt = prompt.replace("{{REFERENCE_DATABASE}}", "No reference database available.")
+
+    # Inject auxiliary parameter group listing
+    if auxiliary_groups:
+        lines = []
+        for group in auxiliary_groups:
+            name = group["name"]
+            description = (group.get("description") or "").strip().replace("\n", " ")
+            base = group.get("base_prior") or {}
+            distribution = base.get("distribution", "?")
+            mu = base.get("mu")
+            sigma = base.get("sigma")
+            tau = group.get("member_deviation_sigma")
+            mu_str = f"{float(mu):.4g}" if mu is not None else "?"
+            sigma_str = f"{float(sigma):.4g}" if sigma is not None else "?"
+            tau_str = f"{float(tau):.4g}" if tau is not None else "?"
+            lines.append(
+                f"- `{name}` ({distribution} base prior, mu={mu_str}, sigma={sigma_str}; "
+                f"member_deviation_sigma={tau_str})\n  - {description}"
+            )
+        prompt = prompt.replace("{{AUXILIARY_GROUPS}}", "\n".join(lines))
+    else:
+        prompt = prompt.replace(
+            "{{AUXILIARY_GROUPS}}",
+            (
+                "No auxiliary parameter groups are declared for this run. "
+                "Do NOT use `observable.auxiliary_parameters` — every cal target "
+                "must satisfy the strict matching requirements without bridging."
+            ),
+        )
 
     return prompt
 

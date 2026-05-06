@@ -1569,6 +1569,7 @@ def build_complete_prompt_cal(
     model_structure_path: Path,
     assessment_json: str,
     digitized_data_section: str,
+    auxiliary_groups: list[dict] | None = None,
 ) -> str:
     """Build stage 3 prompt for CalibrationTarget extraction.
 
@@ -1620,6 +1621,7 @@ def build_complete_prompt_cal(
         model_species_with_units=species_text,
         used_primary_studies=t.get("used_primary_studies", ""),
         primary_source_title=t.get("primary_source_title", ""),
+        auxiliary_groups=auxiliary_groups,
     )
 
     extra = (
@@ -2008,8 +2010,15 @@ async def run_complete(
     priors_csv: Path,
     work_dir: Path,
     target_kind: TargetKind = "submodel",
+    auxiliary_config_path: Path | None = None,
 ) -> Path | None:
-    """Stage 3: Assemble target YAML (SubmodelTarget or CalibrationTarget)."""
+    """Stage 3: Assemble target YAML (SubmodelTarget or CalibrationTarget).
+
+    ``auxiliary_config_path`` is optional and only consumed for ``target_kind=="cal"``.
+    When provided and the file exists, the loaded group declarations are surfaced
+    in the cal-target prompt so the LLM knows which compartment / cross-species /
+    measurement-scale bridges are available via ``observable.auxiliary_parameters``.
+    """
     target_dir = t["dir"]
     output_file = target_dir / f"{t['target_id']}_{t['cancer_type']}_deriv001.yaml"
     assessment_path = target_dir / "assessment.json"
@@ -2104,12 +2113,33 @@ async def run_complete(
         paper_text_section = "\n## Paper Content (text)\n\n" + "\n\n".join(text_parts)
 
     if target_kind == "cal":
+        # Load auxiliary group declarations if a config was supplied.
+        # Loaded fresh per-target so the agent loop reflects edits to
+        # auxiliary_config.yaml between targets without restarting.
+        auxiliary_groups: list[dict] | None = None
+        if auxiliary_config_path is not None and Path(auxiliary_config_path).exists():
+            import yaml as _yaml
+
+            with open(auxiliary_config_path) as _f:
+                _aux_data = _yaml.safe_load(_f) or {}
+            _groups = _aux_data.get("groups", {}) or {}
+            auxiliary_groups = [
+                {
+                    "name": _name,
+                    "description": _spec.get("description", ""),
+                    "base_prior": _spec.get("base_prior", {}),
+                    "member_deviation_sigma": _spec.get("member_deviation_sigma"),
+                }
+                for _name, _spec in _groups.items()
+            ]
+
         prompt = build_complete_prompt_cal(
             t=t,
             model_context=model_context,
             model_structure_path=model_structure_path,
             assessment_json=json.dumps(assessment_data, indent=2),
             digitized_data_section=digitized_section + paper_text_section,
+            auxiliary_groups=auxiliary_groups,
         )
         if plan_review_reason:
             prompt += f"\n\n## Plan Review Note\n\n{plan_review_reason}\n"
