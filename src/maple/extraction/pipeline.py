@@ -1910,6 +1910,10 @@ async def run_lit_search(
 ) -> dict:
     """Stage 1: Literature search for one target."""
     target_dir = t["dir"]
+    # Defensive: target dir is created at targets-list build time, but a user
+    # may have cleared the cache between then and now. Recreate so the agent's
+    # lit_search_results.json write doesn't fail after a 5-min agent call.
+    target_dir.mkdir(parents=True, exist_ok=True)
     lit_search_path = target_dir / "lit_search_results.json"
 
     if lit_search_path.exists():
@@ -1954,6 +1958,7 @@ async def run_assess(
 ) -> dict | None:
     """Stage 2: Assess papers for one target."""
     target_dir = t["dir"]
+    target_dir.mkdir(parents=True, exist_ok=True)
     assessment_path = target_dir / "assessment.json"
 
     if assessment_path.exists():
@@ -2020,6 +2025,7 @@ async def run_complete(
     measurement-scale bridges are available via ``observable.auxiliary_parameters``.
     """
     target_dir = t["dir"]
+    target_dir.mkdir(parents=True, exist_ok=True)
     output_file = target_dir / f"{t['target_id']}_{t['cancer_type']}_deriv001.yaml"
     assessment_path = target_dir / "assessment.json"
 
@@ -2287,6 +2293,7 @@ def run_validate(
     state ∈ {'pass', 'fail', 'skip_missing', 'skip_promoted'}.
     """
     target_dir = t["dir"]
+    target_dir.mkdir(parents=True, exist_ok=True)
     output_file = target_dir / f"{t['target_id']}_{t['cancer_type']}_deriv001.yaml"
 
     if not output_file.exists():
@@ -2416,6 +2423,7 @@ def run_validate_all(
 def write_assessment_report(t: dict, assessment: dict) -> None:
     """Write assessment.md and digitization READMEs for one target."""
     target_dir = t["dir"]
+    target_dir.mkdir(parents=True, exist_ok=True)
     lines = [f"# Paper Assessment: {t['target_id']}\n"]
 
     # Extraction plan
