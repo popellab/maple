@@ -12,7 +12,7 @@ See docs/calibration_target_design.md for full specification.
 import ast
 from enum import Enum
 from pathlib import Path
-from typing import List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -44,7 +44,6 @@ from maple.core.calibration.exceptions import (
     SnippetValueMismatchError,
     SourceRefError,
     SpeciesNotFoundError,
-    UnitConversionError,
     UnitParsingError,
 )
 from maple.core.calibration.experimental_context import ExperimentalContext
@@ -63,7 +62,6 @@ from maple.core.calibration.shared_models import (
 )
 from maple.core.calibration.validators import (
     check_value_in_text,
-    create_mock_species,
     fuzzy_match,
     resolve_doi,
 )
@@ -82,6 +80,31 @@ def _resolve_species_units(info: ValidationInfo) -> dict:
 
         ms = ModelStructure.from_json(ms)
     return ms.to_species_units()
+
+
+def _create_mock_species_raw(species_units: dict, n_timepoints: int = 100) -> Dict[str, np.ndarray]:
+    """
+    Pintless variant of create_mock_species: returns raw float arrays whose
+    magnitudes follow the same heuristics as the Pint version (cell counts at
+    1e6, molarity at 1.0, mass at 100, default 1.0). Values are interpreted in
+    the species' canonical units (model_structure.json) — the observable.code
+    function is responsible for any explicit numerical conversions.
+    """
+    mock = {}
+    for species, unit_info in species_units.items():
+        unit_str = (
+            unit_info.get("units", "dimensionless") if isinstance(unit_info, dict) else unit_info
+        )
+        if "cell" in unit_str:
+            value = 1e6
+        elif "molarity" in unit_str:
+            value = 1.0
+        elif "gram" in unit_str:
+            value = 100.0
+        else:
+            value = 1.0
+        mock[species] = np.ones(n_timepoints) * value
+    return mock
 
 
 # ============================================================================
@@ -897,7 +920,10 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_observable_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
         """
-        Validator: Check that observable code executes and returns correct units.
+        Validator: Check that observable code executes and returns a numeric
+        value/array. Pintless: the function operates on raw floats keyed off
+        canonical model species units (from model_structure.json); explicit
+        numerical conversions live inside the function body.
 
         Requires context:
             model_structure: ModelStructure instance or path to model_structure.json
@@ -906,12 +932,10 @@ class CalibrationTarget(BaseModel):
         if type(self).__name__ == "IsolatedSystemTarget":
             return self
 
-        from maple.core.unit_registry import ureg
         from maple.core.calibration.code_validator import (
             CodeType,
             validate_code_block,
         )
-        import pint
 
         species_units = _resolve_species_units(info)
 
@@ -931,88 +955,67 @@ class CalibrationTarget(BaseModel):
                     raise CodeSyntaxError(
                         f"observable.code has syntax error: {first_error.message}"
                     )
-                elif first_error.category == "signature":
-                    raise CodeStructureError(first_error.message)
                 else:
-                    raise CodeStructureError(first_error.message)
+                    # Signature mismatch likely means an old 4-arg
+                    # (time, species_dict, constants, ureg) signature; surface
+                    # a clear deprecation hint.
+                    raise CodeStructureError(
+                        first_error.message + "\n\nNote: as of 2026-05-10 observable.code uses the "
+                        "3-arg signature (time, species_dict, constants). "
+                        "Pint/ureg has been removed — operate on raw floats "
+                        "and use explicit numerical unit conversions."
+                    )
 
-        # Execute with mock data
+        # Execute with mock raw-float data
         try:
-            # Create mock time array
-            mock_time = np.linspace(0, 14, 100) * ureg.day
+            mock_time = np.linspace(0, 14, 100)
 
-            # Create mock species from actual model (with matching length)
-            mock_species = create_mock_species(species_units, ureg, n_timepoints=len(mock_time))
+            mock_species = _create_mock_species_raw(species_units, n_timepoints=len(mock_time))
 
-            # Build constants dict from observable.constants
-            constants = {}
+            constants: Dict[str, Any] = {}
             for const in self.observable.constants:
-                constants[const.name] = const.value * ureg(const.units)
+                constants[const.name] = float(const.value)
 
-            # Inject mock values for auxiliary_parameters so observable.code
-            # validation can execute. Real values are sampled from a
-            # hierarchical prior at inference time (qsp-inference); maple's
-            # only concern here is that the code path runs without KeyError
-            # and produces output with the right units.
+            # Inject mock auxiliary_parameters so observable.code can execute
+            # without KeyError (real values sampled at inference time).
             for aux in self.observable.auxiliary_parameters:
-                constants[aux.name] = 1.0 * ureg(aux.units)
+                constants[aux.name] = 1.0
 
-            # Execute function
-            local_scope = {"ureg": ureg, "np": np}
+            local_scope: Dict[str, Any] = {"np": np}
             exec(self.observable.code, local_scope)
             compute_fn = local_scope["compute_observable"]
 
-            result = compute_fn(mock_time, mock_species, constants, ureg)
+            result_value = compute_fn(mock_time, mock_species, constants)
 
-            # Check result has units
-            if not hasattr(result, "units"):
-                raise MissingUnitsError("Function must return a Pint Quantity with units")
-
-            # Check dimensionality matches calibration target units
-            expected_quantity = 1.0 * ureg(self.empirical_data.units)
-            if result.dimensionality != expected_quantity.dimensionality:
-                raise DimensionalityMismatchError(
-                    f"Observable code unit dimensionality mismatch:\n"
-                    f"  Expected: {self.empirical_data.units} ({expected_quantity.dimensionality})\n"
-                    f"  Got: {result.units} ({result.dimensionality})"
+            if hasattr(result_value, "units") or hasattr(result_value, "magnitude"):
+                raise CodeStructureError(
+                    "observable.code must return a raw float / numpy array, "
+                    "not a Pint Quantity. Apply explicit numerical conversions "
+                    "inside the function body and document them in comments."
                 )
 
-            # Check result has same length as time series (no time indexing)
-            if hasattr(result, "magnitude"):
-                result_magnitude = result.magnitude
-                # Handle both scalar and array results
-                if np.isscalar(result_magnitude):
-                    raise ScalarReturnError(
-                        f"Observable code returned a scalar, but should return an array with same length as time series.\n"
-                        f"  Expected length: {len(mock_time)}\n"
-                        f"  Got: scalar value\n"
-                        f"Do NOT use time indexing (e.g., species[-1] or species[0]) in observable code.\n"
-                        f"Compute the observable over the entire time series."
-                    )
-                elif len(result_magnitude) != len(mock_time):
-                    raise ArrayLengthError(
-                        f"Observable code returned array with wrong length:\n"
-                        f"  Expected: {len(mock_time)} (same as time series)\n"
-                        f"  Got: {len(result_magnitude)}\n"
-                        f"Do NOT use time indexing. Compute over entire time series."
-                    )
+            arr = np.asarray(result_value)
+            if arr.ndim == 0:
+                raise ScalarReturnError(
+                    f"Observable code returned a scalar, but should return an array with same length as time series.\n"
+                    f"  Expected length: {len(mock_time)}\n"
+                    f"  Got: scalar value\n"
+                    f"Do NOT use time indexing (e.g., species[-1] or species[0]) in observable code.\n"
+                    f"Compute the observable over the entire time series."
+                )
+            if arr.shape[0] != len(mock_time):
+                raise ArrayLengthError(
+                    f"Observable code returned array with wrong length:\n"
+                    f"  Expected: {len(mock_time)} (same as time series)\n"
+                    f"  Got: {arr.shape[0]}\n"
+                    f"Do NOT use time indexing. Compute over entire time series."
+                )
 
-        except (
-            pint.DimensionalityError,
-            pint.UndefinedUnitError,
-            pint.OffsetUnitCalculusError,
-        ) as e:
-            # Wrap Pint unit errors in our custom exception
-            raise UnitConversionError(
-                f"Observable code has unit error: {str(e)}\n"
-                f"Check that all unit operations are dimensionally consistent."
-            ) from e
         except CalibrationTargetValidationError:
-            # Re-raise all our custom validation errors
             raise
         except Exception:
-            # Other errors might be from complex logic or missing species
-            # Be lenient - actual execution will catch these
+            # Other errors might be from complex logic or missing species —
+            # be lenient; runtime derive will surface them with full context.
             pass
 
         return self
