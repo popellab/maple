@@ -754,8 +754,14 @@ def _zotero_pdf_path(doi: str, zotero_dir: Path) -> Path | None:
         LIMIT 1
     """
 
+    # immutable=1 (not mode=ro): read the DB file directly, ignoring locks.
+    # Zotero 7+ holds an aggressive WAL lock while running, so a mode=ro
+    # connection stalls on the busy-timeout and then raises "database is
+    # locked" — silently caught below and misreported as NOT FOUND. immutable
+    # reads the bytes without acquiring a lock (a torn/stale snapshot is
+    # acceptable for a "does this DOI have a stored PDF" check).
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
         row = conn.execute(query, (doi,)).fetchone()
         conn.close()
     except sqlite3.Error:
