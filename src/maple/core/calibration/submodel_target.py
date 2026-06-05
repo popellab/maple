@@ -2511,6 +2511,11 @@ class SubmodelTarget(BaseModel):
             last = parts[-1].rstrip(".")
             if len(last) <= 2 and last.isupper() and len(parts) > 1:
                 return " ".join(parts[:-1])
+            # Multi-word family name with a lowercase tussenvoegsel particle
+            # ("Van de Velde", "den Braber", "de la Cruz"): the whole string is
+            # the family name, so return it as-is rather than the last token.
+            if any(p.islower() for p in parts):
+                return full_name
             # Otherwise assume "Given Family" format
             return parts[-1]
 
