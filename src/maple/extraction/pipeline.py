@@ -1793,13 +1793,22 @@ def make_agents(
     openai_model = make_model(model_name)
     settings = make_settings()
 
+    # The lit-search agent is the heaviest call in the pipeline (high reasoning
+    # effort + WebSearchTool), and gpt-5+ routinely needs >300 s of server-side
+    # rollout for hard-to-find parameters. The default 300 s read-timeout cuts
+    # those off mid-rollout — a clean httpx read timeout at exactly the cap,
+    # not a wedge — and pydantic-ai does NOT retry transport timeouts, so the
+    # same targets fail every re-run. Give just this agent a longer read-timeout
+    # so long rollouts can land; the other agents stay fail-fast at 300 s.
+    lit_search_model = make_model(model_name, http_timeout_s=900.0)
+
     lit_search_settings = OpenAIResponsesModelSettings(
         openai_reasoning_summary="concise",
         openai_reasoning_effort="high",
     )
 
     lit_search_agent = Agent(
-        openai_model,
+        lit_search_model,
         output_type=LitSearchResult,
         system_prompt=(
             "You are a scientific literature search agent. "
