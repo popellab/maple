@@ -776,11 +776,72 @@ def _zotero_pdf_path(doi: str, zotero_dir: Path) -> Path | None:
     return pdf_path if pdf_path.exists() else None
 
 
+_DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", re.IGNORECASE)
+
+
+def _pdf_head_text(pdf: Path, pages: int = 3) -> str:
+    """First ``pages`` pages of a PDF as text (pdftotext). Empty on failure."""
+    import subprocess as _sp
+
+    try:
+        r = _sp.run(
+            ["pdftotext", "-l", str(pages), str(pdf), "-"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if r.returncode == 0:
+            return r.stdout
+    except Exception:
+        pass
+    return ""
+
+
+def _index_local_pdfs(dest_dir: Path) -> list[tuple[Path, str, set[str]]]:
+    """(path, lowercased filename+head-text, embedded DOIs) for each PDF in dir."""
+    index: list[tuple[Path, str, set[str]]] = []
+    if not dest_dir.exists():
+        return index
+    for p in sorted(dest_dir.glob("*.pdf")):
+        head = _pdf_head_text(p)
+        dois = {d.lower().rstrip(".") for d in _DOI_RE.findall(head)}
+        index.append((p, (p.stem + "\n" + head).lower(), dois))
+    return index
+
+
+def _local_pdf_match(doi: str, title: str, index: list[tuple[Path, str, set[str]]]) -> Path | None:
+    """A PDF already in the dir matching this candidate, or None.
+
+    DOI embedded in the PDF is authoritative; otherwise fall back to a strong
+    title-token overlap (many PDFs don't carry their DOI in the text).
+    """
+    doi_l = (doi or "").lower()
+    if doi_l:
+        for path, _hay, dois in index:
+            if doi_l in dois:
+                return path
+    toks = [t for t in re.sub(r"[^a-z0-9 ]", " ", (title or "").lower()).split() if len(t) > 3]
+    if not toks:
+        return None
+    best, best_score = None, 0.0
+    for path, hay, _ in index:
+        score = sum(1 for t in toks if t in hay) / len(toks)
+        if score > best_score:
+            best, best_score = path, score
+    return best if best_score >= 0.8 else None
+
+
 def fetch_pdfs(candidates: list[dict], papers_dir: Path, zotero_storage: Path) -> list[dict]:
-    """Copy PDFs from Zotero into papers_dir using DOI lookup. Returns NOT FOUND candidates."""
+    """Resolve each candidate's PDF, returning NOT FOUND candidates.
+
+    A PDF already sitting in the destination dir (dropped in manually when the
+    Zotero Connector couldn't fetch it) counts as found — checked by content
+    before the Zotero SQLite lookup, so it isn't misreported as missing.
+    """
     papers_dir.mkdir(exist_ok=True)
     not_found = []
     zotero_dir = zotero_storage.parent  # ~/Zotero
+    local_index_cache: dict[Path, list] = {}
 
     for c in candidates:
         doi = c["doi"]
@@ -789,6 +850,14 @@ def fetch_pdfs(candidates: list[dict], papers_dir: Path, zotero_storage: Path) -
 
         dest_dir = papers_dir / tag if tag else papers_dir
         dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # Already present locally? (PDF placed straight into the dir, not in Zotero)
+        if dest_dir not in local_index_cache:
+            local_index_cache[dest_dir] = _index_local_pdfs(dest_dir)
+        local = _local_pdf_match(doi, title, local_index_cache[dest_dir])
+        if local:
+            print(f"  [{c['rank']}] HAVE (local): {local.name}")
+            continue
 
         # Look up by DOI in Zotero SQLite
         pdf_path = _zotero_pdf_path(doi, zotero_dir)
