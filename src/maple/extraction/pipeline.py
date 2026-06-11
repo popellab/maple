@@ -806,9 +806,20 @@ def fetch_pdfs(candidates: list[dict], papers_dir: Path, zotero_storage: Path) -
     return not_found
 
 
+#: When False, the browser-open step skips PMC and routes every DOI through
+#: doi.org (publisher). PMC's per-IP bot protection 403s the browser after
+#: enough article tabs are opened in a short window; the publisher landing page
+#: avoids NCBI throttling and the Zotero Connector still saves from it. Flip to
+#: True to prefer PMC OA full text when you aren't opening papers in bulk.
+PREFER_PMC = False
+
+
 def _resolve_pmc_urls(dois: list[str]) -> list[str]:
     """Resolve DOIs to PMC full-text URLs where available, else doi.org."""
     import urllib.request
+
+    if not PREFER_PMC:
+        return [f"https://doi.org/{doi}" for doi in dois]
 
     urls = []
     for doi in dois:
