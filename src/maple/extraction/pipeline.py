@@ -488,6 +488,43 @@ def report_digitization_preflight(targets: list[dict]) -> None:
     print()
 
 
+def _locate_paper_pdf(papers_dir: Path, tag: str, doi: str, title: str) -> str:
+    """Best-effort absolute path to a paper's PDF, robust to filename style.
+
+    The old matcher required both author AND a 4-digit year as substrings of the
+    filename, so it silently missed title-only names (``Antigen affinity….pdf``)
+    and Zotero names that drop the year (``Ashour et al. - IL-12….pdf``). This
+    tries a cheap filename match first (author+year, or strong title-token
+    overlap against the filename — covers both ``Author - Year - Title`` and
+    title-only styles), then falls back to content matching (DOI inside the PDF,
+    then extracted-text title overlap) for names that carry neither (e.g. a bare
+    article-number ``4963.pdf``). Returns ``""`` if nothing matches.
+    """
+    search_dirs = [
+        d for d in ([papers_dir / tag, papers_dir] if tag else [papers_dir]) if d.is_dir()
+    ]
+    m = re.match(r"([A-Za-z]+)(\d{4})", tag or "")
+    author = m.group(1).lower() if m else ""
+    year = m.group(2) if m else ""
+    toks = [t for t in re.sub(r"[^a-z0-9 ]", " ", (title or "").lower()).split() if len(t) > 3]
+
+    # 1) cheap filename match (no PDF parsing)
+    for d in search_dirs:
+        for pdf in sorted(d.glob("*.pdf")):
+            nl = pdf.name.lower()
+            if author and year and author in nl and year in nl:
+                return str(pdf.resolve())
+            if toks and sum(1 for t in toks if t in nl) / len(toks) >= 0.6:
+                return str(pdf.resolve())
+
+    # 2) content fallback (parses PDFs — only reached when the name carries no hint)
+    for d in search_dirs:
+        match = _local_pdf_match(doi, title, _index_local_pdfs(d))
+        if match:
+            return str(match.resolve())
+    return ""
+
+
 def summarize_digitizations(
     work_dir: Path,
     output_path: Path | None = None,
@@ -541,29 +578,11 @@ def summarize_digitizations(
             role = p.get("role", "")
             paper_title = doi_to_title.get(p["doi"], "")
 
-            # Find the PDF for this paper by matching source_tag against filename
-            pdf_link = ""
-            title = p.get("title", "")
+            # Locate this paper's PDF robustly (filename style varies — some are
+            # title-only or drop the year). See _locate_paper_pdf.
+            title = p.get("title", "") or paper_title
             tag = p.get("source_tag", "")
-            # Extract author and year from source_tag (e.g., "Miller2019" -> "Miller", "2019")
-            tag_match = re.match(r"([A-Za-z]+)(\d{4})", tag)
-            tag_author = tag_match.group(1).lower() if tag_match else ""
-            tag_year = tag_match.group(2) if tag_match else ""
-            for search_dir in [papers_dir / tag, papers_dir]:
-                if not search_dir.is_dir():
-                    continue
-                for pdf in search_dir.glob("*.pdf"):
-                    name_lower = pdf.name.lower()
-                    if (
-                        tag_author
-                        and tag_year
-                        and tag_author in name_lower
-                        and tag_year in name_lower
-                    ):
-                        pdf_link = str(pdf.resolve())
-                        break
-                if pdf_link:
-                    break
+            pdf_link = _locate_paper_pdf(papers_dir, tag, p["doi"], title)
 
             # Check digitized dir for per-figure completion
             digitized_dir = assessment_path.parent / "digitized"
