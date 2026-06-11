@@ -852,37 +852,38 @@ def collect_missing_pdfs(
         print("\n  All PDFs found!")
         return
 
-    # Step 2: Copy missing DOIs for "Add by Identifier"
-    missing_dois = [c["doi"] for c in all_missing]
-    unique_dois = sorted(set(missing_dois))
-    print(
-        f"\n  {len(unique_dois)} missing PDFs. DOIs copied to clipboard for Zotero 'Add by Identifier'."
-    )
-    subprocess.run(["pbcopy"], input="\n".join(unique_dois), text=True)
+    # Step 2: Walk the missing DOIs in small batches. Each batch is copied to
+    # the clipboard for Zotero 'Add by Identifier' AND opened in the browser
+    # (PMC full text where available, doi.org otherwise); press Enter to advance
+    # to the next batch. Dumping all ~80 DOIs into the clipboard / browser at
+    # once is unmanageable — 5 at a time matches how Zotero's add-by-identifier
+    # and the Connector are actually used. After a pass, re-fetch from Zotero
+    # and repeat on whatever is still missing.
+    BATCH_SIZE = 5
+    unique_dois = sorted(set(c["doi"] for c in all_missing))
 
     while True:
-        resp = (
-            input(
-                f"\n  [{len(unique_dois)} missing] Press Enter after adding to Zotero, 'b' to open in browser, or 's' to skip: "
-            )
-            .strip()
-            .lower()
-        )
-
-        if resp == "s":
-            break
-
-        if resp == "b":
-            # Try PMC (free full text) first, fall back to doi.org
-            urls = _resolve_pmc_urls(unique_dois)
+        print(f"\n  {len(unique_dois)} missing PDFs — walking in batches of {BATCH_SIZE}.")
+        batches = [unique_dois[i : i + BATCH_SIZE] for i in range(0, len(unique_dois), BATCH_SIZE)]
+        stopped = False
+        for bi, batch in enumerate(batches, 1):
+            subprocess.run(["pbcopy"], input="\n".join(batch), text=True)
+            urls = _resolve_pmc_urls(batch)
             n_pmc = sum(1 for u in urls if "pmc.ncbi" in u)
             print(
-                f"  Opening {len(urls)} articles ({n_pmc} via PMC, {len(urls)-n_pmc} via doi.org)..."
+                f"\n  Batch {bi}/{len(batches)} ({len(batch)} DOIs) → clipboard for "
+                f"Zotero 'Add by Identifier'; opening browser "
+                f"({n_pmc} via PMC, {len(urls) - n_pmc} via doi.org):"
             )
+            for d in batch:
+                print(f"    - {d}")
             subprocess.run(["open"] + urls)
-            input("  Press Enter after saving with Zotero Connector...")
+            resp = input("  Press Enter for next batch, 's' to stop: ").strip().lower()
+            if resp == "s":
+                stopped = True
+                break
 
-        # Re-fetch from Zotero
+        # Re-fetch from Zotero to see what actually landed
         all_missing = []
         for t, lr in zip(targets, lit_results):
             missing = fetch_pdfs(lr.get("candidates", []), t["dir"] / "papers", zotero_storage)
@@ -894,7 +895,16 @@ def collect_missing_pdfs(
 
         unique_dois = sorted(set(c["doi"] for c in all_missing))
         subprocess.run(["pbcopy"], input="\n".join(unique_dois), text=True)
-        print(f"  {len(unique_dois)} still missing. DOIs copied to clipboard.")
+        print(f"\n  {len(unique_dois)} still missing. DOIs copied to clipboard.")
+        if stopped:
+            break
+        again = (
+            input("  Re-walk the remaining in batches? Enter to retry, 's' to skip: ")
+            .strip()
+            .lower()
+        )
+        if again == "s":
+            break
 
     # Print final summary of missing papers
     if all_missing:
