@@ -279,8 +279,34 @@ class CalibrationTargetEstimates(BaseModel):
             "        'median_obs': np.array(medians) * means.units,\n"
             "        'ci95_lower': np.array(lowers) * means.units,\n"
             "        'ci95_upper': np.array(uppers) * means.units,\n"
-            "    }"
+            "    }\n\n"
+            "OPTIONAL POPULATION SAMPLE (for hierarchical inference):\n"
+            "You may ALSO return a 'samples' key holding the 1-D across-patient population\n"
+            "draw the function already builds internally (a Pint Quantity array, one value\n"
+            "per patient-equivalent). When present it becomes the canonical observed sample:\n"
+            "its empirical spread (IQR/SD) is the population-variability signal and its\n"
+            "median-bootstrap is the center uncertainty — read directly, with no parametric\n"
+            "refit and no fragile interception of numpy reductions. It MUST be the POPULATION\n"
+            "sample (so its dispersion is genuine patient-to-patient variability), not the\n"
+            "sampling distribution of an estimator (e.g. a pooled-mean / SEM draw). When no\n"
+            "genuine population spread exists, set population_spread='none' instead."
         )
+    )
+    population_spread: Literal["empirical", "none"] = Field(
+        default="empirical",
+        description=(
+            "Whether this target's reported width is a genuine ACROSS-PATIENT population "
+            "spread, usable as the population-variability (omega) signal in hierarchical "
+            "inference.\n\n"
+            "  - 'empirical' (default): the distribution_code sample is a faithful population "
+            "draw, so its spread reflects real patient-to-patient variability. Hierarchical "
+            "SBI reads the spread empirically from the sample (no parametric refit).\n"
+            "  - 'none': the reported width is NOT a population spread — e.g. a pooled-mean / "
+            "SEM confidence interval (shrinks with n), a transcript-vs-protein method bound, "
+            "or an assumed CV with no dispersion data. The target still constrains the "
+            "population CENTER via `median`, but is EXCLUDED from omega conditioning so a "
+            "fabricated or sample-size-shrinking width does not pollute inferred diversity."
+        ),
     )
 
     @field_validator("sample_size")
@@ -1401,6 +1427,53 @@ class CalibrationTarget(BaseModel):
                         f"Computed ci95_upper[{i}] ({ci95_upper_mag[i]:.4g}) does not match "
                         f"reported CI95[{i}] upper ({ci_rep[1]:.4g}) within 10% tolerance"
                     )
+
+            # --- Optional declared population sample (hierarchical omega signal) ---
+            # When distribution_code returns a 'samples' key it must be the 1-D
+            # across-patient population draw the median/CI summarize, so its
+            # empirical spread is genuine patient-to-patient variability.
+            if "samples" in result:
+                samples = result["samples"]
+                if not hasattr(samples, "units"):
+                    raise MissingUnitsError(
+                        "Result['samples'] must be a Pint Quantity array with units "
+                        "(the across-patient population draw, in the observable's units)."
+                    )
+                if samples.dimensionality != expected_quantity.dimensionality:
+                    raise DimensionalityMismatchError(
+                        f"samples unit dimensionality mismatch:\n"
+                        f"  Expected: {self.empirical_data.units} ({expected_quantity.dimensionality})\n"
+                        f"  Got: {samples.units} ({samples.dimensionality})"
+                    )
+                samp_mag = np.asarray(samples.to(self.empirical_data.units).magnitude, dtype=float)
+                if samp_mag.ndim != 1:
+                    raise ReturnStructureError(
+                        f"samples must be a 1-D population array, got {samp_mag.ndim}-D "
+                        f"with shape {samp_mag.shape}"
+                    )
+                finite = samp_mag[np.isfinite(samp_mag)]
+                if finite.size < 100:
+                    raise ReturnStructureError(
+                        f"samples has too few finite values ({finite.size}); need >=100 "
+                        f"for a stable empirical population spread"
+                    )
+                if np.std(finite) == 0:
+                    raise ReturnStructureError(
+                        "samples has zero variance (all identical) — not a usable population "
+                        "spread; set population_spread='none' if no real spread exists"
+                    )
+                # Tie the declared sample to the declared center: for scalar targets
+                # its median must match the reported median within MC tolerance.
+                if n_expected == 1:
+                    samp_median = float(np.median(finite))
+                    if abs(samp_median - median_reported[0]) > ci95_rel_tol * abs(
+                        median_reported[0]
+                    ):
+                        raise ComputedValueMismatchError(
+                            f"median(samples) ({samp_median:.4g}) does not match reported "
+                            f"median ({median_reported[0]:.4g}) within 10% — the declared "
+                            f"'samples' array must be the population draw the median/CI summarize"
+                        )
 
         except CalibrationTargetValidationError:
             # Re-raise all our custom validation errors
