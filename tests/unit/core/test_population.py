@@ -177,11 +177,21 @@ def test_empirical_population_returns_raw_values():
     assert np.allclose(out.magnitude, [5.0, 7.0, 9.0, 11.0])
 
 
-def test_empirical_population_resamples_to_n():
-    vals = [_q(x) for x in (5.0, 7.0, 9.0, 11.0)]
-    out = pop.empirical_population(vals, rng=np.random.default_rng(0), n=1000)
-    assert out.size == 1000
-    assert set(np.unique(out.magnitude)).issubset({5.0, 7.0, 9.0, 11.0})
+def test_empirical_population_tiles_to_at_least_n_preserving_median():
+    # Odd-count cohort: up-sampling must be deterministic and preserve the exact median.
+    vals = [_q(x) for x in (5.0, 7.0, 9.0, 11.0, 30.0)]
+    out = pop.empirical_population(vals, n=1000)
+    assert out.size >= 1000
+    assert set(np.unique(out.magnitude)) == {5.0, 7.0, 9.0, 11.0, 30.0}
+    assert np.median(out.magnitude) == np.median([5.0, 7.0, 9.0, 11.0, 30.0])
+    # deterministic
+    assert np.array_equal(out.magnitude, pop.empirical_population(vals, n=1000).magnitude)
+
+
+def test_empirical_population_even_count_preserves_averaged_median():
+    vals = [_q(x) for x in (2.0, 4.0, 6.0, 100.0)]  # even-count, right-skewed
+    out = pop.empirical_population(vals, n=500)
+    assert np.median(out.magnitude) == np.median([2.0, 4.0, 6.0, 100.0])  # = 5.0
 
 
 def test_midpoint():

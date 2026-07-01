@@ -275,16 +275,18 @@ def empirical_population(values, *, rng=None, n=None):
     """The across-patient population *is* the per-patient data (no assumption).
 
     ``values`` is a list of Pint quantities (or a Pint array) of per-patient
-    measurements. Returned as-is, or resampled with replacement to length ``n`` (needs
-    ``rng``) when a fixed sample size is wanted.
+    measurements. Returned as-is, or up-sampled to length >= ``n`` by DETERMINISTIC
+    tiling (each patient repeated equally) when a larger array is wanted so the
+    downstream >=100-sample floor is met. Tiling preserves the empirical median / IQR /
+    percentiles exactly — unlike a random bootstrap resample, whose median drifts with
+    Monte-Carlo noise and can break the median-tie check. ``rng`` is accepted for API
+    symmetry but unused (up-sampling is deterministic).
     """
     arr = _as_pint_array(values)
-    if n is None or n == len(arr):
+    if n is None or n <= len(arr):
         return arr
-    if rng is None:
-        raise ValueError("empirical_population needs rng to resample to n")
-    idx = rng.integers(0, len(arr), n)
-    return arr[idx]
+    reps = int(np.ceil(n / len(arr)))
+    return np.repeat(arr.magnitude, reps) * arr.units
 
 
 # --------------------------------------------------------------------------- #
