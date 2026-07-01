@@ -184,8 +184,10 @@ def test_empirical_population_tiles_to_at_least_n_preserving_median():
     assert out.size >= 1000
     assert set(np.unique(out.magnitude)) == {5.0, 7.0, 9.0, 11.0, 30.0}
     assert np.median(out.magnitude) == np.median([5.0, 7.0, 9.0, 11.0, 30.0])
-    # deterministic
+    # deterministic (fixed-seed shuffle)
     assert np.array_equal(out.magnitude, pop.empirical_population(vals, n=1000).magnitude)
+    # shuffled: exchangeable rows, not a blocked/sorted tiling
+    assert not np.array_equal(out.magnitude, np.sort(out.magnitude))
 
 
 def test_empirical_population_even_count_preserves_averaged_median():

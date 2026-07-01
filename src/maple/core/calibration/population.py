@@ -27,6 +27,7 @@ import numpy as np
 # Standard-normal quantiles used to back a lognormal sigma out of a reported spread.
 _Z_Q = 0.67448975329236258  # 75th percentile  -> IQR half-width
 _Z_95 = 1.959963984540054  # 97.5th percentile -> 95% CI half-width
+_SHUFFLE_SEED = 0  # fixed seed: tiled up-sampling is shuffled deterministically
 
 
 # --------------------------------------------------------------------------- #
@@ -279,14 +280,19 @@ def empirical_population(values, *, rng=None, n=None):
     tiling (each patient repeated equally) when a larger array is wanted so the
     downstream >=100-sample floor is met. Tiling preserves the empirical median / IQR /
     percentiles exactly — unlike a random bootstrap resample, whose median drifts with
-    Monte-Carlo noise and can break the median-tie check. ``rng`` is accepted for API
+    Monte-Carlo noise and can break the median-tie check. The tiled array is then
+    shuffled with a FIXED seed so it has exchangeable rows (no blocked ordering) for any
+    downstream element-wise / sub-slice use, while remaining deterministic and leaving
+    every order statistic unchanged (a permutation). ``rng`` is accepted for API
     symmetry but unused (up-sampling is deterministic).
     """
     arr = _as_pint_array(values)
     if n is None or n <= len(arr):
         return arr
     reps = int(np.ceil(n / len(arr)))
-    return np.repeat(arr.magnitude, reps) * arr.units
+    tiled = np.repeat(arr.magnitude, reps)
+    np.random.default_rng(_SHUFFLE_SEED).shuffle(tiled)
+    return tiled * arr.units
 
 
 # --------------------------------------------------------------------------- #
