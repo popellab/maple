@@ -280,32 +280,38 @@ class CalibrationTargetEstimates(BaseModel):
             "        'ci95_lower': np.array(lowers) * means.units,\n"
             "        'ci95_upper': np.array(uppers) * means.units,\n"
             "    }\n\n"
-            "OPTIONAL POPULATION SAMPLE (for hierarchical inference):\n"
-            "You may ALSO return a 'samples' key holding the 1-D across-patient population\n"
-            "draw the function already builds internally (a Pint Quantity array, one value\n"
-            "per patient-equivalent). When present it becomes the canonical observed sample:\n"
-            "its empirical spread (IQR/SD) is the population-variability signal and its\n"
-            "median-bootstrap is the center uncertainty — read directly, with no parametric\n"
-            "refit and no fragile interception of numpy reductions. It MUST be the POPULATION\n"
-            "sample (so its dispersion is genuine patient-to-patient variability), not the\n"
-            "sampling distribution of an estimator (e.g. a pooled-mean / SEM draw). When no\n"
-            "genuine population spread exists, set population_spread='none' instead."
+            "POPULATION SAMPLE (for hierarchical inference), gated by population_spread:\n"
+            "If population_spread='across_patient', you MUST ALSO return a 'samples' key\n"
+            "holding the across-patient population draw (a Pint Quantity array, one value per\n"
+            "patient-equivalent; 1-D for a scalar observable, or 2-D (n_patients, k) for a\n"
+            "joint/compositional/trajectory observable). Its empirical spread (IQR/SD) is the\n"
+            "population-variability (omega) signal, read directly with no parametric refit.\n"
+            "It MUST be the POPULATION sample (dispersion = genuine patient-to-patient\n"
+            "variability), not the sampling distribution of an estimator (e.g. a pooled-mean /\n"
+            "SEM draw). median_obs/ci95 are UNAFFECTED — they remain the center + measurement\n"
+            "uncertainty that non-hierarchical inference reads (and may legitimately differ\n"
+            "from the sample spread, e.g. a meta-analytic anchor CI vs a wider population).\n"
+            "If population_spread='center_only' (the default), do NOT return 'samples'."
         )
     )
-    population_spread: Literal["empirical", "none"] = Field(
-        default="empirical",
+    population_spread: Literal["across_patient", "center_only"] = Field(
+        default="center_only",
         description=(
-            "Whether this target's reported width is a genuine ACROSS-PATIENT population "
-            "spread, usable as the population-variability (omega) signal in hierarchical "
-            "inference.\n\n"
-            "  - 'empirical' (default): the distribution_code sample is a faithful population "
-            "draw, so its spread reflects real patient-to-patient variability. Hierarchical "
-            "SBI reads the spread empirically from the sample (no parametric refit).\n"
-            "  - 'none': the reported width is NOT a population spread — e.g. a pooled-mean / "
-            "SEM confidence interval (shrinks with n), a transcript-vs-protein method bound, "
-            "or an assumed CV with no dispersion data. The target still constrains the "
-            "population CENTER via `median`, but is EXCLUDED from omega conditioning so a "
-            "fabricated or sample-size-shrinking width does not pollute inferred diversity."
+            "What this target's reported width MEANS, and whether it feeds the population-"
+            "variability (omega) signal in hierarchical inference. This is an OPT-IN "
+            "contract: a target contributes to omega only if it explicitly declares "
+            "'across_patient' AND returns a population `samples` array.\n\n"
+            "  - 'center_only' (default): the width is NOT genuine across-patient spread — "
+            "e.g. a pooled-mean / SEM confidence interval (shrinks with n), a transcript-vs-"
+            "protein method bound, or an assumed CV with no dispersion data. The target "
+            "still constrains the population CENTER via `median`, but is EXCLUDED from omega "
+            "conditioning. distribution_code must NOT return a `samples` key (that would "
+            "contradict the declaration).\n"
+            "  - 'across_patient': the width is real patient-to-patient variability, usable "
+            "as the omega signal. distribution_code MUST return a `samples` key holding the "
+            "across-patient population draw; the validator rejects the target otherwise. "
+            "The conservative default keeps a fabricated or sample-size-shrinking width from "
+            "silently polluting inferred diversity — you have to assert the spread is real."
         ),
     )
 
@@ -1428,11 +1434,27 @@ class CalibrationTarget(BaseModel):
                         f"reported CI95[{i}] upper ({ci_rep[1]:.4g}) within 10% tolerance"
                     )
 
-            # --- Optional declared population sample (hierarchical omega signal) ---
-            # When distribution_code returns a 'samples' key it must be the 1-D
-            # across-patient population draw the median/CI summarize, so its
-            # empirical spread is genuine patient-to-patient variability.
-            if "samples" in result:
+            # --- Population sample, gated by population_spread (hierarchical omega) ---
+            # 'across_patient' MUST return a 'samples' key (the population draw feeding
+            # omega); 'center_only' MUST NOT (a population sample would contradict the
+            # declaration that the width is center / measurement uncertainty).
+            population_spread = self.empirical_data.population_spread
+            has_samples = "samples" in result
+            if population_spread == "across_patient" and not has_samples:
+                raise ReturnStructureError(
+                    "population_spread='across_patient' requires distribution_code to "
+                    "return a 'samples' key — the across-patient population draw used as "
+                    "the omega signal in hierarchical inference. Return one, or set "
+                    "population_spread='center_only' if the width is not a real spread."
+                )
+            if population_spread == "center_only" and has_samples:
+                raise ReturnStructureError(
+                    "population_spread='center_only' must NOT return a 'samples' key: a "
+                    "population sample contradicts the declaration that the width is "
+                    "center / measurement uncertainty. Remove 'samples', or set "
+                    "population_spread='across_patient' if the spread is genuine."
+                )
+            if has_samples:
                 samples = result["samples"]
                 if not hasattr(samples, "units"):
                     raise MissingUnitsError(
@@ -1446,10 +1468,13 @@ class CalibrationTarget(BaseModel):
                         f"  Got: {samples.units} ({samples.dimensionality})"
                     )
                 samp_mag = np.asarray(samples.to(self.empirical_data.units).magnitude, dtype=float)
-                if samp_mag.ndim != 1:
+                # 1-D for a scalar observable, or 2-D (n_patients, k) for a joint /
+                # compositional / trajectory observable (margins consumed today; the
+                # joint is available when the stage conditions on a covariance).
+                if samp_mag.ndim not in (1, 2):
                     raise ReturnStructureError(
-                        f"samples must be a 1-D population array, got {samp_mag.ndim}-D "
-                        f"with shape {samp_mag.shape}"
+                        f"samples must be 1-D (scalar observable) or 2-D (n_patients, k); "
+                        f"got {samp_mag.ndim}-D with shape {samp_mag.shape}"
                     )
                 finite = samp_mag[np.isfinite(samp_mag)]
                 if finite.size < 100:
@@ -1460,11 +1485,11 @@ class CalibrationTarget(BaseModel):
                 if np.std(finite) == 0:
                     raise ReturnStructureError(
                         "samples has zero variance (all identical) — not a usable population "
-                        "spread; set population_spread='none' if no real spread exists"
+                        "spread; set population_spread='center_only' if no real spread exists"
                     )
-                # Tie the declared sample to the declared center: for scalar targets
-                # its median must match the reported median within MC tolerance.
-                if n_expected == 1:
+                # Tie the declared sample to the declared center: for a scalar (1-D)
+                # target its median must match the reported median within MC tolerance.
+                if samp_mag.ndim == 1 and n_expected == 1:
                     samp_median = float(np.median(finite))
                     if abs(samp_median - median_reported[0]) > ci95_rel_tol * abs(
                         median_reported[0]

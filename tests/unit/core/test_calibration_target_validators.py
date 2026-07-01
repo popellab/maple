@@ -1693,37 +1693,60 @@ class TestCalibrationTargetPopulationSample:
         "            'ci95_upper': ci95[1], 'samples': samples}"
     )
 
-    def _with_code(self, golden, code, **ed_overrides):
+    def _with_code(self, golden, code=None, **ed_overrides):
         data = copy.deepcopy(golden)
-        data["empirical_data"]["distribution_code"] = code
+        if code is not None:
+            data["empirical_data"]["distribution_code"] = code
         data["empirical_data"].update(ed_overrides)
         return data
 
-    def test_declared_samples_validates_and_defaults_empirical(
+    def test_defaults_center_only(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
-        data = self._with_code(golden_calibration_target_data, self._GOOD_CODE)
+        # The golden distribution_code returns no samples; the default is center_only,
+        # so it validates and is excluded from omega.
         target = CalibrationTarget.model_validate(
-            data, context={"model_structure": model_structure}
+            golden_calibration_target_data, context={"model_structure": model_structure}
         )
-        assert target.empirical_data.population_spread == "empirical"
+        assert target.empirical_data.population_spread == "center_only"
 
-    def test_population_spread_none_accepted(
+    def test_across_patient_with_samples_validates(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
-        data = copy.deepcopy(golden_calibration_target_data)
-        data["empirical_data"]["population_spread"] = "none"
+        data = self._with_code(
+            golden_calibration_target_data, self._GOOD_CODE, population_spread="across_patient"
+        )
         target = CalibrationTarget.model_validate(
             data, context={"model_structure": model_structure}
         )
-        assert target.empirical_data.population_spread == "none"
+        assert target.empirical_data.population_spread == "across_patient"
+
+    def test_across_patient_without_samples_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # Declaring across_patient but returning no samples is a hard error.
+        data = self._with_code(golden_calibration_target_data, population_spread="across_patient")
+        with pytest.raises(ValidationError, match="requires distribution_code to"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_center_only_with_samples_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # Returning a population sample while declaring center_only is contradictory.
+        data = self._with_code(
+            golden_calibration_target_data, self._GOOD_CODE
+        )  # default center_only
+        with pytest.raises(ValidationError, match="must NOT return a 'samples'"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_samples_median_mismatch_rejected(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         # samples centered 5x off the reported/computed median -> rejected
         code = self._GOOD_CODE.replace("'samples': samples}", "'samples': samples * 5.0}")
-        data = self._with_code(golden_calibration_target_data, code)
+        data = self._with_code(
+            golden_calibration_target_data, code, population_spread="across_patient"
+        )
         with pytest.raises(ValidationError, match=r"median\(samples\)"):
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
@@ -1735,6 +1758,8 @@ class TestCalibrationTargetPopulationSample:
             "'samples': samples}",
             "'samples': np.ones(10000) * mean.magnitude * mean.units}",
         )
-        data = self._with_code(golden_calibration_target_data, code)
+        data = self._with_code(
+            golden_calibration_target_data, code, population_spread="across_patient"
+        )
         with pytest.raises(ValidationError, match="zero variance"):
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
