@@ -1674,3 +1674,92 @@ class TestObservableDenominatorAudit:
             support="positive",
         )
         assert obs.experimental_denominator is None
+
+
+class TestCalibrationTargetPopulationSample:
+    """The optional declared 'samples' population draw + population_spread gate."""
+
+    # A lognormal population draw whose median matches the golden reported median (1.0).
+    _GOOD_CODE = (
+        "def derive_distribution(inputs, ureg):\n"
+        "    import numpy as np, math\n"
+        "    np.random.seed(42)\n"
+        "    mean = inputs['cd8_ratio_mean']\n"
+        "    sigma_log = inputs['cd8_ratio_sigma_log']\n"
+        "    mu_log = math.log(mean.magnitude)\n"
+        "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, 10000) * mean.units\n"
+        "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+        "    return {'median_obs': np.median(samples), 'ci95_lower': ci95[0],\n"
+        "            'ci95_upper': ci95[1], 'samples': samples}"
+    )
+
+    def _with_code(self, golden, code=None, **ed_overrides):
+        data = copy.deepcopy(golden)
+        if code is not None:
+            data["empirical_data"]["distribution_code"] = code
+        data["empirical_data"].update(ed_overrides)
+        return data
+
+    def test_defaults_center_only(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # The golden distribution_code returns no samples; the default is center_only,
+        # so it validates and is excluded from omega.
+        target = CalibrationTarget.model_validate(
+            golden_calibration_target_data, context={"model_structure": model_structure}
+        )
+        assert target.empirical_data.population_spread == "center_only"
+
+    def test_across_patient_with_samples_validates(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = self._with_code(
+            golden_calibration_target_data, self._GOOD_CODE, population_spread="across_patient"
+        )
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        assert target.empirical_data.population_spread == "across_patient"
+
+    def test_across_patient_without_samples_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # Declaring across_patient but returning no samples is a hard error.
+        data = self._with_code(golden_calibration_target_data, population_spread="across_patient")
+        with pytest.raises(ValidationError, match="requires distribution_code to"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_center_only_with_samples_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # Returning a population sample while declaring center_only is contradictory.
+        data = self._with_code(
+            golden_calibration_target_data, self._GOOD_CODE
+        )  # default center_only
+        with pytest.raises(ValidationError, match="must NOT return a 'samples'"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_samples_median_mismatch_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # samples centered 5x off the reported/computed median -> rejected
+        code = self._GOOD_CODE.replace("'samples': samples}", "'samples': samples * 5.0}")
+        data = self._with_code(
+            golden_calibration_target_data, code, population_spread="across_patient"
+        )
+        with pytest.raises(ValidationError, match=r"median\(samples\)"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_degenerate_samples_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # A flat (zero-variance) sample is not a usable population spread.
+        code = self._GOOD_CODE.replace(
+            "'samples': samples}",
+            "'samples': np.ones(10000) * mean.magnitude * mean.units}",
+        )
+        data = self._with_code(
+            golden_calibration_target_data, code, population_spread="across_patient"
+        )
+        with pytest.raises(ValidationError, match="zero variance"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})

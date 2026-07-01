@@ -1,17 +1,19 @@
-"""Capture the internal bootstrap sample array a CalibrationTarget's
-``empirical_data.distribution_code`` reduces to median/CI95.
+"""Recover the across-patient population sample a CalibrationTarget's
+``empirical_data.distribution_code`` declares via its ``samples`` return key.
 
-The ``derive_distribution(inputs, ureg)`` function only returns ``median_obs`` /
-``ci95_lower`` / ``ci95_upper`` — but most targets build an explicit ``samples``
-(or ``boot_medians``) array and then call ``np.median`` / ``np.percentile`` /
-``np.quantile`` on it. That array is the sampling distribution of the observed
-statistic — the *real* observation noise, with its true skew/tails/bounds. We
-recover it by intercepting those numpy reductions during execution.
+``derive_distribution(inputs, ureg)`` returns ``median_obs`` / ``ci95_lower`` /
+``ci95_upper`` and MAY additionally return ``samples`` — the 1-D population draw
+it builds internally (a Pint Quantity array, one value per patient-equivalent).
+That array is the *real* observation distribution, with its true skew/tails/
+bounds, and its empirical spread is the population-variability signal for
+hierarchical inference. We read it straight off the declared output.
 
 Used by the SBI pipeline to feed empirical observation noise into
 ``add_observation_noise`` (instead of a parametric lognormal/Gaussian refit of
 the CI endpoints, which only matches when the bootstrap is log-symmetric), and
-by diagnostics that overlay the observed distribution.
+by the hierarchical pipeline to read the observed population spread. Targets
+whose code does not declare ``samples`` (older summary-only codes, or analytic/
+closed-form derivations) return ``None`` → parametric fallback downstream.
 """
 
 from __future__ import annotations
@@ -61,8 +63,9 @@ def _empirical_data_of(target: Any) -> dict | None:
 
 
 def capture_bootstrap_samples(target: Any, *, max_samples: int | None = None) -> np.ndarray | None:
-    """Run a CalibrationTarget's ``distribution_code`` and return the internal
-    bootstrap sample array, converted to ``empirical_data.units``.
+    """Run a CalibrationTarget's ``distribution_code`` and return the population
+    sample it declares via the ``samples`` return key, converted to
+    ``empirical_data.units``.
 
     Args:
         target: a YAML path, a parsed YAML document dict, an ``empirical_data``
@@ -71,9 +74,9 @@ def capture_bootstrap_samples(target: Any, *, max_samples: int | None = None) ->
             subsample to this size (evenly spaced over the sorted-by-index array).
 
     Returns:
-        1-D float array of finite bootstrap samples in the target's units, or None
-        for analytic/closed-form codes that never build a sample array (and on any
-        error — capture is best-effort).
+        1-D float array of finite population samples in the target's units, or
+        None when the code declares no ``samples`` key (summary-only / analytic
+        derivations) or on any error — recovery is best-effort.
     """
     ed = _empirical_data_of(target)
     if not ed:
@@ -85,56 +88,21 @@ def capture_bootstrap_samples(target: Any, *, max_samples: int | None = None) ->
 
     try:
         mock = build_distribution_inputs(ed)
-    except Exception:
-        return None
-
-    captured: list = []
-    real_pct, real_med, real_quant = np.percentile, np.median, np.quantile
-
-    def _rec(a):
-        arr = a.magnitude if hasattr(a, "magnitude") else a
-        try:
-            arr = np.asarray(arr)
-        except Exception:
-            return
-        if arr.ndim >= 1 and arr.size > 1:
-            captured.append(a)
-
-    def _p(a, *ar, **kw):
-        _rec(a)
-        return real_pct(a, *ar, **kw)
-
-    def _m(a, *ar, **kw):
-        _rec(a)
-        return real_med(a, *ar, **kw)
-
-    def _q(a, *ar, **kw):
-        _rec(a)
-        return real_quant(a, *ar, **kw)
-
-    # The distribution_code may `import numpy as np` inside the function, which
-    # would bypass an injected proxy — so patch the real module functions.
-    try:
-        np.percentile, np.median, np.quantile = _p, _m, _q
         scope: dict[str, Any] = {"ureg": ureg, "np": np}
         exec(code, scope)
         fn = scope.get("derive_distribution")
         if fn is None:
             return None
-        fn(mock, ureg)
+        result = fn(mock, ureg)
     except Exception:
         return None
-    finally:
-        np.percentile, np.median, np.quantile = real_pct, real_med, real_quant
 
-    if not captured:
+    if not isinstance(result, dict):
+        return None
+    samp = result.get("samples")
+    if samp is None:
         return None
 
-    def _size(a):
-        m = a.magnitude if hasattr(a, "magnitude") else a
-        return np.asarray(m).size
-
-    samp = max(captured, key=_size)
     try:
         if hasattr(samp, "to"):
             samp = samp.to(units)
