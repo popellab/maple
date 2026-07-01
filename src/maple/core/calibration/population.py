@@ -82,6 +82,22 @@ class LogNormal(Marginal):
         return cls(np.log(m), sigma, u)
 
     @classmethod
+    def from_median_iqr_width(cls, median, iqr_width):
+        """Median-anchored from a single IQR *width* (Q3 - Q1, not the quartiles).
+
+        For a lognormal with median m and log-SD sigma, IQR = 2*m*sinh(z_q*sigma), so
+        sigma = arcsinh(IQR / (2*m)) / z_q. Used when a source reports median + IQR as
+        one dispersion number rather than both quartiles.
+        """
+        u = median.units
+        m = median.to(u).magnitude
+        w = iqr_width.to(u).magnitude
+        if m <= 0:
+            raise ValueError(f"LogNormal.from_median_iqr_width needs median > 0 (got {m})")
+        sigma = np.arcsinh(w / (2.0 * m)) / _Z_Q
+        return cls(np.log(m), sigma, u)
+
+    @classmethod
     def from_mean_sd(cls, mean, sd):
         """Mean-anchored (moment-matched): median = mean * exp(-sigma^2 / 2)."""
         u = mean.units

@@ -39,6 +39,15 @@ def test_lognormal_from_mean_sd_matches_arithmetic_mean():
     assert s.std() == pytest.approx(4.5, rel=0.03)
 
 
+def test_lognormal_from_median_iqr_width_recovers_iqr():
+    # median + IQR *width* (Q3 - Q1); the sample's IQR width should come back.
+    m = pop.LogNormal.from_median_iqr_width(_q(140.45), _q(286.84))
+    s = m.sample(np.random.default_rng(0), 400_000).magnitude
+    assert np.median(s) == pytest.approx(140.45, rel=0.02)
+    width = np.percentile(s, 75) - np.percentile(s, 25)
+    assert width == pytest.approx(286.84, rel=0.03)
+
+
 def test_lognormal_from_median_ci95_recovers_ci():
     m = pop.LogNormal.from_median_ci95(_q(60.0), _q(30.0), _q(120.0))
     s = m.sample(np.random.default_rng(0), 400_000).magnitude
