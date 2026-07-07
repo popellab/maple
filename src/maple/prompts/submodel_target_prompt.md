@@ -327,23 +327,32 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
 
 `observation_code` informs the parameter's CENTER. To ALSO inform how much patients *differ* — the population-spread (omega) signal used by virtual-patient inference — add an `observed_distribution` block to the error_model entry whenever the source reports a genuine spread. It is OPTIONAL and additive: omit it and the target behaves exactly as before.
 
-Record the reported distribution as quantile anchors plus a provenance tag:
+Record the reported distribution in whichever form the paper gives, plus a provenance tag. **Prefer the `moments` form** — most papers report mean +/- SD (or median +/- IQR, CV, CI), and the framework expands it to quartiles for you. Do NOT hand-convert mean +/- SD into quartiles.
 
 ```yaml
-error_model:
-  - name: treg_fraction
-    units: dimensionless
-    sample_size_input: n_patients
-    observation_code: ...          # still pins the center (SEM-scale is fine)
-    observed_distribution:
-      quantiles:                   # median + whatever scale the paper gives
-        - {p: 0.25, value: 0.12}
-        - {p: 0.5,  value: 0.178}
-        - {p: 0.75, value: 0.25}
-      spread_source: biological_experimental
-      n_biological: 45
-      experimental_unit_type: biological
-      # shape_assumption: lognormal   # ONLY if anchors were expanded from a scalar SD/CV
+observed_distribution:
+  moments:
+    center: 0.178
+    center_type: mean            # or median
+    scale: 0.09
+    scale_type: sd               # sd | sem | cv | iqr | ci95_halfwidth
+    shape: lognormal             # lognormal | normal (how to expand center+scale)
+  spread_source: biological_experimental
+  n_biological: 45
+  experimental_unit_type: biological
+```
+
+Use the `quantiles` form only when the source reports quartiles/percentiles/samples directly:
+
+```yaml
+observed_distribution:
+  quantiles:
+    - {p: 0.25, value: 0.12}
+    - {p: 0.5,  value: 0.178}
+    - {p: 0.75, value: 0.25}
+  spread_source: biological_experimental
+  n_biological: 45
+  experimental_unit_type: biological
 ```
 
 **Choose `spread_source` by what the reported width actually measures:**
@@ -357,10 +366,12 @@ error_model:
 | No spread reported | omit the field | No — a wide default is used |
 
 **Rules (validated):**
+- Provide EXACTLY ONE of `moments` or `quantiles`.
 - A population spread (`biological_experimental` / `across_patient`) REQUIRES `n_biological` and `experimental_unit_type: biological`. A spread over technical/clonal replicates is not population variability — use `technical` or `center_only`.
-- Build anchors from reported quartiles/percentiles directly. If the paper gives only mean +/- SD, expand to `p: 0.25/0.5/0.75` under a declared `shape_assumption` (e.g. `lognormal`) so the imposed shape is explicit rather than silent.
-- Keep values in paper units (the validator checks snippets); convert only inside code.
+- `scale_type: sem` recovers the population SD as `SEM * sqrt(n_biological)` — so give `n_biological`.
+- Keep values in paper units; do unit conversion in code, not in the anchors.
 - Most in-vitro submodel data is a donor/animal spread that is a LOWER BOUND on PDAC patient spread — grade that transfer in `source_relevance.heterogeneity_transfer` (see Source Relevance below).
+- `observation_code` still just pins the CENTER (keep it SEM-scale); `observed_distribution` is the single source of population-spread truth. Do not double-encode spread in both.
 
 ---
 

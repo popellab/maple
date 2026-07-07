@@ -6,8 +6,9 @@ These models are defined here to avoid circular imports between
 calibration_target_models.py and pydantic_models.py.
 """
 
+import math
 from enum import Enum
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -165,30 +166,165 @@ class QuantileAnchor(BaseModel):
         return v
 
 
-class ObservedDistribution(BaseModel):
-    """General representation of a reported distribution as quantile anchors.
+# Standard normal quantiles used to expand a scalar scale into quartile anchors.
+_Z_Q = 0.6744897501960817  # Phi^-1(0.75): the 0.25/0.75 quantile of N(0,1)
+_Z_95 = 1.959963984540054  # Phi^-1(0.975): half-width of a 95% normal interval
 
-    SD, SEM, CV, IQR, CI95, quartiles, deciles, and full samples are all partial
-    specifications of one distribution. This object is the unifying data layer:
-    the extractor records whatever anchors the paper reports, and the framework
-    derives median / IQR / scale (or expands to a sample array) on demand.
 
-    - median = the p=0.5 anchor; IQR = the p=0.25, 0.75 anchors; quartiles/
-      deciles = more anchors; full samples = a dense empirical quantile function.
-    - A scalar scale (SD/CV/CI95) with no shape information is expanded to two
-      symmetric anchors under a DECLARED ``shape_assumption`` (recorded so the
-      imposed shape is explicit, not silent).
+class DistributionShape(str, Enum):
+    """Shape used to expand a reported center+scale into quantile anchors."""
 
-    This is orthogonal to ``spread_source``: the anchors carry the *shape*, the
-    ``spread_source`` tag carries the *provenance* (whether that shape is genuine
-    population spread). Both are needed to route the quantity in inference.
+    NORMAL = "normal"
+    LOGNORMAL = "lognormal"
+
+
+class ScaleType(str, Enum):
+    """What kind of scale a reported dispersion value is.
+
+    Determines how it expands to quartiles and whether it needs ``n_biological``.
+    """
+
+    SD = "sd"  # population standard deviation (linear units)
+    SEM = "sem"  # standard error of the mean: SD = SEM * sqrt(n_biological)
+    CV = "cv"  # coefficient of variation, SD/mean (dimensionless)
+    IQR = "iqr"  # full interquartile range, q75 - q25 (linear units)
+    CI95_HALFWIDTH = "ci95_halfwidth"  # half-width of a 95% interval (linear units)
+
+
+class MomentSpread(BaseModel):
+    """A reported distribution given as center + scale + shape (mean +/- SD, etc.).
+
+    This is the form most papers actually report. It is an alternative to explicit
+    ``quantiles`` on :class:`ObservedDistribution`: the framework expands it to
+    quartile anchors once, centrally, so extractors never hand-convert mean +/- SD
+    into q25/q50/q75 (an error-prone step that also duplicates snippet-validated
+    inputs). The imposed ``shape`` is recorded, so nothing is silent.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    quantiles: List[QuantileAnchor] = Field(
-        description="Quantile anchors, at least one. Provide the median (p=0.5) plus "
-        "whatever scale anchors the source reports (IQR edges at minimum for a spread)."
+    center: float = Field(description="Reported central value (see ``center_type``).")
+    center_type: Literal["mean", "median"] = Field(
+        default="mean", description="Whether ``center`` is the arithmetic mean or the median."
+    )
+    scale: float = Field(
+        description="Reported dispersion value, in the same units as ``center`` "
+        "(dimensionless for ``cv``). Interpreted per ``scale_type``.",
+        ge=0.0,
+    )
+    scale_type: ScaleType = Field(description="What kind of scale ``scale`` is (see ScaleType).")
+    shape: DistributionShape = Field(
+        description="Shape used to expand center+scale into quartiles. Records the "
+        "imposed shape explicitly."
+    )
+
+    def to_quartiles(self, n_biological: Optional[int] = None) -> tuple:
+        """Expand to (q25, q50, q75). ``n_biological`` is required for scale_type='sem'."""
+        return _expand_moments(self, n_biological)
+
+
+def _expand_moments(m: "MomentSpread", n_biological: Optional[int]) -> tuple:
+    """Expand a center+scale+shape spec into (q25, q50, q75).
+
+    Handles the common, unambiguous cases; raises with a clear pointer for combos
+    that a single center+scale cannot determine (e.g. lognormal + bare IQR).
+    """
+    center = m.center
+
+    def _linear_sd() -> float:
+        if m.scale_type == ScaleType.SD:
+            return m.scale
+        if m.scale_type == ScaleType.SEM:
+            if n_biological is None:
+                raise ValueError(
+                    "scale_type='sem' needs n_biological to recover the population SD "
+                    "(SD = SEM * sqrt(n))."
+                )
+            return m.scale * math.sqrt(n_biological)
+        if m.scale_type == ScaleType.CI95_HALFWIDTH:
+            return m.scale / _Z_95
+        if m.scale_type == ScaleType.CV:
+            return m.scale * abs(center)
+        raise ValueError(f"scale_type '{m.scale_type}' has no linear-SD form")  # pragma: no cover
+
+    if m.shape == DistributionShape.NORMAL:
+        # mean and median coincide.
+        if m.scale_type == ScaleType.IQR:
+            half = m.scale / 2.0
+            return (center - half, center, center + half)
+        sd = _linear_sd()
+        return (center - _Z_Q * sd, center, center + _Z_Q * sd)
+
+    # lognormal
+    if m.scale_type == ScaleType.IQR:
+        # median (IQR) is the common clinical form. Given the median and the IQR,
+        # solve for sigma_ln: IQR = median * 2 * sinh(Z_Q * sigma_ln).
+        if m.center_type != "median":
+            raise ValueError(
+                "shape='lognormal' with scale_type='iqr' needs center_type='median' "
+                "(median + IQR is well-determined; mean + IQR is not). Provide the median, "
+                "or use explicit quantiles."
+            )
+        median = center
+        sigma_ln = math.asinh(m.scale / (2.0 * median)) / _Z_Q
+        return (
+            median * math.exp(-_Z_Q * sigma_ln),
+            median,
+            median * math.exp(_Z_Q * sigma_ln),
+        )
+    if m.scale_type == ScaleType.CV:
+        sigma_ln = math.sqrt(math.log(1.0 + m.scale**2))
+        median = center if m.center_type == "median" else center / math.sqrt(1.0 + m.scale**2)
+    else:  # sd / sem / ci95_halfwidth -> a linear SD, which needs the mean to form CV
+        if m.center_type != "mean":
+            raise ValueError(
+                "shape='lognormal' with a linear scale (sd/sem/ci95_halfwidth) needs "
+                "center_type='mean' to form CV=SD/mean. Use scale_type='cv' with a median "
+                "center, or provide explicit quantiles."
+            )
+        sd = _linear_sd()
+        cv = sd / abs(center)
+        sigma_ln = math.sqrt(math.log(1.0 + cv**2))
+        median = center / math.sqrt(1.0 + cv**2)
+    return (
+        median * math.exp(-_Z_Q * sigma_ln),
+        median,
+        median * math.exp(_Z_Q * sigma_ln),
+    )
+
+
+class ObservedDistribution(BaseModel):
+    """General representation of a reported distribution.
+
+    SD, SEM, CV, IQR, CI95, quartiles, deciles, and full samples are all partial
+    specifications of one distribution. This object is the unifying data layer,
+    authored in whichever form the paper reports and reduced to quartiles centrally:
+
+    - ``moments``: center + scale + shape (mean +/- SD, median +/- IQR, CV, CI). The
+      dominant form in the literature; the framework expands it to quartiles so the
+      extractor never hand-converts (and never restates snippet-validated inputs).
+    - ``quantiles``: explicit quantile anchors, for sources that give
+      quartiles/percentiles/samples directly.
+
+    Provide EXACTLY ONE. Derivations (``median``/``iqr``/``quantile``) work off
+    whichever form is present. This is orthogonal to ``spread_source``: the form
+    carries the *shape*, the ``spread_source`` tag carries the *provenance* (whether
+    that shape is genuine population spread). Both route the quantity in inference.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    quantiles: Optional[List[QuantileAnchor]] = Field(
+        default=None,
+        description="Quantile anchors: the median (p=0.5) plus whatever scale anchors the "
+        "source reports (IQR edges at minimum for a spread). Use this when the paper gives "
+        "quantiles/percentiles/samples directly. Provide EITHER quantiles OR moments.",
+    )
+    moments: Optional["MomentSpread"] = Field(
+        default=None,
+        description="Center + scale + shape form (mean +/- SD, median +/- IQR, CV, CI). Use "
+        "this when the paper reports moments rather than quantiles — the framework expands it "
+        "to quartiles centrally, so you never hand-convert. Provide EITHER quantiles OR moments.",
     )
     spread_source: SpreadSource = Field(
         description="Provenance of the spread these anchors describe (see SpreadSource). "
@@ -225,13 +361,36 @@ class ObservedDistribution(BaseModel):
 
     @field_validator("quantiles")
     @classmethod
-    def _non_empty(cls, v: List[QuantileAnchor]) -> List[QuantileAnchor]:
-        if not v:
+    def _non_empty(cls, v: Optional[List[QuantileAnchor]]) -> Optional[List[QuantileAnchor]]:
+        if v is not None and len(v) == 0:
             raise ValueError("observed_distribution.quantiles must have at least one anchor")
         return v
 
     @model_validator(mode="after")
+    def _exactly_one_form(self) -> "ObservedDistribution":
+        """Exactly one of quantiles / moments must be given."""
+        has_q = self.quantiles is not None
+        has_m = self.moments is not None
+        if has_q == has_m:
+            raise ValueError(
+                "observed_distribution must specify EXACTLY ONE of 'quantiles' or 'moments' "
+                f"(got quantiles={'set' if has_q else 'unset'}, "
+                f"moments={'set' if has_m else 'unset'})."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_moments_derivable(self) -> "ObservedDistribution":
+        """Fail fast on a moments spec that a single center+scale cannot determine."""
+        if self.moments is not None:
+            _expand_moments(self.moments, self.n_biological)  # raises with a clear pointer
+        return self
+
+    @model_validator(mode="after")
     def _validate_quantile_function(self) -> "ObservedDistribution":
+        # Only applies to the explicit-quantiles form.
+        if self.quantiles is None:
+            return self
         # Unique, sorted probability levels with non-decreasing values (a valid,
         # non-crossing quantile function).
         ps = [q.p for q in self.quantiles]
@@ -251,28 +410,13 @@ class ObservedDistribution(BaseModel):
         # Keep anchors stored in probability order.
         object.__setattr__(self, "quantiles", ordered)
 
-        # A spread that feeds omega needs at least two anchors (a scale, not just a center).
+        # A quantiles-form spread that feeds omega needs at least two anchors (a scale,
+        # not just a center). The moments form always carries a scale.
         if self.spread_source in POPULATION_SPREAD_SOURCES and len(self.quantiles) < 2:
             raise ValueError(
                 f"spread_source='{self.spread_source.value}' declares a population spread "
                 "but only a single quantile anchor is given (no scale). Provide IQR edges "
                 "(p=0.25, 0.75) or set spread_source='center_only'."
-            )
-
-        # SD<->SEM recovery is only licensed for biological units.
-        if (
-            self.experimental_unit_type
-            in (
-                ExperimentalUnitType.TECHNICAL,
-                ExperimentalUnitType.CLONAL,
-            )
-            and self.spread_source in POPULATION_SPREAD_SOURCES
-        ):
-            raise ValueError(
-                f"experimental_unit_type='{self.experimental_unit_type.value}' cannot support "
-                f"spread_source='{self.spread_source.value}': a spread over "
-                "technical/clonal replicates is not population variability. Use "
-                "'center_only' (or 'technical'), or provide a biological n."
             )
         return self
 
@@ -283,10 +427,22 @@ class ObservedDistribution(BaseModel):
         These are what separate a genuine cross-donor/patient spread from an SEM-scale
         width over technical replicates — the exact conflation this schema exists to
         prevent. Only enforced when spread_source feeds the population-spread magnitude;
-        center_only / technical / translation / assumed sources are exempt.
+        center_only / technical / translation / assumed sources are exempt. Applies to
+        both the quantiles and moments forms.
         """
         if self.spread_source not in POPULATION_SPREAD_SOURCES:
             return self
+        # SD<->SEM recovery is only licensed for biological units.
+        if self.experimental_unit_type in (
+            ExperimentalUnitType.TECHNICAL,
+            ExperimentalUnitType.CLONAL,
+        ):
+            raise ValueError(
+                f"experimental_unit_type='{self.experimental_unit_type.value}' cannot support "
+                f"spread_source='{self.spread_source.value}': a spread over "
+                "technical/clonal replicates is not population variability. Use "
+                "'center_only' (or 'technical'), or provide a biological n."
+            )
         if self.n_biological is None:
             raise ValueError(
                 f"spread_source='{self.spread_source.value}' declares a population spread "
@@ -305,20 +461,31 @@ class ObservedDistribution(BaseModel):
 
     # ---- Derivations (median / quantile / IQR / scale) --------------------
 
+    def _anchor_pairs(self) -> List[tuple]:
+        """Effective (p, value) anchors from whichever form is present, p-sorted.
+
+        The quantiles form returns its anchors; the moments form is expanded to
+        (q25, q50, q75) once, centrally.
+        """
+        if self.quantiles is not None:
+            return [(q.p, q.value) for q in self.quantiles]  # sorted by validator
+        q25, q50, q75 = _expand_moments(self.moments, self.n_biological)
+        return [(0.25, q25), (0.5, q50), (0.75, q75)]
+
     def quantile(self, p: float) -> float:
         """Linearly interpolated value at probability level ``p`` (clamped to the anchor range)."""
-        anchors = self.quantiles  # already p-sorted by validator
-        if p <= anchors[0].p:
-            return anchors[0].value
-        if p >= anchors[-1].p:
-            return anchors[-1].value
-        for lo, hi in zip(anchors[:-1], anchors[1:]):
-            if lo.p <= p <= hi.p:
-                if hi.p == lo.p:
-                    return lo.value
-                frac = (p - lo.p) / (hi.p - lo.p)
-                return lo.value + frac * (hi.value - lo.value)
-        return anchors[-1].value  # pragma: no cover
+        anchors = self._anchor_pairs()
+        if p <= anchors[0][0]:
+            return anchors[0][1]
+        if p >= anchors[-1][0]:
+            return anchors[-1][1]
+        for (p_lo, v_lo), (p_hi, v_hi) in zip(anchors[:-1], anchors[1:]):
+            if p_lo <= p <= p_hi:
+                if p_hi == p_lo:
+                    return v_lo
+                frac = (p - p_lo) / (p_hi - p_lo)
+                return v_lo + frac * (v_hi - v_lo)
+        return anchors[-1][1]  # pragma: no cover
 
     def median(self) -> float:
         """Value at p=0.5 (interpolated if not an explicit anchor)."""
@@ -326,7 +493,7 @@ class ObservedDistribution(BaseModel):
 
     def iqr(self) -> Optional[float]:
         """Interquartile range (q75 - q25), or None if the anchors do not span it."""
-        ps = [q.p for q in self.quantiles]
+        ps = [p for p, _ in self._anchor_pairs()]
         if min(ps) > 0.25 or max(ps) < 0.75:
             return None
         return self.quantile(0.75) - self.quantile(0.25)
