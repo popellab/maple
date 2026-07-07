@@ -150,6 +150,29 @@ observable:
     rationale: "ORR per RECIST 1.1 (≥30% decrease in longest diameter)"
 ```
 
+### Population Spread (across-patient variability)
+
+For hierarchical / virtual-patient inference, a target declares whether its reported width is genuine patient-to-patient spread (usable as the population-spread / omega signal) or just uncertainty on the mean. Default is `center_only` (excluded from omega); opt in explicitly. Two interoperable ways to declare it:
+
+1. **`population_spread` + a `samples` array.** Set `empirical_data.population_spread: across_patient` and have `distribution_code` ALSO return a `samples` key — the across-patient population draw (one value per patient-equivalent); its empirical spread is the omega signal. Keep the default `center_only` (and do NOT return `samples`) when the width is a pooled-mean / SEM CI that shrinks with n. `median_obs` / `ci95` are unaffected either way.
+
+2. **`observed_distribution` quantile anchors** (general representation, shared with submodel targets) — use when the paper gives quartiles/percentiles rather than raw samples:
+
+```yaml
+empirical_data:
+  population_spread: across_patient
+  observed_distribution:
+    quantiles:
+      - {p: 0.25, value: 9}
+      - {p: 0.5,  value: 17}
+      - {p: 0.75, value: 30}
+    spread_source: across_patient       # or center_only (SEM/CI on the mean; default)
+    n_biological: 40
+    experimental_unit_type: biological
+```
+
+A population spread (`spread_source: across_patient`) REQUIRES `n_biological` + `experimental_unit_type: biological`. When both `observed_distribution` and `population_spread` are present they must agree that the width is (or is not) genuine spread — a validator enforces this.
+
 ### Source Relevance Assessment
 
 `primary_data_source.source_relevance` (and the same field on each `secondary_data_sources` entry) is **required** whenever a Source is provided. Even for exact-match human clinical data, fill the fields — the indication_match=`exact` / species_target=species_source / `tme_compatibility=high` path is the common case, not a skip:
@@ -160,6 +183,7 @@ observable:
 | `source_quality` | `primary_human_clinical`, `primary_human_in_vitro`, `primary_animal_in_vivo`, `primary_animal_in_vitro`, `review_article`, `textbook`, `non_peer_reviewed` |
 | `perturbation_type` | `physiological_baseline`, `pathological_state`, `pharmacological`, `genetic_perturbation` |
 | `tme_compatibility` | `high`, `moderate`, `low` |
+| `heterogeneity_transfer` | `high`, `moderate`, `low` — spread-transfer grade (+ `heterogeneity_transfer_justification`). OPTIONAL: omit for direct patient measurements (they measure the target spread directly); set only for proxy / preclinical sources whose spread understates patient heterogeneity. |
 | `validation_warnings` | List[str] — free-text caveats (e.g., "Values digitized from scatter plots; precision ±0.5%"). Optional but commonly used. |
 
 **Example:**

@@ -57,8 +57,10 @@ from maple.core.calibration.shared_models import (
     EstimateInput,
     InputType,
     ModelingAssumption,
+    ObservedDistribution,
     SecondarySource,
     Source,
+    SpreadSource,
 )
 from maple.core.calibration.validators import (
     check_value_in_text,
@@ -314,6 +316,62 @@ class CalibrationTargetEstimates(BaseModel):
             "silently polluting inferred diversity — you have to assert the spread is real."
         ),
     )
+    observed_distribution: Optional[ObservedDistribution] = Field(
+        default=None,
+        description=(
+            "Optional quantile-anchor representation of the reported distribution "
+            "(median plus whatever scale anchors the source gives: IQR edges, quartiles, "
+            "deciles, or a dense empirical quantile function). This is the general, "
+            "shape-preserving data layer shared with SubmodelTarget; the framework can "
+            "derive median/IQR/scale from it on demand. ADDITIVE and OPTIONAL — when "
+            "omitted, the target behaves exactly as before (median/ci95 from "
+            "distribution_code, omega gated by population_spread). Its `spread_source` "
+            "carries finer provenance than the two-valued population_spread; when both "
+            "are present they must agree on whether the width is genuine population spread "
+            "(see resolved_spread_source)."
+        ),
+    )
+
+    @property
+    def resolved_spread_source(self) -> SpreadSource:
+        """Unified spread provenance for downstream inference.
+
+        Prefers the richer ``observed_distribution.spread_source`` when present;
+        otherwise maps the legacy two-valued ``population_spread`` literal onto the
+        shared enum. Lets consumers read one field regardless of which layer the
+        target was authored against.
+        """
+        if self.observed_distribution is not None:
+            return self.observed_distribution.spread_source
+        return (
+            SpreadSource.ACROSS_PATIENT
+            if self.population_spread == "across_patient"
+            else SpreadSource.CENTER_ONLY
+        )
+
+    @model_validator(mode="after")
+    def validate_observed_distribution_consistency(self) -> "CalibrationTargetEstimates":
+        """When both spread declarations are present, they must not contradict.
+
+        ``observed_distribution`` is additive, so the legacy ``population_spread``
+        contract still governs the ``samples`` gate; this only forbids the two from
+        disagreeing about whether the reported width is genuine population spread.
+        """
+        od = self.observed_distribution
+        if od is None:
+            return self
+        feeds = od.feeds_population_spread
+        declared = self.population_spread == "across_patient"
+        if feeds != declared:
+            raise ValueError(
+                f"observed_distribution.spread_source='{od.spread_source.value}' "
+                f"({'feeds' if feeds else 'does not feed'} population spread) contradicts "
+                f"population_spread='{self.population_spread}'. Align them: a population "
+                f"spread source (across_patient / biological_experimental) requires "
+                f"population_spread='across_patient'; a center/technical source requires "
+                f"'center_only'."
+            )
+        return self
 
     @field_validator("sample_size")
     @classmethod
