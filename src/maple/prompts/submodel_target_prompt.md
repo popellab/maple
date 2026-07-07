@@ -319,6 +319,49 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
 
 **Red flag:** If reported uncertainty seems implausibly small (e.g., 17.8 +/- 0.7% for a biological fraction), it's almost certainly SEM.
 
+**This width pins the CENTER, not the population.** The `observation_code` above divides by `sqrt(sample_size)`, so it returns an SEM-scale summary that constrains the parameter's *mean* — correct for this submodel's own inference. It is NOT the patient-to-patient population spread. When the paper reports genuine biological variability (across donors/animals/patients), declare it separately in the `observed_distribution` field of the error_model entry (next section) so hierarchical inference can use it as population spread. Without that, only the center is informed and the population spread falls back to a wide default.
+
+---
+
+## Population Spread: `observed_distribution` (for hierarchical inference)
+
+`observation_code` informs the parameter's CENTER. To ALSO inform how much patients *differ* — the population-spread (omega) signal used by virtual-patient inference — add an `observed_distribution` block to the error_model entry whenever the source reports a genuine spread. It is OPTIONAL and additive: omit it and the target behaves exactly as before.
+
+Record the reported distribution as quantile anchors plus a provenance tag:
+
+```yaml
+error_model:
+  - name: treg_fraction
+    units: dimensionless
+    sample_size_input: n_patients
+    observation_code: ...          # still pins the center (SEM-scale is fine)
+    observed_distribution:
+      quantiles:                   # median + whatever scale the paper gives
+        - {p: 0.25, value: 0.12}
+        - {p: 0.5,  value: 0.178}
+        - {p: 0.75, value: 0.25}
+      spread_source: biological_experimental
+      n_biological: 45
+      experimental_unit_type: biological
+      # shape_assumption: lognormal   # ONLY if anchors were expanded from a scalar SD/CV
+```
+
+**Choose `spread_source` by what the reported width actually measures:**
+
+| Reported width | `spread_source` | Feeds population spread? |
+|---|---|---|
+| Across donors / animals (genuine biological SD or IQR) | `biological_experimental` | Yes |
+| Across patients of the target population | `across_patient` | Yes |
+| SEM / CI on the mean (shrinks with n) | `center_only` | No — center only |
+| Technical / replicate wells of one sample | `technical` | No |
+| No spread reported | omit the field | No — a wide default is used |
+
+**Rules (validated):**
+- A population spread (`biological_experimental` / `across_patient`) REQUIRES `n_biological` and `experimental_unit_type: biological`. A spread over technical/clonal replicates is not population variability — use `technical` or `center_only`.
+- Build anchors from reported quartiles/percentiles directly. If the paper gives only mean +/- SD, expand to `p: 0.25/0.5/0.75` under a declared `shape_assumption` (e.g. `lognormal`) so the imposed shape is explicit rather than silent.
+- Keep values in paper units (the validator checks snippets); convert only inside code.
+- Most in-vitro submodel data is a donor/animal spread that is a LOWER BOUND on PDAC patient spread — grade that transfer in `source_relevance.heterogeneity_transfer` (see Source Relevance below).
+
 ---
 
 ## Prior Distributions
@@ -728,6 +771,18 @@ Every data source (`primary_data_source` and each `secondary_data_sources` entry
 
 **If `low`:** Provide `tme_compatibility_notes` documenting differences.
 
+### Heterogeneity Transfer (population-spread analog)
+
+How well the source's measured biological spread transfers to TARGET-population (PDAC patient-to-patient) spread. This is the SPREAD counterpart of the grades above (which concern the central value). Set it whenever the target declares a population spread via `observed_distribution`; it governs how much that spread is widened to reflect real patient diversity. Requires `heterogeneity_transfer_justification` when set.
+
+| Value | When to Use |
+|-------|-------------|
+| `high` | Source spread spans most target heterogeneity (patient-derived panel, across-patient cohort) |
+| `moderate` | Partial (healthy human donors, a few cell lines, outbred animals) |
+| `low` | Homogeneous system (single cell line, inbred strain, technical replicates) — spread badly understates patient spread |
+
+A source can pin the mean well (`measurement_directness: direct`) yet transfer heterogeneity poorly (`low`) — these are independent. Omit for clinical patient measurements (they measure the target spread directly).
+
 ### Example
 
 ```yaml
@@ -753,6 +808,11 @@ primary_data_source:
     measurement_directness: direct
     temporal_resolution: endpoint_pair
     experimental_system: animal_in_vivo
+    heterogeneity_transfer: low
+    heterogeneity_transfer_justification: |
+      Spread is across inbred B16 tumor-bearing mice — near-isogenic, single
+      tumor line. Captures almost none of PDAC patient heterogeneity (stage,
+      genetics, TME), so donor SD is a weak lower bound on patient spread.
 ```
 
 ---

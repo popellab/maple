@@ -24,6 +24,7 @@ from maple.core.calibration.code_validator import find_accessed_params
 from maple.core.calibration.exceptions import DimensionalityMismatchError
 from maple.core.calibration.shared_models import (
     FigureExcerpt,
+    ObservedDistribution,
     SourceRelevanceAssessment,
     TableExcerpt,
 )
@@ -871,6 +872,24 @@ class ErrorModel(BaseModel):
         default=10000,
         description="Number of parametric bootstrap samples to generate. "
         "Default 10000 provides stable median/SD/CI95 estimates.",
+    )
+    observed_distribution: Optional[ObservedDistribution] = Field(
+        default=None,
+        description=(
+            "Optional quantile-anchor representation of the measured quantity's "
+            "distribution, with an explicit ``spread_source`` provenance tag (shared "
+            "with CalibrationTarget). ADDITIVE and OPTIONAL — when omitted, the target "
+            "behaves exactly as before (observation_code alone drives the bootstrap). "
+            "This is where the schema separates the CENTER (feeds mu) from genuine "
+            "POPULATION SPREAD (feeds omega): most submodel observation_code returns an "
+            "SEM-scale summary that pins the mean, which is correct for the center but too "
+            "narrow to reuse as population variability. Declaring observed_distribution "
+            "with spread_source in {biological_experimental, across_patient} (plus a "
+            "biological n and experimental_unit_type) records the real cross-unit spread; "
+            "'technical'/'center_only' explicitly withhold a spread. Consumed by the "
+            "hierarchical inference layer; see the reparameterized-hierarchical methods "
+            "writeup for how spread_source routes to mu vs omega."
+        ),
     )
 
 

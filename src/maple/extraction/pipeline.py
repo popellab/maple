@@ -1110,6 +1110,11 @@ For each paper, determine:
    by reported EC50). If text/tables already report the key values with uncertainty, the
    figure is redundant — list it as a data source but do NOT flag it for digitization.
    When you do flag digitization, explain the specific added value in `digitization_justification`.
+   **Population spread is high-value.** A figure with individual donor/animal points
+   (scatter or box-with-points) yields genuine across-unit biological spread plus a
+   biological n — the population-variability signal hierarchical inference needs, which a
+   reported mean +/- SEM cannot give. Prefer digitizing these, and note whether the points
+   are biological units (donors/animals) or technical replicates, and the biological n.
 6. **What forward model would fit?** (exponential_growth, first_order_decay, algebraic, direct_fit, etc.)
 7. **What is this paper's role?** Assign each paper a `role`:
    - `standalone`: contains all data needed for a complete derivation by itself
@@ -1442,7 +1447,10 @@ For each paper, determine:
 5. **Does any figure data warrant digitization?** Only flag `needs_digitization`
    when the figure contains data that is **not available** in text or tables AND
    digitizing would provide meaningful added value (e.g., individual data points
-   vs a reported mean).
+   vs a reported mean). A figure with individual PATIENT points is especially
+   valuable: it yields genuine across-patient spread and a biological n — the
+   population-variability signal for hierarchical inference — which a reported
+   mean +/- SEM or CI cannot. Note the patient n when flagging such a figure.
 6. **What is this paper's role?** For cal-mode, the typical role is `standalone`
    (single direct observation). Multi-paper derivations and proxy-with-translation
    are exceptions, used only when the notes explicitly authorize them.
