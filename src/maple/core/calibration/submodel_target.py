@@ -866,7 +866,16 @@ class ErrorModel(BaseModel):
         "Choose the bootstrap distribution to match the data-generating process: "
         "normal for mean±SD data, lognormal for positive quantities with log-space spread, "
         "poisson for count data, etc. "
-        "For multi-timepoint models, this is called once per evaluation_point.",
+        "For multi-timepoint models, this is called once per evaluation_point.\n\n"
+        "CONVENTION — pin the CENTER, not the population spread. observation_code should "
+        "constrain the parameter's central value (its width represents measurement/epistemic "
+        "uncertainty on the mean, e.g. an SEM-scale bootstrap that shrinks with n). Genuine "
+        "population (patient-to-patient) variability is declared SEPARATELY and explicitly in "
+        "the observed_distribution field, which is the single source of spread truth for "
+        "hierarchical inference. Do NOT try to encode across-patient spread by widening the "
+        "bootstrap here (or via ad-hoc n_effective / sqrt(n) tricks): that conflates center "
+        "and spread and makes the resulting posterior scale ambiguous. Keep this SEM-scale and "
+        "put the population spread in observed_distribution.",
     )
     n_bootstrap: int = Field(
         default=10000,

@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from maple.core.calibration.shared_models import (
     ExperimentalUnitType,
+    MomentSpread,
     ObservedDistribution,
     POPULATION_SPREAD_SOURCES,
     QuantileAnchor,
@@ -219,6 +220,124 @@ def test_iqr_none_when_range_not_spanned():
         experimental_unit_type=ExperimentalUnitType.BIOLOGICAL,
     )
     assert d.iqr() is None
+
+
+# ---------------------------------------------------------------------------
+# Moments form (mean +/- SD etc.) — native authoring, central expansion
+# ---------------------------------------------------------------------------
+
+
+def test_moments_lognormal_mean_sd_matches_hand_expansion():
+    # k_C1_growth (Ahn 2017): VDT 132.3 +/- 132.1 days, lognormal, across 100 patients.
+    d = ObservedDistribution(
+        moments=MomentSpread(center=132.3, scale=132.1, scale_type="sd", shape="lognormal"),
+        spread_source=SpreadSource.ACROSS_PATIENT,
+        n_biological=100,
+        experimental_unit_type=ExperimentalUnitType.BIOLOGICAL,
+    )
+    assert d.quantile(0.25) == pytest.approx(53.4, abs=0.2)
+    assert d.median() == pytest.approx(93.6, abs=0.2)
+    assert d.quantile(0.75) == pytest.approx(164.1, abs=0.2)
+
+
+def test_moments_normal_mean_sd():
+    d = ObservedDistribution(
+        moments=MomentSpread(center=10.0, scale=2.0, scale_type="sd", shape="normal"),
+        spread_source=SpreadSource.CENTER_ONLY,
+    )
+    assert d.median() == 10.0
+    # IQR = 2 * Phi^-1(0.75) * sd = 2 * 0.674489 * 2
+    assert d.iqr() == pytest.approx(2.0 * 0.6744897501960817 * 2.0)
+
+
+def test_moments_sem_recovers_population_sd_with_n():
+    # SD = SEM * sqrt(n); normal -> IQR = 2 * Z_Q * SD
+    d = ObservedDistribution(
+        moments=MomentSpread(center=1.97, scale=0.4, scale_type="sem", shape="normal"),
+        spread_source=SpreadSource.BIOLOGICAL_EXPERIMENTAL,
+        n_biological=10,
+        experimental_unit_type=ExperimentalUnitType.BIOLOGICAL,
+    )
+    expected = 2.0 * 0.6744897501960817 * 0.4 * (10**0.5)
+    assert d.iqr() == pytest.approx(expected)
+
+
+def test_moments_cv_lognormal():
+    d = ObservedDistribution(
+        moments=MomentSpread(center=100.0, scale=0.5, scale_type="cv", shape="lognormal"),
+        spread_source=SpreadSource.CENTER_ONLY,
+    )
+    # median = mean / sqrt(1 + cv^2)
+    assert d.median() == pytest.approx(100.0 / (1.25**0.5))
+
+
+def test_moments_iqr_normal_direct():
+    d = ObservedDistribution(
+        moments=MomentSpread(center=15.0, scale=10.0, scale_type="iqr", shape="normal"),
+        spread_source=SpreadSource.CENTER_ONLY,
+    )
+    assert d.iqr() == pytest.approx(10.0)
+    assert d.median() == 15.0
+
+
+def test_exactly_one_form_required():
+    with pytest.raises(ValidationError, match="EXACTLY ONE"):
+        ObservedDistribution(spread_source=SpreadSource.CENTER_ONLY)
+    with pytest.raises(ValidationError, match="EXACTLY ONE"):
+        ObservedDistribution(
+            quantiles=[QuantileAnchor(p=0.5, value=1.0)],
+            moments=MomentSpread(center=1.0, scale=1.0, scale_type="sd", shape="normal"),
+            spread_source=SpreadSource.CENTER_ONLY,
+        )
+
+
+def test_moments_lognormal_median_iqr():
+    # median (IQR) clinical form: recover q25/q75 that reproduce the median and IQR.
+    d = ObservedDistribution(
+        moments=MomentSpread(
+            center=17.0, center_type="median", scale=21.0, scale_type="iqr", shape="lognormal"
+        ),
+        spread_source=SpreadSource.CENTER_ONLY,
+    )
+    assert d.median() == pytest.approx(17.0)
+    assert d.iqr() == pytest.approx(21.0)
+    assert d.quantile(0.25) < 17.0 < d.quantile(0.75)
+
+
+def test_moments_lognormal_mean_iqr_underdetermined_rejected():
+    with pytest.raises(ValidationError, match="needs center_type='median'"):
+        ObservedDistribution(
+            moments=MomentSpread(center=5.0, scale=1.0, scale_type="iqr", shape="lognormal"),
+            spread_source=SpreadSource.CENTER_ONLY,
+        )
+
+
+def test_moments_sem_without_n_rejected():
+    with pytest.raises(ValidationError, match="needs n_biological"):
+        ObservedDistribution(
+            moments=MomentSpread(center=5.0, scale=1.0, scale_type="sem", shape="normal"),
+            spread_source=SpreadSource.CENTER_ONLY,
+        )
+
+
+def test_moments_population_spread_requires_biological_provenance():
+    # moments form is still subject to the biological-provenance rule
+    with pytest.raises(ValidationError, match="experimental_unit_type is not set"):
+        ObservedDistribution(
+            moments=MomentSpread(center=1.0, scale=0.2, scale_type="sd", shape="normal"),
+            spread_source=SpreadSource.ACROSS_PATIENT,
+            n_biological=20,
+        )
+
+
+def test_moments_technical_unit_cannot_be_population_spread():
+    with pytest.raises(ValidationError, match="not population variability"):
+        ObservedDistribution(
+            moments=MomentSpread(center=1.0, scale=0.2, scale_type="sd", shape="normal"),
+            spread_source=SpreadSource.BIOLOGICAL_EXPERIMENTAL,
+            n_biological=5,
+            experimental_unit_type=ExperimentalUnitType.TECHNICAL,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -156,22 +156,37 @@ For hierarchical / virtual-patient inference, a target declares whether its repo
 
 1. **`population_spread` + a `samples` array.** Set `empirical_data.population_spread: across_patient` and have `distribution_code` ALSO return a `samples` key — the across-patient population draw (one value per patient-equivalent); its empirical spread is the omega signal. Keep the default `center_only` (and do NOT return `samples`) when the width is a pooled-mean / SEM CI that shrinks with n. `median_obs` / `ci95` are unaffected either way.
 
-2. **`observed_distribution` quantile anchors** (general representation, shared with submodel targets) — use when the paper gives quartiles/percentiles rather than raw samples:
+2. **`observed_distribution`** (general representation, shared with submodel targets). Author it in whichever form the paper reports — **prefer `moments`** (mean +/- SD, median +/- IQR, CV, CI); the framework expands it to quartiles, so do not hand-convert:
 
 ```yaml
 empirical_data:
   population_spread: across_patient
   observed_distribution:
-    quantiles:
-      - {p: 0.25, value: 9}
-      - {p: 0.5,  value: 17}
-      - {p: 0.75, value: 30}
+    moments:
+      center: 17
+      center_type: median
+      scale: 21            # full IQR here
+      scale_type: iqr      # sd | sem | cv | iqr | ci95_halfwidth
+      shape: lognormal     # lognormal | normal
     spread_source: across_patient       # or center_only (SEM/CI on the mean; default)
     n_biological: 40
     experimental_unit_type: biological
 ```
 
-A population spread (`spread_source: across_patient`) REQUIRES `n_biological` + `experimental_unit_type: biological`. When both `observed_distribution` and `population_spread` are present they must agree that the width is (or is not) genuine spread — a validator enforces this.
+Use the `quantiles` form when the paper gives quartiles/percentiles/samples directly:
+
+```yaml
+  observed_distribution:
+    quantiles:
+      - {p: 0.25, value: 9}
+      - {p: 0.5,  value: 17}
+      - {p: 0.75, value: 30}
+    spread_source: across_patient
+    n_biological: 40
+    experimental_unit_type: biological
+```
+
+Provide EXACTLY ONE of `moments` / `quantiles`. A population spread (`spread_source: across_patient`) REQUIRES `n_biological` + `experimental_unit_type: biological`. When both `observed_distribution` and `population_spread` are present they must agree that the width is (or is not) genuine spread — a validator enforces this.
 
 ### Source Relevance Assessment
 
