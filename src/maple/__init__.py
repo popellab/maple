@@ -5,7 +5,7 @@ Provides structured YAML schemas with Pydantic validation and Julia/Turing.jl
 translation for Bayesian inference.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.6.0"
 
 # Public API
 from maple.core.prompt_builder import (
