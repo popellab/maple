@@ -3,6 +3,12 @@ name: Release Please
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: "Existing tag to build and publish to PyPI (e.g. v0.7.0). Leave blank on normal runs."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -12,8 +18,8 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      # Empty string when no release was cut this run; the tag (e.g. v0.7.0) otherwise.
-      tag_name: ${{ steps.release.outputs['.--tag_name'] }}
+      # 'true' when any release was cut this run (manifest-mode output).
+      released: ${{ steps.release.outputs.releases_created }}
     steps:
       - id: release
         uses: googleapis/release-please-action@v4
@@ -24,7 +30,8 @@ jobs:
 
   publish:
     needs: release-please
-    if: ${{ needs.release-please.outputs.tag_name != '' }}
+    # Publish on a fresh release, or when manually dispatched with a tag to backfill.
+    if: ${{ needs.release-please.outputs.released == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_tag != '') }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -34,7 +41,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          # Dispatch: the named tag. Push: the release commit that just merged.
+          ref: ${{ github.event.inputs.publish_tag || github.sha }}
 
       - uses: actions/setup-python@v5
         with:
