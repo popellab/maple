@@ -962,16 +962,51 @@ class Calibration(BaseModel):
 
     @model_validator(mode="after")
     def _unit_groups_consistent(self) -> "Calibration":
-        """Error-model entries sharing an ``observed_distribution.unit_group`` must
-        agree on the fields that describe their shared biological batch.
+        """Validate ``observed_distribution.unit_group`` across error-model entries.
 
-        A ``unit_group`` asserts that its members were measured on the SAME
-        biological units, so they must be moment-matched jointly for the population
-        spread. That claim is only coherent if the members agree on how many units
-        there are (``n_biological``), what one unit is (``experimental_unit_type``),
-        and the provenance of the spread (``spread_source``). Disagreement means the
-        entries are NOT actually one panel and should not share a group.
+        Two checks:
+
+        1. **Presence (conditionally required).** ``unit_group`` is OPTIONAL by
+           default — a lone observable is unambiguously its own group. But when a
+           target carries TWO OR MORE population-spread observables, leaving them
+           untagged silently drops each into its own group, i.e. treats measurements
+           that may share biological units as independent. That is exactly the
+           ~sqrt(K) over-confidence the population-spread design exists to prevent,
+           and it happens silently. So once there are >= 2 population-spread entries,
+           each MUST declare ``unit_group`` explicitly — forcing a conscious "these
+           share units" (same string) vs "these are separate populations" (different
+           strings) decision. Single-population-entry targets, and center_only /
+           technical entries (which never feed omega), stay optional.
+
+        2. **Within-group consistency.** A ``unit_group`` asserts its members were
+           measured on the SAME biological units, so they are moment-matched jointly
+           for the population spread. That is only coherent if the members agree on
+           how many units there are (``n_biological``), what one unit is
+           (``experimental_unit_type``), and the provenance of the spread
+           (``spread_source``). Disagreement means the entries are NOT one panel.
         """
+        # Presence: force an explicit grouping decision when >= 2 entries feed omega.
+        pop_entries = [
+            (em.name, em.observed_distribution)
+            for em in self.error_model
+            if em.observed_distribution is not None
+            and em.observed_distribution.feeds_population_spread
+        ]
+        if len(pop_entries) >= 2:
+            untagged = [name for name, od in pop_entries if od.unit_group is None]
+            if untagged:
+                raise ValueError(
+                    f"This target has {len(pop_entries)} population-spread observables "
+                    f"but these leave unit_group unset: {untagged}. With 2+ such "
+                    "observables the grouping is ambiguous, and the default (each its "
+                    "own group) silently treats shared-unit measurements as independent "
+                    "(spuriously shrinking the population spread). Tag every "
+                    "population-spread entry: use the SAME unit_group string for "
+                    "observables measured on the same biological units (e.g. one donor "
+                    "panel across doses), and DIFFERENT strings for separate populations "
+                    "(e.g. distinct mouse lines / genotypes)."
+                )
+
         groups: dict = {}
         for em in self.error_model:
             od = getattr(em, "observed_distribution", None)

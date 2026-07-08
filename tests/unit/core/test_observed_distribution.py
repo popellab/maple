@@ -519,6 +519,16 @@ def _em(name, od):
     )
 
 
+def _od_center(group):
+    # A center_only observed_distribution: does NOT feed omega, so it is exempt from
+    # the conditional-presence requirement even in a multi-entry target.
+    return ObservedDistribution(
+        moments=MomentSpread(center=100.0, scale=30.0, scale_type="sd", shape="normal"),
+        spread_source=SpreadSource.CENTER_ONLY,
+        unit_group=group,
+    )
+
+
 def _run_unit_group_check(ems):
     from maple.core.calibration.submodel_target import Calibration
 
@@ -547,8 +557,31 @@ def test_unit_group_separate_groups_may_differ():
     _run_unit_group_check([_em("d1", _od(13, "lineA")), _em("d2", _od(20, "lineB"))])
 
 
-def test_unit_group_ungrouped_entries_unconstrained():
-    _run_unit_group_check([_em("d1", _od(13, None)), _em("d2", _od(20, None))])
+# --- conditional presence: required once 2+ population-spread observables exist ---
+
+
+def test_unit_group_required_when_multiple_population_entries():
+    with pytest.raises(ValueError, match="leave unit_group unset"):
+        _run_unit_group_check([_em("d1", _od(13, None)), _em("d2", _od(13, None))])
+
+
+def test_unit_group_multiple_population_tagged_same_ok():
+    _run_unit_group_check([_em("d1", _od(13, "donors")), _em("d2", _od(13, "donors"))])
+
+
+def test_unit_group_multiple_population_tagged_different_ok():
+    # Two separate populations, both tagged -> a conscious decision, allowed.
+    _run_unit_group_check([_em("d1", _od(13, "lineA")), _em("d2", _od(20, "lineB"))])
+
+
+def test_unit_group_single_population_entry_untagged_ok():
+    # Only one population-spread observable -> no ambiguity, tag not required.
+    _run_unit_group_check([_em("d1", _od(13, None)), _em("c1", _od_center(None))])
+
+
+def test_unit_group_center_only_entries_exempt_from_presence():
+    # Two entries, but neither feeds omega -> presence rule does not apply.
+    _run_unit_group_check([_em("c1", _od_center(None)), _em("c2", _od_center(None))])
 
 
 def test_unit_group_mismatched_spread_source_rejected():
