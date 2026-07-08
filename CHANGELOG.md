@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/popellab/maple/compare/v0.7.0...v0.7.1) (2026-07-08)
+
+
+### Documentation
+
+* document FigureExcerpt/TableExcerpt schemas and denominator requirement in cal-target prompt ([#32](https://github.com/popellab/maple/issues/32)) ([0c1b6ac](https://github.com/popellab/maple/commit/0c1b6ac355d71bbeb13be17adda86ea1a432274a))
+
 ## [0.7.0](https://github.com/popellab/maple/compare/v0.6.0...v0.7.0) (2026-07-08)
 
 
