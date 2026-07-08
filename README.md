@@ -26,6 +26,12 @@ MAPLE fits into a two-stage calibration pipeline:
 pip install maple-qsp
 ```
 
+MAPLE is published on [PyPI](https://pypi.org/project/maple-qsp/) as `maple-qsp`; the import name is `maple` (`import maple`). To track the development version, install from GitHub:
+
+```bash
+pip install "maple-qsp @ git+https://github.com/popellab/maple.git@main"
+```
+
 MAPLE works with any AI tool that can access your files and run Python — coding agents (Claude Code, Codex, Cursor) via [MCP](#setup), or chat UIs with code execution (Claude Cowork, ChatGPT with Code Interpreter) via the [Python API](#python-api). From your model repo, ask the agent to extract a parameter:
 
 > *"Use the MAPLE tool to help me extract the k_IL6_sec parameter"*
