@@ -56,3 +56,6 @@ scratch/
 docs-manuscript/
 validation-outputs
 notes
+
+# worktree-local dev venv
+.venv-wt/

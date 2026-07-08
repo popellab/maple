@@ -444,3 +444,154 @@ def test_heterogeneity_transfer_requires_justification():
         SourceRelevanceAssessment(
             **_SOURCE_RELEVANCE, heterogeneity_transfer=HeterogeneityTransfer.LOW
         )
+
+
+# ---------------------------------------------------------------------------
+# logit_normal shape (bounded [0, 1] fractions)
+# ---------------------------------------------------------------------------
+
+
+def test_moments_logit_normal_stays_in_unit_interval():
+    q25, q50, q75 = MomentSpread(
+        center=0.9, center_type="median", scale=0.15, scale_type="sd", shape="logit_normal"
+    ).to_quartiles()
+    assert 0.0 < q25 < q50 < q75 < 1.0
+    assert q50 == pytest.approx(0.9)
+
+
+def test_moments_logit_normal_near_one_does_not_escape():
+    # lognormal would push the upper quartile past 1 here; logit_normal must not.
+    _, _, q75 = MomentSpread(
+        center=0.97, center_type="median", scale=0.05, scale_type="sd", shape="logit_normal"
+    ).to_quartiles()
+    assert q75 < 1.0
+
+
+def test_moments_logit_normal_requires_median_center():
+    with pytest.raises(ValidationError, match="center_type='median'"):
+        ObservedDistribution(
+            moments=MomentSpread(
+                center=0.5, center_type="mean", scale=0.1, scale_type="sd", shape="logit_normal"
+            ),
+            spread_source=SpreadSource.CENTER_ONLY,
+        )
+
+
+@pytest.mark.parametrize("bad_center", [1.5, 0.0, 1.0, -0.1])
+def test_moments_logit_normal_center_must_be_in_open_unit_interval(bad_center):
+    with pytest.raises(ValidationError, match=r"open interval \(0, 1\)"):
+        ObservedDistribution(
+            moments=MomentSpread(
+                center=bad_center,
+                center_type="median",
+                scale=0.1,
+                scale_type="sd",
+                shape="logit_normal",
+            ),
+            spread_source=SpreadSource.CENTER_ONLY,
+        )
+
+
+# ---------------------------------------------------------------------------
+# unit_group (shared-biological-unit panels)
+# ---------------------------------------------------------------------------
+
+
+def _od(
+    n_bio, group, unit=ExperimentalUnitType.BIOLOGICAL, src=SpreadSource.BIOLOGICAL_EXPERIMENTAL
+):
+    return ObservedDistribution(
+        moments=MomentSpread(center=100.0, scale=30.0, scale_type="sd", shape="normal"),
+        spread_source=src,
+        n_biological=n_bio,
+        experimental_unit_type=unit,
+        unit_group=group,
+    )
+
+
+def _em(name, od):
+    return ErrorModel(
+        name=name,
+        units="pg/mL",
+        sample_size_input="n",
+        observation_code=_DEFAULT_OBS_CODE,
+        observed_distribution=od,
+    )
+
+
+def _od_center(group):
+    # A center_only observed_distribution: does NOT feed omega, so it is exempt from
+    # the conditional-presence requirement even in a multi-entry target.
+    return ObservedDistribution(
+        moments=MomentSpread(center=100.0, scale=30.0, scale_type="sd", shape="normal"),
+        spread_source=SpreadSource.CENTER_ONLY,
+        unit_group=group,
+    )
+
+
+def _run_unit_group_check(ems):
+    from maple.core.calibration.submodel_target import Calibration
+
+    Calibration.model_construct(error_model=ems)._unit_groups_consistent()
+
+
+def test_unit_group_defaults_none():
+    od = ObservedDistribution(
+        moments=MomentSpread(center=1.0, scale=1.0, scale_type="sd", shape="normal"),
+        spread_source=SpreadSource.CENTER_ONLY,
+    )
+    assert od.unit_group is None
+
+
+def test_unit_group_consistent_members_ok():
+    _run_unit_group_check([_em("d1", _od(13, "donors")), _em("d2", _od(13, "donors"))])
+
+
+def test_unit_group_mismatched_n_biological_rejected():
+    with pytest.raises(ValueError, match="disagree on 'n_biological'"):
+        _run_unit_group_check([_em("d1", _od(13, "donors")), _em("d2", _od(20, "donors"))])
+
+
+def test_unit_group_separate_groups_may_differ():
+    # Distinct groups (e.g. two mouse lines) are independent — no consistency demand.
+    _run_unit_group_check([_em("d1", _od(13, "lineA")), _em("d2", _od(20, "lineB"))])
+
+
+# --- conditional presence: required once 2+ population-spread observables exist ---
+
+
+def test_unit_group_required_when_multiple_population_entries():
+    with pytest.raises(ValueError, match="leave unit_group unset"):
+        _run_unit_group_check([_em("d1", _od(13, None)), _em("d2", _od(13, None))])
+
+
+def test_unit_group_multiple_population_tagged_same_ok():
+    _run_unit_group_check([_em("d1", _od(13, "donors")), _em("d2", _od(13, "donors"))])
+
+
+def test_unit_group_multiple_population_tagged_different_ok():
+    # Two separate populations, both tagged -> a conscious decision, allowed.
+    _run_unit_group_check([_em("d1", _od(13, "lineA")), _em("d2", _od(20, "lineB"))])
+
+
+def test_unit_group_single_population_entry_untagged_ok():
+    # Only one population-spread observable -> no ambiguity, tag not required.
+    _run_unit_group_check([_em("d1", _od(13, None)), _em("c1", _od_center(None))])
+
+
+def test_unit_group_center_only_entries_exempt_from_presence():
+    # Two entries, but neither feeds omega -> presence rule does not apply.
+    _run_unit_group_check([_em("c1", _od_center(None)), _em("c2", _od_center(None))])
+
+
+def test_unit_group_mismatched_spread_source_rejected():
+    with pytest.raises(ValueError, match="disagree on 'spread_source'"):
+        _run_unit_group_check(
+            [
+                _em("d1", _od(13, "g")),
+                _em(
+                    "d2",
+                    _od(13, "g", unit=ExperimentalUnitType.TECHNICAL, src=SpreadSource.TECHNICAL),
+                ),
+            ]
+        )
