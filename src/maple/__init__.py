@@ -5,7 +5,12 @@ Provides structured YAML schemas with Pydantic validation and Julia/Turing.jl
 translation for Bayesian inference.
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("maple-qsp")
+except PackageNotFoundError:  # not installed (e.g. running from a source checkout)
+    __version__ = "0.0.0+unknown"
 
 # Public API
 from maple.core.prompt_builder import (

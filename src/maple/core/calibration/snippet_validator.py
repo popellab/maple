@@ -14,14 +14,81 @@ directly::
 
 import json
 import re
+import unicodedata
 import urllib.request
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
-from maple.core.calibration.submodel_target import SubmodelTarget
 from maple.core.calibration.validators import fuzzy_find_snippet_in_text
+
+
+def _ascii_fold(s: str) -> str:
+    """Lower-case and strip combining diacritics so author names with accented
+    characters (e.g. ``Canè``, ``Müller``, ``Brügger``) match against
+    ASCII-only source tags (``Cane2023``, ``Muller2020``).
+
+    NFKD decomposition followed by ASCII-only encoding drops the combining
+    marks while preserving the base letters. The lower-case is applied
+    afterwards so the result is suitable for substring matching against
+    similarly-folded filenames.
+    """
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii").lower()
+
+
+class _AttrView:
+    """Lightweight dict→attribute adapter so snippet validation can read raw
+    dicts uniformly across SubmodelTarget and CalibrationTarget shapes without
+    invoking pydantic validators (CalibrationTarget validators require a
+    ``context={'model_structure': ...}`` that snippet validation does not need).
+    """
+
+    __slots__ = ("_d",)
+
+    def __init__(self, d):
+        self._d = d if isinstance(d, dict) else {}
+
+    def __getattr__(self, name):
+        v = self._d.get(name)
+        if isinstance(v, dict):
+            return _AttrView(v)
+        return v
+
+    def __bool__(self):
+        return bool(self._d)
+
+
+def _parse_target(data: dict):
+    """Read a YAML payload as either SubmodelTarget or CalibrationTarget.
+
+    Returns ``(target, inputs, primary_data_source, secondary_data_sources)``
+    using lightweight dict→attribute adapters. Avoids pydantic validation so
+    cal-mode YAMLs (which require a ModelStructure context) can be snippet-
+    validated outside of a full validation pipeline.
+
+    Discrimination is by shape: a YAML with both ``empirical_data`` and
+    ``calibration_target_id`` is treated as a CalibrationTarget, otherwise
+    SubmodelTarget.
+    """
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected a dict at YAML root, got {type(data).__name__}")
+
+    is_cal = "empirical_data" in data and "calibration_target_id" in data
+
+    if is_cal:
+        emp = data.get("empirical_data") or {}
+        raw_inputs = emp.get("inputs") or []
+    else:
+        raw_inputs = data.get("inputs") or []
+
+    inputs = [_AttrView(i) for i in raw_inputs]
+    primary = (
+        _AttrView(data.get("primary_data_source")) if data.get("primary_data_source") else None
+    )
+    secondary = [_AttrView(s) for s in (data.get("secondary_data_sources") or [])]
+    target = _AttrView(data)
+    return target, inputs, primary, secondary
 
 
 # ---------------------------------------------------------------------------
@@ -131,14 +198,20 @@ def find_paper_pdf(source_tag: str, papers_dir: Path) -> Optional[Path]:
     # Extract author and year from tag like "Ganusov2014" or "denBraber2012"
     m = re.match(r"([A-Za-z]+)(\d{4})", source_tag)
     if m and papers_dir.is_dir():
-        author = m.group(1).lower()
+        author = _ascii_fold(m.group(1))
         year = m.group(2)
         for pdf in papers_dir.glob("*.pdf"):
-            name_lower = pdf.name.lower()
-            # Strip spaces (including non-breaking \xa0), hyphens for multi-word authors
-            # e.g., "den\xa0Braber" or "Vukmanovic-Stejic" → "denbraber", "vukmanovicstejic"
-            name_collapsed = name_lower.replace(" ", "").replace("\xa0", "").replace("-", "")
-            if (author in name_lower or author in name_collapsed) and year in name_lower:
+            # Apply the same NFKD + ASCII fold to the filename so accented
+            # author surnames (e.g. "Canè et al. - 2023 - ...pdf" matched
+            # against the "Cane2023" source_tag) resolve. Lowercasing alone
+            # would leave "è" untouched and miss the substring match. Strip
+            # spaces (including non-breaking \xa0) and hyphens after folding
+            # so multi-word / hyphenated surnames still hit the collapsed
+            # form (e.g. "den\xa0Braber" → "denbraber",
+            # "Vukmanovic-Stejic" → "vukmanovicstejic").
+            name_folded = _ascii_fold(pdf.name)
+            name_collapsed = name_folded.replace(" ", "").replace("-", "")
+            if (author in name_folded or author in name_collapsed) and year in name_folded:
                 return pdf
 
     return None
@@ -214,7 +287,8 @@ def validate_snippets_in_file(
     Parameters
     ----------
     yaml_path : Path
-        Path to a SubmodelTarget YAML file.
+        Path to a SubmodelTarget or CalibrationTarget YAML file. The schema is
+        auto-detected from the YAML payload shape.
     papers_dir : Path, optional
         Directory containing ``<source_tag>/`` subdirs with PDFs.
         If None, defaults to ``yaml_path.parent / "papers"``.
@@ -233,7 +307,7 @@ def validate_snippets_in_file(
     try:
         with open(yaml_path) as f:
             data = yaml.safe_load(f)
-        target = SubmodelTarget.model_validate(data)
+        target, inputs_list, primary, secondary = _parse_target(data)
     except Exception as e:
         return (False, [f"Failed to parse: {e}"], [], [], [])
 
@@ -241,24 +315,36 @@ def validate_snippets_in_file(
     source_tags = set()
     source_metadata: dict[str, dict] = {}
 
-    pri = target.primary_data_source
-    source_tags.add(pri.source_tag)
-    source_metadata[pri.source_tag] = {"doi": pri.doi, "url": None}
+    # CalibrationTarget allows primary_data_source=None (mechanistic basis); skip
+    # source loading entirely in that case — there is nothing to fuzzy-match against.
+    if primary is None and not secondary:
+        return (
+            True,
+            [],
+            [
+                "no primary_data_source (mechanistic / non-literature target — snippet validation skipped)"
+            ],
+            [],
+            [],
+        )
 
-    if target.secondary_data_sources:
-        for src in target.secondary_data_sources:
-            source_tags.add(src.source_tag)
-            source_metadata[src.source_tag] = {
-                "doi": src.doi,
-                "url": getattr(src, "url", None),
-            }
+    if primary is not None:
+        source_tags.add(primary.source_tag)
+        source_metadata[primary.source_tag] = {"doi": primary.doi, "url": None}
+
+    for src in secondary:
+        source_tags.add(src.source_tag)
+        source_metadata[src.source_tag] = {
+            "doi": src.doi,
+            "url": getattr(src, "url", None),
+        }
 
     # Load paper texts
     paper_data = load_paper_texts(source_tags, source_metadata, papers_dir)
 
     # Verify each input's snippet, table_excerpt, and/or figure_excerpt
     manual_review = []
-    for inp in target.inputs:
+    for inp in inputs_list:
         tag = inp.source_ref
         has_snippet = bool(inp.value_snippet)
         has_table = bool(inp.table_excerpt)

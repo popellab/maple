@@ -8,16 +8,36 @@ draw theta. Use cases:
 
 - Counterfactual fold-changes ("iCAF fraction with TGFb blockade vs baseline")
 - Treatment-vs-untreated comparisons ("tumor diameter d90 GVAX vs untreated")
-- Time-to-event ratios across scenarios
+- Cross-arm invariants ("within-TLA CD8 number is unchanged by urelumab")
 
 The model is intentionally leaner than CalibrationTarget. It does NOT carry
-its own species_dict, denominator audit, or population aggregation block —
-those concerns belong to the per-scenario observables that feed this target
-as scalar inputs (input_kind='test_statistic') or to the composer code
-itself (input_kind='timeseries').
+its own species_dict, denominator audit, or population aggregation block.
 
-See pdac-build/notes/calibration/cross_scenario_observable_spike.md for the
-full design rationale (Option D3+).
+Design — why each input owns its observable
+--------------------------------------------
+A cross-scenario target is only worth a likelihood term when its constituent
+per-arm quantities are NOT already columns in the joint-NPE training x. If they
+were, the NPE already conditions on them and on every relationship between them
+(conditioning on two marginals already pins their ratio) — a cross-scenario
+likelihood term would be redundant, or worse double-count a belief already in
+the fit. The legitimate case is the opposite: a per-arm quantity we deliberately
+keep OUT of x (e.g. an absolute within-TLA CD8 count whose unmodeled denominator
+only cancels in a ratio), composed across arms so only the invariant constrains
+the fit.
+
+So each input defines its OWN per-arm observable (``observable_code`` +
+``required_species``) rather than pointing at a per-scenario calibration target.
+The target is self-contained: it owns both the per-arm extraction and the
+cross-arm reduction, in one YAML, with no reference to any other target and
+without entering the NPE x as a standalone constraint. The per-arm scalar is
+computed at derive time on the worker (while the trajectory is still in hand,
+before ``discard_trajectories`` drops it); the cross-arm reduction runs
+downstream once every scenario's matrix is gathered and aligned on
+``sample_index``.
+
+See pdac-build/notes/calibration/cross_scenario_derive_time_inputs.md for the
+full design rationale (this single self-contained input kind replaced the older
+``test_statistic`` / ``timeseries`` split).
 """
 
 from typing import List, Literal, Optional
@@ -32,119 +52,93 @@ from maple.core.calibration.shared_models import SecondarySource, Source
 
 class CrossScenarioInput(BaseModel):
     """
-    One input to a cross-scenario observable.
+    One per-arm input to a cross-scenario observable.
 
-    Each input is keyed by ``role`` (a stable name the observable code
-    references, e.g. 'untreated', 'treated', 'numerator') and pulls data
-    from one scenario in one of two modes:
+    Each input is keyed by ``role`` (a stable name the reduction code
+    references, e.g. 'numerator', 'denominator', 'treated', 'untreated')
+    and defines a self-contained per-scenario observable: a Python function
+    that maps one scenario's simulated trajectory to a single scalar.
 
-    - ``input_kind='test_statistic'``: pull a precomputed scalar from that
-      scenario's per-scenario test_stats matrix. Requires
-      ``test_statistic_id`` to identify the target. Cheapest path; use
-      when a per-scenario CalibrationTarget or PredictionTarget already
-      computes the value you need.
+    The observable is evaluated at derive time on the HPC worker, in the same
+    row-group pass that derives the regular per-scenario test stats, using the
+    same ``build_test_stat_registry`` / ``compute_test_statistics_batch``
+    machinery. So ``observable_code`` must match the per-scenario test-stat
+    contract exactly:
 
-    - ``input_kind='timeseries'``: pull the full simulation timeseries
-      from that scenario's parquet. Requires ``required_species`` listing
-      the model species to expose to the composer. Use when no natural
-      per-scenario summary exists (e.g. time-to-event compositions).
+        def compute_test_statistic(time, species_dict) -> float
+
+    where ``time`` is a numpy array of time points (days) and ``species_dict``
+    maps each entry of ``required_species`` to a raw float or numpy array in its
+    canonical model_structure.json units (no Pint). The function does its own
+    time selection (e.g. interpolate to day 21) and returns one scalar.
+
+    The returned raw scalar is handed straight to the reduction in
+    ``CrossScenarioObservable.code`` (the runtime path is pintless — the
+    reduction does any unit arithmetic numerically inline, exactly like a
+    per-scenario test stat). The physical meaning of the scalar is documented
+    by the model species it derives from; the only declared unit is the
+    target-level ``CrossScenarioObservable.units`` on the reduction output.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     role: str = Field(
         description=(
-            "Stable name the composer code uses to look this input up "
-            "(e.g. 'untreated', 'treated', 'numerator'). Must be unique "
-            "across the inputs list of a single CrossScenarioCalibrationTarget."
+            "Stable name the reduction code uses to look this input up "
+            "(e.g. 'numerator', 'denominator', 'treated', 'untreated'). Must "
+            "be unique across the inputs list of a single "
+            "CrossScenarioCalibrationTarget."
         )
     )
     scenario: str = Field(
         description=(
             "Scenario name. Must match one of the scenario keys passed to "
-            "the SBI runner (e.g. 'clinical_progression_longterm', "
-            "'gvax_neoadjuvant_longterm', 'tgfb_blockade_baseline'). "
-            "Cross-scenario derive will fail loudly at runtime if the "
-            "scenario isn't present in scenario_meta."
+            "the SBI runner (e.g. 'gvax_nivo_neoadjuvant_zheng2022', "
+            "'gvax_nivo_urelumab_neoadjuvant_heumann2023'). Cross-scenario "
+            "derive will fail loudly at runtime if the scenario isn't present "
+            "in scenario_meta."
         )
     )
-    input_kind: Literal["test_statistic", "timeseries"] = Field(
+    observable_code: str = Field(
         description=(
-            "How to resolve this input. 'test_statistic' pulls a scalar "
-            "from the per-scenario x_raw matrix; 'timeseries' pulls the "
-            "full sim_df and exposes a species_dict to the composer."
+            "Python source defining "
+            "compute_test_statistic(time, species_dict) -> float — the same "
+            "contract as a per-scenario test stat. Evaluated at derive time on "
+            "the worker against this scenario's trajectory. Must do its own "
+            "time selection and return a single scalar.\n\n"
+            "Example (within-TLA CD8 number at day 21):\n"
+            "def compute_test_statistic(time, species_dict):\n"
+            "    import numpy as np\n"
+            "    t = np.asarray(time, dtype=float)\n"
+            "    n = (np.asarray(species_dict['V_T.CD8_TLA'], dtype=float)\n"
+            "         + np.asarray(species_dict['V_T.CD8_TLA_act'], dtype=float))\n"
+            "    return float(np.interp(21.0, t, n))"
         )
     )
-    test_statistic_id: Optional[str] = Field(
-        default=None,
+    required_species: List[str] = Field(
+        min_length=1,
         description=(
-            "Required when input_kind='test_statistic'. The "
-            "test_statistic_id of a per-scenario CalibrationTarget or "
-            "PredictionTarget defined for the scenario referenced above."
+            "Model species / compartments / parameters the observable_code "
+            "accesses (e.g. ['V_T.CD8_TLA', 'V_T.CD8_TLA_act']). Same format "
+            "and resolution strategies as a per-scenario test stat's "
+            "required_species (series / param / template / missing)."
         ),
     )
-    required_species: Optional[List[str]] = Field(
-        default=None,
-        description=(
-            "Required when input_kind='timeseries'. List of full-model "
-            "species the composer accesses (e.g. ['V_T.C1', 'V_T']). "
-            "Same format as Observable.species. Resolved via the same "
-            "species_plan strategies as compute_test_statistics_batch "
-            "(series, param, template, missing)."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def validate_kind_payload(self) -> "CrossScenarioInput":
-        if self.input_kind == "test_statistic":
-            if not self.test_statistic_id:
-                raise ValueError(
-                    f"CrossScenarioInput role='{self.role}' has "
-                    "input_kind='test_statistic' but no test_statistic_id. "
-                    "Provide the per-scenario test_statistic_id this input "
-                    "should pull from."
-                )
-            if self.required_species is not None:
-                raise ValueError(
-                    f"CrossScenarioInput role='{self.role}' has "
-                    "input_kind='test_statistic' but required_species is set. "
-                    "required_species is only valid for input_kind='timeseries'."
-                )
-        elif self.input_kind == "timeseries":
-            if not self.required_species:
-                raise ValueError(
-                    f"CrossScenarioInput role='{self.role}' has "
-                    "input_kind='timeseries' but required_species is empty. "
-                    "List the model species the composer accesses."
-                )
-            if self.test_statistic_id is not None:
-                raise ValueError(
-                    f"CrossScenarioInput role='{self.role}' has "
-                    "input_kind='timeseries' but test_statistic_id is set. "
-                    "test_statistic_id is only valid for input_kind='test_statistic'."
-                )
-        return self
 
 
 class CrossScenarioObservable(BaseModel):
     """
     Composer specification for a cross-scenario observable.
 
-    The composer is a Python function with signature
-    ``compute(inputs, ureg) -> Pint Quantity``, where ``inputs`` is a
-    role-keyed dict whose value shape depends on each input's ``input_kind``:
+    The composer is a pure reduction over the per-arm scalars produced by each
+    input. Its signature is ``compute(inputs) -> float`` (the runtime path is
+    pintless), where ``inputs`` is a role-keyed dict and each ``inputs[role]``
+    is a raw float in the per-arm observable's canonical units. The composer
+    returns one raw float; any unit arithmetic is done numerically inline.
 
-    - ``input_kind='test_statistic'``: ``inputs[role]`` is a scalar
-      Pint Quantity carrying the per-scenario units declared in that
-      target's YAML.
-    - ``input_kind='timeseries'``: ``inputs[role]`` is a dict mapping
-      ``'time'`` and each entry of ``required_species`` to a Pint
-      Quantity (scalar for compartment volumes, array for species
-      timeseries), matching the species_dict shape exposed to per-scenario
-      observables.
-
-    The composer must return a scalar Pint Quantity with units matching
-    ``units`` below.
+    Because every input is a scalar, the reduction never touches raw species or
+    timeseries — that extraction lives entirely in each input's
+    ``observable_code``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -152,37 +146,28 @@ class CrossScenarioObservable(BaseModel):
     code: str = Field(
         description=(
             "Python function source defining "
-            "compute(inputs, ureg) -> Pint Quantity. See class docstring "
-            "for the inputs dict shape per input_kind.\n\n"
-            "Example (scalar fold ratio):\n"
-            "def compute(inputs, ureg):\n"
-            "    return inputs['treated'] / inputs['untreated']\n\n"
-            "Example (timeseries time-to-50% threshold):\n"
-            "def compute(inputs, ureg):\n"
-            "    import numpy as np\n"
-            "    def t_half(scen):\n"
-            "        c = scen['V_T.C1'].to('cell').magnitude\n"
-            "        t = scen['time'].to('day').magnitude\n"
-            "        target = 0.5 * c[0]\n"
-            "        below = np.where(c <= target)[0]\n"
-            "        return float(t[below[0]]) if len(below) else float('nan')\n"
-            "    return (t_half(inputs['treated']) /\n"
-            "            t_half(inputs['untreated'])) * ureg.dimensionless"
+            "compute(inputs) -> float. Pure reduction over the role-keyed "
+            "per-arm scalars; does not touch raw species. Pintless — do any "
+            "unit arithmetic numerically inline.\n\n"
+            "Example (cross-arm invariance ratio):\n"
+            "def compute(inputs):\n"
+            "    return inputs['urelumab'] / inputs['nivo']"
         )
     )
     units: str = Field(
         description=(
-            "Pint-parseable units of the composer output. Must match "
-            "empirical_data.units. Typical values: 'dimensionless' (fold "
-            "ratios), 'day' (event times), 'cell/mm**2' (density "
-            "differences)."
+            "Label for the composer output's units. Must match "
+            "empirical_data.units (validated). Used for documentation and the "
+            "units-consistency check only — NOT parsed by the pintless runtime. "
+            "Typical values: 'dimensionless' (fold ratios, invariants), 'day' "
+            "(event times), 'cell/mm**2' (density differences)."
         )
     )
     inputs: List[CrossScenarioInput] = Field(
         min_length=2,
         description=(
-            "List of role-keyed inputs the composer consumes. Must have "
-            "at least 2 inputs (otherwise it isn't a cross-scenario "
+            "List of role-keyed per-arm inputs the reduction consumes. Must "
+            "have at least 2 inputs (otherwise it isn't a cross-scenario "
             "observable). Roles must be unique."
         ),
     )
@@ -209,10 +194,12 @@ class CrossScenarioCalibrationTarget(BaseModel):
     A calibration target derived from multiple per-scenario simulations.
 
     Composes outputs across N>=2 scenarios on the same parameter draw
-    theta, evaluating a Python composer over scalar test-statistic inputs
-    and/or full-timeseries inputs. Used for counterfactual fold-changes,
-    treatment-vs-untreated comparisons, and other cross-scenario
-    observables that don't fit a single-scenario CalibrationTarget.
+    theta, evaluating a per-arm observable per scenario and a Python
+    reduction over the resulting scalars. Used for counterfactual
+    fold-changes, treatment-vs-untreated comparisons, and cross-arm
+    invariants that don't fit a single-scenario CalibrationTarget — and
+    specifically for relationships whose per-arm constituents are kept out
+    of the joint-NPE training x on purpose.
 
     The empirical_data / epistemic_basis / provenance fields mirror
     CalibrationTarget. Most cross-scenario targets are
@@ -228,12 +215,12 @@ class CrossScenarioCalibrationTarget(BaseModel):
         description=(
             "Unique target identifier. Convention: "
             "'<observable>_<scen_a>_vs_<scen_b>_<role_descriptor>' "
-            "(e.g. 'tumor_diameter_d90_gvax_vs_untreated_fold')."
+            "(e.g. 'cd8_intla_number_invariance_nivo_vs_urelumab')."
         )
     )
 
     observable: CrossScenarioObservable = Field(
-        description="Composer specification with role-keyed inputs."
+        description="Composer specification with role-keyed per-arm inputs."
     )
 
     empirical_data: CalibrationTargetEstimates = Field(

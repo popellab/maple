@@ -100,11 +100,10 @@ def golden_calibration_target_data():
     return {
         "observable": {
             "code": (
-                "def compute_observable(time, species_dict, constants, ureg):\n"
+                "def compute_observable(time, species_dict, constants):\n"
                 "    cd8 = species_dict['V_T.CD8']\n"
                 "    tumor = species_dict['V_T.C1']\n"
-                "    ratio = cd8 / tumor\n"
-                "    return ratio.to(ureg.dimensionless)"
+                "    return cd8 / tumor"
             ),
             "units": "dimensionless",
             "species": ["V_T.CD8", "V_T.C1"],
@@ -415,23 +414,23 @@ class TestCalibrationTargetValidators:
             error_str = str(exc_info.value).lower()
             assert "title mismatch" in error_str or "mismatch" in error_str
 
-    def test_validate_observable_code_units_fails_on_wrong_units(
+    def test_validate_observable_code_rejects_pint_return(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
-        """Validator should reject observable code with wrong output units."""
+        """Post-Pint-strip: observable.code must return raw floats, not Pint Quantities."""
         data = copy.deepcopy(golden_calibration_target_data)
-        # Change observable code to return wrong units (nanomolar instead of dimensionless)
         data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
+            "def compute_observable(time, species_dict, constants):\n"
             "    import numpy as np\n"
-            "    return np.ones(len(time)) * 100.0 * ureg.nanomolar"
+            "    from maple.core.unit_registry import ureg\n"
+            "    return np.ones(len(time)) * 100.0 * ureg.dimensionless"
         )
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
         error_str = str(exc_info.value).lower()
-        assert "dimensionality mismatch" in error_str or "unit" in error_str
+        assert "raw float" in error_str or "pint quantity" in error_str
 
     def test_validate_derivation_code_fails_on_value_mismatch(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
@@ -604,11 +603,11 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Change observable code to return scalar (using time indexing)
         data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
+            "def compute_observable(time, species_dict, constants):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    ratio = cd8[-1] / tumor[-1]  # Returns scalar (last timepoint)\n"
-            "    return ratio.to(ureg.dimensionless)"
+            "    return ratio"
         )
 
         with pytest.raises(ValidationError) as exc_info:
@@ -624,13 +623,13 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Change observable code to return wrong-length array
         data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
+            "def compute_observable(time, species_dict, constants):\n"
             "    import numpy as np\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    # Return only first 5 timepoints (wrong length)\n"
             "    ratio = cd8[:5] / tumor[:5]\n"
-            "    return ratio.to(ureg.dimensionless)"
+            "    return ratio"
         )
 
         with pytest.raises(ValidationError) as exc_info:
@@ -784,16 +783,14 @@ class TestCalibrationTargetValidators:
 
         data["empirical_data"]["ci95"] = [[1.0079, 1.9935]]
 
-        # Also update observable code to return centimeter (to avoid unit mismatch error)
+        # Observable returns raw float array in centimeters (no Pint).
         data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
+            "def compute_observable(time, species_dict, constants):\n"
             "    import numpy as np\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
-            "    # Hypothetical tumor diameter in centimeters\n"
-            "    # Scale cell counts to reasonable diameter range (1-2 cm)\n"
-            "    diameter_cm = 1.5 + 0.0 * (cd8 / tumor).magnitude  # ~1.5 cm\n"
-            "    return diameter_cm * ureg.centimeter"
+            "    # Hypothetical tumor diameter; scale cell counts to ~1.5 cm.\n"
+            "    return 1.5 + 0.0 * (cd8 / tumor)  # cm"
         )
         data["observable"]["units"] = "centimeter"
 
@@ -827,13 +824,13 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Add magic number (cell size) to observable code without documenting
         data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
+            "def compute_observable(time, species_dict, constants):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    # Magic number: 10 = cell radius in micrometers (UNDOCUMENTED)\n"
             "    cell_volume = 10  # This should trigger warning (not using ureg)\n"
             "    ratio = cd8 / tumor\n"
-            "    return ratio.to(ureg.dimensionless)"
+            "    return ratio"
         )
 
         with pytest.warns(UserWarning, match="numeric literals.*conversion factors"):
@@ -843,43 +840,10 @@ class TestCalibrationTargetValidators:
 
         assert target is not None
 
-    def test_validate_dimensionality_error(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Validator should catch Pint DimensionalityError (e.g., day² → day)."""
-        data = copy.deepcopy(golden_calibration_target_data)
-        # Create code that produces dimensional mismatch
-        data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
-            "    cd8 = species_dict['V_T.CD8']\n"
-            "    tumor = species_dict['V_T.C1']\n"
-            "    # Intentional dimension error: time squared can't convert to dimensionless\n"
-            "    bad_value = (time * time).to(ureg.dimensionless)  # day² → dimensionless fails\n"
-            "    ratio = cd8 / tumor\n"
-            "    return ratio.to(ureg.dimensionless)"
-        )
-
-        with pytest.raises(ValidationError, match="unit error"):
-            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
-
-    def test_validate_undefined_unit_error(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Validator should catch Pint UndefinedUnitError for unknown units."""
-        data = copy.deepcopy(golden_calibration_target_data)
-        # Create code that uses undefined unit
-        data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
-            "    cd8 = species_dict['V_T.CD8']\n"
-            "    tumor = species_dict['V_T.C1']\n"
-            "    # Intentional undefined unit error\n"
-            "    bad_value = 5.0 * ureg.foobar  # 'foobar' is not a defined unit\n"
-            "    ratio = cd8 / tumor\n"
-            "    return ratio.to(ureg.dimensionless)"
-        )
-
-        with pytest.raises(ValidationError, match="unit error"):
-            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+    # Pint dimensionality and undefined-unit tests removed 2026-05-10:
+    # observable.code is now Pintless. Unit consistency is enforced inside the
+    # function body via explicit numerical conversions, which surface as
+    # ordinary numerical/typing errors at derive time.
 
     def test_validate_control_characters(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
@@ -899,13 +863,13 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Add hardcoded constant with units (1e-8 * ureg.mm**2)
         data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
+            "def compute_observable(time, species_dict, constants):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    # BAD: hardcoded constant with units\n"
             "    area_per_cell = 2.27e-4 * ureg.mm**2\n"
             "    ratio = cd8 / tumor\n"
-            "    return ratio.to(ureg.dimensionless)"
+            "    return ratio"
         )
 
         with pytest.raises(ValidationError, match="Hardcoded numeric constants"):
@@ -929,13 +893,13 @@ class TestCalibrationTargetValidators:
         ]
         # Use constant via constants dict (no hardcoded numbers with units)
         data["observable"]["code"] = (
-            "def compute_observable(time, species_dict, constants, ureg):\n"
+            "def compute_observable(time, species_dict, constants):\n"
             "    cd8 = species_dict['V_T.CD8']\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    # GOOD: use constant from constants dict\n"
             "    area_per_cell = constants['area_per_cancer_cell']\n"
             "    ratio = cd8 / tumor\n"
-            "    return ratio.to(ureg.dimensionless)"
+            "    return ratio"
         )
 
         # Should pass without error
@@ -943,6 +907,91 @@ class TestCalibrationTargetValidators:
             data, context={"model_structure": model_structure}
         )
         assert target is not None
+
+    def test_auxiliary_parameter_accessible_in_observable_code(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Observable code can reference an auxiliary parameter via the constants dict.
+
+        Auxiliary parameters are sampled per-simulation at inference time but at
+        schema-validation time maple injects a 1.0-magnitude stub of the right
+        units so observable.code can be exec'd and unit-checked.
+        """
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["auxiliary_parameters"] = [
+            {
+                "name": "f_serum_to_tumor",
+                "group": "serum_to_tumor",
+                "biological_basis": (
+                    "Serum:tumor concentration ratio for the cytokine; "
+                    "observable.code multiplies the model tumor concentration by "
+                    "this factor to predict the human serum concentration."
+                ),
+                "units": "dimensionless",
+            }
+        ]
+        data["observable"]["code"] = (
+            "def compute_observable(time, species_dict, constants):\n"
+            "    cd8 = species_dict['V_T.CD8']\n"
+            "    tumor = species_dict['V_T.C1']\n"
+            "    f = constants['f_serum_to_tumor']\n"
+            "    ratio = (cd8 / tumor) * f\n"
+            "    return ratio"
+        )
+
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        assert len(target.observable.auxiliary_parameters) == 1
+        aux = target.observable.auxiliary_parameters[0]
+        assert aux.name == "f_serum_to_tumor"
+        assert aux.group == "serum_to_tumor"
+        assert aux.units == "dimensionless"
+
+    def test_auxiliary_parameter_units_validated(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Bad pint units on an auxiliary parameter should fail validation."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["auxiliary_parameters"] = [
+            {
+                "name": "bad_aux",
+                "group": "test_group",
+                "biological_basis": (
+                    "Auxiliary parameter declared with a unit string that pint "
+                    "cannot parse, used as a regression test for unit validation."
+                ),
+                "units": "this_is_not_a_unit_string",
+            }
+        ]
+        with pytest.raises(ValidationError, match="auxiliary_parameters"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_auxiliary_parameter_biological_basis_min_length(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """biological_basis must be substantive (>=20 chars), like ObservableConstant."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["auxiliary_parameters"] = [
+            {
+                "name": "f_test",
+                "group": "test_group",
+                "biological_basis": "too short",
+                "units": "dimensionless",
+            }
+        ]
+        with pytest.raises(ValidationError):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_auxiliary_parameters_default_empty(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Existing cal targets without auxiliary_parameters keep working."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        assert target.observable.auxiliary_parameters == []
 
     def test_validate_species_completeness_warns_on_missing_related_species(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
@@ -1562,7 +1611,7 @@ class TestObservableDenominatorAudit:
         """Helper to create Observable with sensible defaults."""
         base = {
             "code": (
-                "def compute_observable(time, species_dict, constants, ureg):\n"
+                "def compute_observable(time, species_dict, constants):\n"
                 "    return species_dict['V_T.CD8']"
             ),
             "units": "dimensionless",
@@ -1625,3 +1674,92 @@ class TestObservableDenominatorAudit:
             support="positive",
         )
         assert obs.experimental_denominator is None
+
+
+class TestCalibrationTargetPopulationSample:
+    """The optional declared 'samples' population draw + population_spread gate."""
+
+    # A lognormal population draw whose median matches the golden reported median (1.0).
+    _GOOD_CODE = (
+        "def derive_distribution(inputs, ureg):\n"
+        "    import numpy as np, math\n"
+        "    np.random.seed(42)\n"
+        "    mean = inputs['cd8_ratio_mean']\n"
+        "    sigma_log = inputs['cd8_ratio_sigma_log']\n"
+        "    mu_log = math.log(mean.magnitude)\n"
+        "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, 10000) * mean.units\n"
+        "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+        "    return {'median_obs': np.median(samples), 'ci95_lower': ci95[0],\n"
+        "            'ci95_upper': ci95[1], 'samples': samples}"
+    )
+
+    def _with_code(self, golden, code=None, **ed_overrides):
+        data = copy.deepcopy(golden)
+        if code is not None:
+            data["empirical_data"]["distribution_code"] = code
+        data["empirical_data"].update(ed_overrides)
+        return data
+
+    def test_defaults_center_only(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # The golden distribution_code returns no samples; the default is center_only,
+        # so it validates and is excluded from omega.
+        target = CalibrationTarget.model_validate(
+            golden_calibration_target_data, context={"model_structure": model_structure}
+        )
+        assert target.empirical_data.population_spread == "center_only"
+
+    def test_across_patient_with_samples_validates(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = self._with_code(
+            golden_calibration_target_data, self._GOOD_CODE, population_spread="across_patient"
+        )
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        assert target.empirical_data.population_spread == "across_patient"
+
+    def test_across_patient_without_samples_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # Declaring across_patient but returning no samples is a hard error.
+        data = self._with_code(golden_calibration_target_data, population_spread="across_patient")
+        with pytest.raises(ValidationError, match="requires distribution_code to"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_center_only_with_samples_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # Returning a population sample while declaring center_only is contradictory.
+        data = self._with_code(
+            golden_calibration_target_data, self._GOOD_CODE
+        )  # default center_only
+        with pytest.raises(ValidationError, match="must NOT return a 'samples'"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_samples_median_mismatch_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # samples centered 5x off the reported/computed median -> rejected
+        code = self._GOOD_CODE.replace("'samples': samples}", "'samples': samples * 5.0}")
+        data = self._with_code(
+            golden_calibration_target_data, code, population_spread="across_patient"
+        )
+        with pytest.raises(ValidationError, match=r"median\(samples\)"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_degenerate_samples_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # A flat (zero-variance) sample is not a usable population spread.
+        code = self._GOOD_CODE.replace(
+            "'samples': samples}",
+            "'samples': np.ones(10000) * mean.magnitude * mean.units}",
+        )
+        data = self._with_code(
+            golden_calibration_target_data, code, population_spread="across_patient"
+        )
+        with pytest.raises(ValidationError, match="zero variance"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})

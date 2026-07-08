@@ -40,7 +40,7 @@ class CodeType(str, Enum):
 EXPECTED_SIGNATURES: Dict[CodeType, Tuple[str, List[str]]] = {
     CodeType.SUBMODEL: ("submodel", ["t", "y", "params", "inputs"]),
     CodeType.SUBMODEL_OBSERVABLE: ("compute_observable", ["t", "y", "constants", "ureg"]),
-    CodeType.OBSERVABLE: ("compute_observable", ["time", "species_dict", "constants", "ureg"]),
+    CodeType.OBSERVABLE: ("compute_observable", ["time", "species_dict", "constants"]),
     CodeType.DISTRIBUTION: ("derive_distribution", ["inputs", "ureg"]),
     CodeType.DERIVATION: ("derive_parameter", ["inputs", "ureg"]),
     CodeType.ALGEBRAIC: ("compute", ["params", "inputs"]),
@@ -405,9 +405,13 @@ class CodeValidator:
 
         expected_name, _ = EXPECTED_SIGNATURES[code_type]
 
-        # SubmodelTarget code types (ALGEBRAIC, MEASUREMENT_ERROR) use plain floats
-        # Other code types (OBSERVABLE, DISTRIBUTION, etc.) still use ureg
-        uses_ureg = code_type not in (CodeType.ALGEBRAIC, CodeType.MEASUREMENT_ERROR)
+        # Code types that operate on raw floats (no ureg in scope).
+        # OBSERVABLE migrated to raw floats (matches submodel forward-model precedent).
+        uses_ureg = code_type not in (
+            CodeType.ALGEBRAIC,
+            CodeType.MEASUREMENT_ERROR,
+            CodeType.OBSERVABLE,
+        )
 
         # Compile and extract function
         try:
@@ -464,11 +468,14 @@ class CodeValidator:
             return (t, y, constants, ureg)
 
         elif code_type == CodeType.OBSERVABLE:
-            # compute_observable(time, species_dict, constants, ureg)
-            time = context.get("time", np.linspace(0, 10, 100) * ureg.day)
+            # compute_observable(time, species_dict, constants) — raw floats.
+            # Caller is responsible for keying species_dict on canonical species
+            # units (from model_structure.json) so the function body can do
+            # explicit numerical conversions where needed.
+            time = context.get("time", np.linspace(0, 10, 100))
             species_dict = context.get("species_dict", {})
             constants = context.get("constants", {})
-            return (time, species_dict, constants, ureg)
+            return (time, species_dict, constants)
 
         elif code_type == CodeType.DISTRIBUTION:
             # derive_distribution(inputs, ureg)

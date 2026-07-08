@@ -12,7 +12,7 @@ See docs/calibration_target_design.md for full specification.
 import ast
 from enum import Enum
 from pathlib import Path
-from typing import List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -44,7 +44,6 @@ from maple.core.calibration.exceptions import (
     SnippetValueMismatchError,
     SourceRefError,
     SpeciesNotFoundError,
-    UnitConversionError,
     UnitParsingError,
 )
 from maple.core.calibration.experimental_context import ExperimentalContext
@@ -58,12 +57,13 @@ from maple.core.calibration.shared_models import (
     EstimateInput,
     InputType,
     ModelingAssumption,
+    ObservedDistribution,
     SecondarySource,
     Source,
+    SpreadSource,
 )
 from maple.core.calibration.validators import (
     check_value_in_text,
-    create_mock_species,
     fuzzy_match,
     resolve_doi,
 )
@@ -82,6 +82,31 @@ def _resolve_species_units(info: ValidationInfo) -> dict:
 
         ms = ModelStructure.from_json(ms)
     return ms.to_species_units()
+
+
+def _create_mock_species_raw(species_units: dict, n_timepoints: int = 100) -> Dict[str, np.ndarray]:
+    """
+    Pintless variant of create_mock_species: returns raw float arrays whose
+    magnitudes follow the same heuristics as the Pint version (cell counts at
+    1e6, molarity at 1.0, mass at 100, default 1.0). Values are interpreted in
+    the species' canonical units (model_structure.json) — the observable.code
+    function is responsible for any explicit numerical conversions.
+    """
+    mock = {}
+    for species, unit_info in species_units.items():
+        unit_str = (
+            unit_info.get("units", "dimensionless") if isinstance(unit_info, dict) else unit_info
+        )
+        if "cell" in unit_str:
+            value = 1e6
+        elif "molarity" in unit_str:
+            value = 1.0
+        elif "gram" in unit_str:
+            value = 100.0
+        else:
+            value = 1.0
+        mock[species] = np.ones(n_timepoints) * value
+    return mock
 
 
 # ============================================================================
@@ -256,9 +281,97 @@ class CalibrationTargetEstimates(BaseModel):
             "        'median_obs': np.array(medians) * means.units,\n"
             "        'ci95_lower': np.array(lowers) * means.units,\n"
             "        'ci95_upper': np.array(uppers) * means.units,\n"
-            "    }"
+            "    }\n\n"
+            "POPULATION SAMPLE (for hierarchical inference), gated by population_spread:\n"
+            "If population_spread='across_patient', you MUST ALSO return a 'samples' key\n"
+            "holding the across-patient population draw (a Pint Quantity array, one value per\n"
+            "patient-equivalent; 1-D for a scalar observable, or 2-D (n_patients, k) for a\n"
+            "joint/compositional/trajectory observable). Its empirical spread (IQR/SD) is the\n"
+            "population-variability (omega) signal, read directly with no parametric refit.\n"
+            "It MUST be the POPULATION sample (dispersion = genuine patient-to-patient\n"
+            "variability), not the sampling distribution of an estimator (e.g. a pooled-mean /\n"
+            "SEM draw). median_obs/ci95 are UNAFFECTED — they remain the center + measurement\n"
+            "uncertainty that non-hierarchical inference reads (and may legitimately differ\n"
+            "from the sample spread, e.g. a meta-analytic anchor CI vs a wider population).\n"
+            "If population_spread='center_only' (the default), do NOT return 'samples'."
         )
     )
+    population_spread: Literal["across_patient", "center_only"] = Field(
+        default="center_only",
+        description=(
+            "What this target's reported width MEANS, and whether it feeds the population-"
+            "variability (omega) signal in hierarchical inference. This is an OPT-IN "
+            "contract: a target contributes to omega only if it explicitly declares "
+            "'across_patient' AND returns a population `samples` array.\n\n"
+            "  - 'center_only' (default): the width is NOT genuine across-patient spread — "
+            "e.g. a pooled-mean / SEM confidence interval (shrinks with n), a transcript-vs-"
+            "protein method bound, or an assumed CV with no dispersion data. The target "
+            "still constrains the population CENTER via `median`, but is EXCLUDED from omega "
+            "conditioning. distribution_code must NOT return a `samples` key (that would "
+            "contradict the declaration).\n"
+            "  - 'across_patient': the width is real patient-to-patient variability, usable "
+            "as the omega signal. distribution_code MUST return a `samples` key holding the "
+            "across-patient population draw; the validator rejects the target otherwise. "
+            "The conservative default keeps a fabricated or sample-size-shrinking width from "
+            "silently polluting inferred diversity — you have to assert the spread is real."
+        ),
+    )
+    observed_distribution: Optional[ObservedDistribution] = Field(
+        default=None,
+        description=(
+            "Optional quantile-anchor representation of the reported distribution "
+            "(median plus whatever scale anchors the source gives: IQR edges, quartiles, "
+            "deciles, or a dense empirical quantile function). This is the general, "
+            "shape-preserving data layer shared with SubmodelTarget; the framework can "
+            "derive median/IQR/scale from it on demand. ADDITIVE and OPTIONAL — when "
+            "omitted, the target behaves exactly as before (median/ci95 from "
+            "distribution_code, omega gated by population_spread). Its `spread_source` "
+            "carries finer provenance than the two-valued population_spread; when both "
+            "are present they must agree on whether the width is genuine population spread "
+            "(see resolved_spread_source)."
+        ),
+    )
+
+    @property
+    def resolved_spread_source(self) -> SpreadSource:
+        """Unified spread provenance for downstream inference.
+
+        Prefers the richer ``observed_distribution.spread_source`` when present;
+        otherwise maps the legacy two-valued ``population_spread`` literal onto the
+        shared enum. Lets consumers read one field regardless of which layer the
+        target was authored against.
+        """
+        if self.observed_distribution is not None:
+            return self.observed_distribution.spread_source
+        return (
+            SpreadSource.ACROSS_PATIENT
+            if self.population_spread == "across_patient"
+            else SpreadSource.CENTER_ONLY
+        )
+
+    @model_validator(mode="after")
+    def validate_observed_distribution_consistency(self) -> "CalibrationTargetEstimates":
+        """When both spread declarations are present, they must not contradict.
+
+        ``observed_distribution`` is additive, so the legacy ``population_spread``
+        contract still governs the ``samples`` gate; this only forbids the two from
+        disagreeing about whether the reported width is genuine population spread.
+        """
+        od = self.observed_distribution
+        if od is None:
+            return self
+        feeds = od.feeds_population_spread
+        declared = self.population_spread == "across_patient"
+        if feeds != declared:
+            raise ValueError(
+                f"observed_distribution.spread_source='{od.spread_source.value}' "
+                f"({'feeds' if feeds else 'does not feed'} population spread) contradicts "
+                f"population_spread='{self.population_spread}'. Align them: a population "
+                f"spread source (across_patient / biological_experimental) requires "
+                f"population_spread='across_patient'; a center/technical source requires "
+                f"'center_only'."
+            )
+        return self
 
     @field_validator("sample_size")
     @classmethod
@@ -875,6 +988,10 @@ class CalibrationTarget(BaseModel):
         for const in self.observable.constants:
             _check_unit(const.units, f"observable.constants['{const.name}'].units")
 
+        # observable.auxiliary_parameters[*].units
+        for aux in self.observable.auxiliary_parameters:
+            _check_unit(aux.units, f"observable.auxiliary_parameters['{aux.name}'].units")
+
         # empirical_data.index_unit
         _check_unit(self.empirical_data.index_unit, "empirical_data.index_unit")
 
@@ -893,7 +1010,10 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def validate_observable_code_units(self, info: ValidationInfo) -> "CalibrationTarget":
         """
-        Validator: Check that observable code executes and returns correct units.
+        Validator: Check that observable code executes and returns a numeric
+        value/array. Pintless: the function operates on raw floats keyed off
+        canonical model species units (from model_structure.json); explicit
+        numerical conversions live inside the function body.
 
         Requires context:
             model_structure: ModelStructure instance or path to model_structure.json
@@ -902,12 +1022,10 @@ class CalibrationTarget(BaseModel):
         if type(self).__name__ == "IsolatedSystemTarget":
             return self
 
-        from maple.core.unit_registry import ureg
         from maple.core.calibration.code_validator import (
             CodeType,
             validate_code_block,
         )
-        import pint
 
         species_units = _resolve_species_units(info)
 
@@ -927,80 +1045,67 @@ class CalibrationTarget(BaseModel):
                     raise CodeSyntaxError(
                         f"observable.code has syntax error: {first_error.message}"
                     )
-                elif first_error.category == "signature":
-                    raise CodeStructureError(first_error.message)
                 else:
-                    raise CodeStructureError(first_error.message)
+                    # Signature mismatch likely means an old 4-arg
+                    # (time, species_dict, constants, ureg) signature; surface
+                    # a clear deprecation hint.
+                    raise CodeStructureError(
+                        first_error.message + "\n\nNote: as of 2026-05-10 observable.code uses the "
+                        "3-arg signature (time, species_dict, constants). "
+                        "Pint/ureg has been removed — operate on raw floats "
+                        "and use explicit numerical unit conversions."
+                    )
 
-        # Execute with mock data
+        # Execute with mock raw-float data
         try:
-            # Create mock time array
-            mock_time = np.linspace(0, 14, 100) * ureg.day
+            mock_time = np.linspace(0, 14, 100)
 
-            # Create mock species from actual model (with matching length)
-            mock_species = create_mock_species(species_units, ureg, n_timepoints=len(mock_time))
+            mock_species = _create_mock_species_raw(species_units, n_timepoints=len(mock_time))
 
-            # Build constants dict from observable.constants
-            constants = {}
+            constants: Dict[str, Any] = {}
             for const in self.observable.constants:
-                constants[const.name] = const.value * ureg(const.units)
+                constants[const.name] = float(const.value)
 
-            # Execute function
-            local_scope = {"ureg": ureg, "np": np}
+            # Inject mock auxiliary_parameters so observable.code can execute
+            # without KeyError (real values sampled at inference time).
+            for aux in self.observable.auxiliary_parameters:
+                constants[aux.name] = 1.0
+
+            local_scope: Dict[str, Any] = {"np": np}
             exec(self.observable.code, local_scope)
             compute_fn = local_scope["compute_observable"]
 
-            result = compute_fn(mock_time, mock_species, constants, ureg)
+            result_value = compute_fn(mock_time, mock_species, constants)
 
-            # Check result has units
-            if not hasattr(result, "units"):
-                raise MissingUnitsError("Function must return a Pint Quantity with units")
-
-            # Check dimensionality matches calibration target units
-            expected_quantity = 1.0 * ureg(self.empirical_data.units)
-            if result.dimensionality != expected_quantity.dimensionality:
-                raise DimensionalityMismatchError(
-                    f"Observable code unit dimensionality mismatch:\n"
-                    f"  Expected: {self.empirical_data.units} ({expected_quantity.dimensionality})\n"
-                    f"  Got: {result.units} ({result.dimensionality})"
+            if hasattr(result_value, "units") or hasattr(result_value, "magnitude"):
+                raise CodeStructureError(
+                    "observable.code must return a raw float / numpy array, "
+                    "not a Pint Quantity. Apply explicit numerical conversions "
+                    "inside the function body and document them in comments."
                 )
 
-            # Check result has same length as time series (no time indexing)
-            if hasattr(result, "magnitude"):
-                result_magnitude = result.magnitude
-                # Handle both scalar and array results
-                if np.isscalar(result_magnitude):
-                    raise ScalarReturnError(
-                        f"Observable code returned a scalar, but should return an array with same length as time series.\n"
-                        f"  Expected length: {len(mock_time)}\n"
-                        f"  Got: scalar value\n"
-                        f"Do NOT use time indexing (e.g., species[-1] or species[0]) in observable code.\n"
-                        f"Compute the observable over the entire time series."
-                    )
-                elif len(result_magnitude) != len(mock_time):
-                    raise ArrayLengthError(
-                        f"Observable code returned array with wrong length:\n"
-                        f"  Expected: {len(mock_time)} (same as time series)\n"
-                        f"  Got: {len(result_magnitude)}\n"
-                        f"Do NOT use time indexing. Compute over entire time series."
-                    )
+            arr = np.asarray(result_value)
+            if arr.ndim == 0:
+                raise ScalarReturnError(
+                    f"Observable code returned a scalar, but should return an array with same length as time series.\n"
+                    f"  Expected length: {len(mock_time)}\n"
+                    f"  Got: scalar value\n"
+                    f"Do NOT use time indexing (e.g., species[-1] or species[0]) in observable code.\n"
+                    f"Compute the observable over the entire time series."
+                )
+            if arr.shape[0] != len(mock_time):
+                raise ArrayLengthError(
+                    f"Observable code returned array with wrong length:\n"
+                    f"  Expected: {len(mock_time)} (same as time series)\n"
+                    f"  Got: {arr.shape[0]}\n"
+                    f"Do NOT use time indexing. Compute over entire time series."
+                )
 
-        except (
-            pint.DimensionalityError,
-            pint.UndefinedUnitError,
-            pint.OffsetUnitCalculusError,
-        ) as e:
-            # Wrap Pint unit errors in our custom exception
-            raise UnitConversionError(
-                f"Observable code has unit error: {str(e)}\n"
-                f"Check that all unit operations are dimensionally consistent."
-            ) from e
         except CalibrationTargetValidationError:
-            # Re-raise all our custom validation errors
             raise
         except Exception:
-            # Other errors might be from complex logic or missing species
-            # Be lenient - actual execution will catch these
+            # Other errors might be from complex logic or missing species —
+            # be lenient; runtime derive will surface them with full context.
             pass
 
         return self
@@ -1386,6 +1491,72 @@ class CalibrationTarget(BaseModel):
                         f"Computed ci95_upper[{i}] ({ci95_upper_mag[i]:.4g}) does not match "
                         f"reported CI95[{i}] upper ({ci_rep[1]:.4g}) within 10% tolerance"
                     )
+
+            # --- Population sample, gated by population_spread (hierarchical omega) ---
+            # 'across_patient' MUST return a 'samples' key (the population draw feeding
+            # omega); 'center_only' MUST NOT (a population sample would contradict the
+            # declaration that the width is center / measurement uncertainty).
+            population_spread = self.empirical_data.population_spread
+            has_samples = "samples" in result
+            if population_spread == "across_patient" and not has_samples:
+                raise ReturnStructureError(
+                    "population_spread='across_patient' requires distribution_code to "
+                    "return a 'samples' key — the across-patient population draw used as "
+                    "the omega signal in hierarchical inference. Return one, or set "
+                    "population_spread='center_only' if the width is not a real spread."
+                )
+            if population_spread == "center_only" and has_samples:
+                raise ReturnStructureError(
+                    "population_spread='center_only' must NOT return a 'samples' key: a "
+                    "population sample contradicts the declaration that the width is "
+                    "center / measurement uncertainty. Remove 'samples', or set "
+                    "population_spread='across_patient' if the spread is genuine."
+                )
+            if has_samples:
+                samples = result["samples"]
+                if not hasattr(samples, "units"):
+                    raise MissingUnitsError(
+                        "Result['samples'] must be a Pint Quantity array with units "
+                        "(the across-patient population draw, in the observable's units)."
+                    )
+                if samples.dimensionality != expected_quantity.dimensionality:
+                    raise DimensionalityMismatchError(
+                        f"samples unit dimensionality mismatch:\n"
+                        f"  Expected: {self.empirical_data.units} ({expected_quantity.dimensionality})\n"
+                        f"  Got: {samples.units} ({samples.dimensionality})"
+                    )
+                samp_mag = np.asarray(samples.to(self.empirical_data.units).magnitude, dtype=float)
+                # 1-D for a scalar observable, or 2-D (n_patients, k) for a joint /
+                # compositional / trajectory observable (margins consumed today; the
+                # joint is available when the stage conditions on a covariance).
+                if samp_mag.ndim not in (1, 2):
+                    raise ReturnStructureError(
+                        f"samples must be 1-D (scalar observable) or 2-D (n_patients, k); "
+                        f"got {samp_mag.ndim}-D with shape {samp_mag.shape}"
+                    )
+                finite = samp_mag[np.isfinite(samp_mag)]
+                if finite.size < 100:
+                    raise ReturnStructureError(
+                        f"samples has too few finite values ({finite.size}); need >=100 "
+                        f"for a stable empirical population spread"
+                    )
+                if np.std(finite) == 0:
+                    raise ReturnStructureError(
+                        "samples has zero variance (all identical) — not a usable population "
+                        "spread; set population_spread='center_only' if no real spread exists"
+                    )
+                # Tie the declared sample to the declared center: for a scalar (1-D)
+                # target its median must match the reported median within MC tolerance.
+                if samp_mag.ndim == 1 and n_expected == 1:
+                    samp_median = float(np.median(finite))
+                    if abs(samp_median - median_reported[0]) > ci95_rel_tol * abs(
+                        median_reported[0]
+                    ):
+                        raise ComputedValueMismatchError(
+                            f"median(samples) ({samp_median:.4g}) does not match reported "
+                            f"median ({median_reported[0]:.4g}) within 10% — the declared "
+                            f"'samples' array must be the population draw the median/CI summarize"
+                        )
 
         except CalibrationTargetValidationError:
             # Re-raise all our custom validation errors

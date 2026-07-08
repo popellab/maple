@@ -20,6 +20,7 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, BinaryContent, WebSearchTool
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from maple.core.calibration.submodel_target import SubmodelTarget
 from maple.core.calibration.calibration_target_models import CalibrationTarget
@@ -753,8 +754,14 @@ def _zotero_pdf_path(doi: str, zotero_dir: Path) -> Path | None:
         LIMIT 1
     """
 
+    # immutable=1 (not mode=ro): read the DB file directly, ignoring locks.
+    # Zotero 7+ holds an aggressive WAL lock while running, so a mode=ro
+    # connection stalls on the busy-timeout and then raises "database is
+    # locked" — silently caught below and misreported as NOT FOUND. immutable
+    # reads the bytes without acquiring a lock (a torn/stale snapshot is
+    # acceptable for a "does this DOI have a stored PDF" check).
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
         row = conn.execute(query, (doi,)).fetchone()
         conn.close()
     except sqlite3.Error:
@@ -900,8 +907,50 @@ def collect_missing_pdfs(
                 print(f"    https://doi.org/{c['doi']}")
 
 
-def make_model(model_name: str) -> OpenAIResponsesModel:
-    return OpenAIResponsesModel(model_name)
+#: Per-HTTP-attempt read timeout for the OpenAI client, in seconds.
+#: gpt-5+ with high reasoning effort + tool-call validation feedback can
+#: occasionally enter a server-side reasoning rollout that exceeds the
+#: openai-python default of 600 s. When that happens, openai-python's two
+#: internal retries each silently re-hit the same hang, so a single
+#: ``Agent.run()`` call burns ~30 minutes (3 attempts × 600 s) before the
+#: ``APITimeoutError`` propagates as ``ModelAPIError("Request timed out.")``.
+#: A 5-minute cap aborts those wedges in the same wall-clock window where
+#: a healthy gpt-5.5 high-reasoning call returns (typically 30-150 s),
+#: making real failures observable to the caller in minutes instead of
+#: half-hours. See pydantic-ai #3268 for the underlying long-rollout
+#: motivation (background mode is the proper long-term fix).
+DEFAULT_OPENAI_HTTP_TIMEOUT_S: float = 300.0
+
+#: openai-python's default ``max_retries`` is 2, which compounds the wedge
+#: above (3 HTTP attempts per logical call). pydantic-ai already has its
+#: own structural retry loop (validation feedback) above the transport
+#: layer, so layering openai-python's blind transport retries on top
+#: gains nothing and just multiplies the wall-clock cost of a hang.
+DEFAULT_OPENAI_MAX_RETRIES: int = 0
+
+
+def make_model(
+    model_name: str,
+    *,
+    http_timeout_s: float = DEFAULT_OPENAI_HTTP_TIMEOUT_S,
+    openai_max_retries: int = DEFAULT_OPENAI_MAX_RETRIES,
+) -> OpenAIResponsesModel:
+    """Build an ``OpenAIResponsesModel`` with fail-fast HTTP transport settings.
+
+    The defaults override openai-python's stock ``timeout=600`` /
+    ``max_retries=2``, which together cap a single hung call at ~30 minutes
+    of silent waiting before the ``APITimeoutError`` surfaces. With these
+    defaults, a hung call aborts after ``http_timeout_s`` (default 300 s)
+    on the first try and propagates immediately to pydantic-ai's
+    structural retry layer.
+    """
+    import openai
+
+    client = openai.AsyncOpenAI(
+        timeout=http_timeout_s,
+        max_retries=openai_max_retries,
+    )
+    return OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
 
 
 def make_settings() -> OpenAIResponsesModelSettings:
@@ -1061,6 +1110,11 @@ For each paper, determine:
    by reported EC50). If text/tables already report the key values with uncertainty, the
    figure is redundant — list it as a data source but do NOT flag it for digitization.
    When you do flag digitization, explain the specific added value in `digitization_justification`.
+   **Population spread is high-value.** A figure with individual donor/animal points
+   (scatter or box-with-points) yields genuine across-unit biological spread plus a
+   biological n — the population-variability signal hierarchical inference needs, which a
+   reported mean +/- SEM cannot give. Prefer digitizing these, and note whether the points
+   are biological units (donors/animals) or technical replicates, and the biological n.
 6. **What forward model would fit?** (exponential_growth, first_order_decay, algebraic, direct_fit, etc.)
 7. **What is this paper's role?** Assign each paper a `role`:
    - `standalone`: contains all data needed for a complete derivation by itself
@@ -1082,6 +1136,419 @@ that are **required** for this plan (source_tag/location format, e.g., "Obar2008
 
 If there is a viable alternative plan (e.g., a different standalone paper, or a different
 multi-paper combination), include it in `alternative_plans`.
+"""
+
+
+def _build_scenario_section(t: dict) -> str:
+    """Render the scenario block for a cal-mode prompt.
+
+    Reads two optional fields off the target dict:
+      - ``t['scenario']`` — short scenario name (used as a hint).
+      - ``t['scenario_yaml']`` — full scenario YAML contents as a string,
+        pre-resolved by the caller. This is the authoritative description
+        of the QSP trajectory; the prompts instruct the agent to derive
+        required data context from it rather than from hard-coded scenario
+        names. When absent, the section degrades to the bucket-level checks.
+
+    Caller responsibility (e.g., pdac-build's staged_extraction.py): resolve
+    the scenario name to a YAML string before invoking the stage. The
+    pipeline does not assume any directory layout for scenario YAMLs.
+    """
+    scenario = t.get("scenario") or ""
+    scenario_yaml = t.get("scenario_yaml") or ""
+    if not scenario and not scenario_yaml:
+        return ""
+    parts = ["## Scenario"]
+    if scenario:
+        parts.append(f"**Scenario name:** `{scenario}`")
+    if scenario_yaml:
+        parts.append(
+            "**Scenario YAML** (the authoritative QSP trajectory description "
+            "for this target — initial state, interventions, duration, "
+            "observable readout timepoint):"
+        )
+        parts.append("```yaml")
+        parts.append(scenario_yaml.rstrip())
+        parts.append("```")
+    else:
+        parts.append("_No scenario YAML provided; fall back to bucket-level checks._")
+    return "\n\n".join(parts)
+
+
+def _format_auxiliary_groups_section(auxiliary_config_path: Path | None) -> str:
+    """Render the available compartment/measurement-bridge groups.
+
+    Returned text is injected into cal-mode prompts (lit_search, assess,
+    plan_review) so each stage knows which compartment / cross-species /
+    measurement-scale gaps are pre-authorized as acceptable via the
+    ``observable.auxiliary_parameters`` mechanism (qsp-inference side). When
+    no config is supplied, the section explicitly tells the agent that no
+    bridging is available — preserving the strict compartment-match rules.
+    """
+    fallback = (
+        "## Available Compartment / Measurement Bridges\n\n"
+        "No auxiliary parameter groups are declared for this run. "
+        "Compartment mismatches (e.g., serum vs tumor tissue) MUST be "
+        "rejected — there is no bridging mechanism available."
+    )
+    if auxiliary_config_path is None:
+        return fallback
+    p = Path(auxiliary_config_path)
+    if not p.exists():
+        return fallback
+    import yaml as _yaml
+
+    with open(p) as _f:
+        _data = _yaml.safe_load(_f) or {}
+    _groups = _data.get("groups", {}) or {}
+    if not _groups:
+        return fallback
+    lines = [
+        "## Available Compartment / Measurement Bridges",
+        "",
+        "The following auxiliary parameter groups are declared in "
+        "``auxiliary_config.yaml``. Sources whose compartment / measurement "
+        "scale is bridged by one of these groups are ACCEPTABLE — the "
+        "bridging factor will be inferred jointly with QSP parameters at "
+        "calibration time via ``observable.auxiliary_parameters``.",
+        "",
+    ]
+    for _name, _spec in _groups.items():
+        _desc = (_spec.get("description") or "").strip().replace("\n", " ")
+        _bp = _spec.get("base_prior") or {}
+        _dist = _bp.get("distribution", "?")
+        _mu = _bp.get("mu")
+        _sigma = _bp.get("sigma")
+        _tau = _spec.get("member_deviation_sigma")
+        _mu_str = f"{float(_mu):.4g}" if _mu is not None else "?"
+        _sigma_str = f"{float(_sigma):.4g}" if _sigma is not None else "?"
+        _tau_str = f"{float(_tau):.4g}" if _tau is not None else "?"
+        lines.append(
+            f"- `{_name}` ({_dist} base, mu={_mu_str}, sigma={_sigma_str}; "
+            f"member_deviation_sigma={_tau_str})\n  - {_desc}"
+        )
+    lines.append("")
+    lines.append(
+        "When a paper's measurement compartment / scale differs from the "
+        "model species but a matching auxiliary group exists, treat the "
+        "paper as ACCEPTABLE. The cal-target authoring stage will declare "
+        "the relevant ``observable.auxiliary_parameters`` member; the "
+        "inference workflow consumes the bridge."
+    )
+    return "\n".join(lines)
+
+
+LIT_SEARCH_PROMPT_CAL = """\
+You are a scientific literature search assistant for quantitative systems pharmacology (QSP) model calibration.
+
+## Task
+
+Find peer-reviewed papers reporting **direct quantitative observations** of a model species
+(observable) that will be used to calibrate the QSP model end-to-end. This is a
+*calibration target*, not a parameter-derivation submodel target — the goal is to
+find a measurement of the observable in the right indication, compartment,
+treatment context, and disease stage, NOT to infer a rate constant from a
+mechanistic in-vitro experiment.
+
+**Parameters / observable description:** {parameters}
+
+## Model Context
+
+{model_context}
+
+## Parameter Context (from model structure)
+
+{parameter_context}
+
+{scenario_section}
+
+{notes_section}
+
+{auxiliary_groups_section}
+
+## Critical: Match the model's observation context, not the parameter's mechanism
+
+The notes block above (and the targets CSV) carry the calibration context fields
+that MUST match — typically:
+
+- `model_indication` (e.g., PDAC, NSCLC) — strict-match preferred; non-target
+  indication is acceptable only as a last resort and must be flagged for an
+  explicit translation_sigma.
+- `model_compartment` (e.g., V_T tumor tissue, V_C central/serum) — by default,
+  compartment mismatches (e.g., a tumor-tissue observable satisfied by a
+  serum/plasma measurement) are REJECTED. The exception is when a matching
+  auxiliary parameter group is declared in the "Available Compartment /
+  Measurement Bridges" section below — those gaps are bridged by an
+  auxiliary parameter inferred jointly at calibration time, so sources in
+  the bridged compartment are ACCEPTABLE. Reject compartment mismatches
+  only when no matching bridge group is available.
+- `model_treatment_history` (e.g., treatment-naive at diagnosis, post-neoadjuvant)
+  — a measurement at diagnosis is NOT satisfied by a post-treatment biopsy.
+- `model_stage_burden` (e.g., resectable vs metastatic) — match where possible.
+- `model_system` (human vs mouse vs cell line) — for cal targets, **human is
+  strongly preferred**; mouse is acceptable only when no human source exists,
+  with explicit translation_sigma.
+
+Search for **observations of the species in the matched bucket**. A "tumor-tissue
+TGFβ concentration in human PDAC at diagnosis" is satisfied by a homogenate /
+lysate / tissue ELISA in resected human PDAC specimens — NOT by a KPC mouse
+model, NOT by serum, NOT by an in-vitro stimulation experiment.
+
+## Scenario semantics (CRITICAL when present)
+
+The `scenario` field above (when set) anchors the data context to a specific
+QSP simulation trajectory. The scenario block below — when provided — is the
+authoritative specification of what trajectory the simulator runs for this
+target. It defines the initial state, any interventions/dosing, the simulated
+duration, and the timepoint at which the observable is evaluated. **Use it to
+determine what experimental context the paper must report.**
+
+Apply these scenario-derived rules in addition to the bucket-level checks
+above:
+
+- If the scenario describes a **pre-treatment / treatment-naive baseline**
+  (no on-study interventions before the observable is read out), reject mixed
+  cohorts that include any post-neoadjuvant, post-chemo, post-radiation, or
+  post-immunotherapy samples — even when the post-treatment fraction is
+  small (e.g., 10/36). The aggregate statistic from a mixed cohort is NOT a
+  baseline observation. If the paper reports the treatment-naive subset
+  separately, that subset is acceptable.
+
+- If the scenario describes an **on-treatment timepoint** (an intervention
+  precedes the observable readout), the paper must report data at that
+  treatment context and timepoint. Pre-treatment baselines and post-completion
+  follow-up samples fail the match. Different regimens fail the match unless
+  the target's notes authorize the substitution.
+
+- If the scenario describes **longitudinal disease progression**, the paper's
+  reported timepoint must be anchored to the scenario's trajectory.
+
+- If no scenario block is provided, fall back to the bucket-level checks above.
+
+When the scenario disagrees with `model_treatment_history` or
+`model_stage_burden`, the scenario takes precedence — it encodes the
+simulator state at which the observable will actually be evaluated.
+
+## Requirements
+
+1. Prefer **clinical / surgical / autopsy specimens** in the right indication,
+   compartment, and treatment-history bucket. Cohort studies (n>10) preferred
+   over case reports.
+2. The reported quantity must be **directly comparable** to the model species:
+   tumor tissue concentration (pg/mL homogenate, pg/mg protein, or nM tissue),
+   absolute cell density (cells/mm^2 or cells/mg), absolute concentration in
+   serum, etc. Reject IHC scores or relative RNA expression unless the notes
+   explicitly authorize them.
+3. Look for papers reporting **summary statistics** (mean ± SD, median + IQR,
+   per-patient values) with sample size.
+4. Avoid reviews, meta-analyses, and computational-only papers.
+5. **Every value must be traceable** to text, tables, or figure legends in the
+   primary paper (not buried in inaccessible supplementary material).
+
+## Single-source observations are the norm
+
+A calibration target is typically a single direct measurement, not a multi-paper
+algebraic derivation. Do NOT propose multi-paper derivations or joint-parameter
+constraining for cal-mode targets unless the notes explicitly request it. If
+no single paper provides a direct observation, prefer to return an empty plan
+and let plan-review trigger a search rerun, rather than constructing a synthetic
+derivation from indirect proxies.
+
+## Important
+
+If no paper meets the indication/compartment/treatment-history match, say so
+explicitly in `unmappable_notes`. It is better to flag an unmappable target
+than to anchor on a proxy. The downstream pipeline will rerun the search with
+revised guidance.
+
+Begin with a brief analysis of what observation context the target requires
+(indication, compartment, treatment history, stage), in the
+`parameters_analyzed` field. Then return 3-5 candidates that match that
+context.
+
+## CRITICAL
+
+You MUST perform web searches BEFORE returning your structured output. Do NOT return
+an empty candidates list or a placeholder response. Your structured output is final —
+there is no second chance to populate it. If your first searches don't find results,
+try different search terms (synonyms, related concepts, broader queries). Only return
+an empty candidates list if you have genuinely exhausted search strategies and confirmed
+that no suitable observation in the matched indication/compartment/treatment-history
+bucket exists in the literature.
+"""
+
+
+ASSESS_PROMPT_CAL = """\
+You are a scientific data assessment assistant for QSP model calibration.
+
+## Task
+
+Assess whether the attached paper(s) contain a **direct observation** of the
+model species suitable as a calibration target for these parameter(s):
+
+**Parameters / observable description:** {parameters}
+**Cancer type:** {cancer_type}
+{scenario_section}
+{notes_section}
+
+{auxiliary_groups_section}
+
+## Model Context
+
+{model_context}
+
+## Parameter Context
+
+{parameter_context}
+
+{prior_context_section}
+
+{paper_text_section}
+
+## Instructions
+
+For each paper, determine:
+
+1. **Does it report a direct observation of the model species?** (absolute
+   concentration, density, count — not IHC score, not relative expression,
+   not in-vitro stimulation response).
+2. **Does the observation context match the model bucket?** Check, in order:
+   - **`scenario` (when set)** — the dominant filter. The scenario block
+     (when provided alongside the target) describes the QSP trajectory and
+     the timepoint at which the observable is evaluated. Use it to derive
+     the required data context (treatment-naive vs on-treatment, timepoint,
+     regimen). Reject papers whose cohorts do not match this context. If
+     the paper's cohort is mixed and the matching subset is not reported
+     separately, the paper fails the scenario match. The scenario takes
+     precedence over `model_treatment_history` and `model_stage_burden`
+     when they conflict.
+   - `model_indication` — strict-match preferred. Non-target indication is a
+     proxy and must be flagged.
+   - `model_compartment` — by default, a tumor-tissue observable is NOT
+     satisfied by a serum/plasma measurement. The exception is when a
+     matching auxiliary parameter group is declared in the "Available
+     Compartment / Measurement Bridges" section below — those gaps are
+     bridged at calibration time and serum sources for tumor observables
+     are then ACCEPTABLE. Reject compartment mismatches only when no
+     matching bridge group is available.
+   - `model_treatment_history` — at-diagnosis is not satisfied by a
+     post-treatment biopsy.
+   - `model_stage_burden` — match where possible.
+   - `model_system` — human strongly preferred for cal targets; mouse only
+     when no human source exists.
+3. **Where is the data?** (table, text, or figure — be specific).
+4. **Which specific values within the paper should be used?** Papers often
+   contain multiple cohorts or conditions. Identify the rows/columns/conditions
+   that match the model bucket. Do NOT use the "prior median sanity check" to
+   pick between mismatched options — pick on indication/compartment/treatment
+   match first, then accept whatever value falls out, even if 100x from the
+   simulator's current baseline. If all options are mismatched, flag the paper
+   as proxy-only and recommend rerun_lit_search.
+5. **Does any figure data warrant digitization?** Only flag `needs_digitization`
+   when the figure contains data that is **not available** in text or tables AND
+   digitizing would provide meaningful added value (e.g., individual data points
+   vs a reported mean). A figure with individual PATIENT points is especially
+   valuable: it yields genuine across-patient spread and a biological n — the
+   population-variability signal for hierarchical inference — which a reported
+   mean +/- SEM or CI cannot. Note the patient n when flagging such a figure.
+6. **What is this paper's role?** For cal-mode, the typical role is `standalone`
+   (single direct observation). Multi-paper derivations and proxy-with-translation
+   are exceptions, used only when the notes explicitly authorize them.
+
+## Extraction Plan
+
+After assessing all papers, construct an `extraction_plan`: the **single best
+paper** providing a direct observation in the matched bucket. Prefer:
+
+- A paper in the target indication, compartment, and treatment-history bucket
+  over a larger cohort in a mismatched bucket.
+- Text/table values over digitization.
+- A standalone direct observation over any multi-paper combination.
+
+If no paper matches the bucket, set the plan papers to empty and explain the
+mismatch in the strategy field — plan-review will then trigger a search rerun.
+Include alternative_plans only if there is a genuinely different but viable
+direct-observation paper.
+"""
+
+
+PLAN_REVIEW_PROMPT_CAL = """\
+You are reviewing extraction plans for QSP model **calibration targets** (direct
+observations of model species, used to fit the full simulator end-to-end). This
+is NOT a submodel parameter derivation — the standard for acceptance is
+indication/compartment/treatment-context match, not mechanistic plausibility.
+
+## Task
+
+For each target below, evaluate whether the primary extraction plan is the best
+option, or whether an alternative plan or a lit search rerun would be better.
+Consider, in priority order:
+
+1. **Scenario match (when scenario is set)**: The target's `scenario` field
+   anchors the data context to a QSP simulation trajectory and is the
+   dominant filter. The scenario block (when included with the target)
+   describes the trajectory in detail — initial state, interventions,
+   duration, and observable readout timepoint. Use it to determine the
+   required data context for each target.
+   - If the scenario describes a pre-treatment / treatment-naive baseline,
+     a paper whose cohort includes ANY post-treatment samples (even a
+     minority subset, e.g., 10 of 36) FAILS the scenario match unless the
+     paper reports the treatment-naive subset separately. Recommend
+     `rerun_lit_search`.
+   - If the scenario describes an on-treatment timepoint, the paper must
+     report data at the matching regimen and timepoint. Pre-treatment
+     baselines and different regimens fail the match unless the target's
+     notes authorize the substitution.
+   - If the scenario describes longitudinal disease progression, the
+     paper's reported timepoint must be anchored to the trajectory.
+   - When the scenario disagrees with `model_treatment_history` or
+     `model_stage_burden`, the scenario takes precedence.
+2. **Indication match**: Does the paper report data in the target's
+   `model_indication`? Indication mismatches (e.g., NSCLC paper for a PDAC
+   target) are first-class reasons to recommend `rerun_lit_search`, not
+   `proceed`. PDAC-specific data is preferred and the "larger non-PDAC cohort
+   beats tiny PDAC cohort" trade-off does NOT apply for cal-mode observables —
+   indication mismatch dominates uncertainty.
+3. **Compartment match**: by default, tumor-tissue observable + serum/plasma
+   source = reject and recommend rerun_lit_search. The exception is when a
+   matching auxiliary parameter group is declared in the "Available
+   Compartment / Measurement Bridges" section below — those gaps are
+   bridged via ``observable.auxiliary_parameters`` at calibration time, so
+   serum sources for tumor observables are ACCEPTABLE and should usually
+   recommend ``proceed`` (assuming other dimensions match). Reject
+   compartment mismatches only when no matching bridge group is available.
+4. **Treatment-history / stage match**: At-diagnosis + post-neoadjuvant biopsy
+   = reject. Recommend rerun_lit_search.
+5. **Species / system**: Human preferred. Mouse-PDAC for a human-PDAC observable
+   is acceptable only when explicitly authorized by the target's notes column,
+   AND only after `rerun_lit_search` has been tried at least once with stricter
+   guidance.
+6. **Direct vs proxy**: Reject IHC scores, relative RNA expression, or
+   in-vitro-stimulation values when an absolute concentration / density exists
+   in another paper.
+7. **Sample size**: n=2 case reports are weak; prefer cohort studies (n>10)
+   when both are in the matched bucket.
+8. **Digitization burden**: Lower is better, but never trade an indication
+   match for fewer digitizations.
+9. **Empty plans / proxy-only plans / scenario-mismatched plans**: If the
+   primary plan has no papers, OR has only one paper that is mismatched on
+   scenario/indication/compartment/treatment, recommend `rerun_lit_search`
+   with concrete suggestions for what to search differently (specific search
+   terms, data types, indications, treatment context).
+
+## Targets
+
+{targets_json}
+
+{auxiliary_groups_section}
+
+## Digitization Summary
+
+{digitization_summary}
+
+For each target, provide a verdict. Be specific about WHY you're recommending a
+switch or rerun — what bucket dimension is mismatched, and what search terms
+would surface a better source.
 """
 
 
@@ -1244,6 +1711,7 @@ def build_complete_prompt_cal(
     model_structure_path: Path,
     assessment_json: str,
     digitized_data_section: str,
+    auxiliary_groups: list[dict] | None = None,
 ) -> str:
     """Build stage 3 prompt for CalibrationTarget extraction.
 
@@ -1295,6 +1763,7 @@ def build_complete_prompt_cal(
         model_species_with_units=species_text,
         used_primary_studies=t.get("used_primary_studies", ""),
         primary_source_title=t.get("primary_source_title", ""),
+        auxiliary_groups=auxiliary_groups,
     )
 
     extra = (
@@ -1423,8 +1892,16 @@ async def run_plan_review(
     work_dir: Path,
     plan_review_agent: Agent,
     targets_csv: Path,
+    target_kind: TargetKind = "submodel",
+    auxiliary_config_path: Path | None = None,
 ) -> PlanReviewResult | None:
-    """Stage 2b: Review all extraction plans and recommend actions."""
+    """Stage 2b: Review all extraction plans and recommend actions.
+
+    ``auxiliary_config_path`` is consumed only when ``target_kind == 'cal'``
+    and is surfaced in the prompt's "Available Compartment / Measurement
+    Bridges" section so the reviewer doesn't reject a serum-for-tumor plan
+    that the bridging mechanism makes acceptable.
+    """
     review_path = work_dir / "plan_review.json"
 
     if review_path.exists():
@@ -1444,6 +1921,14 @@ async def run_plan_review(
         summary = {
             "target_id": t["target_id"],
             "parameters": t["parameters"],
+            "scenario": t.get("scenario") or "",
+            "scenario_yaml": t.get("scenario_yaml") or "",
+            # Per-target authoring notes from the targets CSV (e.g., loosened
+            # bucket directives that authorize serum sources for tumor
+            # observables when bridged by an auxiliary group). Surfaced so
+            # plan-review reads the same authoring intent that lit-search /
+            # assess saw at earlier stages.
+            "notes": t.get("notes", ""),
             "extraction_plan": assessment.get("extraction_plan", {}),
             "alternative_plans": assessment.get("alternative_plans", []),
             "overall_notes": assessment.get("overall_notes", ""),
@@ -1479,10 +1964,16 @@ async def run_plan_review(
     dig_summary_path = work_dir / "digitization_summary.md"
     dig_summary = dig_summary_path.read_text() if dig_summary_path.exists() else ""
 
-    prompt = PLAN_REVIEW_PROMPT.format(
+    prompt_template = PLAN_REVIEW_PROMPT_CAL if target_kind == "cal" else PLAN_REVIEW_PROMPT
+    fmt_kwargs = dict(
         targets_json=json.dumps(target_summaries, indent=2),
         digitization_summary=dig_summary,
     )
+    if target_kind == "cal":
+        fmt_kwargs["auxiliary_groups_section"] = _format_auxiliary_groups_section(
+            auxiliary_config_path
+        )
+    prompt = prompt_template.format(**fmt_kwargs)
 
     result = await plan_review_agent.run(prompt)
     review = result.output
@@ -1570,10 +2061,27 @@ def apply_lit_search_reruns(reviews: list, work_dir: Path, targets_csv: Path) ->
 
 
 async def run_lit_search(
-    t: dict, *, lit_search_agent: Agent, model_context: str, model_structure_path: Path
+    t: dict,
+    *,
+    lit_search_agent: Agent,
+    model_context: str,
+    model_structure_path: Path,
+    target_kind: TargetKind = "submodel",
+    auxiliary_config_path: Path | None = None,
 ) -> dict:
-    """Stage 1: Literature search for one target."""
+    """Stage 1: Literature search for one target.
+
+    ``auxiliary_config_path`` is consumed only when ``target_kind == 'cal'``
+    and is rendered into the prompt's "Available Compartment / Measurement
+    Bridges" section so the LLM knows which compartment / cross-species /
+    measurement-scale gaps are pre-authorized as acceptable via the
+    auxiliary-parameter mechanism. Submodel mode ignores it.
+    """
     target_dir = t["dir"]
+    # Defensive: target dir is created at targets-list build time, but a user
+    # may have cleared the cache between then and now. Recreate so the agent's
+    # lit_search_results.json write doesn't fail after a 5-min agent call.
+    target_dir.mkdir(parents=True, exist_ok=True)
     lit_search_path = target_dir / "lit_search_results.json"
 
     if lit_search_path.exists():
@@ -1583,13 +2091,21 @@ async def run_lit_search(
 
     parameter_context = build_parameter_context(t["parameters"], model_structure_path)
     notes_section = f"## Additional Notes\n\n{t['notes']}" if t["notes"] else ""
+    scenario_section = _build_scenario_section(t)
 
-    prompt = LIT_SEARCH_PROMPT.format(
+    prompt_template = LIT_SEARCH_PROMPT_CAL if target_kind == "cal" else LIT_SEARCH_PROMPT
+    fmt_kwargs = dict(
         parameters=t["parameters"],
         model_context=model_context,
         parameter_context=parameter_context,
         notes_section=notes_section,
     )
+    if target_kind == "cal":
+        fmt_kwargs["scenario_section"] = scenario_section
+        fmt_kwargs["auxiliary_groups_section"] = _format_auxiliary_groups_section(
+            auxiliary_config_path
+        )
+    prompt = prompt_template.format(**fmt_kwargs)
 
     result = await lit_search_agent.run(prompt)
     result_dict = result.output.model_dump()
@@ -1609,9 +2125,18 @@ async def run_assess(
     model_context: str,
     model_structure_path: Path,
     priors_csv: Path,
+    target_kind: TargetKind = "submodel",
+    auxiliary_config_path: Path | None = None,
 ) -> dict | None:
-    """Stage 2: Assess papers for one target."""
+    """Stage 2: Assess papers for one target.
+
+    ``auxiliary_config_path`` is consumed only for ``target_kind == 'cal'`` —
+    it surfaces the available compartment / measurement-bridge groups so
+    the assessor doesn't pre-reject a serum source that the cal-target
+    extractor will later bridge via ``observable.auxiliary_parameters``.
+    """
     target_dir = t["dir"]
+    target_dir.mkdir(parents=True, exist_ok=True)
     assessment_path = target_dir / "assessment.json"
 
     if assessment_path.exists():
@@ -1632,8 +2157,10 @@ async def run_assess(
 
     notes = t.get("notes", "")
     notes_section = f"**Extraction guidance:** {notes}" if notes else ""
+    scenario_section = _build_scenario_section(t)
 
-    prompt = ASSESS_PROMPT.format(
+    prompt_template = ASSESS_PROMPT_CAL if target_kind == "cal" else ASSESS_PROMPT
+    fmt_kwargs = dict(
         parameters=t["parameters"],
         cancer_type=t["cancer_type"],
         model_context=model_context,
@@ -1642,6 +2169,12 @@ async def run_assess(
         paper_text_section=paper_text_section,
         notes_section=notes_section,
     )
+    if target_kind == "cal":
+        fmt_kwargs["scenario_section"] = scenario_section
+        fmt_kwargs["auxiliary_groups_section"] = _format_auxiliary_groups_section(
+            auxiliary_config_path
+        )
+    prompt = prompt_template.format(**fmt_kwargs)
 
     user_prompt: list = list(file_parts) + [prompt]
     result = await assess_agent.run(user_prompt)
@@ -1663,9 +2196,17 @@ async def run_complete(
     priors_csv: Path,
     work_dir: Path,
     target_kind: TargetKind = "submodel",
+    auxiliary_config_path: Path | None = None,
 ) -> Path | None:
-    """Stage 3: Assemble target YAML (SubmodelTarget or CalibrationTarget)."""
+    """Stage 3: Assemble target YAML (SubmodelTarget or CalibrationTarget).
+
+    ``auxiliary_config_path`` is optional and only consumed for ``target_kind=="cal"``.
+    When provided and the file exists, the loaded group declarations are surfaced
+    in the cal-target prompt so the LLM knows which compartment / cross-species /
+    measurement-scale bridges are available via ``observable.auxiliary_parameters``.
+    """
     target_dir = t["dir"]
+    target_dir.mkdir(parents=True, exist_ok=True)
     output_file = target_dir / f"{t['target_id']}_{t['cancer_type']}_deriv001.yaml"
     assessment_path = target_dir / "assessment.json"
 
@@ -1759,12 +2300,33 @@ async def run_complete(
         paper_text_section = "\n## Paper Content (text)\n\n" + "\n\n".join(text_parts)
 
     if target_kind == "cal":
+        # Load auxiliary group declarations if a config was supplied.
+        # Loaded fresh per-target so the agent loop reflects edits to
+        # auxiliary_config.yaml between targets without restarting.
+        auxiliary_groups: list[dict] | None = None
+        if auxiliary_config_path is not None and Path(auxiliary_config_path).exists():
+            import yaml as _yaml
+
+            with open(auxiliary_config_path) as _f:
+                _aux_data = _yaml.safe_load(_f) or {}
+            _groups = _aux_data.get("groups", {}) or {}
+            auxiliary_groups = [
+                {
+                    "name": _name,
+                    "description": _spec.get("description", ""),
+                    "base_prior": _spec.get("base_prior", {}),
+                    "member_deviation_sigma": _spec.get("member_deviation_sigma"),
+                }
+                for _name, _spec in _groups.items()
+            ]
+
         prompt = build_complete_prompt_cal(
             t=t,
             model_context=model_context,
             model_structure_path=model_structure_path,
             assessment_json=json.dumps(assessment_data, indent=2),
             digitized_data_section=digitized_section + paper_text_section,
+            auxiliary_groups=auxiliary_groups,
         )
         if plan_review_reason:
             prompt += f"\n\n## Plan Review Note\n\n{plan_review_reason}\n"
@@ -1912,6 +2474,7 @@ def run_validate(
     state ∈ {'pass', 'fail', 'skip_missing', 'skip_promoted'}.
     """
     target_dir = t["dir"]
+    target_dir.mkdir(parents=True, exist_ok=True)
     output_file = target_dir / f"{t['target_id']}_{t['cancer_type']}_deriv001.yaml"
 
     if not output_file.exists():
@@ -2041,6 +2604,7 @@ def run_validate_all(
 def write_assessment_report(t: dict, assessment: dict) -> None:
     """Write assessment.md and digitization READMEs for one target."""
     target_dir = t["dir"]
+    target_dir.mkdir(parents=True, exist_ok=True)
     lines = [f"# Paper Assessment: {t['target_id']}\n"]
 
     # Extraction plan

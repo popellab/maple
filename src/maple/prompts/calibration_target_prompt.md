@@ -53,6 +53,7 @@ The `experimental_context` block is REQUIRED — it documents where the data cam
 - System (clinical.resection vs clinical.biopsy) - document timing differences
 - Treatment history (treatment_naive vs post-treatment) - document and justify
 - Measurement modality (IHC vs flow cytometry) - if measuring same quantity
+- **Compartment mismatch (e.g., serum vs tumor tissue)** - acceptable ONLY when a matching auxiliary-parameter group is available (see "Available Auxiliary Parameter Groups" below). The bridging factor must be declared via `observable.auxiliary_parameters` and applied in `observable.code` so the inference absorbs the bridging uncertainty. If no matching group is declared for the relevant bridge, treat the compartment mismatch as a strict-rejection criterion.
 
 **If strict requirements cannot be met:**
 - Do NOT fabricate or substitute incompatible data
@@ -178,6 +179,44 @@ observable:
     rationale: "ORR per RECIST 1.1 (≥30% decrease in longest diameter)"
 ```
 
+### Population Spread (across-patient variability)
+
+For hierarchical / virtual-patient inference, a target declares whether its reported width is genuine patient-to-patient spread (usable as the population-spread / omega signal) or just uncertainty on the mean. Default is `center_only` (excluded from omega); opt in explicitly. Two interoperable ways to declare it:
+
+1. **`population_spread` + a `samples` array.** Set `empirical_data.population_spread: across_patient` and have `distribution_code` ALSO return a `samples` key — the across-patient population draw (one value per patient-equivalent); its empirical spread is the omega signal. Keep the default `center_only` (and do NOT return `samples`) when the width is a pooled-mean / SEM CI that shrinks with n. `median_obs` / `ci95` are unaffected either way.
+
+2. **`observed_distribution`** (general representation, shared with submodel targets). Author it in whichever form the paper reports — **prefer `moments`** (mean +/- SD, median +/- IQR, CV, CI); the framework expands it to quartiles, so do not hand-convert:
+
+```yaml
+empirical_data:
+  population_spread: across_patient
+  observed_distribution:
+    moments:
+      center: 17
+      center_type: median
+      scale: 21            # full IQR here
+      scale_type: iqr      # sd | sem | cv | iqr | ci95_halfwidth
+      shape: lognormal     # lognormal | normal
+    spread_source: across_patient       # or center_only (SEM/CI on the mean; default)
+    n_biological: 40
+    experimental_unit_type: biological
+```
+
+Use the `quantiles` form when the paper gives quartiles/percentiles/samples directly:
+
+```yaml
+  observed_distribution:
+    quantiles:
+      - {p: 0.25, value: 9}
+      - {p: 0.5,  value: 17}
+      - {p: 0.75, value: 30}
+    spread_source: across_patient
+    n_biological: 40
+    experimental_unit_type: biological
+```
+
+Provide EXACTLY ONE of `moments` / `quantiles`. A population spread (`spread_source: across_patient`) REQUIRES `n_biological` + `experimental_unit_type: biological`. When both `observed_distribution` and `population_spread` are present they must agree that the width is (or is not) genuine spread — a validator enforces this.
+
 ### Source Relevance Assessment
 
 `primary_data_source.source_relevance` (and the same field on each `secondary_data_sources` entry) is **required** whenever a Source is provided. Even for exact-match human clinical data, fill the fields — the indication_match=`exact` / species_target=species_source / `tme_compatibility=high` path is the common case, not a skip:
@@ -188,6 +227,7 @@ observable:
 | `source_quality` | `primary_human_clinical`, `primary_human_in_vitro`, `primary_animal_in_vivo`, `primary_animal_in_vitro`, `review_article`, `textbook`, `non_peer_reviewed` |
 | `perturbation_type` | `physiological_baseline`, `pathological_state`, `pharmacological`, `genetic_perturbation` |
 | `tme_compatibility` | `high`, `moderate`, `low` |
+| `heterogeneity_transfer` | `high`, `moderate`, `low` — spread-transfer grade (+ `heterogeneity_transfer_justification`). OPTIONAL: omit for direct patient measurements (they measure the target spread directly); set only for proxy / preclinical sources whose spread understates patient heterogeneity. |
 | `validation_warnings` | List[str] — free-text caveats (e.g., "Values digitized from scatter plots; precision ±0.5%"). Optional but commonly used. |
 
 **Example:**
@@ -395,26 +435,34 @@ The top-level `observable:` block describes a single experimental observable. (T
    - **No "modeling_assumption" allowed** — every constant must trace to a verifiable source
    - Access in code via: `constants['constant_name']`
 
-3. **observable.code** (executable Python) - Computes the observable from species time series:
+3. **observable.auxiliary_parameters** (list, optional) - Measurement-bridging parameters that are *jointly inferred* with QSP parameters at calibration time:
+   - Use ONLY when a real compartment / cross-species / measurement-scale gap exists between the literature measurement and the QSP species (e.g., serum cytokine concentration vs tumor-compartment concentration; mouse activity vs human equivalent; IHC H-score vs nM concentration).
+   - Each auxiliary parameter requires: `name` (globally unique Python identifier; same name across cal targets ⇒ same theta draw), `group` (must match a declared group — see "Available Auxiliary Parameter Groups" below), `units` (Pint-parseable, defaults to `dimensionless`), and `biological_basis` (≥20 chars; explain *which* gap is being bridged and *how* `observable.code` uses the parameter).
+   - Access in `observable.code` via the same `constants` dict — auxiliary draws are merged into `constants` per-simulation by the inference workflow before invoking the observable. **Do NOT also list the same name in `observable.constants`** — that's a hard validation error (name collision).
+   - Cross-target consistency: if `f_serum_to_tumor_TGFb` appears on both the TGFβ and IL-12 cal targets, both must declare the same `group` and `units`. Different bridges across cytokines should use distinct names (`f_serum_to_tumor_TGFb`, `f_serum_to_tumor_IL12`, ...).
+   - Naming convention: use a leading `f_` for ratios/dimensionless factors, and embed the bridged quantity in the name (`f_serum_to_tumor_<species>`, `f_mouse_to_human_<param>`, `f_ihc_to_nM_<species>`). The leading `f_` keeps the variable distinguishable from fixed `observable.constants`.
+   - **Do NOT invent auxiliary parameters when no compartment / measurement gap exists.** A target whose source already matches the model compartment must NOT declare any auxiliary parameters — extra members would inject unidentified slack into the joint posterior.
+
+4. **observable.code** (executable Python) - Computes the observable from species time series:
    - Function signature: `compute_observable(time, species_dict, constants, ureg)`
    - `time`: numpy array with day units (Pint Quantity)
    - `species_dict`: dict mapping species names to numpy arrays (Pint Quantities, one value per timepoint)
-   - `constants`: dict mapping constant names to Pint Quantities (from `observable.constants`)
+   - `constants`: dict mapping constant names to Pint Quantities (from `observable.constants` AND `observable.auxiliary_parameters` — both are looked up by the same key)
    - `ureg`: Pint UnitRegistry for conversions
    - Must return Pint Quantity (scalar or array) with units matching `observable.units` and `empirical_data.units`
    - **IMPORTANT**: Do NOT hardcode numbers with units. Use `constants` dict for all conversion factors.
    - **IMPORTANT**: Do NOT include time filtering logic. This function computes WHAT to measure. WHEN to measure is handled at the scenario/timepoint level.
 
-4. **observable.units** (str) - Pint-parseable units of the observable output. Must match both `observable.code` return units and `empirical_data.units`.
+5. **observable.units** (str) - Pint-parseable units of the observable output. Must match both `observable.code` return units and `empirical_data.units`.
 
-5. **observable.support** (required) - Declares the mathematical support of the output:
+6. **observable.support** (required) - Declares the mathematical support of the output:
    - `positive`: Output must be > 0 (densities, concentrations, volumes)
    - `non_negative`: Output must be ≥ 0 (counts)
    - `unit_interval`: Output must be in [0, 1] (fractions, proportions)
    - `positive_unbounded`: Output must be > 0, no upper bound (fold-changes, ratios)
    - `real`: Any real value (log-ratios, change scores)
 
-6. **observable.experimental_denominator** / **observable.model_denominator_species** — describe what the experiment normalizes by, and which model species form the matching model-side denominator. **Conditionally required:** when the observable is a density or per-mass concentration (units like `cell/mm**2`, `pg/mg`, `cell/g`, etc., with `support: positive`), validation REQUIRES `experimental_denominator` to be set. Omitting it triggers a `value_error: "Observable with units='pg/mg' and support='positive' is a density but experimental_denominator is not set"` failure. Optional only for unitless ratios (`support: unit_interval`) or absolute counts.
+7. **observable.experimental_denominator** / **observable.model_denominator_species** — describe what the experiment normalizes by, and which model species form the matching model-side denominator. **Conditionally required:** when the observable is a density or per-mass concentration (units like `cell/mm**2`, `pg/mg`, `cell/g`, etc., with `support: positive`), validation REQUIRES `experimental_denominator` to be set. Omitting it triggers a `value_error: "Observable with units='pg/mg' and support='positive' is a density but experimental_denominator is not set"` failure. Optional only for unitless ratios (`support: unit_interval`) or absolute counts.
 
 **Example observable (absolute density with stroma correction):**
 ```yaml
@@ -464,6 +512,45 @@ observable:
   experimental_denominator: "CD3+ T cells (all T cell subsets)"
   model_denominator_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
 ```
+
+**Example observable (compartment bridge via auxiliary parameter — serum→tumor TGFβ):**
+```yaml
+observable:
+  code: |
+    def compute_observable(time, species_dict, constants, ureg):
+        # Model species V_T.TGFb is the BIOACTIVE pool in the tumor compartment.
+        # The literature value is total TGFβ1 in human serum, so we (1) scale
+        # to the bioactive fraction, (2) apply the serum:tumor compartment
+        # bridge inferred jointly with QSP theta.
+        tgfb_tumor = species_dict['V_T.TGFb']                       # nanomolar
+        f_active = constants['active_fraction']                      # 0.10 (fixed)
+        f_serum_to_tumor = constants['f_serum_to_tumor_TGFb']        # AUXILIARY draw
+        predicted_serum = (tgfb_tumor * f_active) / f_serum_to_tumor
+        return predicted_serum.to('nanomolar')
+  units: nanomolar
+  species: ['V_T.TGFb']
+  constants:
+    - name: active_fraction
+      value: 0.10
+      units: dimensionless
+      biological_basis: "Typical bioactive TGFβ1 fraction in vivo (~10% of total)."
+      source_type: literature
+      source_tag: <SOME_REFERENCE>
+  auxiliary_parameters:
+    - name: f_serum_to_tumor_TGFb
+      group: serum_to_tumor
+      units: dimensionless
+      biological_basis: >
+        Serum:tumor concentration ratio for TGF-β1. The literature reports
+        bioactive TGFβ1 in human PDAC serum, while the QSP species is the
+        tumor-compartment bioactive pool — `observable.code` divides the
+        compartment-corrected V_T.TGFb by this auxiliary factor to predict
+        the serum measurement, with the inference jointly absorbing the
+        bridging uncertainty.
+  support: positive
+```
+
+The auxiliary parameter is consumed via `constants['f_serum_to_tumor_TGFb']` in the same dict as the fixed-constant `active_fraction`. The prior on the ratio (lognormal, location, spread) lives in `auxiliary_config.yaml` on the inference side and is NOT specified here — `observable.auxiliary_parameters` only declares the *member* and which group's prior it draws from.
 
 **Key principles for `observable.code`:**
 - Keep Pint units throughout calculation (see Pint Golden Rule below)
@@ -706,6 +793,11 @@ Note: `inputs: []` is allowed for mechanistic targets because the CI95 itself is
 {{REFERENCE_DATABASE}}
 
 Use these reference values in `observable.constants` when applicable (e.g., cell diameters, molecular weights, tissue densities). This avoids re-deriving standard physical/biological constants and ensures consistency across targets.
+
+**Available Auxiliary Parameter Groups (for measurement-bridging — see `observable.auxiliary_parameters`):**
+{{AUXILIARY_GROUPS}}
+
+Each group declares a hierarchical prior shared by every member that references it. To use one, declare the bridging factor under `observable.auxiliary_parameters` with `group: <name>` (matching one of the listed groups exactly). Use these ONLY when a real compartment / cross-species / measurement-scale gap exists between the source measurement and the QSP species — never to introduce slack on a target that already matches the model context.
 
 ---
 

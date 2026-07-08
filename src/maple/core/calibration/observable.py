@@ -64,10 +64,11 @@ class PopulationAggregation(BaseModel):
         default=None,
         description=(
             "Python code defining per-patient binary classification for response_rate.\n"
-            "Function signature: classify_patient(time, species_dict, constants, ureg) -> bool\n"
-            "Returns True if patient meets the response criterion.\n\n"
+            "Function signature: classify_patient(time, species_dict, constants) -> bool\n"
+            "Returns True if patient meets the response criterion. Operates on\n"
+            "raw floats (no Pint); species_dict values are in canonical model units.\n\n"
             "Example (RECIST partial response):\n"
-            "def classify_patient(time, species_dict, constants, ureg):\n"
+            "def classify_patient(time, species_dict, constants):\n"
             "    tumor = species_dict['V_T.C1']\n"
             "    baseline = tumor[0]\n"
             "    nadir = min(tumor)\n"
@@ -271,6 +272,81 @@ class ObservableConstant(BaseModel):
         return self
 
 
+class AuxiliaryParameter(BaseModel):
+    """
+    A measurement-bridging parameter sampled per-simulation alongside the QSP
+    parameters during inference.
+
+    Auxiliary parameters encode the gap between what the literature reports and
+    what the model species directly is — e.g., a serum:tumor compartment ratio,
+    a cross-species translation factor, an IHC-score-to-concentration conversion.
+    They are accessed inside ``observable.code`` exactly like ``ObservableConstant``
+    entries (via the ``constants`` dict), but unlike constants they have a
+    *prior*, not a fixed value, and are jointly inferred with the QSP parameters
+    so the Bayesian update can absorb the bridging uncertainty.
+
+    Maple's role is purely declarative: it lets a calibration target name the
+    auxiliary parameters its observable consumes, the hierarchical group they
+    belong to, and the units they carry. Maple does NOT define how the prior
+    is structured, how groups are pooled, or how the parameter is sampled —
+    those concerns live in qsp-inference (which loads ``auxiliary_config.yaml``
+    and runs the hierarchical sampler at inference time).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(
+        description=(
+            "Variable name used in observable code to access this parameter. "
+            "Must be a valid Python identifier. Globally unique across all "
+            "calibration targets — the inference workflow merges by name "
+            "across cal targets, so two cal targets that reference the same "
+            "auxiliary parameter must declare it with the same name."
+        )
+    )
+
+    group: str = Field(
+        description=(
+            "Hierarchical group this parameter belongs to. The structural prior "
+            "(``base_prior``, ``member_deviation_sigma``) for the group is "
+            "declared in the inference workflow's ``auxiliary_config.yaml`` "
+            "(qsp-inference territory). Members of the same group are pooled "
+            "via a Normal(mu_g, tau_g) hierarchy at inference time. "
+            "Parameters without a meaningful hierarchy still get a group entry "
+            "(typically of size 1) so the inference machinery has a single "
+            "place to look up the prior."
+        )
+    )
+
+    biological_basis: str = Field(
+        min_length=20,
+        description=(
+            "REQUIRED rationale for why this calibration target needs this "
+            "auxiliary parameter — what gap between measurement and model "
+            "species it bridges, and how observable.code uses it. "
+            "Must be substantive (minimum 20 characters).\n\n"
+            "Examples:\n"
+            "- 'Serum:tumor concentration ratio for TGF-β1; observable.code "
+            "multiplies V_T.TGFb by this factor to predict the human plasma "
+            "TGF-β1 concentration reported by Friess1993.'\n"
+            "- 'IHC H-score to nM ArgI conversion factor; observable.code "
+            "multiplies the model V_T.ArgI by 1/c to compare to the IHC "
+            "H-score reported by Smith2020.'"
+        ),
+    )
+
+    units: str = Field(
+        default="dimensionless",
+        description=(
+            "Pint-parseable units of the auxiliary parameter as a Pint Quantity. "
+            "For pure compartment ratios or species translation factors, leave "
+            "as 'dimensionless'. For conversion factors, declare the source "
+            "and target units (e.g., 'nanomolar / dimensionless' for IHC-to-"
+            "concentration)."
+        ),
+    )
+
+
 class Observable(BaseModel):
     """
     Observable specification for CalibrationTarget (full model).
@@ -283,22 +359,24 @@ class Observable(BaseModel):
     code: str = Field(
         description=(
             "Python function that computes the observable from full model species.\n\n"
-            "Function signature: compute_observable(time, species_dict, constants, ureg)\n"
-            "- time: numpy array with time values (Pint Quantity with day units)\n"
-            "- species_dict: dict mapping species names to numpy arrays (Pint Quantities)\n"
-            "- constants: dict mapping constant names to Pint Quantities (from constants field)\n"
-            "- ureg: Pint UnitRegistry for unit conversions\n\n"
-            "Must return a Pint Quantity array with units matching empirical_data.units.\n\n"
+            "Function signature: compute_observable(time, species_dict, constants)\n"
+            "- time: numpy float array of time values, in canonical days.\n"
+            "- species_dict: dict mapping species names to numpy float arrays.\n"
+            "  Values are in each species' canonical units (model_structure.json).\n"
+            "- constants: dict mapping constant names to raw floats. Values are in\n"
+            "  the units declared on the corresponding ObservableConstant.units field.\n\n"
+            "Must return a raw float / numpy array (not a Pint Quantity) whose\n"
+            "magnitudes are in empirical_data.units. Apply explicit numerical\n"
+            "unit conversions inside the function body and document them with\n"
+            "inline comments (e.g., `* 1000.0  # uM -> nM`).\n\n"
             "Example (cell density with stroma correction):\n"
-            "def compute_observable(time, species_dict, constants, ureg):\n"
-            "    cd8 = species_dict['V_T.CD8']\n"
-            "    cancer_cells = species_dict['V_T.C1']\n"
-            "    area_per_cell = constants['area_per_cancer_cell']\n"
-            "    stroma_frac = constants['stromal_fraction']\n"
-            "    # Tissue area includes cancer cells AND stroma\n"
-            "    tumor_area = cancer_cells * area_per_cell / (1 - stroma_frac)\n"
-            "    density = cd8 / tumor_area\n"
-            "    return density.to('cell/mm**2')"
+            "def compute_observable(time, species_dict, constants):\n"
+            "    cd8 = species_dict['V_T.CD8']                # cell\n"
+            "    cancer_cells = species_dict['V_T.C1']        # cell\n"
+            "    area_per_cell = constants['area_per_cancer_cell']  # mm**2 / cell\n"
+            "    stroma_frac = constants['stromal_fraction']         # dimensionless\n"
+            "    tumor_area = cancer_cells * area_per_cell / (1 - stroma_frac)  # mm**2\n"
+            "    return cd8 / tumor_area                              # cell / mm**2"
         )
     )
 
@@ -316,6 +394,18 @@ class Observable(BaseModel):
     constants: List[ObservableConstant] = Field(
         default_factory=list,
         description="List of geometric/modeling constants used in the observable code.",
+    )
+
+    auxiliary_parameters: List[AuxiliaryParameter] = Field(
+        default_factory=list,
+        description=(
+            "List of measurement-bridging parameters consumed by observable.code "
+            "alongside the fixed ``constants``. These are sampled per-simulation "
+            "from a hierarchical prior at inference time (qsp-inference) and "
+            "inferred jointly with the QSP parameters. Examples: serum:tumor "
+            "compartment ratio, cross-species translation factor, IHC-to-"
+            "concentration conversion. See AuxiliaryParameter for details."
+        ),
     )
 
     support: SupportType = Field(

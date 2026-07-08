@@ -21,6 +21,10 @@ from maple.core.calibration.cross_scenario_target import (
     CrossScenarioInput,
     CrossScenarioObservable,
 )
+from maple.core.calibration.bootstrap_capture import (
+    capture_bootstrap_samples,
+    build_distribution_inputs,
+)
 
 # Enums
 from maple.core.calibration.enums import (
@@ -51,6 +55,7 @@ from maple.core.calibration.scenario import (
 # Observable models
 from maple.core.calibration.observable import (
     AggregationType,
+    AuxiliaryParameter,
     ConstantSourceType,
     Observable,
     ObservableConstant,
@@ -171,6 +176,7 @@ __all__ = [
     "Scenario",
     # Observable
     "AggregationType",
+    "AuxiliaryParameter",
     "ConstantSourceType",
     "PopulationAggregation",
     "Observable",
@@ -239,4 +245,7 @@ __all__ = [
     "ContentValidationError",
     "ControlCharacterError",
     "EmptyScenarioError",
+    # Bootstrap capture
+    "capture_bootstrap_samples",
+    "build_distribution_inputs",
 ]

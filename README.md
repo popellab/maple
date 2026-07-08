@@ -4,13 +4,17 @@
 
 ---
 
-QSP models have many biological parameters, and most can't be measured directly in the clinical context being modeled. The relevant data is usually scattered across papers, often from different species or indications entirely. Turning that into informative priors is tedious, error-prone, and rarely done systematically.
+QSP models have many biological parameters, and most can't be measured directly in the clinical context being modeled. The relevant data is usually scattered across papers, often from different species or indications entirely. Turning that into informative priors by hand is tedious and error-prone.
 
-MAPLE provides a structured pipeline for this. It uses LLMs to extract measurements from papers into validated YAML schemas (with anti-hallucination checks against source text), and scores how well each data source translates to the model context across eight axes (species, indication, TME compatibility, etc.). Each axis contributes a component to a translation sigma that widens the likelihood for that target during joint inference — so a mouse in vitro measurement constraining the same parameter as a human clinical measurement will naturally contribute less. The output is a set of marginal distributions plus a Gaussian copula that preserves posterior correlations for downstream SBI calibration.
+MAPLE uses LLMs to extract measurements from papers into validated YAML schemas, checking that every extracted value traces back to the source text. It then scores how well each source translates to the model context across eight axes (species, indication, TME compatibility, and so on). Each axis adds a component to a translation sigma that widens the likelihood for that target during joint inference, so a mouse in vitro measurement contributes less than a human clinical one constraining the same parameter. The output is a set of marginal distributions plus a Gaussian copula that preserves posterior correlations for downstream SBI calibration.
 
 ---
 
 ## How it works
+
+<p align="center">
+  <img src="docs/workflow.png" alt="MAPLE workflow: a parameter target drives LLM literature search and extraction into a structured YAML target, which passes automated validation and modeler curation before feeding joint Bayesian inference to produce calibrated posteriors, with retry, revise, and re-extract feedback loops" width="820">
+</p>
 
 MAPLE fits into a two-stage calibration pipeline:
 
@@ -24,6 +28,12 @@ MAPLE fits into a two-stage calibration pipeline:
 
 ```bash
 pip install maple-qsp
+```
+
+MAPLE is published on [PyPI](https://pypi.org/project/maple-qsp/) as `maple-qsp`; the import name is `maple` (`import maple`). To track the development version, install from GitHub:
+
+```bash
+pip install "maple-qsp @ git+https://github.com/popellab/maple.git@main"
 ```
 
 MAPLE works with any AI tool that can access your files and run Python — coding agents (Claude Code, Codex, Cursor) via [MCP](#setup), or chat UIs with code execution (Claude Cowork, ChatGPT with Code Interpreter) via the [Python API](#python-api). From your model repo, ask the agent to extract a parameter:
@@ -91,7 +101,7 @@ source_relevance:
 
 </details>
 
-**Forward model types** include algebraic formulas, dose-response curves (`direct_fit`), power laws, and ODE systems — both structured types with analytical solutions (`exponential_growth`, `first_order_decay`, `logistic`, etc.) and arbitrary user-provided ODEs (`custom_ode`) integrated numerically via diffrax. The source relevance assessment maps to a translation sigma that inflates the likelihood during inference — so mouse data naturally gets less weight than human data constraining the same parameter.
+**Forward model types** include algebraic formulas, dose-response curves (`direct_fit`), power laws, and ODE systems — both structured types with analytical solutions (`exponential_growth`, `first_order_decay`, `logistic`, etc.) and arbitrary user-provided ODEs (`custom_ode`) integrated numerically via diffrax.
 
 **Nuisance parameters** can be marked `nuisance: true` when needed by the forward model but not part of the QSP model (e.g., a proliferation rate that helps constrain an activation rate). They carry their own inline prior, are sampled during MCMC, but are excluded from the output priors.
 
@@ -126,7 +136,7 @@ k_IL2_sec,k_IL2_sec,PDAC,"Per-cell IL-2 secretion rate. Search for: ELISA, singl
 k_vas_growth,k_vas_growth,PDAC,"Rate law: dK/dt = k_vas_growth * C_total * VEGF/(VEGF+VEGF_50). Search for: MVD growth kinetics."
 ```
 
-The `notes` field guides the lit search agent. Include rate laws, search terms, and context about what kind of data would constrain the parameter. Richer notes produce better search results.
+The `notes` field guides the lit search agent. Include rate laws, search terms, and context about what kind of data would constrain the parameter.
 
 **Per-target caching**: each target gets a directory (`work/staged_extraction/{target_id}/`) with independently cached files:
 - `lit_search_results.json` (stage 1)
@@ -218,7 +228,7 @@ Copy [`examples/staged_extraction.py`](examples/staged_extraction.py) into your 
 
 ## Interactive extraction (single target)
 
-For extracting one parameter at a time with an AI coding agent. MAPLE works with any AI tool that can run Python and access your files.
+For extracting one parameter at a time with an AI coding agent.
 
 ### MCP server (coding agents)
 
