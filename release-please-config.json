@@ -3,16 +3,10 @@
   "packages": {
     ".": {
       "release-type": "python",
-      "package-name": "maple",
+      "package-name": "maple-qsp",
       "changelog-path": "CHANGELOG.md",
       "include-v-in-tag": true,
-      "include-component-in-tag": false,
-      "extra-files": [
-        {
-          "type": "python",
-          "path": "src/maple/__init__.py"
-        }
-      ]
+      "include-component-in-tag": false
     }
   }
 }
