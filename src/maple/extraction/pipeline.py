@@ -488,6 +488,43 @@ def report_digitization_preflight(targets: list[dict]) -> None:
     print()
 
 
+def _locate_paper_pdf(papers_dir: Path, tag: str, doi: str, title: str) -> str:
+    """Best-effort absolute path to a paper's PDF, robust to filename style.
+
+    The old matcher required both author AND a 4-digit year as substrings of the
+    filename, so it silently missed title-only names (``Antigen affinity….pdf``)
+    and Zotero names that drop the year (``Ashour et al. - IL-12….pdf``). This
+    tries a cheap filename match first (author+year, or strong title-token
+    overlap against the filename — covers both ``Author - Year - Title`` and
+    title-only styles), then falls back to content matching (DOI inside the PDF,
+    then extracted-text title overlap) for names that carry neither (e.g. a bare
+    article-number ``4963.pdf``). Returns ``""`` if nothing matches.
+    """
+    search_dirs = [
+        d for d in ([papers_dir / tag, papers_dir] if tag else [papers_dir]) if d.is_dir()
+    ]
+    m = re.match(r"([A-Za-z]+)(\d{4})", tag or "")
+    author = m.group(1).lower() if m else ""
+    year = m.group(2) if m else ""
+    toks = [t for t in re.sub(r"[^a-z0-9 ]", " ", (title or "").lower()).split() if len(t) > 3]
+
+    # 1) cheap filename match (no PDF parsing)
+    for d in search_dirs:
+        for pdf in sorted(d.glob("*.pdf")):
+            nl = pdf.name.lower()
+            if author and year and author in nl and year in nl:
+                return str(pdf.resolve())
+            if toks and sum(1 for t in toks if t in nl) / len(toks) >= 0.6:
+                return str(pdf.resolve())
+
+    # 2) content fallback (parses PDFs — only reached when the name carries no hint)
+    for d in search_dirs:
+        match = _local_pdf_match(doi, title, _index_local_pdfs(d))
+        if match:
+            return str(match.resolve())
+    return ""
+
+
 def summarize_digitizations(
     work_dir: Path,
     output_path: Path | None = None,
@@ -541,29 +578,11 @@ def summarize_digitizations(
             role = p.get("role", "")
             paper_title = doi_to_title.get(p["doi"], "")
 
-            # Find the PDF for this paper by matching source_tag against filename
-            pdf_link = ""
-            title = p.get("title", "")
+            # Locate this paper's PDF robustly (filename style varies — some are
+            # title-only or drop the year). See _locate_paper_pdf.
+            title = p.get("title", "") or paper_title
             tag = p.get("source_tag", "")
-            # Extract author and year from source_tag (e.g., "Miller2019" -> "Miller", "2019")
-            tag_match = re.match(r"([A-Za-z]+)(\d{4})", tag)
-            tag_author = tag_match.group(1).lower() if tag_match else ""
-            tag_year = tag_match.group(2) if tag_match else ""
-            for search_dir in [papers_dir / tag, papers_dir]:
-                if not search_dir.is_dir():
-                    continue
-                for pdf in search_dir.glob("*.pdf"):
-                    name_lower = pdf.name.lower()
-                    if (
-                        tag_author
-                        and tag_year
-                        and tag_author in name_lower
-                        and tag_year in name_lower
-                    ):
-                        pdf_link = str(pdf.resolve())
-                        break
-                if pdf_link:
-                    break
+            pdf_link = _locate_paper_pdf(papers_dir, tag, p["doi"], title)
 
             # Check digitized dir for per-figure completion
             digitized_dir = assessment_path.parent / "digitized"
@@ -776,11 +795,72 @@ def _zotero_pdf_path(doi: str, zotero_dir: Path) -> Path | None:
     return pdf_path if pdf_path.exists() else None
 
 
+_DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", re.IGNORECASE)
+
+
+def _pdf_head_text(pdf: Path, pages: int = 3) -> str:
+    """First ``pages`` pages of a PDF as text (pdftotext). Empty on failure."""
+    import subprocess as _sp
+
+    try:
+        r = _sp.run(
+            ["pdftotext", "-l", str(pages), str(pdf), "-"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if r.returncode == 0:
+            return r.stdout
+    except Exception:
+        pass
+    return ""
+
+
+def _index_local_pdfs(dest_dir: Path) -> list[tuple[Path, str, set[str]]]:
+    """(path, lowercased filename+head-text, embedded DOIs) for each PDF in dir."""
+    index: list[tuple[Path, str, set[str]]] = []
+    if not dest_dir.exists():
+        return index
+    for p in sorted(dest_dir.glob("*.pdf")):
+        head = _pdf_head_text(p)
+        dois = {d.lower().rstrip(".") for d in _DOI_RE.findall(head)}
+        index.append((p, (p.stem + "\n" + head).lower(), dois))
+    return index
+
+
+def _local_pdf_match(doi: str, title: str, index: list[tuple[Path, str, set[str]]]) -> Path | None:
+    """A PDF already in the dir matching this candidate, or None.
+
+    DOI embedded in the PDF is authoritative; otherwise fall back to a strong
+    title-token overlap (many PDFs don't carry their DOI in the text).
+    """
+    doi_l = (doi or "").lower()
+    if doi_l:
+        for path, _hay, dois in index:
+            if doi_l in dois:
+                return path
+    toks = [t for t in re.sub(r"[^a-z0-9 ]", " ", (title or "").lower()).split() if len(t) > 3]
+    if not toks:
+        return None
+    best, best_score = None, 0.0
+    for path, hay, _ in index:
+        score = sum(1 for t in toks if t in hay) / len(toks)
+        if score > best_score:
+            best, best_score = path, score
+    return best if best_score >= 0.8 else None
+
+
 def fetch_pdfs(candidates: list[dict], papers_dir: Path, zotero_storage: Path) -> list[dict]:
-    """Copy PDFs from Zotero into papers_dir using DOI lookup. Returns NOT FOUND candidates."""
+    """Resolve each candidate's PDF, returning NOT FOUND candidates.
+
+    A PDF already sitting in the destination dir (dropped in manually when the
+    Zotero Connector couldn't fetch it) counts as found — checked by content
+    before the Zotero SQLite lookup, so it isn't misreported as missing.
+    """
     papers_dir.mkdir(exist_ok=True)
     not_found = []
     zotero_dir = zotero_storage.parent  # ~/Zotero
+    local_index_cache: dict[Path, list] = {}
 
     for c in candidates:
         doi = c["doi"]
@@ -789,6 +869,14 @@ def fetch_pdfs(candidates: list[dict], papers_dir: Path, zotero_storage: Path) -
 
         dest_dir = papers_dir / tag if tag else papers_dir
         dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # Already present locally? (PDF placed straight into the dir, not in Zotero)
+        if dest_dir not in local_index_cache:
+            local_index_cache[dest_dir] = _index_local_pdfs(dest_dir)
+        local = _local_pdf_match(doi, title, local_index_cache[dest_dir])
+        if local:
+            print(f"  [{c['rank']}] HAVE (local): {local.name}")
+            continue
 
         # Look up by DOI in Zotero SQLite
         pdf_path = _zotero_pdf_path(doi, zotero_dir)
@@ -806,9 +894,20 @@ def fetch_pdfs(candidates: list[dict], papers_dir: Path, zotero_storage: Path) -
     return not_found
 
 
+#: When False, the browser-open step skips PMC and routes every DOI through
+#: doi.org (publisher). PMC's per-IP bot protection 403s the browser after
+#: enough article tabs are opened in a short window; the publisher landing page
+#: avoids NCBI throttling and the Zotero Connector still saves from it. Flip to
+#: True to prefer PMC OA full text when you aren't opening papers in bulk.
+PREFER_PMC = False
+
+
 def _resolve_pmc_urls(dois: list[str]) -> list[str]:
     """Resolve DOIs to PMC full-text URLs where available, else doi.org."""
     import urllib.request
+
+    if not PREFER_PMC:
+        return [f"https://doi.org/{doi}" for doi in dois]
 
     urls = []
     for doi in dois:
@@ -852,37 +951,38 @@ def collect_missing_pdfs(
         print("\n  All PDFs found!")
         return
 
-    # Step 2: Copy missing DOIs for "Add by Identifier"
-    missing_dois = [c["doi"] for c in all_missing]
-    unique_dois = sorted(set(missing_dois))
-    print(
-        f"\n  {len(unique_dois)} missing PDFs. DOIs copied to clipboard for Zotero 'Add by Identifier'."
-    )
-    subprocess.run(["pbcopy"], input="\n".join(unique_dois), text=True)
+    # Step 2: Walk the missing DOIs in small batches. Each batch is copied to
+    # the clipboard for Zotero 'Add by Identifier' AND opened in the browser
+    # (PMC full text where available, doi.org otherwise); press Enter to advance
+    # to the next batch. Dumping all ~80 DOIs into the clipboard / browser at
+    # once is unmanageable — 5 at a time matches how Zotero's add-by-identifier
+    # and the Connector are actually used. After a pass, re-fetch from Zotero
+    # and repeat on whatever is still missing.
+    BATCH_SIZE = 5
+    unique_dois = sorted(set(c["doi"] for c in all_missing))
 
     while True:
-        resp = (
-            input(
-                f"\n  [{len(unique_dois)} missing] Press Enter after adding to Zotero, 'b' to open in browser, or 's' to skip: "
-            )
-            .strip()
-            .lower()
-        )
-
-        if resp == "s":
-            break
-
-        if resp == "b":
-            # Try PMC (free full text) first, fall back to doi.org
-            urls = _resolve_pmc_urls(unique_dois)
+        print(f"\n  {len(unique_dois)} missing PDFs — walking in batches of {BATCH_SIZE}.")
+        batches = [unique_dois[i : i + BATCH_SIZE] for i in range(0, len(unique_dois), BATCH_SIZE)]
+        stopped = False
+        for bi, batch in enumerate(batches, 1):
+            subprocess.run(["pbcopy"], input="\n".join(batch), text=True)
+            urls = _resolve_pmc_urls(batch)
             n_pmc = sum(1 for u in urls if "pmc.ncbi" in u)
             print(
-                f"  Opening {len(urls)} articles ({n_pmc} via PMC, {len(urls)-n_pmc} via doi.org)..."
+                f"\n  Batch {bi}/{len(batches)} ({len(batch)} DOIs) → clipboard for "
+                f"Zotero 'Add by Identifier'; opening browser "
+                f"({n_pmc} via PMC, {len(urls) - n_pmc} via doi.org):"
             )
+            for d in batch:
+                print(f"    - {d}")
             subprocess.run(["open"] + urls)
-            input("  Press Enter after saving with Zotero Connector...")
+            resp = input("  Press Enter for next batch, 's' to stop: ").strip().lower()
+            if resp == "s":
+                stopped = True
+                break
 
-        # Re-fetch from Zotero
+        # Re-fetch from Zotero to see what actually landed
         all_missing = []
         for t, lr in zip(targets, lit_results):
             missing = fetch_pdfs(lr.get("candidates", []), t["dir"] / "papers", zotero_storage)
@@ -894,7 +994,16 @@ def collect_missing_pdfs(
 
         unique_dois = sorted(set(c["doi"] for c in all_missing))
         subprocess.run(["pbcopy"], input="\n".join(unique_dois), text=True)
-        print(f"  {len(unique_dois)} still missing. DOIs copied to clipboard.")
+        print(f"\n  {len(unique_dois)} still missing. DOIs copied to clipboard.")
+        if stopped:
+            break
+        again = (
+            input("  Re-walk the remaining in batches? Enter to retry, 's' to skip: ")
+            .strip()
+            .lower()
+        )
+        if again == "s":
+            break
 
     # Print final summary of missing papers
     if all_missing:
@@ -1801,13 +1910,22 @@ def make_agents(
     openai_model = make_model(model_name)
     settings = make_settings()
 
+    # The lit-search agent is the heaviest call in the pipeline (high reasoning
+    # effort + WebSearchTool), and gpt-5+ routinely needs >300 s of server-side
+    # rollout for hard-to-find parameters. The default 300 s read-timeout cuts
+    # those off mid-rollout — a clean httpx read timeout at exactly the cap,
+    # not a wedge — and pydantic-ai does NOT retry transport timeouts, so the
+    # same targets fail every re-run. Give just this agent a longer read-timeout
+    # so long rollouts can land; the other agents stay fail-fast at 300 s.
+    lit_search_model = make_model(model_name, http_timeout_s=900.0)
+
     lit_search_settings = OpenAIResponsesModelSettings(
         openai_reasoning_summary="concise",
         openai_reasoning_effort="high",
     )
 
     lit_search_agent = Agent(
-        openai_model,
+        lit_search_model,
         output_type=LitSearchResult,
         system_prompt=(
             "You are a scientific literature search agent. "
