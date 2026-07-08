@@ -547,9 +547,10 @@ def test_unit_group_consistent_members_ok():
     _run_unit_group_check([_em("d1", _od(13, "donors")), _em("d2", _od(13, "donors"))])
 
 
-def test_unit_group_mismatched_n_biological_rejected():
-    with pytest.raises(ValueError, match="disagree on 'n_biological'"):
-        _run_unit_group_check([_em("d1", _od(13, "donors")), _em("d2", _od(20, "donors"))])
+def test_unit_group_unbalanced_n_allowed():
+    # An unbalanced panel (per-point n differs — e.g. a donor missing at some doses)
+    # is still one population viewed several times; n_biological may differ.
+    _run_unit_group_check([_em("d1", _od(13, "donors")), _em("d2", _od(12, "donors"))])
 
 
 def test_unit_group_separate_groups_may_differ():

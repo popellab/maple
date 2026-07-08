@@ -1018,7 +1018,15 @@ class Calibration(BaseModel):
             if len(members) < 2:
                 continue  # a lone member is indistinguishable from the default
             first_name, first = members[0]
-            for field in ("n_biological", "spread_source", "experimental_unit_type"):
+            # Consistency is required only on the fields that identify the shared
+            # POPULATION and UNIT TYPE. n_biological is deliberately NOT checked: an
+            # unbalanced panel (a donor measured at some points but not others, so
+            # per-point n differs) is still one population viewed several times —
+            # each point's moment is an estimate of the SAME spread, just at its own
+            # sampling precision. The per-member n feeds the moment weighting in the
+            # consumer, it does not define the batch. Forcing equal n wrongly rejects
+            # legitimate unbalanced panels.
+            for field in ("spread_source", "experimental_unit_type"):
                 ref = getattr(first, field)
                 for member_name, od in members[1:]:
                     val = getattr(od, field)
@@ -1026,9 +1034,11 @@ class Calibration(BaseModel):
                         raise ValueError(
                             f"unit_group='{group_name}' members disagree on '{field}': "
                             f"'{first_name}' has {ref!r} but '{member_name}' has {val!r}. "
-                            "Observables sharing a unit_group must be measured on the same "
-                            "biological batch, so these fields must match. If they genuinely "
-                            "come from different populations, give them separate unit_groups."
+                            "Observables sharing a unit_group must describe the same "
+                            "population and unit type, so these fields must match. If they "
+                            "genuinely come from different populations, give them separate "
+                            "unit_groups. (n_biological MAY differ across members — an "
+                            "unbalanced panel is fine.)"
                         )
         return self
 
