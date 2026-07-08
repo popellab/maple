@@ -507,3 +507,48 @@ class ExperimentalSystem(str, Enum):
     - 721.221 as NK killing target
     - Cancer cell line growth rates
     """
+
+
+class HeterogeneityTransfer(str, Enum):
+    """How well the source's measured biological spread transfers to TARGET-population spread.
+
+    The SPREAD analog of the center-transfer grades (indication_match,
+    tme_compatibility, measurement_directness). Those ask "does the source's
+    central value translate to the target?"; this asks "does the source's
+    inter-unit variability translate to PDAC patient-to-patient variability?".
+
+    A source's biological SD (across donors/animals) is almost always a LOWER
+    BOUND on patient spread — controlled assays, often healthy or inbred units,
+    miss the disease/TME/genetic heterogeneity of a real patient population. This
+    grade sets how much translation widening the population spread (omega) needs
+    on top of the measured biological SD. It is about the spread, not the mean;
+    a source can pin the center well (high directness) yet transfer heterogeneity
+    poorly (low transfer), and vice versa.
+    """
+
+    HIGH = "high"
+    """Source spread already spans most of the target population's heterogeneity;
+    the measured biological SD is a good estimate of patient spread. Little
+    widening. Examples for PDAC:
+    - Panel of many patient-derived PDAC organoids / primary samples
+    - Human PDAC tissue cohort spanning stages and demographics
+    - Across-patient measurements in a clinical study (this IS the target spread)
+    """
+
+    MODERATE = "moderate"
+    """Source captures some but not all target heterogeneity; the biological SD is
+    a partial lower bound. Moderate widening. Examples for PDAC:
+    - Healthy human donor PBMCs (genetic diversity, but no disease/TME axis)
+    - A handful of human cancer cell lines
+    - Outbred animal cohort
+    """
+
+    LOW = "low"
+    """Source is a controlled/homogeneous system capturing almost none of the
+    target population's heterogeneity; the biological SD badly understates patient
+    spread. Large widening, or the spread should come from a mechanistic default
+    rather than this source. Examples for PDAC:
+    - Single immortalized cell line
+    - Inbred (isogenic) mouse strain
+    - Technical replicates of one biological sample
+    """

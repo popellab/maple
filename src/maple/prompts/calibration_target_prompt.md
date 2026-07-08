@@ -90,10 +90,39 @@ The `experimental_context` block is REQUIRED — it documents where the data cam
 - **Validation:** Code is executed and outputs compared to reported statistics
 
 ### 6. Text Snippets Must Contain Declared Values
-- Each `value_snippet` must contain the actual numeric value being reported
-- Include enough context so the number is clearly visible in snippet text
-- **Validation:** Automated string matching checks snippet content
-- **Exception for figures:** When values come from figures (plots, charts, bar graphs), use `source_type: 'figure'` with `figure_id` (e.g., `'Figure 2A'`) and `extraction_method: 'manual'`. Snippet validation is relaxed for figure sources — the `value_snippet` should contain the figure caption or relevant axis labels instead of the exact numeric value.
+
+For values **in body text or numeric mentions** (the default case), set `value_snippet` to a verbatim quote that contains the numeric value. Automated string matching verifies the value appears in the snippet.
+
+For values **read from a figure or table** — where PDF text extraction is unreliable or unreadable — set `value_snippet: null` and instead populate one of these structured excerpt blocks, both of which are **all-string** with `extra="forbid"`:
+
+`figure_excerpt` (use when value comes from a figure — plot, chart, scatter, bar, dose-response curve):
+
+```yaml
+figure_excerpt:
+  figure_id: "Figure 2A"                  # str — e.g. 'Figure 1C', 'Supplementary Figure S2A'
+  value: "~5 pg/mg"                       # str — what you READ from the figure (text annotation, NOT the digitized number; e.g., '~5', '2-5 range', 'lower whisker at ~2 pg/mg')
+  description: "highest data point in scatter plot at 16 h"   # str — what was read and from where in the panel
+  context: "Figure 2A: IL-10 ELISA on tumor lysates (pg/mg total protein); error bars = SD across n=3 mice"  # str — caption / axis labels / panel conditions
+```
+
+`table_excerpt` (use when value comes from a table cell):
+
+```yaml
+table_excerpt:
+  table_id: "Table 2"                     # str — e.g. 'Table 2', 'Supplementary Table S1'
+  column: "PDAC tumor"                    # str — column header the value falls under
+  row: "IL-1β (pg/mL)"                    # str — row label / identifier
+  value: "29 ± 10"                        # str — value AS IT APPEARS in the cell (preserve formatting like '29 ± 10', '<0.1', 'n/d')
+  context: "Table caption: 'Cytokine concentrations in resected PDAC vs adjacent normal pancreas; n=12 per group, mean ± SD'"  # str — caption, units in column header, surrounding text
+```
+
+**CRITICAL — common mistakes:**
+
+- `figure_excerpt.value` and `table_excerpt.value` are **strings**, NOT numbers. Do NOT emit `value: 5.263` (numeric). The actual digitized numeric value belongs in the parent `EstimateInput.value` field; the excerpt's `value` is a *string description of what's visible* (e.g., `"~5"`, `"5.263"` quoted as a string, or `"lower whisker at ~5 pg/mg"`).
+- These are the ONLY fields each schema accepts. Do not add `panel`, `group`, `caption_excerpt`, or other made-up fields — they will fail with `extra_forbidden` validation errors.
+- All five `table_excerpt` fields and all four `figure_excerpt` fields are **required**.
+
+When figure/table excerpts are populated, snippet validation is relaxed (figure-derived values cannot be text-matched, so they are flagged for manual review instead of failing validation). For non-figure / non-table sources, populate `value_snippet` with the verbatim quote as before.
 
 ### 7. All Observable Constant Sources Must Be Traceable
 - Every observable constant must have a verifiable source via `source_type`:
@@ -150,6 +179,44 @@ observable:
     rationale: "ORR per RECIST 1.1 (≥30% decrease in longest diameter)"
 ```
 
+### Population Spread (across-patient variability)
+
+For hierarchical / virtual-patient inference, a target declares whether its reported width is genuine patient-to-patient spread (usable as the population-spread / omega signal) or just uncertainty on the mean. Default is `center_only` (excluded from omega); opt in explicitly. Two interoperable ways to declare it:
+
+1. **`population_spread` + a `samples` array.** Set `empirical_data.population_spread: across_patient` and have `distribution_code` ALSO return a `samples` key — the across-patient population draw (one value per patient-equivalent); its empirical spread is the omega signal. Keep the default `center_only` (and do NOT return `samples`) when the width is a pooled-mean / SEM CI that shrinks with n. `median_obs` / `ci95` are unaffected either way.
+
+2. **`observed_distribution`** (general representation, shared with submodel targets). Author it in whichever form the paper reports — **prefer `moments`** (mean +/- SD, median +/- IQR, CV, CI); the framework expands it to quartiles, so do not hand-convert:
+
+```yaml
+empirical_data:
+  population_spread: across_patient
+  observed_distribution:
+    moments:
+      center: 17
+      center_type: median
+      scale: 21            # full IQR here
+      scale_type: iqr      # sd | sem | cv | iqr | ci95_halfwidth
+      shape: lognormal     # lognormal | normal
+    spread_source: across_patient       # or center_only (SEM/CI on the mean; default)
+    n_biological: 40
+    experimental_unit_type: biological
+```
+
+Use the `quantiles` form when the paper gives quartiles/percentiles/samples directly:
+
+```yaml
+  observed_distribution:
+    quantiles:
+      - {p: 0.25, value: 9}
+      - {p: 0.5,  value: 17}
+      - {p: 0.75, value: 30}
+    spread_source: across_patient
+    n_biological: 40
+    experimental_unit_type: biological
+```
+
+Provide EXACTLY ONE of `moments` / `quantiles`. A population spread (`spread_source: across_patient`) REQUIRES `n_biological` + `experimental_unit_type: biological`. When both `observed_distribution` and `population_spread` are present they must agree that the width is (or is not) genuine spread — a validator enforces this.
+
 ### Source Relevance Assessment
 
 `primary_data_source.source_relevance` (and the same field on each `secondary_data_sources` entry) is **required** whenever a Source is provided. Even for exact-match human clinical data, fill the fields — the indication_match=`exact` / species_target=species_source / `tme_compatibility=high` path is the common case, not a skip:
@@ -160,6 +227,7 @@ observable:
 | `source_quality` | `primary_human_clinical`, `primary_human_in_vitro`, `primary_animal_in_vivo`, `primary_animal_in_vitro`, `review_article`, `textbook`, `non_peer_reviewed` |
 | `perturbation_type` | `physiological_baseline`, `pathological_state`, `pharmacological`, `genetic_perturbation` |
 | `tme_compatibility` | `high`, `moderate`, `low` |
+| `heterogeneity_transfer` | `high`, `moderate`, `low` — spread-transfer grade (+ `heterogeneity_transfer_justification`). OPTIONAL: omit for direct patient measurements (they measure the target spread directly); set only for proxy / preclinical sources whose spread understates patient heterogeneity. |
 | `validation_warnings` | List[str] — free-text caveats (e.g., "Values digitized from scatter plots; precision ±0.5%"). Optional but commonly used. |
 
 **Example:**
@@ -394,7 +462,7 @@ The top-level `observable:` block describes a single experimental observable. (T
    - `positive_unbounded`: Output must be > 0, no upper bound (fold-changes, ratios)
    - `real`: Any real value (log-ratios, change scores)
 
-7. **observable.experimental_denominator** / **observable.model_denominator_species** (optional, for density/fraction observables): describe what the experiment normalizes by and which model species form the matching model-side denominator.
+7. **observable.experimental_denominator** / **observable.model_denominator_species** — describe what the experiment normalizes by, and which model species form the matching model-side denominator. **Conditionally required:** when the observable is a density or per-mass concentration (units like `cell/mm**2`, `pg/mg`, `cell/g`, etc., with `support: positive`), validation REQUIRES `experimental_denominator` to be set. Omitting it triggers a `value_error: "Observable with units='pg/mg' and support='positive' is a density but experimental_denominator is not set"` failure. Optional only for unitless ratios (`support: unit_interval`) or absolute counts.
 
 **Example observable (absolute density with stroma correction):**
 ```yaml

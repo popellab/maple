@@ -24,6 +24,7 @@ from maple.core.calibration.code_validator import find_accessed_params
 from maple.core.calibration.exceptions import DimensionalityMismatchError
 from maple.core.calibration.shared_models import (
     FigureExcerpt,
+    ObservedDistribution,
     SourceRelevanceAssessment,
     TableExcerpt,
 )
@@ -865,12 +866,39 @@ class ErrorModel(BaseModel):
         "Choose the bootstrap distribution to match the data-generating process: "
         "normal for mean±SD data, lognormal for positive quantities with log-space spread, "
         "poisson for count data, etc. "
-        "For multi-timepoint models, this is called once per evaluation_point.",
+        "For multi-timepoint models, this is called once per evaluation_point.\n\n"
+        "CONVENTION — pin the CENTER, not the population spread. observation_code should "
+        "constrain the parameter's central value (its width represents measurement/epistemic "
+        "uncertainty on the mean, e.g. an SEM-scale bootstrap that shrinks with n). Genuine "
+        "population (patient-to-patient) variability is declared SEPARATELY and explicitly in "
+        "the observed_distribution field, which is the single source of spread truth for "
+        "hierarchical inference. Do NOT try to encode across-patient spread by widening the "
+        "bootstrap here (or via ad-hoc n_effective / sqrt(n) tricks): that conflates center "
+        "and spread and makes the resulting posterior scale ambiguous. Keep this SEM-scale and "
+        "put the population spread in observed_distribution.",
     )
     n_bootstrap: int = Field(
         default=10000,
         description="Number of parametric bootstrap samples to generate. "
         "Default 10000 provides stable median/SD/CI95 estimates.",
+    )
+    observed_distribution: Optional[ObservedDistribution] = Field(
+        default=None,
+        description=(
+            "Optional quantile-anchor representation of the measured quantity's "
+            "distribution, with an explicit ``spread_source`` provenance tag (shared "
+            "with CalibrationTarget). ADDITIVE and OPTIONAL — when omitted, the target "
+            "behaves exactly as before (observation_code alone drives the bootstrap). "
+            "This is where the schema separates the CENTER (feeds mu) from genuine "
+            "POPULATION SPREAD (feeds omega): most submodel observation_code returns an "
+            "SEM-scale summary that pins the mean, which is correct for the center but too "
+            "narrow to reuse as population variability. Declaring observed_distribution "
+            "with spread_source in {biological_experimental, across_patient} (plus a "
+            "biological n and experimental_unit_type) records the real cross-unit spread; "
+            "'technical'/'center_only' explicitly withhold a spread. Consumed by the "
+            "hierarchical inference layer; see the reparameterized-hierarchical methods "
+            "writeup for how spread_source routes to mu vs omega."
+        ),
     )
 
 

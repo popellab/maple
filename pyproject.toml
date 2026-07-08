@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "maple"
-version = "0.5.0"
+name = "maple-qsp"
+version = "0.7.1"
 description = "Extract calibration targets from scientific literature for QSP model calibration with structured YAML schemas, Pydantic validation, and Julia/Turing.jl code generation"
 readme = "README.md"
 requires-python = ">=3.11"

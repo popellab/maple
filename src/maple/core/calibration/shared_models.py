@@ -6,14 +6,16 @@ These models are defined here to avoid circular imports between
 calibration_target_models.py and pydantic_models.py.
 """
 
+import math
 from enum import Enum
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from maple.core.calibration.enums import (
     ExperimentalSystem,
     ExtractionMethod,
+    HeterogeneityTransfer,
     IndicationMatch,
     MeasurementDirectness,
     PerturbationType,
@@ -70,6 +72,436 @@ class UncertaintyType(str, Enum):
     CI95 = "ci95"  # 95% confidence interval
     RANGE = "range"  # Min-max range
     IQR = "iqr"  # Interquartile range
+
+
+# =============================================================================
+# POPULATION SPREAD PROVENANCE + QUANTILE-ANCHOR DISTRIBUTION
+# =============================================================================
+#
+# Shared across CalibrationTarget (empirical_data) and SubmodelTarget (error_model).
+# Motivation: a single reported "spread" silently stands in for several distinct
+# quantities (uncertainty on the mean, biological SD across experimental units,
+# in-vitro→in-vivo translation gap, and target-population variability). For
+# hierarchical (virtual-patient) inference only two are needed, cleanly separated:
+# the CENTER (feeds the population mean mu) and the POPULATION SPREAD (feeds omega).
+# The tags below make that provenance explicit so the inference can route each
+# quantity to the right hyperparameter instead of reusing an SEM-scale width as
+# population variability. See the reparameterized-hierarchical methods writeup.
+
+
+class SpreadSource(str, Enum):
+    """Provenance of a reported spread — what kind of variability it measures.
+
+    This drives whether a spread feeds the population-spread hyperparameter
+    (omega) in hierarchical inference or only the center's error budget.
+    Subsumes the calibration side's earlier two-valued ``population_spread``
+    (``across_patient`` / ``center_only``) and adds the finer provenance the
+    submodel (in-vitro / ex-vivo) targets need.
+    """
+
+    ACROSS_PATIENT = "across_patient"
+    """Genuine inter-individual spread in the TARGET population (e.g. PDAC
+    patients). The gold standard for population spread; feeds omega directly."""
+
+    BIOLOGICAL_EXPERIMENTAL = "biological_experimental"
+    """Biological SD across experimental units (donors/animals) in an assay.
+    A physical spread, but almost certainly a LOWER BOUND on patient-to-patient
+    variability (controlled system, often healthy donors). Feeds omega, but may
+    need translation widening (see ``translation``)."""
+
+    TRANSLATION = "translation"
+    """In-vitro/ex-vivo -> in-vivo PDAC transfer gap (species, missing TME,
+    proxy cell types). An amplification/modifier on the spread, not a base
+    magnitude; graded from source_relevance. May widen omega."""
+
+    ASSUMED = "assumed"
+    """No valid spread information; a deliberately wide, class-based mechanistic
+    default. Tagged so it is never mistaken for a data-anchored constraint."""
+
+    TECHNICAL = "technical"
+    """Assay/technical-replicate noise. A spread, but NOT biological — it must
+    NOT feed population spread."""
+
+    CENTER_ONLY = "center_only"
+    """The reported width is uncertainty on the MEAN (SEM / CI on the estimate),
+    not a population spread. Feeds the center's error budget only."""
+
+
+# Which provenance tags contribute a genuine population-spread MAGNITUDE (omega).
+# ``translation`` and ``assumed`` are modifiers/defaults applied on top; they are
+# handled by the inference layer, not counted as a base spread here.
+POPULATION_SPREAD_SOURCES: frozenset = frozenset(
+    {SpreadSource.ACROSS_PATIENT, SpreadSource.BIOLOGICAL_EXPERIMENTAL}
+)
+
+
+class ExperimentalUnitType(str, Enum):
+    """What one replicate in the reported n actually is.
+
+    Gates the ``SD = SEM * sqrt(n)`` round-trip: it is valid ONLY when n counts
+    biological units. SEM over technical replicates yields a meaningless "SD".
+    """
+
+    BIOLOGICAL = "biological"  # distinct donors / animals / patients
+    TECHNICAL = "technical"  # replicate wells / measurements of the same unit
+    CLONAL = "clonal"  # clones / passages of one line — treat as technical for spread
+
+
+class QuantileAnchor(BaseModel):
+    """One (probability, value) point on an observed distribution's quantile function."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    p: float = Field(
+        description="Probability level in the open interval (0, 1). "
+        "0.5 is the median; 0.25/0.75 are the IQR edges."
+    )
+    value: float = Field(description="Observed value at this quantile (in ``units``).")
+
+    @field_validator("p")
+    @classmethod
+    def _p_in_open_unit_interval(cls, v: float) -> float:
+        if not (0.0 < v < 1.0):
+            raise ValueError(f"quantile probability p must be in (0, 1), got {v}")
+        return v
+
+
+# Standard normal quantiles used to expand a scalar scale into quartile anchors.
+_Z_Q = 0.6744897501960817  # Phi^-1(0.75): the 0.25/0.75 quantile of N(0,1)
+_Z_95 = 1.959963984540054  # Phi^-1(0.975): half-width of a 95% normal interval
+
+
+class DistributionShape(str, Enum):
+    """Shape used to expand a reported center+scale into quantile anchors."""
+
+    NORMAL = "normal"
+    LOGNORMAL = "lognormal"
+
+
+class ScaleType(str, Enum):
+    """What kind of scale a reported dispersion value is.
+
+    Determines how it expands to quartiles and whether it needs ``n_biological``.
+    """
+
+    SD = "sd"  # population standard deviation (linear units)
+    SEM = "sem"  # standard error of the mean: SD = SEM * sqrt(n_biological)
+    CV = "cv"  # coefficient of variation, SD/mean (dimensionless)
+    IQR = "iqr"  # full interquartile range, q75 - q25 (linear units)
+    CI95_HALFWIDTH = "ci95_halfwidth"  # half-width of a 95% interval (linear units)
+
+
+class MomentSpread(BaseModel):
+    """A reported distribution given as center + scale + shape (mean +/- SD, etc.).
+
+    This is the form most papers actually report. It is an alternative to explicit
+    ``quantiles`` on :class:`ObservedDistribution`: the framework expands it to
+    quartile anchors once, centrally, so extractors never hand-convert mean +/- SD
+    into q25/q50/q75 (an error-prone step that also duplicates snippet-validated
+    inputs). The imposed ``shape`` is recorded, so nothing is silent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    center: float = Field(description="Reported central value (see ``center_type``).")
+    center_type: Literal["mean", "median"] = Field(
+        default="mean", description="Whether ``center`` is the arithmetic mean or the median."
+    )
+    scale: float = Field(
+        description="Reported dispersion value, in the same units as ``center`` "
+        "(dimensionless for ``cv``). Interpreted per ``scale_type``.",
+        ge=0.0,
+    )
+    scale_type: ScaleType = Field(description="What kind of scale ``scale`` is (see ScaleType).")
+    shape: DistributionShape = Field(
+        description="Shape used to expand center+scale into quartiles. Records the "
+        "imposed shape explicitly."
+    )
+
+    def to_quartiles(self, n_biological: Optional[int] = None) -> tuple:
+        """Expand to (q25, q50, q75). ``n_biological`` is required for scale_type='sem'."""
+        return _expand_moments(self, n_biological)
+
+
+def _expand_moments(m: "MomentSpread", n_biological: Optional[int]) -> tuple:
+    """Expand a center+scale+shape spec into (q25, q50, q75).
+
+    Handles the common, unambiguous cases; raises with a clear pointer for combos
+    that a single center+scale cannot determine (e.g. lognormal + bare IQR).
+    """
+    center = m.center
+
+    def _linear_sd() -> float:
+        if m.scale_type == ScaleType.SD:
+            return m.scale
+        if m.scale_type == ScaleType.SEM:
+            if n_biological is None:
+                raise ValueError(
+                    "scale_type='sem' needs n_biological to recover the population SD "
+                    "(SD = SEM * sqrt(n))."
+                )
+            return m.scale * math.sqrt(n_biological)
+        if m.scale_type == ScaleType.CI95_HALFWIDTH:
+            return m.scale / _Z_95
+        if m.scale_type == ScaleType.CV:
+            return m.scale * abs(center)
+        raise ValueError(f"scale_type '{m.scale_type}' has no linear-SD form")  # pragma: no cover
+
+    if m.shape == DistributionShape.NORMAL:
+        # mean and median coincide.
+        if m.scale_type == ScaleType.IQR:
+            half = m.scale / 2.0
+            return (center - half, center, center + half)
+        sd = _linear_sd()
+        return (center - _Z_Q * sd, center, center + _Z_Q * sd)
+
+    # lognormal
+    if m.scale_type == ScaleType.IQR:
+        # median (IQR) is the common clinical form. Given the median and the IQR,
+        # solve for sigma_ln: IQR = median * 2 * sinh(Z_Q * sigma_ln).
+        if m.center_type != "median":
+            raise ValueError(
+                "shape='lognormal' with scale_type='iqr' needs center_type='median' "
+                "(median + IQR is well-determined; mean + IQR is not). Provide the median, "
+                "or use explicit quantiles."
+            )
+        median = center
+        sigma_ln = math.asinh(m.scale / (2.0 * median)) / _Z_Q
+        return (
+            median * math.exp(-_Z_Q * sigma_ln),
+            median,
+            median * math.exp(_Z_Q * sigma_ln),
+        )
+    if m.scale_type == ScaleType.CV:
+        sigma_ln = math.sqrt(math.log(1.0 + m.scale**2))
+        median = center if m.center_type == "median" else center / math.sqrt(1.0 + m.scale**2)
+    else:  # sd / sem / ci95_halfwidth -> a linear SD, which needs the mean to form CV
+        if m.center_type != "mean":
+            raise ValueError(
+                "shape='lognormal' with a linear scale (sd/sem/ci95_halfwidth) needs "
+                "center_type='mean' to form CV=SD/mean. Use scale_type='cv' with a median "
+                "center, or provide explicit quantiles."
+            )
+        sd = _linear_sd()
+        cv = sd / abs(center)
+        sigma_ln = math.sqrt(math.log(1.0 + cv**2))
+        median = center / math.sqrt(1.0 + cv**2)
+    return (
+        median * math.exp(-_Z_Q * sigma_ln),
+        median,
+        median * math.exp(_Z_Q * sigma_ln),
+    )
+
+
+class ObservedDistribution(BaseModel):
+    """General representation of a reported distribution.
+
+    SD, SEM, CV, IQR, CI95, quartiles, deciles, and full samples are all partial
+    specifications of one distribution. This object is the unifying data layer,
+    authored in whichever form the paper reports and reduced to quartiles centrally:
+
+    - ``moments``: center + scale + shape (mean +/- SD, median +/- IQR, CV, CI). The
+      dominant form in the literature; the framework expands it to quartiles so the
+      extractor never hand-converts (and never restates snippet-validated inputs).
+    - ``quantiles``: explicit quantile anchors, for sources that give
+      quartiles/percentiles/samples directly.
+
+    Provide EXACTLY ONE. Derivations (``median``/``iqr``/``quantile``) work off
+    whichever form is present. This is orthogonal to ``spread_source``: the form
+    carries the *shape*, the ``spread_source`` tag carries the *provenance* (whether
+    that shape is genuine population spread). Both route the quantity in inference.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    quantiles: Optional[List[QuantileAnchor]] = Field(
+        default=None,
+        description="Quantile anchors: the median (p=0.5) plus whatever scale anchors the "
+        "source reports (IQR edges at minimum for a spread). Use this when the paper gives "
+        "quantiles/percentiles/samples directly. Provide EITHER quantiles OR moments.",
+    )
+    moments: Optional["MomentSpread"] = Field(
+        default=None,
+        description="Center + scale + shape form (mean +/- SD, median +/- IQR, CV, CI). Use "
+        "this when the paper reports moments rather than quantiles — the framework expands it "
+        "to quartiles centrally, so you never hand-convert. Provide EITHER quantiles OR moments.",
+    )
+    spread_source: SpreadSource = Field(
+        description="Provenance of the spread these anchors describe (see SpreadSource). "
+        "Determines whether the spread feeds population omega or only the center."
+    )
+    n_biological: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Number of BIOLOGICAL units (donors/animals/patients) the summary "
+        "is computed over. REQUIRED when spread_source declares a population spread "
+        "(across_patient / biological_experimental): it licenses the SD<->SEM round-trip "
+        "and sets per-target finite-sample noise. Distinct from technical replicates.",
+    )
+    n_technical: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Number of technical replicates, when reported separately. Does not "
+        "license the SD = SEM*sqrt(n) recovery.",
+    )
+    experimental_unit_type: Optional[ExperimentalUnitType] = Field(
+        default=None,
+        description="What one replicate is (biological/technical/clonal). Gates whether "
+        "an SEM can be converted to a population SD. REQUIRED when spread_source declares "
+        "a population spread (and must be 'biological' — technical/clonal spreads are not "
+        "population variability). Omit only for center_only / technical sources.",
+    )
+    shape_assumption: Optional[str] = Field(
+        default=None,
+        description="Distributional shape imposed when anchors were expanded from a SCALAR "
+        "scale with no shape information (e.g. 'lognormal', 'normal'). Records the imposed "
+        "shape so it is explicit rather than silent. Omit when anchors come directly from "
+        "reported quantiles/samples.",
+    )
+
+    @field_validator("quantiles")
+    @classmethod
+    def _non_empty(cls, v: Optional[List[QuantileAnchor]]) -> Optional[List[QuantileAnchor]]:
+        if v is not None and len(v) == 0:
+            raise ValueError("observed_distribution.quantiles must have at least one anchor")
+        return v
+
+    @model_validator(mode="after")
+    def _exactly_one_form(self) -> "ObservedDistribution":
+        """Exactly one of quantiles / moments must be given."""
+        has_q = self.quantiles is not None
+        has_m = self.moments is not None
+        if has_q == has_m:
+            raise ValueError(
+                "observed_distribution must specify EXACTLY ONE of 'quantiles' or 'moments' "
+                f"(got quantiles={'set' if has_q else 'unset'}, "
+                f"moments={'set' if has_m else 'unset'})."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_moments_derivable(self) -> "ObservedDistribution":
+        """Fail fast on a moments spec that a single center+scale cannot determine."""
+        if self.moments is not None:
+            _expand_moments(self.moments, self.n_biological)  # raises with a clear pointer
+        return self
+
+    @model_validator(mode="after")
+    def _validate_quantile_function(self) -> "ObservedDistribution":
+        # Only applies to the explicit-quantiles form.
+        if self.quantiles is None:
+            return self
+        # Unique, sorted probability levels with non-decreasing values (a valid,
+        # non-crossing quantile function).
+        ps = [q.p for q in self.quantiles]
+        if len(set(ps)) != len(ps):
+            raise ValueError(
+                f"observed_distribution has duplicate probability levels: {sorted(ps)}"
+            )
+        ordered = sorted(self.quantiles, key=lambda q: q.p)
+        prev = None
+        for q in ordered:
+            if prev is not None and q.value < prev.value:
+                raise ValueError(
+                    "observed_distribution quantiles must be non-decreasing in value with p: "
+                    f"value {q.value} at p={q.p} is below value {prev.value} at p={prev.p}"
+                )
+            prev = q
+        # Keep anchors stored in probability order.
+        object.__setattr__(self, "quantiles", ordered)
+
+        # A quantiles-form spread that feeds omega needs at least two anchors (a scale,
+        # not just a center). The moments form always carries a scale.
+        if self.spread_source in POPULATION_SPREAD_SOURCES and len(self.quantiles) < 2:
+            raise ValueError(
+                f"spread_source='{self.spread_source.value}' declares a population spread "
+                "but only a single quantile anchor is given (no scale). Provide IQR edges "
+                "(p=0.25, 0.75) or set spread_source='center_only'."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_biological_provenance_for_spread(self) -> "ObservedDistribution":
+        """A population-spread claim must state its biological unit count and unit type.
+
+        These are what separate a genuine cross-donor/patient spread from an SEM-scale
+        width over technical replicates — the exact conflation this schema exists to
+        prevent. Only enforced when spread_source feeds the population-spread magnitude;
+        center_only / technical / translation / assumed sources are exempt. Applies to
+        both the quantiles and moments forms.
+        """
+        if self.spread_source not in POPULATION_SPREAD_SOURCES:
+            return self
+        # SD<->SEM recovery is only licensed for biological units.
+        if self.experimental_unit_type in (
+            ExperimentalUnitType.TECHNICAL,
+            ExperimentalUnitType.CLONAL,
+        ):
+            raise ValueError(
+                f"experimental_unit_type='{self.experimental_unit_type.value}' cannot support "
+                f"spread_source='{self.spread_source.value}': a spread over "
+                "technical/clonal replicates is not population variability. Use "
+                "'center_only' (or 'technical'), or provide a biological n."
+            )
+        if self.n_biological is None:
+            raise ValueError(
+                f"spread_source='{self.spread_source.value}' declares a population spread "
+                "but n_biological is not set. A population-spread claim needs a biological "
+                "unit count (donors/animals/patients) to license the SD<->SEM round-trip "
+                "and set per-target finite-sample noise. Provide n_biological, or use "
+                "spread_source='center_only'/'technical'."
+            )
+        if self.experimental_unit_type is None:
+            raise ValueError(
+                f"spread_source='{self.spread_source.value}' declares a population spread "
+                "but experimental_unit_type is not set. State that the n counts biological "
+                "units (technical/clonal spreads are not population variability)."
+            )
+        return self
+
+    # ---- Derivations (median / quantile / IQR / scale) --------------------
+
+    def _anchor_pairs(self) -> List[tuple]:
+        """Effective (p, value) anchors from whichever form is present, p-sorted.
+
+        The quantiles form returns its anchors; the moments form is expanded to
+        (q25, q50, q75) once, centrally.
+        """
+        if self.quantiles is not None:
+            return [(q.p, q.value) for q in self.quantiles]  # sorted by validator
+        q25, q50, q75 = _expand_moments(self.moments, self.n_biological)
+        return [(0.25, q25), (0.5, q50), (0.75, q75)]
+
+    def quantile(self, p: float) -> float:
+        """Linearly interpolated value at probability level ``p`` (clamped to the anchor range)."""
+        anchors = self._anchor_pairs()
+        if p <= anchors[0][0]:
+            return anchors[0][1]
+        if p >= anchors[-1][0]:
+            return anchors[-1][1]
+        for (p_lo, v_lo), (p_hi, v_hi) in zip(anchors[:-1], anchors[1:]):
+            if p_lo <= p <= p_hi:
+                if p_hi == p_lo:
+                    return v_lo
+                frac = (p - p_lo) / (p_hi - p_lo)
+                return v_lo + frac * (v_hi - v_lo)
+        return anchors[-1][1]  # pragma: no cover
+
+    def median(self) -> float:
+        """Value at p=0.5 (interpolated if not an explicit anchor)."""
+        return self.quantile(0.5)
+
+    def iqr(self) -> Optional[float]:
+        """Interquartile range (q75 - q25), or None if the anchors do not span it."""
+        ps = [p for p, _ in self._anchor_pairs()]
+        if min(ps) > 0.25 or max(ps) < 0.75:
+            return None
+        return self.quantile(0.75) - self.quantile(0.25)
+
+    @property
+    def feeds_population_spread(self) -> bool:
+        """Whether these anchors contribute a base population-spread magnitude (omega)."""
+        return self.spread_source in POPULATION_SPREAD_SOURCES
 
 
 class TableExcerpt(BaseModel):
@@ -764,11 +1196,59 @@ class SourceRelevanceAssessment(BaseModel):
         ),
     )
 
+    # Spread transfer (for hierarchical / virtual-patient inference).
+    # The SPREAD analog of the center-transfer fields above: how well the source's
+    # biological variability transfers to target-population variability. Like
+    # measurement_directness, required for SubmodelTarget (in vitro / preclinical),
+    # omitted for clinical CalibrationTargets (which measure the target population's
+    # spread directly).
+    heterogeneity_transfer: Optional[HeterogeneityTransfer] = Field(
+        default=None,
+        description=(
+            "How well the source's measured biological spread transfers to TARGET-"
+            "population (patient-to-patient) spread. Sets translation widening of the "
+            "population-spread hyperparameter (omega) on top of the measured biological SD, "
+            "which is typically a lower bound on patient spread.\n"
+            "- high: source spread spans most target heterogeneity (patient-derived panel, "
+            "across-patient cohort) -> little widening\n"
+            "- moderate: partial (healthy human donors, a few cell lines, outbred animals)\n"
+            "- low: homogeneous system (single cell line, inbred strain, technical "
+            "replicates) -> large widening or use a mechanistic-default spread\n"
+            "Distinct from the center-transfer grades: a source can pin the mean well yet "
+            "transfer heterogeneity poorly. Omit (null) for clinical CalibrationTarget "
+            "sources, which measure the target-population spread directly."
+        ),
+    )
+    heterogeneity_transfer_justification: Optional[str] = Field(
+        default=None,
+        description=(
+            "Justify the heterogeneity_transfer grade: what units the source's spread is "
+            "across, and which target-population heterogeneity axes (disease stage, TME, "
+            "genetics, treatment) it does or does not capture. Required when "
+            "heterogeneity_transfer is set."
+        ),
+    )
+
     # Computed (machine-populated, not user-facing)
     validation_warnings: Optional[List[str]] = Field(
         default=None,
         description="Validation warnings generated by automated checks (populated by validators)",
     )
+
+    @model_validator(mode="after")
+    def _require_heterogeneity_transfer_justification(self) -> "SourceRelevanceAssessment":
+        """Require a justification whenever the heterogeneity_transfer grade is set."""
+        if (
+            self.heterogeneity_transfer is not None
+            and not self.heterogeneity_transfer_justification
+        ):
+            raise ValueError(
+                "heterogeneity_transfer_justification is required when "
+                f"heterogeneity_transfer is set ('{self.heterogeneity_transfer.value}'). "
+                "State what units the source's spread is across and which target-population "
+                "heterogeneity axes it does/does not capture."
+            )
+        return self
 
 
 # Rebuild models that use forward references to SourceRelevanceAssessment
