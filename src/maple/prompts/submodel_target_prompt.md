@@ -372,6 +372,33 @@ observed_distribution:
 - Keep values in paper units; do unit conversion in code, not in the anchors.
 - Most in-vitro submodel data is a donor/animal spread that is a LOWER BOUND on PDAC patient spread — grade that transfer in `source_relevance.heterogeneity_transfer` (see Source Relevance below).
 - `observation_code` still just pins the CENTER (keep it SEM-scale); `observed_distribution` is the single source of population-spread truth. Do not double-encode spread in both.
+- For a `[0,1]`-bounded observable (a fraction, proportion, or probability — e.g. a polarization fraction, a positive-cell %), use `shape: logit_normal` instead of `lognormal`. It expands the quartiles in logit space so they can never escape `(0, 1)`; `lognormal` on a near-1 fraction would push the upper quartile past 1. `logit_normal` requires `center_type: median`.
+
+**`unit_group` — only for multi-observable, SAME-unit targets.** When a single target has SEVERAL `error_model` entries measured on the SAME biological units (the same donor panel across the doses of a dose-response; one cohort followed over a time course), tag those entries with a shared `unit_group` string. This tells the hierarchical layer they share ONE biological random effect, so it moment-matches them jointly instead of treating each dose/timepoint as an independent measurement (which would spuriously shrink the population spread by ~sqrt(number-of-points)).
+
+```yaml
+error_model:
+  - name: IFNg_at_0p5_kPa
+    observed_distribution:
+      unit_group: saitakis_donors        # same 13 donors measured at every stiffness
+      moments: {center: 370.5, center_type: mean, scale: 316.4, scale_type: sd, shape: lognormal}
+      spread_source: biological_experimental
+      n_biological: 13
+      experimental_unit_type: biological
+  - name: IFNg_at_2p0_kPa
+    observed_distribution:
+      unit_group: saitakis_donors        # <- same tag: shared donor panel
+      moments: {center: 210.0, center_type: mean, scale: 180.0, scale_type: sd, shape: lognormal}
+      spread_source: biological_experimental
+      n_biological: 13
+      experimental_unit_type: biological
+```
+
+Rules for `unit_group`:
+- **Default is to OMIT it.** A single-observable target, or observables that don't share units, need no tag — each observable is then its own group. This covers the large majority of targets.
+- Share a group ONLY across observables from the SAME biological units. Members of one group MUST agree on `n_biological`, `spread_source`, and `experimental_unit_type` (they describe the shared batch) — the validator enforces this.
+- Do NOT share a group across observables from DIFFERENT populations (different mouse lines, genotypes, or proxy species; WT vs knockout arms). Those are distinct spreads — leave them ungrouped (separate default groups) or give them different group strings.
+- A `unit_group` is for SAMPLING the population, not for perturbation/knockout arms that exist to identify the parameter's center — those should not carry a population `observed_distribution` at all.
 
 ---
 

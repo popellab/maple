@@ -176,6 +176,7 @@ class DistributionShape(str, Enum):
 
     NORMAL = "normal"
     LOGNORMAL = "lognormal"
+    LOGIT_NORMAL = "logit_normal"  # bounded to (0, 1): fractions, probabilities
 
 
 class ScaleType(str, Enum):
@@ -254,6 +255,34 @@ def _expand_moments(m: "MomentSpread", n_biological: Optional[int]) -> tuple:
             return (center - half, center, center + half)
         sd = _linear_sd()
         return (center - _Z_Q * sd, center, center + _Z_Q * sd)
+
+    if m.shape == DistributionShape.LOGIT_NORMAL:
+        # Bounded to (0, 1): expand in logit space so quartiles never escape the
+        # bounds. logit(X) ~ Normal(mu_l, sigma_l); the reported scale sets sigma_l
+        # via the delta method at the median (d logit/dx = 1/(x(1-x))).
+        if not (0.0 < center < 1.0):
+            raise ValueError(
+                "shape='logit_normal' needs center in the open interval (0, 1) "
+                f"(it is a bounded fraction/probability), got {center}."
+            )
+        if m.center_type != "median":
+            raise ValueError(
+                "shape='logit_normal' needs center_type='median' (the logit map is "
+                "applied at the median). Provide the median, or use explicit quantiles."
+            )
+        median = center
+        mu_l = math.log(median / (1.0 - median))
+        if m.scale_type == ScaleType.IQR:
+            # linear IQR -> linear SD (normal-equivalent) -> logit-space sigma
+            sd_linear = m.scale / (2.0 * _Z_Q)
+        else:
+            sd_linear = _linear_sd()  # sd/sem/ci95 -> linear SD; cv -> cv*|center|
+        sigma_l = sd_linear / (median * (1.0 - median))
+
+        def _expit(z: float) -> float:
+            return 1.0 / (1.0 + math.exp(-z))
+
+        return (_expit(mu_l - _Z_Q * sigma_l), median, _expit(mu_l + _Z_Q * sigma_l))
 
     # lognormal
     if m.scale_type == ScaleType.IQR:
@@ -357,6 +386,22 @@ class ObservedDistribution(BaseModel):
         "scale with no shape information (e.g. 'lognormal', 'normal'). Records the imposed "
         "shape so it is explicit rather than silent. Omit when anchors come directly from "
         "reported quantiles/samples.",
+    )
+    unit_group: Optional[str] = Field(
+        default=None,
+        description="Name of the shared biological-unit group this observation belongs to. "
+        "DEFAULT (omitted) = this observable is its own group — the correct choice for the "
+        "vast majority of single-observable targets. Set a shared string ONLY across "
+        "observables measured on the SAME biological units (e.g. the same donor panel across "
+        "the doses of a dose-response, or one cohort followed over a time course). Grouped "
+        "observables are moment-matched JOINTLY for the population spread (omega), so a "
+        "donor's variation is treated as one shared random effect rather than K independent "
+        "measurements (which would spuriously shrink the spread by ~sqrt(K)). Do NOT share a "
+        "group across observables from DIFFERENT populations (different mouse lines, "
+        "genotypes, or proxy species) — those are distinct spreads and must stay separate. "
+        "A string (not a bool) so a target can carry two independent groups if it has two "
+        "unit sets. Members of one group must agree on n_biological / spread_source / "
+        "experimental_unit_type (they describe the shared batch).",
     )
 
     @field_validator("quantiles")

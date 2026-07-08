@@ -196,7 +196,7 @@ empirical_data:
       center_type: median
       scale: 21            # full IQR here
       scale_type: iqr      # sd | sem | cv | iqr | ci95_halfwidth
-      shape: lognormal     # lognormal | normal
+      shape: lognormal     # lognormal | normal | logit_normal (for [0,1] fractions)
     spread_source: across_patient       # or center_only (SEM/CI on the mean; default)
     n_biological: 40
     experimental_unit_type: biological
@@ -215,7 +215,7 @@ Use the `quantiles` form when the paper gives quartiles/percentiles/samples dire
     experimental_unit_type: biological
 ```
 
-Provide EXACTLY ONE of `moments` / `quantiles`. A population spread (`spread_source: across_patient`) REQUIRES `n_biological` + `experimental_unit_type: biological`. When both `observed_distribution` and `population_spread` are present they must agree that the width is (or is not) genuine spread — a validator enforces this.
+Provide EXACTLY ONE of `moments` / `quantiles`. A population spread (`spread_source: across_patient`) REQUIRES `n_biological` + `experimental_unit_type: biological`. When both `observed_distribution` and `population_spread` are present they must agree that the width is (or is not) genuine spread — a validator enforces this. For a `[0,1]`-bounded observable (a fraction / proportion / response rate), use `shape: logit_normal` (with `center_type: median`) so expanded quartiles stay in-bounds. If a target ever carries several observables measured on the SAME patients/units and you want them treated as one shared spread, tag them with a common `unit_group` string (rare for full-model calibration targets, which are usually one observable each — omit it otherwise).
 
 ### Source Relevance Assessment
 

@@ -960,6 +960,43 @@ class Calibration(BaseModel):
         """Backwards compatibility: access forward_model.independent_variable."""
         return self.forward_model.independent_variable
 
+    @model_validator(mode="after")
+    def _unit_groups_consistent(self) -> "Calibration":
+        """Error-model entries sharing an ``observed_distribution.unit_group`` must
+        agree on the fields that describe their shared biological batch.
+
+        A ``unit_group`` asserts that its members were measured on the SAME
+        biological units, so they must be moment-matched jointly for the population
+        spread. That claim is only coherent if the members agree on how many units
+        there are (``n_biological``), what one unit is (``experimental_unit_type``),
+        and the provenance of the spread (``spread_source``). Disagreement means the
+        entries are NOT actually one panel and should not share a group.
+        """
+        groups: dict = {}
+        for em in self.error_model:
+            od = getattr(em, "observed_distribution", None)
+            if od is None or od.unit_group is None:
+                continue
+            groups.setdefault(od.unit_group, []).append((em.name, od))
+
+        for group_name, members in groups.items():
+            if len(members) < 2:
+                continue  # a lone member is indistinguishable from the default
+            first_name, first = members[0]
+            for field in ("n_biological", "spread_source", "experimental_unit_type"):
+                ref = getattr(first, field)
+                for member_name, od in members[1:]:
+                    val = getattr(od, field)
+                    if val != ref:
+                        raise ValueError(
+                            f"unit_group='{group_name}' members disagree on '{field}': "
+                            f"'{first_name}' has {ref!r} but '{member_name}' has {val!r}. "
+                            "Observables sharing a unit_group must be measured on the same "
+                            "biological batch, so these fields must match. If they genuinely "
+                            "come from different populations, give them separate unit_groups."
+                        )
+        return self
+
 
 # =============================================================================
 # DATA SOURCES
