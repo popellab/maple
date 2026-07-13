@@ -246,6 +246,46 @@ class TestCalibrationTargetGolden:
         assert target.empirical_data.index_values is None  # Scalar case
 
 
+class TestCalibrationTargetContextOptional:
+    """Model-structure-dependent validators must DEFER when no validation
+    context is supplied, and still ENFORCE when it is.
+
+    Rationale: pydantic-ai runs CalibrationTarget output validation during the
+    Agent loop with no context. If ``validate_species_exist`` /
+    ``validate_observable_code_units`` hard-raised there, every retry would fail
+    and cal-mode extraction could never complete. ``run_complete`` re-validates
+    WITH context immediately after the agent call, so deferring here loses
+    nothing (regression: cal-mode extraction wedged at 7/7 retries).
+    """
+
+    def test_validate_without_context_defers(
+        self, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Golden target validates with NO context (agent-loop path)."""
+        target = CalibrationTarget.model_validate(golden_calibration_target_data)
+        assert target is not None
+        assert target.observable is not None
+
+    def test_bad_species_still_rejected_with_context(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """The authoritative context-carrying check still catches bad species."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["species"] = ["V_T.NOT_A_REAL_SPECIES"]
+        with pytest.raises(ValidationError):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_bad_species_slips_through_without_context(
+        self, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Without context the species check is deferred, not enforced —
+        confirms the deferral is real (the post-agent check is what guards)."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["species"] = ["V_T.NOT_A_REAL_SPECIES"]
+        target = CalibrationTarget.model_validate(data)  # no context -> defers
+        assert target is not None
+
+
 # ============================================================================
 # Negative Tests - Each Validator Fails
 # ============================================================================

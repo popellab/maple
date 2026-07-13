@@ -1022,6 +1022,14 @@ class CalibrationTarget(BaseModel):
         if type(self).__name__ == "IsolatedSystemTarget":
             return self
 
+        # Defer when no model_structure context is supplied. pydantic-ai runs
+        # output validation during an Agent loop WITHOUT context, which would
+        # otherwise fail every retry; the pipeline re-validates WITH context
+        # immediately after the agent call (run_complete), so the model-structure
+        # dependent checks are not lost.
+        if not info.context or "model_structure" not in info.context:
+            return self
+
         from maple.core.calibration.code_validator import (
             CodeType,
             validate_code_block,
@@ -1701,6 +1709,12 @@ class CalibrationTarget(BaseModel):
         """
         # Skip for IsolatedSystemTarget (uses submodel.observable instead)
         if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
+        # Defer when no model_structure context is supplied (pydantic-ai Agent
+        # output validation). run_complete re-validates WITH context right after
+        # the agent call, so this check is not lost.
+        if not info.context or "model_structure" not in info.context:
             return self
 
         species_units = _resolve_species_units(info)
