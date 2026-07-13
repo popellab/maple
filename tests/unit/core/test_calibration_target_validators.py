@@ -285,6 +285,21 @@ class TestCalibrationTargetContextOptional:
         target = CalibrationTarget.model_validate(data)  # no context -> defers
         assert target is not None
 
+    def test_wrong_signature_still_rejected_without_context(
+        self, golden_calibration_target_data, mock_crossref_success
+    ):
+        """The context-FREE syntax/signature check must run even in the
+        context-less Agent loop, so a wrong observable.code signature raises a
+        retriable ValidationError (letting the model self-correct) rather than
+        passing the loop and only hard-failing at the post-agent check."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["code"] = data["observable"]["code"].replace(
+            "def compute_observable(time, species_dict, constants)",
+            "def compute_observable(time, species_dict)",
+        )
+        with pytest.raises(ValidationError, match="wrong signature"):
+            CalibrationTarget.model_validate(data)  # no context
+
 
 # ============================================================================
 # Negative Tests - Each Validator Fails

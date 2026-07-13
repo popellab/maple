@@ -1022,22 +1022,16 @@ class CalibrationTarget(BaseModel):
         if type(self).__name__ == "IsolatedSystemTarget":
             return self
 
-        # Defer when no model_structure context is supplied. pydantic-ai runs
-        # output validation during an Agent loop WITHOUT context, which would
-        # otherwise fail every retry; the pipeline re-validates WITH context
-        # immediately after the agent call (run_complete), so the model-structure
-        # dependent checks are not lost.
-        if not info.context or "model_structure" not in info.context:
-            return self
-
         from maple.core.calibration.code_validator import (
             CodeType,
             validate_code_block,
         )
 
-        species_units = _resolve_species_units(info)
-
-        # Use CodeValidator for syntax and signature checks
+        # Context-free syntax/signature check runs ALWAYS, including during the
+        # pydantic-ai Agent output-validation loop (which supplies no context),
+        # so a wrong signature surfaces as a retriable ValidationError and the
+        # model can self-correct — rather than passing the agent loop and only
+        # hard-failing at the post-agent check in run_complete.
         result = validate_code_block(
             self.observable.code,
             CodeType.OBSERVABLE,
@@ -1063,6 +1057,15 @@ class CalibrationTarget(BaseModel):
                         "Pint/ureg has been removed — operate on raw floats "
                         "and use explicit numerical unit conversions."
                     )
+
+        # The execution check below needs canonical species units from
+        # model_structure. Defer only this part when no context is supplied;
+        # run_complete re-validates WITH context immediately after the agent
+        # call, so it is not lost.
+        if not info.context or "model_structure" not in info.context:
+            return self
+
+        species_units = _resolve_species_units(info)
 
         # Execute with mock raw-float data
         try:
