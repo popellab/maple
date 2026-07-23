@@ -20,13 +20,15 @@ Tests all validators with:
   - Conversion factors should be documented
   - Unused inputs emit warning
 
-Vector-valued data tests:
-- Vector calibration target passes validation (time-course data)
-- Vector input length mismatch fails (input length != index_values length)
-- Output array length mismatch fails (median/ci95 different lengths)
-- Index fields required together (index_values needs index_unit and index_type)
-- Scalar data requires length-1 arrays (no index_values → length must be 1)
+Scalar output shape tests:
+- Multi-element median fails (every target is a scalar; median must be length 1)
+- CI95 with more than one pair fails (must be a single [[lo, hi]])
 - CI95 wrong inner structure fails ([lo, mid, hi] instead of [lo, hi])
+
+Note: calibration targets no longer carry an index axis (index_values /
+index_unit / index_type are gone). The reduction from the observable
+time-series to the single compared scalar is declared on the Observable as
+either ``readout_time`` (+ ``readout_time_unit``) or ``reduce_observable``.
 """
 
 import copy
@@ -108,6 +110,9 @@ def golden_calibration_target_data():
             "units": "dimensionless",
             "species": ["V_T.CD8", "V_T.C1"],
             "constants": [],
+            # Baseline / diagnosis snapshot: read the observable series at t=0.
+            "readout_time": 0.0,
+            "readout_time_unit": "day",
             "support": "positive_unbounded",
             "mapping_rationale": (
                 "CD8+ T cell density measured via IHC in tumor tissue sections, "
@@ -243,7 +248,10 @@ class TestCalibrationTargetGolden:
         # Scalar data uses length-1 lists
         assert target.empirical_data.median == [pytest.approx(1.0, rel=0.01)]
         assert len(target.empirical_data.ci95) == 1
-        assert target.empirical_data.index_values is None  # Scalar case
+        # Reduction is declared on the observable: a t=0 baseline snapshot.
+        assert target.observable.readout_time == 0.0
+        assert target.observable.readout_time_unit == "day"
+        assert target.observable.reduce_observable is None
 
 
 class TestCalibrationTargetContextOptional:
@@ -596,12 +604,8 @@ class TestCalibrationTargetValidators:
         data["empirical_data"]["inputs"][0][
             "value_snippet"
         ] = "Values were 1.0 at baseline, 2.0 at day 7"  # Missing 999.0
-        # Set up as vector data
-        data["empirical_data"]["median"] = [1.0, 2.0, 2.5]
-        data["empirical_data"]["ci95"] = [[0.5, 1.5], [1.0, 3.0], [1.2, 3.8]]
-        data["empirical_data"]["index_values"] = [0, 7, 14]
-        data["empirical_data"]["index_unit"] = "day"
-        data["empirical_data"]["index_type"] = "time"
+        # The estimate itself stays scalar (median/ci95 are length-1); only the
+        # INPUT is list-valued, and every element must appear in the snippet.
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
@@ -1114,195 +1118,40 @@ class TestCalibrationTargetValidators:
 
 
 # ============================================================================
-# Vector-Valued Data Tests
+# Scalar Output Shape Tests
 # ============================================================================
 
 
-class TestVectorValuedCalibrationTarget:
-    """Tests for vector-valued calibration target data (time-course, dose-response)."""
+class TestScalarOutputShape:
+    """Every calibration target is a SCALAR measurement: ``median`` is a
+    length-1 list and ``ci95`` a single ``[[lower, upper]]`` pair. The
+    time-series reduction that produces that scalar is declared on the
+    observable (``readout_time`` XOR ``reduce_observable``), not by an index
+    axis on the empirical data.
+    """
 
-    def test_vector_calibration_target_passes_validation(
+    def test_median_longer_than_one_fails(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
-        """Test that vector-valued calibration target passes all validators."""
-        from maple.core.calibration import IndexType
-
+        """A multi-element median is no longer a vector target — it is an error."""
         data = copy.deepcopy(golden_calibration_target_data)
 
-        # Use actual computed values from the distribution_code with seed=42
-        # These are the values that lognormal(mu_log, 0.5) produces with the given means
-        data["empirical_data"]["median"] = [0.799, 1.008, 1.1965, 1.0943]
-
-        data["empirical_data"]["ci95"] = [
-            [0.299, 2.1467],
-            [0.3768, 2.6694],
-            [0.4546, 3.1404],
-            [0.4106, 2.9389],
-        ]
-        data["empirical_data"]["index_values"] = [0, 7, 14, 21]
-        data["empirical_data"]["index_unit"] = "day"
-        data["empirical_data"]["index_type"] = "time"
-
-        # Update inputs to be vector-valued
-        data["empirical_data"]["inputs"] = [
-            {
-                "name": "cd8_ratio_mean",
-                "value": [0.8, 1.0, 1.2, 1.1],  # Vector input
-                "units": "dimensionless",
-                "description": "Mean CD8/tumor ratio at each time point",
-                "source_ref": "smith_2020",
-                "value_location": "Figure 3",
-                "value_snippet": "CD8/tumor ratio increased from 0.8 at baseline to 1.2 at day 14",
-            },
-            {
-                "name": "cd8_ratio_sigma_log",
-                "value": 0.5,  # Scalar input (broadcast)
-                "units": "dimensionless",
-                "description": "Log-scale SD (assumed constant)",
-                "source_ref": "smith_2020",
-                "value_location": "Figure 3",
-                "value_snippet": "variability σ=0.5 approximately constant across time",
-                "dispersion_type": "sd",
-                "dispersion_type_rationale": "Paper states σ=0.5 as log-scale standard deviation",
-            },
-        ]
-        data["empirical_data"]["assumptions"] = [
-            {
-                "name": "n_mc_samples",
-                "value": 10000.0,
-                "units": "dimensionless",
-                "description": "MC samples",
-                "rationale": "Standard sample size for stable percentile estimates",
-            },
-        ]
-
-        # Update distribution_code to return vector outputs
-        data["empirical_data"]["distribution_code"] = (
-            "def derive_distribution(inputs, ureg):\n"
-            "    import numpy as np\n"
-            "    import math\n"
-            "    np.random.seed(42)\n"
-            "    means = inputs['cd8_ratio_mean'].magnitude\n"
-            "    sigma_log = inputs['cd8_ratio_sigma_log'].magnitude\n"
-            "    n = int(inputs['n_mc_samples'].magnitude)\n"
-            "    units = inputs['cd8_ratio_mean'].units\n"
-            "    n_points = len(means)\n"
-            "    medians, lowers, uppers = [], [], []\n"
-            "    for i in range(n_points):\n"
-            "        mu_log = math.log(means[i])\n"
-            "        samples = np.random.lognormal(mu_log, sigma_log, n)\n"
-            "        medians.append(np.median(samples))\n"
-            "        lowers.append(np.percentile(samples, 2.5))\n"
-            "        uppers.append(np.percentile(samples, 97.5))\n"
-            "    return {\n"
-            "        'median_obs': np.array(medians) * units,\n"
-            "        'ci95_lower': np.array(lowers) * units,\n"
-            "        'ci95_upper': np.array(uppers) * units,\n"
-            "    }"
-        )
-
-        target = CalibrationTarget.model_validate(
-            data, context={"model_structure": model_structure}
-        )
-
-        assert target is not None
-        assert len(target.empirical_data.median) == 4
-        assert target.empirical_data.index_values == [0, 7, 14, 21]
-        assert target.empirical_data.index_type == IndexType.TIME
-        assert target.empirical_data.index_unit == "day"
-
-    def test_vector_input_length_mismatch_fails(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Test that vector input with wrong length fails validation."""
-        data = copy.deepcopy(golden_calibration_target_data)
-
-        # Set up vector data with 4 time points
-        data["empirical_data"]["median"] = [0.8, 1.0, 1.2, 1.1]
-
-        data["empirical_data"]["ci95"] = [
-            [0.3, 2.2],
-            [0.37, 2.7],
-            [0.45, 3.2],
-            [0.40, 2.95],
-        ]
-        data["empirical_data"]["index_values"] = [0, 7, 14, 21]
-        data["empirical_data"]["index_unit"] = "day"
-        data["empirical_data"]["index_type"] = "time"
-
-        # Vector input with wrong length (3 instead of 4)
-        data["empirical_data"]["inputs"] = [
-            {
-                "name": "cd8_ratio_mean",
-                "value": [0.8, 1.0, 1.2],  # Wrong length!
-                "units": "dimensionless",
-                "description": "Mean CD8/tumor ratio",
-                "source_ref": "smith_2020",
-                "value_location": "Figure 3",
-                "value_snippet": "data",
-            },
-        ]
-
-        with pytest.raises(ValidationError, match="length"):
-            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
-
-    def test_output_length_mismatch_fails(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Test that output arrays with different lengths fail validation."""
-        data = copy.deepcopy(golden_calibration_target_data)
-
-        # median has 4 elements, iqr has 3 - mismatch
-        data["empirical_data"]["median"] = [0.8, 1.0, 1.2, 1.1]
-
-        data["empirical_data"]["ci95"] = [
-            [0.3, 2.2],
-            [0.37, 2.7],
-            [0.45, 3.2],
-            [0.40, 2.95],
-        ]
-        # Must set index_values to enable length mismatch validation (otherwise fails scalar check)
-        data["empirical_data"]["index_values"] = [0, 7, 14, 21]
-        data["empirical_data"]["index_unit"] = "day"
-        data["empirical_data"]["index_type"] = "time"
-
-        with pytest.raises(ValidationError, match="(length mismatch|must be a list of 4)"):
-            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
-
-    def test_index_fields_required_together(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Test that index_values requires index_unit and index_type."""
-        data = copy.deepcopy(golden_calibration_target_data)
-
-        # Vector outputs with index_values but missing index_unit
-        data["empirical_data"]["median"] = [0.8, 1.0, 1.2, 1.1]
-
-        data["empirical_data"]["ci95"] = [
-            [0.3, 2.2],
-            [0.37, 2.7],
-            [0.45, 3.2],
-            [0.40, 2.95],
-        ]
-        data["empirical_data"]["index_values"] = [0, 7, 14, 21]
-        # Missing index_unit and index_type
-
-        with pytest.raises(ValidationError, match="index_unit is required"):
-            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
-
-    def test_scalar_data_requires_length_one(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Test that scalar data (no index_values) must have length-1 arrays."""
-        data = copy.deepcopy(golden_calibration_target_data)
-
-        # No index_values but median has length > 1
-        data["empirical_data"]["median"] = [0.8, 1.0]  # Length 2 without index_values
-
+        data["empirical_data"]["median"] = [0.8, 1.0]  # Length 2
         data["empirical_data"]["ci95"] = [[0.3, 2.2], [0.37, 2.7]]
-        # No index_values set
 
-        with pytest.raises(ValidationError, match="outputs must have length 1"):
+        with pytest.raises(ValidationError, match="median must be a length-1 list"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_ci95_more_than_one_pair_fails(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """ci95 must carry exactly one pair, matching the length-1 median."""
+        data = copy.deepcopy(golden_calibration_target_data)
+
+        # median stays scalar, but ci95 supplies two pairs -> shape mismatch.
+        data["empirical_data"]["ci95"] = [[0.3, 2.2], [0.37, 2.7]]
+
+        with pytest.raises(ValidationError, match=r"ci95 must be a single \[lower, upper\] pair"):
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_ci95_wrong_inner_structure_fails(
@@ -1314,7 +1163,7 @@ class TestVectorValuedCalibrationTarget:
         # ci95 with wrong inner structure (3 elements instead of 2)
         data["empirical_data"]["ci95"] = [[0.3, 1.0, 2.7]]  # Wrong!
 
-        with pytest.raises(ValidationError, match="\\[lower, upper\\] pair"):
+        with pytest.raises(ValidationError, match=r"ci95 must be \[\[lower, upper\]\]"):
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
 
@@ -1672,6 +1521,10 @@ class TestObservableDenominatorAudit:
             "units": "dimensionless",
             "species": ["V_T.CD8"],
             "support": "positive_unbounded",
+            # Every Observable must declare its reduction; these denominator
+            # tests are indifferent to which, so use a t=0 baseline snapshot.
+            "readout_time": 0.0,
+            "readout_time_unit": "day",
         }
         base.update(overrides)
         return Observable(**base)

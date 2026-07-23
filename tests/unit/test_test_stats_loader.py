@@ -51,13 +51,15 @@ BASELINE_YAML = {
         "units": "dimensionless",
         "species": ["V_T.Mac_M1", "V_T.Mac_M2"],
         "constants": [],
+        # Baseline snapshot: read the series at t=0.
+        "readout_time": 0.0,
+        "readout_time_unit": "day",
     },
     "empirical_data": {
         "median": [0.518],
         "ci95": [[0.071, 3.722]],
         "units": "dimensionless",
         "sample_size": 30,
-        "index_values": None,
     },
 }
 
@@ -90,13 +92,15 @@ CONSTANTS_YAML = {
                 "units": "dimensionless",
             },
         ],
+        # Baseline snapshot: read the series at t=0.
+        "readout_time": 0.0,
+        "readout_time_unit": "day",
     },
     "empirical_data": {
         "median": [138.78],
         "ci95": [[20.31, 965.18]],
         "units": "cell / millimeter**2",
         "sample_size": 444,
-        "index_values": None,
     },
 }
 
@@ -112,15 +116,15 @@ TREATMENT_YAML = {
         "units": "dimensionless",
         "species": ["V_T.CD8"],
         "constants": [],
+        # Timed readout: interpolate the series at day 21.
+        "readout_time": 21.0,
+        "readout_time_unit": "day",
     },
     "empirical_data": {
         "median": [3.028],
         "ci95": [[1.4, 6.55]],
         "units": "dimensionless",
         "sample_size": 10,
-        "index_values": [21.0],
-        "index_unit": "day",
-        "index_type": "time",
     },
 }
 
@@ -421,7 +425,8 @@ class TestGenerateWrapperCode:
                 "    return species_dict['V_T.CD8']\n"
             ),
             constants=[],
-            index_values=[15.0],
+            readout_time=15.0,
+            reduce_observable=None,
         )
 
         ns = {}
@@ -451,7 +456,8 @@ class TestGenerateWrapperCode:
                 },
                 {"name": "pdac_cellularity_fraction", "value": 0.25, "units": "dimensionless"},
             ],
-            index_values=None,
+            readout_time=0.0,
+            reduce_observable=None,
         )
 
         assert "pdac_cancer_cell_cross_section" in code
@@ -462,17 +468,18 @@ class TestGenerateWrapperCode:
         assert "ureg.parse_expression" not in code
 
     def test_wrapper_extracts_at_target_time(self):
-        """Treatment target with index_values evaluates at the correct time."""
+        """Treatment target with a timed readout evaluates at the correct time."""
         code = _generate_wrapper_code(
             observable_code=(
                 "def compute_observable(time, species_dict, constants):\n"
                 "    return species_dict['V_T.CD8']\n"
             ),
             constants=[],
-            index_values=[21.0],
+            readout_time=21.0,
+            reduce_observable=None,
         )
 
-        assert "_target_t = 21.0" in code
+        assert "_readout_t = 21.0" in code
 
     def test_wrapper_extracts_at_baseline(self):
         """Baseline target evaluates at t=0."""
@@ -482,10 +489,11 @@ class TestGenerateWrapperCode:
                 "    return species_dict['V_T.CD8']\n"
             ),
             constants=[],
-            index_values=None,
+            readout_time=0.0,
+            reduce_observable=None,
         )
 
-        assert "_target_t = 0.0" in code
+        assert "_readout_t = 0.0" in code
 
     def test_wrapper_no_constants_still_passes_empty_dict(self):
         """Wrapper with no constants still passes _constants={} to observable."""
@@ -494,7 +502,8 @@ class TestGenerateWrapperCode:
                 "def compute_observable(time, species_dict, constants):\n" "    return 42\n"
             ),
             constants=[],
-            index_values=None,
+            readout_time=0.0,
+            reduce_observable=None,
         )
 
         assert "_constants = {}" in code
@@ -507,7 +516,8 @@ class TestGenerateWrapperCode:
                 "def compute_observable(time, species_dict, constants):\n" "    return 42.0\n"
             ),
             constants=[],
-            index_values=None,
+            readout_time=0.0,
+            reduce_observable=None,
         )
 
         ns = {}
@@ -516,6 +526,125 @@ class TestGenerateWrapperCode:
         time = np.array([0.0])
         result = ns["compute_test_statistic"](time, {})
         assert result == 42.0
+
+    def test_wrapper_requires_exactly_one_reduction(self):
+        """Neither / both readout_time and reduce_observable is a hard error —
+        there is no implicit t=0 fallback."""
+        observable_code = (
+            "def compute_observable(time, species_dict, constants):\n"
+            "    return species_dict['V_T.CD8']\n"
+        )
+        reduce_code = (
+            "def reduce_observable(time, series):\n"
+            "    import numpy as np\n"
+            "    return float(np.max(series))\n"
+        )
+
+        with pytest.raises(ValueError, match="exactly one of readout_time"):
+            _generate_wrapper_code(
+                observable_code=observable_code,
+                constants=[],
+                readout_time=None,
+                reduce_observable=None,
+            )
+
+        with pytest.raises(ValueError, match="exactly one of readout_time"):
+            _generate_wrapper_code(
+                observable_code=observable_code,
+                constants=[],
+                readout_time=21.0,
+                reduce_observable=reduce_code,
+            )
+
+
+class TestReduceObservableWrapper:
+    """``reduce_observable`` replaces the fixed-time readout with an author
+    supplied ``reduce_observable(time, series) -> float`` reduction (peak, AUC,
+    final value, ...)."""
+
+    _PEAK_REDUCE = (
+        "def reduce_observable(time, series):\n"
+        "    import numpy as np\n"
+        "    return float(np.max(series))\n"
+    )
+
+    def test_reduce_observable_returns_peak(self):
+        """A np.max reduction returns the series peak, not the value at t=0 or
+        at the end of the trajectory."""
+        code = _generate_wrapper_code(
+            observable_code=(
+                "def compute_observable(time, species_dict, constants):\n"
+                "    return species_dict['V_T.CD8']\n"
+            ),
+            constants=[],
+            readout_time=None,
+            reduce_observable=self._PEAK_REDUCE,
+        )
+
+        ns = {}
+        exec(code, ns)
+
+        time = np.array([0.0, 7.0, 14.0, 21.0])
+        # Peak is interior: neither the first (1.0) nor the last (2.0) sample.
+        species_dict = {"V_T.CD8": np.array([1.0, 5.0, 9.0, 2.0])}
+
+        result = ns["compute_test_statistic"](time, species_dict)
+        assert result == pytest.approx(9.0)
+        # No fixed-time interpolation is emitted for a reduce_observable target.
+        assert "_readout_t" not in code
+
+    def test_reduce_observable_through_registry(self):
+        """End-to-end through the same registry-compilation path used by the
+        qsp-hpc-tools runtime: a reduce_observable row compiles to a callable
+        ``compute_test_statistic`` returning the peak."""
+        code = _generate_wrapper_code(
+            observable_code=(
+                "def compute_observable(time, species_dict, constants):\n"
+                "    scale = constants['assay_scale']\n"
+                "    return species_dict['V_T.CD8'] * scale\n"
+            ),
+            constants=[
+                {"name": "assay_scale", "value": 2.0, "units": "dimensionless"},
+            ],
+            readout_time=None,
+            reduce_observable=self._PEAK_REDUCE,
+        )
+
+        df = pd.DataFrame([{"test_statistic_id": "cd8_peak", "model_output_code": code}])
+        registry = _build_registry(df)
+        assert set(registry) == {"cd8_peak"}
+
+        time = np.array([0.0, 7.0, 14.0, 21.0])
+        species_dict = {"V_T.CD8": np.array([1.0, 5.0, 9.0, 2.0])}
+
+        result = registry["cd8_peak"](time, species_dict)
+        # Peak of the scaled series: max(9.0) * 2.0
+        assert result == pytest.approx(18.0)
+
+    def test_reduce_observable_auc(self):
+        """A trapezoidal-AUC reduction integrates over the whole trajectory."""
+        code = _generate_wrapper_code(
+            observable_code=(
+                "def compute_observable(time, species_dict, constants):\n"
+                "    return species_dict['V_T.CD8']\n"
+            ),
+            constants=[],
+            readout_time=None,
+            reduce_observable=(
+                "def reduce_observable(time, series):\n"
+                "    import numpy as np\n"
+                "    return float(np.trapezoid(series, time))\n"
+            ),
+        )
+
+        ns = {}
+        exec(code, ns)
+
+        time = np.array([0.0, 1.0, 2.0, 3.0])
+        species_dict = {"V_T.CD8": np.array([0.0, 1.0, 2.0, 3.0])}
+
+        result = ns["compute_test_statistic"](time, species_dict)
+        assert result == pytest.approx(np.trapezoid([0.0, 1.0, 2.0, 3.0], [0.0, 1.0, 2.0, 3.0]))
 
 
 # ============================================================================
@@ -612,11 +741,11 @@ PREDICTION_YAML = {
         "units": "dimensionless",
         "species": ["V_T.C1"],
         "constants": [],
+        # Timed readout: evaluate at the 365-day landmark.
+        "readout_time": 365.0,
+        "readout_time_unit": "day",
     },
     "scenario": "clinical_progression",
-    "index_values": [365.0],
-    "index_unit": "day",
-    "index_type": "time",
     "rationale": "12-month OS is the standard adjuvant PDAC landmark.",
     "tags": [],
 }
@@ -635,11 +764,11 @@ PREDICTION_YAML_TTP = {
         "units": "day",
         "species": ["V_T.C1"],
         "constants": [],
+        # Timed readout: evaluate at the 1095-day censoring horizon.
+        "readout_time": 1095.0,
+        "readout_time_unit": "day",
     },
     "scenario": "clinical_progression",
-    "index_values": [1095.0],
-    "index_unit": "day",
-    "index_type": "time",
     "rationale": "TTP landmark at censoring horizon.",
     "tags": [],
 }

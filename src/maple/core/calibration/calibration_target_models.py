@@ -10,9 +10,8 @@ See docs/calibration_target_design.md for full specification.
 """
 
 import ast
-from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -133,46 +132,35 @@ class CalibrationTargetFooters(BaseModel):
     derivation_timestamp: Optional[str] = Field(None, description="ISO timestamp of derivation")
 
 
-class IndexType(str, Enum):
-    """Type of index dimension for vector-valued calibration targets."""
-
-    TIME = "time"  # Time-course data (e.g., measurements at Day 0, 7, 14)
-    DOSE = "dose"  # Dose-response data (e.g., drug concentrations)
-    RATIO = "ratio"  # Ratio-based index (e.g., E:T ratios)
-    CONCENTRATION = "concentration"  # Concentration series
-    OTHER = "other"  # Other index types
-
-
 class CalibrationTargetEstimates(BaseModel):
     """
     Calibration target estimates with structured inputs and derivation.
 
-    Supports both scalar and vector-valued outputs:
-    - Scalar: Single measurement → length-1 lists (median=[42.0], ci95=[[37.0, 47.0]])
-    - Vector: Multi-point data → lists matching index_values length
-
-    Vector-valued outputs are indexed by index_values (e.g., time points, doses).
+    Each target is a SCALAR measurement: ``median`` is a length-1 list
+    (``[42.0]``) and ``ci95`` a single ``[[lower, upper]]`` pair. The reduction
+    from the observable time-series to that scalar is declared on the
+    ``Observable`` (``readout_time`` or ``reduce_observable``) — there is no
+    index dimension here. Multi-point data (time-course, dose-response) is
+    authored as separate scalar targets, one per readout / arm.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     median: List[float] = Field(
         description=(
-            "COMPUTED median value(s) from distribution_code. "
-            "Length-1 list for scalar data, or list matching index_values length for vector data."
+            "COMPUTED median value from distribution_code, as a length-1 list " "(e.g. ``[42.0]``)."
         )
     )
     ci95: List[List[float]] = Field(
         description=(
-            "COMPUTED 95% confidence intervals from distribution_code. "
-            "List of [lower, upper] pairs. Length-1 for scalar data ([[lo, hi]]), "
-            "or matching index_values length for vector data."
+            "COMPUTED 95% confidence interval from distribution_code, as a "
+            "single ``[[lower, upper]]`` pair."
         )
     )
     units: str = Field(description="Units of the observable (Pint-parseable)")
 
     # Sample size metadata
-    sample_size: Union[int, List[int]] = Field(
+    sample_size: int = Field(
         description=(
             "Sample size (n) for the measurement. CRITICAL for uncertainty quantification "
             "and pooling across studies.\n\n"
@@ -182,9 +170,6 @@ class CalibrationTargetEstimates(BaseModel):
             "- Patient/subject counts in study design\n"
             "- Number of replicates in in vitro experiments\n"
             "- Number of animals per group in preclinical studies\n\n"
-            "FORMAT:\n"
-            "- Single int for scalar data or same n for all index points\n"
-            "- List[int] for different sample sizes at each index point\n\n"
             "IF NOT REPORTED:\n"
             "- Check figure error bars - if SEM is reported, can back-calculate n from SD/SEM\n"
             "- Use conservative estimate based on study type\n"
@@ -202,29 +187,11 @@ class CalibrationTargetEstimates(BaseModel):
         )
     )
 
-    # Index dimension for vector-valued data
-    index_values: Optional[List[float]] = Field(
-        None,
-        description=(
-            "Index values for vector-valued data (e.g., [0, 24, 48, 72] for time points). "
-            "None for scalar data. Vector-valued inputs and outputs must match this length."
-        ),
-    )
-    index_unit: Optional[str] = Field(
-        None,
-        description="Units for index_values (e.g., 'hour', 'day', 'nanomolar'). Required if index_values provided.",
-    )
-    index_type: Optional[IndexType] = Field(
-        None,
-        description="Type of index dimension. Required if index_values provided.",
-    )
-
     inputs: List[EstimateInput] = Field(
         description=(
             "List of literature-extracted inputs used in distribution_code derivation. "
             "These are the VALUES REPORTED IN THE PAPER (mean, SD, median, IQR, trajectories, etc.) "
-            "that are used to DERIVE the distribution via Monte Carlo. "
-            "Inputs can be scalar (broadcast to all index points) or vector-valued (same length as index_values).\n\n"
+            "that are used to DERIVE the distribution via Monte Carlo.\n\n"
             "NOTE: These are values used by distribution_code, not by observable.code. "
             "observable.code uses observable.constants for grounded reference values."
         )
@@ -242,11 +209,10 @@ class CalibrationTargetEstimates(BaseModel):
             "Python code defining a derive_distribution(inputs, ureg) function.\n"
             "inputs is a dict mapping input names to Pint Quantities (scalar or array).\n"
             "Must return dict with Pint Quantities:\n"
-            "  - median_obs: median value(s) as Pint Quantity\n"
-            "  - ci95_lower: lower CI bound(s) as Pint Quantity\n"
-            "  - ci95_upper: upper CI bound(s) as Pint Quantity\n\n"
-            "For scalar data, return scalar Quantities.\n"
-            "For vector data, return array Quantities matching index_values length.\n\n"
+            "  - median_obs: median value as Pint Quantity\n"
+            "  - ci95_lower: lower CI bound as Pint Quantity\n"
+            "  - ci95_upper: upper CI bound as Pint Quantity\n\n"
+            "Return scalar Quantities (each target is a scalar measurement).\n\n"
             "GOLDEN RULE: Reattach units immediately after sampling, then they propagate.\n"
             "np.median, np.percentile, np.mean, np.std all preserve Pint units.\n\n"
             "Example (scalar - single measurement):\n"
@@ -375,110 +341,30 @@ class CalibrationTargetEstimates(BaseModel):
 
     @field_validator("sample_size")
     @classmethod
-    def validate_sample_size_positive(cls, v: Union[int, List[int]]) -> Union[int, List[int]]:
+    def validate_sample_size_positive(cls, v: int) -> int:
         """Validate sample size is at least 1."""
-        if isinstance(v, list):
-            for i, n in enumerate(v):
-                if n < 1:
-                    raise ValueError(f"sample_size[{i}] must be at least 1, got {n}")
-        else:
-            if v < 1:
-                raise ValueError(f"sample_size must be at least 1, got {v}")
+        if v < 1:
+            raise ValueError(f"sample_size must be at least 1, got {v}")
         return v
 
     @model_validator(mode="after")
-    def validate_output_lengths_match(self) -> "CalibrationTargetEstimates":
-        """Validator: Ensure median and ci95 have the same length."""
-        n_median = len(self.median)
-        n_ci95 = len(self.ci95)
-
-        if n_median != n_ci95:
+    def validate_scalar_output(self) -> "CalibrationTargetEstimates":
+        """Validator: each target is a scalar — ``median`` is length-1 and
+        ``ci95`` is a single ``[lower, upper]`` pair."""
+        if len(self.median) != 1:
             raise ValueError(
-                f"Output array lengths must match: median has {n_median}, ci95 has {n_ci95}"
+                f"median must be a length-1 list (a scalar target), got length {len(self.median)}. "
+                f"Multi-point data is authored as separate scalar targets, one per readout / arm."
+            )
+        if len(self.ci95) != 1:
+            raise ValueError(
+                f"ci95 must be a single [lower, upper] pair, got {len(self.ci95)} entries."
+            )
+        if len(self.ci95[0]) != 2:
+            raise ValueError(
+                f"ci95 must be [[lower, upper]], got {len(self.ci95[0])} elements in the pair."
             )
 
-        # Check ci95 inner structure
-        for i, ci in enumerate(self.ci95):
-            if len(ci) != 2:
-                raise ValueError(f"ci95[{i}] must be [lower, upper] pair, got {len(ci)} elements")
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_index_fields_consistent(self) -> "CalibrationTargetEstimates":
-        """Validator: Ensure index_* fields are all present or all absent."""
-        has_values = self.index_values is not None
-        has_unit = self.index_unit is not None
-        has_type = self.index_type is not None
-
-        if has_values:
-            if not has_unit:
-                raise ValueError("index_unit is required when index_values is provided")
-            if not has_type:
-                raise ValueError("index_type is required when index_values is provided")
-
-            # Check that output length matches index_values length
-            # Type narrowing: we know index_values is not None here
-            assert self.index_values is not None  # for type checker
-            n_index = len(self.index_values)
-            n_output = len(self.median)
-            if n_output != n_index:
-                raise ValueError(
-                    f"Output length ({n_output}) must match index_values length ({n_index})"
-                )
-        else:
-            # Scalar case: must have length 1
-            if len(self.median) != 1:
-                raise ValueError(
-                    f"For scalar data (no index_values), outputs must have length 1, "
-                    f"got {len(self.median)}"
-                )
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_vector_input_lengths(self) -> "CalibrationTargetEstimates":
-        """Validator: Ensure vector-valued inputs and assumptions match index_values length."""
-        if self.index_values is None:
-            return self  # Scalar case, skip
-
-        n_index = len(self.index_values)
-
-        # Check literature inputs
-        for inp in self.inputs:
-            if isinstance(inp.value, list):
-                if len(inp.value) != n_index:
-                    raise ValueError(
-                        f"Vector input '{inp.name}' has length {len(inp.value)}, "
-                        f"but index_values has length {n_index}. "
-                        f"Vector inputs must match index_values length."
-                    )
-
-        # Check assumptions
-        for assumption in self.assumptions:
-            if isinstance(assumption.value, list):
-                if len(assumption.value) != n_index:
-                    raise ValueError(
-                        f"Vector assumption '{assumption.name}' has length {len(assumption.value)}, "
-                        f"but index_values has length {n_index}. "
-                        f"Vector assumptions must match index_values length."
-                    )
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_sample_size_length(self) -> "CalibrationTargetEstimates":
-        """Validator: Ensure vector sample_size matches index_values length."""
-        if isinstance(self.sample_size, list):
-            if self.index_values is None:
-                raise ValueError(
-                    "Vector sample_size requires index_values. " "Use a single int for scalar data."
-                )
-            if len(self.sample_size) != len(self.index_values):
-                raise ValueError(
-                    f"sample_size length ({len(self.sample_size)}) must match "
-                    f"index_values length ({len(self.index_values)})"
-                )
         return self
 
     @model_validator(mode="after")
@@ -992,8 +878,8 @@ class CalibrationTarget(BaseModel):
         for aux in self.observable.auxiliary_parameters:
             _check_unit(aux.units, f"observable.auxiliary_parameters['{aux.name}'].units")
 
-        # empirical_data.index_unit
-        _check_unit(self.empirical_data.index_unit, "empirical_data.index_unit")
+        # observable.readout_time_unit (if present)
+        _check_unit(self.observable.readout_time_unit, "observable.readout_time_unit")
 
         # aggregation.time_unit (if present)
         if (
@@ -1153,22 +1039,24 @@ class CalibrationTarget(BaseModel):
     @model_validator(mode="after")
     def warn_evaluation_timing(self) -> "CalibrationTarget":
         """
-        Validator (WARNING): Warn when time-indexed data has no scenario context.
+        Validator (WARNING): Warn when a non-baseline readout has no scenario.
 
-        Time-course calibration targets need a scenario to anchor the timeline
-        (e.g., treatment start, measurement protocol).
+        A readout at a non-zero ``readout_time`` (or a ``reduce_observable``
+        that walks the trajectory) needs a scenario to anchor the timeline
+        (treatment start, measurement protocol).
         """
         import warnings
 
-        if (
-            self.empirical_data.index_type is not None
-            and self.empirical_data.index_type == IndexType.TIME
-            and self.scenario is None
-        ):
+        obs = self.observable
+        needs_timeline = (
+            obs.readout_time is not None and obs.readout_time != 0.0
+        ) or obs.reduce_observable is not None
+        if needs_timeline and self.scenario is None:
             warnings.warn(
-                "empirical_data has index_type='time' but no scenario is defined. "
-                "Time-course data typically needs a scenario to anchor the timeline "
-                "(treatment start, measurement schedule). Consider adding a scenario.",
+                "observable has a non-baseline readout (readout_time != 0 or "
+                "reduce_observable) but no scenario is defined. Such targets "
+                "typically need a scenario to anchor the timeline (treatment "
+                "start, measurement schedule). Consider adding a scenario.",
                 UserWarning,
             )
 

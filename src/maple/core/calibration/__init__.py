@@ -11,7 +11,6 @@ from maple.core.calibration.calibration_target_models import (
     CalibrationTarget,
     CalibrationTargetEstimates,
     CalibrationTargetFooters,
-    IndexType,
 )
 from maple.core.calibration.submodel_target import (
     SubmodelTarget,
@@ -164,7 +163,6 @@ __all__ = [
     "CalibrationTarget",
     "CalibrationTargetEstimates",
     "CalibrationTargetFooters",
-    "IndexType",
     "SubmodelTarget",
     "CrossScenarioCalibrationTarget",
     "CrossScenarioInput",
