@@ -1935,7 +1935,8 @@ def make_agents(
             "If your first searches find nothing, try synonyms, broader terms, or related biological concepts."
         ),
         model_settings=lit_search_settings,
-        builtin_tools=[WebSearchTool()],
+        # pydantic-ai >=2.x: native tools attach via capabilities= (was builtin_tools in 1.x)
+        capabilities=[WebSearchTool()],
         retries=max_retries,
     )
 
