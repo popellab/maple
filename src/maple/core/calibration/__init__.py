@@ -117,6 +117,21 @@ from maple.core.calibration.code_validator import (
     validate_code_block,
 )
 
+# Target loaders: compile calibration / prediction / cross-scenario target
+# YAMLs into the schema-agnostic test-stats DataFrame the runtime consumes.
+# (Moved here from qsp_hpc.calibration so maple owns compilation of its own
+# schema; qsp-hpc-tools consumes only the resulting DataFrame.)
+from maple.core.calibration.test_stats_loader import (
+    hash_calibration_targets,
+    hash_prediction_targets,
+    load_calibration_targets,
+    load_prediction_targets,
+)
+from maple.core.calibration.cross_scenario_loader import (
+    hash_cross_scenario_targets,
+    load_cross_scenario_targets,
+)
+
 # Exceptions
 from maple.core.calibration.exceptions import (
     ArrayLengthError,
@@ -248,4 +263,11 @@ __all__ = [
     # Bootstrap capture
     "capture_bootstrap_samples",
     "build_distribution_inputs",
+    # Target loaders (YAML -> test-stats DataFrame)
+    "load_calibration_targets",
+    "hash_calibration_targets",
+    "load_prediction_targets",
+    "hash_prediction_targets",
+    "load_cross_scenario_targets",
+    "hash_cross_scenario_targets",
 ]
