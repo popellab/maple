@@ -451,7 +451,7 @@ The top-level `observable:` block describes a single experimental observable. (T
    - `ureg`: Pint UnitRegistry for conversions
    - Must return Pint Quantity (scalar or array) with units matching `observable.units` and `empirical_data.units`
    - **IMPORTANT**: Do NOT hardcode numbers with units. Use `constants` dict for all conversion factors.
-   - **IMPORTANT**: Do NOT include time filtering logic. This function computes WHAT to measure. WHEN to measure is handled at the scenario/timepoint level.
+   - **IMPORTANT**: Do NOT reduce over time inside this function. `observable.code` computes WHAT to measure over the WHOLE time series; HOW that series is reduced to the single compared scalar is declared separately via `observable.readout_time` / `observable.reduce_observable` (see below).
 
 5. **observable.units** (str) - Pint-parseable units of the observable output. Must match both `observable.code` return units and `empirical_data.units`.
 
@@ -463,6 +463,11 @@ The top-level `observable:` block describes a single experimental observable. (T
    - `real`: Any real value (log-ratios, change scores)
 
 7. **observable.experimental_denominator** / **observable.model_denominator_species** — describe what the experiment normalizes by, and which model species form the matching model-side denominator. **Conditionally required:** when the observable is a density or per-mass concentration (units like `cell/mm**2`, `pg/mg`, `cell/g`, etc., with `support: positive`), validation REQUIRES `experimental_denominator` to be set. Omitting it triggers a `value_error: "Observable with units='pg/mg' and support='positive' is a density but experimental_denominator is not set"` failure. Optional only for unitless ratios (`support: unit_interval`) or absolute counts.
+
+8. **observable.readout_time / observable.reduce_observable** (**required — set EXACTLY ONE**) — how the observable time-series from `observable.code` is reduced to the single scalar compared against `empirical_data`. There is NO implicit default; a target that sets neither is rejected.
+   - **`readout_time`** (float) + **`readout_time_unit`** (str, e.g. `day`) — the common case: the series is linearly interpolated to this simulation time. For a treatment-arm biopsy at day 21, use `readout_time: 21.0`, `readout_time_unit: day`. For a **baseline / diagnosis-snapshot** measurement (treatment-naive resection, the reference state), set `readout_time: 0.0` explicitly (the trajectory's `t=0` is diagnosis).
+   - **`reduce_observable`** (executable Python) — use ONLY when the measurement is NOT a value at a fixed time: a peak/Cmax, an AUC, a final value, a time-to-threshold. Signature `reduce_observable(time, series) -> float` (numpy arrays in, one float out; `np.*` only). Example (peak): `def reduce_observable(time, series):\n    import numpy as np\n    return float(np.max(series))`.
+   - Dose-response / multi-timepoint data is NOT a single vector target — author one scalar target per readout (or per dose arm).
 
 **Example observable (absolute density with stroma correction):**
 ```yaml
@@ -679,13 +684,13 @@ When `observable.code` includes conversion factors (cells → volume, IHC score 
 
 ### Sample Size
 
-`empirical_data.sample_size` (int or List[int]) and `empirical_data.sample_size_rationale` (str) are required. Look for `n =`, `N =`, figure legends, patient counts, replicate counts. If unreported, back-calculate from SD/SEM (if both given), or use a conservative type-based estimate and note the uncertainty in `sample_size_rationale`.
+`empirical_data.sample_size` (int) and `empirical_data.sample_size_rationale` (str) are required. Look for `n =`, `N =`, figure legends, patient counts, replicate counts. If unreported, back-calculate from SD/SEM (if both given), or use a conservative type-based estimate and note the uncertainty in `sample_size_rationale`.
 
 **Reference example with all `empirical_data` fields:**
 ```yaml
 empirical_data:
-  median: [149.94]                       # List[float] — length 1 for scalar; matches index_values length for vector data
-  ci95: [[100.79, 199.35]]               # List[List[float]] — one [lo, hi] pair per index point
+  median: [149.94]                       # List[float] — length-1 (scalar target)
+  ci95: [[100.79, 199.35]]               # List[List[float]] — a single [lo, hi] pair
   units: cell / mm**2
   sample_size: 42
   sample_size_rationale: "n=42 patients with resected PDAC tumors, stated in Table 1"

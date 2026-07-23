@@ -384,6 +384,51 @@ class Observable(BaseModel):
         description="Pint-parseable units of the observable output (must match empirical_data.units)"
     )
 
+    readout_time: Optional[float] = Field(
+        default=None,
+        description=(
+            "Model-simulation time at which to read the observable series, in "
+            "``readout_time_unit``. The series returned by ``code`` is linearly "
+            "interpolated to this single time to produce the scalar compared "
+            "against ``empirical_data``. Use this for a value-at-a-time "
+            "measurement (the common case, e.g. a day-21 biopsy). Mutually "
+            "exclusive with ``reduce_observable``; exactly one of the two MUST "
+            "be set — there is no implicit default readout time, so a missing "
+            "choice is an error, not a silent t=0. For a baseline / diagnosis "
+            "snapshot, set ``readout_time: 0.0`` explicitly."
+        ),
+    )
+    readout_time_unit: Optional[str] = Field(
+        default=None,
+        description=(
+            "Pint-parseable unit for ``readout_time`` (e.g. 'day', 'hour'). "
+            "Required when ``readout_time`` is set."
+        ),
+    )
+    reduce_observable: Optional[str] = Field(
+        default=None,
+        description=(
+            "Python function that reduces the observable time-series to the "
+            "single scalar compared against ``empirical_data`` — use this when "
+            "the measurement is NOT a value at a fixed time (e.g. a peak / Cmax, "
+            "an AUC, a final value, a time-to-threshold).\n\n"
+            "Function signature: reduce_observable(time, series) -> float\n"
+            "- time: numpy float array of simulation times (canonical days).\n"
+            "- series: numpy float array from ``code`` (same length as time),\n"
+            "  in ``empirical_data.units``.\n"
+            "Must return a single float. Use only ``np.*`` functions.\n\n"
+            "Examples:\n"
+            "def reduce_observable(time, series):\n"
+            "    import numpy as np\n"
+            "    return float(np.max(series))              # Cmax / peak\n\n"
+            "def reduce_observable(time, series):\n"
+            "    import numpy as np\n"
+            "    return float(np.trapezoid(series, time))  # AUC\n\n"
+            "(NumPy >= 2.0 renamed ``np.trapz`` to ``np.trapezoid``.)\n\n"
+            "Mutually exclusive with ``readout_time``; exactly one MUST be set."
+        ),
+    )
+
     species: List[str] = Field(
         description=(
             "List of full model species accessed by the observable code.\n"
@@ -488,6 +533,41 @@ class Observable(BaseModel):
                 f"is a density but experimental_denominator is not set. "
                 f"Document what the experiment divides by (e.g., 'mm^2 of tumor "
                 f"tissue including stroma') to enable denominator audit."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_reduction_choice(self) -> "Observable":
+        """Require exactly one of ``readout_time`` / ``reduce_observable``.
+
+        This is the contract that removes the old silent-t=0 default: the
+        author must state HOW the observable time-series is reduced to the
+        scalar compared against ``empirical_data`` — either a value at a fixed
+        ``readout_time`` or a ``reduce_observable`` function. A baseline /
+        diagnosis snapshot states ``readout_time: 0.0`` explicitly.
+        """
+        has_time = self.readout_time is not None
+        has_reduce = self.reduce_observable is not None
+
+        if has_time == has_reduce:
+            raise ValueError(
+                "Observable must set exactly one of 'readout_time' or "
+                "'reduce_observable' (got "
+                f"{'both' if has_time else 'neither'}). Use 'readout_time' for a "
+                "value at a fixed time (set 0.0 for a diagnosis/baseline "
+                "snapshot), or 'reduce_observable' for a peak/AUC/final-value "
+                "reduction."
+            )
+
+        if has_time and not self.readout_time_unit:
+            raise ValueError(
+                "readout_time_unit is required when readout_time is set " "(e.g. 'day')."
+            )
+        if not has_time and self.readout_time_unit:
+            raise ValueError(
+                "readout_time_unit is only meaningful with readout_time; "
+                "remove it when using reduce_observable."
             )
 
         return self

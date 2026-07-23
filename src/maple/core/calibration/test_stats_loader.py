@@ -182,14 +182,15 @@ def load_calibration_targets(yaml_dir: Path | str | List) -> pd.DataFrame:
         units = observable.get("units", "")
         sample_size = empirical.get("sample_size", float("nan"))
 
-        # Extract index_values for time-indexed targets
-        index_values = empirical.get("index_values")
-
-        # Generate wrapper code
+        # Generate wrapper code. The time-series reduction is declared on the
+        # observable: readout_time (interpolate at that time) XOR
+        # reduce_observable (author function series -> scalar).
+        readout_time_days, reduce_code = _resolve_reduction(observable)
         wrapper_code = _generate_wrapper_code(
             observable_code=observable["code"],
             constants=observable.get("constants") or [],
-            index_values=index_values,
+            readout_time=readout_time_days,
+            reduce_observable=reduce_code,
             auxiliary_parameters=aux_params,
         )
 
@@ -291,15 +292,14 @@ def load_prediction_targets(yaml_dir: Path) -> pd.DataFrame:
         required_species = ",".join(all_required) if all_required else ""
         units = observable.get("units", "")
 
-        # Prediction targets keep their index_values at the top level
-        # (PredictionTarget schema), not under empirical_data. Fall back
-        # to None so the wrapper code evaluates at t=0 when absent.
-        index_values = data.get("index_values")
-
+        # Prediction targets declare their reduction on the observable, same as
+        # calibration targets (readout_time XOR reduce_observable).
+        readout_time_days, reduce_code = _resolve_reduction(observable)
         wrapper_code = _generate_wrapper_code(
             observable_code=observable["code"],
             constants=observable.get("constants") or [],
-            index_values=index_values,
+            readout_time=readout_time_days,
+            reduce_observable=reduce_code,
             auxiliary_parameters=aux_params,
         )
 
@@ -343,10 +343,42 @@ def hash_prediction_targets(yaml_dir: Path) -> str:
     return hasher.hexdigest()
 
 
+def _resolve_reduction(observable: dict) -> tuple[float | None, str | None]:
+    """Resolve the observable's time-series reduction into ``(readout_time_days,
+    reduce_code)`` — exactly one non-None.
+
+    Mirrors the ``Observable`` schema contract: exactly one of ``readout_time``
+    (interpolate the series at that time) or ``reduce_observable`` (author
+    function series -> scalar) must be set. ``readout_time`` is converted to
+    canonical days here (compile time, using the shared Pint registry) so the
+    generated wrapper stays pintless and interpolates directly against the
+    trajectory's day-based ``time`` axis.
+    """
+    reduce_code = observable.get("reduce_observable")
+    readout_time = observable.get("readout_time")
+
+    if (reduce_code is None) == (readout_time is None):
+        raise ValueError(
+            "observable must set exactly one of 'readout_time' or "
+            "'reduce_observable' (got "
+            f"{'both' if reduce_code is not None else 'neither'})."
+        )
+
+    if reduce_code is not None:
+        return None, reduce_code
+
+    unit = observable.get("readout_time_unit") or "day"
+    from maple.core.unit_registry import ureg
+
+    readout_time_days = (float(readout_time) * ureg(unit)).to("day").magnitude
+    return float(readout_time_days), None
+
+
 def _generate_wrapper_code(
     observable_code: str,
     constants: list,
-    index_values: list | None,
+    readout_time: float | None,
+    reduce_observable: str | None,
     auxiliary_parameters: list | None = None,
 ) -> str:
     """
@@ -358,8 +390,11 @@ def _generate_wrapper_code(
        derive worker joins per-sim aux draws into ``species_dict`` from the
        aux samples sidecar; see ``derive_test_stats_worker``) into ``_constants``.
     3. Embeds the original ``compute_observable`` function verbatim.
-    4. Calls ``compute_observable(time, species_dict, _constants)``.
-    5. Extracts a scalar at the target time (from ``index_values`` or t=0).
+    4. Calls ``compute_observable(time, species_dict, _constants)`` to get the
+       observable time-series.
+    5. Reduces the series to a scalar — either the author's ``reduce_observable``
+       function, or linear interpolation at ``readout_time`` (canonical days).
+       Exactly one of the two must be provided (there is no implicit t=0).
 
     All values are raw floats in their canonical / declared units; observable
     code is responsible for any inline numerical conversions (matching the
@@ -369,8 +404,10 @@ def _generate_wrapper_code(
         observable_code: The ``compute_observable`` function source from the YAML.
         constants: List of constant dicts with ``name``, ``value``, ``units`` keys.
             ``units`` is documentation only — the value is emitted as-is.
-        index_values: List of target time points (e.g., ``[21.0]``), or None/empty
-                      for baseline (t=0) targets.
+        readout_time: Time in canonical days at which to interpolate the series,
+            or None when ``reduce_observable`` is used instead.
+        reduce_observable: Source of a ``reduce_observable(time, series) -> float``
+            function, or None when ``readout_time`` is used instead.
         auxiliary_parameters: Optional list of aux parameter dicts from
             ``observable.auxiliary_parameters``. When non-empty, the wrapper
             relocates ``species_dict[aux_name]`` (a raw float in the units
@@ -381,6 +418,12 @@ def _generate_wrapper_code(
     Returns:
         String containing complete ``compute_test_statistic`` function source.
     """
+    if (readout_time is None) == (reduce_observable is None):
+        raise ValueError(
+            "exactly one of readout_time / reduce_observable must be provided to "
+            "_generate_wrapper_code"
+        )
+
     lines = ["import numpy as np", "", "def compute_test_statistic(time, species_dict):"]
 
     if constants:
@@ -411,19 +454,23 @@ def _generate_wrapper_code(
     lines.append(indented_code.rstrip())
     lines.append("")
 
-    lines.append("    _result = compute_observable(time, species_dict, _constants)")
+    lines.append("    _time = np.asarray(time, dtype=float)")
+    lines.append("    _series = np.asarray(")
+    lines.append("        compute_observable(time, species_dict, _constants), dtype=float")
+    lines.append("    )")
     lines.append("")
 
-    if index_values and len(index_values) > 0:
-        target_t = float(index_values[0])
+    if reduce_observable is not None:
+        # Embed the author's reduce_observable(time, series) -> float verbatim.
+        reduce_indented = textwrap.indent(textwrap.dedent(reduce_observable), "    ")
+        lines.append(reduce_indented.rstrip())
+        lines.append("")
+        lines.append("    return float(reduce_observable(_time, _series))")
     else:
-        target_t = 0.0
-
-    # Extract scalar at target time. Result is a raw float or numpy array.
-    lines.append(f"    _target_t = {target_t!r}")
-    lines.append("    _arr = np.asarray(_result, dtype=float)")
-    lines.append("    if _arr.ndim > 0 and _arr.size > 1:")
-    lines.append("        return float(np.interp(_target_t, np.asarray(time, dtype=float), _arr))")
-    lines.append("    return float(_arr.item()) if _arr.size == 1 else float(_arr)")
+        # Interpolate the series at the (canonical-day) readout time.
+        lines.append(f"    _readout_t = {float(readout_time)!r}")
+        lines.append("    if _series.ndim > 0 and _series.size > 1:")
+        lines.append("        return float(np.interp(_readout_t, _time, _series))")
+        lines.append("    return float(_series.item()) if _series.size == 1 else float(_series)")
 
     return "\n".join(lines)

@@ -342,7 +342,7 @@ def derive_distribution(inputs, ureg):
     }
 ```
 
-**Vector-valued targets** supported via `index_values`, `index_unit`, `index_type` for time-course or dose-response data.
+**Time-series reduction** — each target is scalar. The observable declares how its time-series is reduced to the compared scalar via **exactly one** of `observable.readout_time` (+ `readout_time_unit`; interpolate the series at that sim time — set `0.0` for a baseline/diagnosis snapshot) or `observable.reduce_observable` (a `reduce_observable(time, series) -> float` function, for peak/Cmax, AUC, final value, etc.). There is no implicit default readout. Time-course / dose-response data is authored as separate scalar targets, one per readout / dose arm (there is no vector `index_values` dimension).
 
 ### Validation
 
