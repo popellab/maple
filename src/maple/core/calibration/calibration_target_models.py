@@ -53,6 +53,7 @@ from maple.core.calibration.observable import (
 )
 from maple.core.calibration.scenario import Scenario
 from maple.core.calibration.shared_models import (
+    DistributionShape,
     EstimateInput,
     InputType,
     ModelingAssumption,
@@ -338,6 +339,34 @@ class CalibrationTargetEstimates(BaseModel):
                 f"'center_only'."
             )
         return self
+
+    @model_validator(mode="after")
+    def validate_bounded_observable_uses_logit_normal(self) -> "CalibrationTargetEstimates":
+        """A bounded observable's population spread (``moments`` form) must use
+        ``shape: logit_normal``, not normal/lognormal.
+
+        Parity with the SubmodelTarget validator of the same name: for a
+        fraction / proportion / probability / percent observable, ``normal`` puts
+        mass outside the bound and ``lognormal`` is unbounded above; ``logit_normal``
+        keeps expanded quartiles in (0, 1). Only applies to the ``moments`` form —
+        the ``quantiles`` form carries the empirical shape directly and is exempt.
+        """
+        od = self.observed_distribution
+        if od is None or od.moments is None:
+            return self
+        if od.moments.shape == DistributionShape.LOGIT_NORMAL:
+            return self
+        BOUNDED_UNITS = {"percent", "%", "fraction", "proportion", "probability"}
+        if (self.units or "").strip().lower() not in BOUNDED_UNITS:
+            return self
+        raise ValueError(
+            f"Observable units='{self.units}' are a bounded fraction/percentage, but "
+            f"observed_distribution.moments uses shape='{od.moments.shape.value}'. "
+            "Bounded observables must use shape='logit_normal', which expands quartiles "
+            "in logit space so they never escape (0, 1); normal puts mass outside the "
+            "bound and lognormal is unbounded above. logit_normal requires center in "
+            "(0, 1) with center_type='median' — express a percent as a fraction (12% -> 0.12)."
+        )
 
     @field_validator("sample_size")
     @classmethod

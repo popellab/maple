@@ -1671,3 +1671,59 @@ class TestCalibrationTargetPopulationSample:
         )
         with pytest.raises(ValidationError, match="zero variance"):
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+
+# ============================================================================
+# Cal-side parity for the submodel bounded->logit_normal validator: a bounded
+# observable's moments-form observed_distribution must use shape=logit_normal.
+# ============================================================================
+
+from maple.core.calibration.calibration_target_models import CalibrationTargetEstimates
+
+
+def _bounded_cal_estimates(shape: str) -> dict:
+    return {
+        "median": [0.5],
+        "ci95": [[0.3, 0.7]],
+        "units": "percent",
+        "sample_size": 40,
+        "sample_size_rationale": "n=40 patients, Table 1",
+        "inputs": [
+            {
+                "name": "resp_fraction",
+                "value": 0.5,
+                "units": "percent",
+                "description": "objective response fraction",
+                "source_ref": "smith_2020",
+                "value_location": "Table 1",
+                "value_snippet": "response rate 0.5",
+            }
+        ],
+        "distribution_code": (
+            "def derive_distribution(inputs, ureg):\n"
+            "    v = inputs['resp_fraction']\n"
+            "    return {'median_obs': v, 'ci95_lower': v * 0.6, 'ci95_upper': v * 1.4}"
+        ),
+        "population_spread": "center_only",
+        "observed_distribution": {
+            "moments": {
+                "center": 0.5,
+                "center_type": "median",
+                "scale": 0.1,
+                "scale_type": "sd",
+                "shape": shape,
+            },
+            "spread_source": "center_only",
+        },
+    }
+
+
+class TestCalBoundedObservableLogitNormal:
+    """CalibrationTargetEstimates: bounded moments-form observable must use logit_normal."""
+
+    def test_percent_with_normal_shape_raises(self):
+        with pytest.raises(ValidationError, match="logit_normal"):
+            CalibrationTargetEstimates.model_validate(_bounded_cal_estimates("normal"))
+
+    def test_percent_with_logit_normal_passes(self):
+        CalibrationTargetEstimates.model_validate(_bounded_cal_estimates("logit_normal"))
