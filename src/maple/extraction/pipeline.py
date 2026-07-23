@@ -19,6 +19,7 @@ import yaml
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, BinaryContent, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -1935,8 +1936,11 @@ def make_agents(
             "If your first searches find nothing, try synonyms, broader terms, or related biological concepts."
         ),
         model_settings=lit_search_settings,
-        # pydantic-ai >=2.x: native tools attach via capabilities= (was builtin_tools in 1.x)
-        capabilities=[WebSearchTool()],
+        # pydantic-ai >=2.x (post builtin->native rename, issue #5338): a native tool
+        # attaches via capabilities= wrapped in a NativeTool capability. Was
+        # builtin_tools=[WebSearchTool()] in 1.x; bare capabilities=[WebSearchTool()]
+        # fails at run time ("'WebSearchTool' object is not callable").
+        capabilities=[NativeTool(WebSearchTool())],
         retries=max_retries,
     )
 
