@@ -2110,3 +2110,29 @@ class TestBoundedObservableLogitNormal:
     def test_percent_with_logit_normal_passes(self):
         # logit_normal on a median-in-(0,1) percent observable is the correct shape.
         SubmodelTarget(**_percent_target("logit_normal"))
+
+
+# ============================================================================
+# Test that 1.645 (5th-95th percentile z) is an allowed observation_code constant,
+# parallel to 1.96 (2.5th-97.5th). The authoring prompt instructs 1.645 for
+# box-plot-whisker SD reconstruction, so the validator must not flag it.
+# ============================================================================
+
+CODE_WITH_1645 = """
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    sd = inputs['test_value'] / (2 * 1.645)
+    return rng.normal(inputs['test_value'], sd / np.sqrt(sample_size), n_bootstrap)
+"""
+
+
+class TestAllowedConstant1645:
+    """1.645 must be whitelisted like 1.96 in observation_code."""
+
+    def test_1645_not_flagged_as_hardcoded(self):
+        data = make_algebraic_target(input_value=10.0, measurement_error_code=CODE_WITH_1645)
+        try:
+            SubmodelTarget(**data)
+        except ValidationError as e:
+            msg = str(e)
+            assert "1.645" not in msg and "hardcoded" not in msg.lower(), msg

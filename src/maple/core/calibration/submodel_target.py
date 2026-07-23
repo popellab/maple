@@ -3080,7 +3080,9 @@ class SubmodelTarget(BaseModel):
 
         Allowed constants:
         - 0, 1, 2 (indexing, basic arithmetic)
-        - 1.96 (95% CI convention)
+        - 1.96 (normal z for the 2.5th-97.5th / 95% CI range)
+        - 1.645 (normal z for the 5th-95th percentile range; box-plot whisker
+          convention, parallel to 1.96)
 
         NOT allowed (should be inputs):
         - Time conversions like 24.0, 60.0 (add as unit_conversion input)
@@ -3090,8 +3092,9 @@ class SubmodelTarget(BaseModel):
         """
         import ast
 
-        # Minimal set of truly necessary constants
-        ALLOWED_CONSTANTS = {0, 0.0, 1, 1.0, 2, 2.0, 1.96}
+        # Minimal set of truly necessary constants (normal z-values for the two
+        # standard percentile ranges used in SD-from-percentile reconstructions).
+        ALLOWED_CONSTANTS = {0, 0.0, 1, 1.0, 2, 2.0, 1.96, 1.645}
 
         errors = []
 
