@@ -1960,3 +1960,153 @@ class TestDerivedArithmeticInputs:
             }
         )
         SubmodelTarget(**data)
+
+
+# ============================================================================
+# Tests for validate_center_channel_sem_scale (R1) — two-channel "do not
+# double-encode": when a population observed_distribution is declared, the
+# observation_code (center channel) MUST be SEM-scale (use sample_size).
+# ============================================================================
+
+# center channel that correctly SEM-scales (divides by sqrt(sample_size))
+SEM_SCALE_OBSERVATION_CODE = """
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    return rng.normal(inputs['test_value'], 1.0 / np.sqrt(sample_size), n_bootstrap)
+"""
+
+# center channel that does NOT use sample_size — population-scale, double-encodes
+NON_SEM_OBSERVATION_CODE = """
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    return rng.normal(inputs['test_value'], 1.0, n_bootstrap)
+"""
+
+
+def _population_observed_distribution() -> dict:
+    return {
+        "quantiles": [
+            {"p": 0.25, "value": 8.0},
+            {"p": 0.5, "value": 10.0},
+            {"p": 0.75, "value": 13.0},
+        ],
+        "spread_source": "biological_experimental",
+        "n_biological": 10,
+        "experimental_unit_type": "biological",
+    }
+
+
+class TestCenterChannelSemScale:
+    """R1: population observed_distribution requires an SEM-scale observation_code."""
+
+    def test_population_spread_without_sample_size_raises(self):
+        data = make_algebraic_target(
+            input_value=10.0, measurement_error_code=NON_SEM_OBSERVATION_CODE
+        )
+        data["calibration"]["error_model"][0][
+            "observed_distribution"
+        ] = _population_observed_distribution()
+        with pytest.raises(ValidationError, match="sample_size"):
+            SubmodelTarget(**data)
+
+    def test_population_spread_with_sem_scale_passes(self):
+        data = make_algebraic_target(
+            input_value=10.0, measurement_error_code=SEM_SCALE_OBSERVATION_CODE
+        )
+        data["calibration"]["error_model"][0][
+            "observed_distribution"
+        ] = _population_observed_distribution()
+        # R1 must not fire; construction succeeds.
+        SubmodelTarget(**data)
+
+    def test_center_only_without_sample_size_is_exempt(self):
+        # No population spread => R1 does not apply even without sample_size.
+        data = make_algebraic_target(
+            input_value=10.0, measurement_error_code=NON_SEM_OBSERVATION_CODE
+        )
+        SubmodelTarget(**data)
+
+
+# ============================================================================
+# Tests for validate_normal_error_stays_positive (V-A) — un-clipped additive
+# normal that pushes a positive quantity below zero.
+# ============================================================================
+
+# additive normal, scale ~= center => a fat negative tail, no clipping
+CROSSES_ZERO_OBSERVATION_CODE = """
+def derive_observation(inputs, sample_size, rng, n_bootstrap):
+    import numpy as np
+    return rng.normal(inputs['test_value'], inputs['test_value'], n_bootstrap)
+"""
+
+
+class TestNormalErrorStaysPositive:
+    """V-A: warn when an un-clipped normal emits negatives for a positive quantity."""
+
+    def test_normal_crossing_zero_warns(self):
+        data = make_algebraic_target(
+            input_value=5.0, measurement_error_code=CROSSES_ZERO_OBSERVATION_CODE
+        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                SubmodelTarget(**data)
+            except ValidationError:
+                pass
+            hits = [x for x in w if "below zero" in str(x.message)]
+            assert len(hits) > 0
+
+    def test_well_behaved_positive_normal_no_warning(self):
+        # scale small relative to center => negligible negative mass, no warning.
+        data = make_algebraic_target(input_value=100.0)  # default scale=1.0
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                SubmodelTarget(**data)
+            except ValidationError:
+                pass
+            hits = [x for x in w if "below zero" in str(x.message)]
+            assert len(hits) == 0
+
+
+# ============================================================================
+# Tests for validate_bounded_observable_uses_logit_normal (V-B) — bounded
+# observable in the moments form must use shape='logit_normal'.
+# ============================================================================
+
+
+def _percent_target(shape: str) -> dict:
+    """A percent-unit target with a moments-form population spread of the given shape."""
+    data = make_algebraic_target(
+        input_value=0.12, measurement_error_code=SEM_SCALE_OBSERVATION_CODE
+    )
+    # Make units internally consistent as a bounded fraction (percent).
+    data["inputs"][0]["units"] = "percent"
+    data["calibration"]["parameters"][0]["units"] = "percent"
+    em = data["calibration"]["error_model"][0]
+    em["units"] = "percent"
+    em["observed_distribution"] = {
+        "moments": {
+            "center": 0.12,
+            "center_type": "median",
+            "scale": 0.05,
+            "scale_type": "sd",
+            "shape": shape,
+        },
+        "spread_source": "biological_experimental",
+        "n_biological": 10,
+        "experimental_unit_type": "biological",
+    }
+    return data
+
+
+class TestBoundedObservableLogitNormal:
+    """V-B: bounded moments-form observable must use logit_normal."""
+
+    def test_percent_with_normal_shape_raises(self):
+        with pytest.raises(ValidationError, match="logit_normal"):
+            SubmodelTarget(**_percent_target("normal"))
+
+    def test_percent_with_logit_normal_passes(self):
+        # logit_normal on a median-in-(0,1) percent observable is the correct shape.
+        SubmodelTarget(**_percent_target("logit_normal"))

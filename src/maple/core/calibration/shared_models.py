@@ -367,6 +367,15 @@ class ObservedDistribution(BaseModel):
         "(across_patient / biological_experimental): it licenses the SD<->SEM round-trip "
         "and sets per-target finite-sample noise. Distinct from technical replicates.",
     )
+    n_biological_is_floor: bool = Field(
+        default=False,
+        description="True when ``n_biological`` is a LOWER BOUND, not an exact count — the "
+        "source reports the unit count as 'n>=8', 'at least 8 donors', 'n=8-12 across "
+        "conditions', etc. Consumers that weight panels by precision (finite-sample noise "
+        "~ 1/sqrt(n), inverse-variance moment weighting) must treat a floor conservatively: "
+        "an exact-looking n from a floor over-states precision and over-weights the panel. "
+        "Leave False only when the source gives an exact per-summary n.",
+    )
     n_technical: Optional[int] = Field(
         default=None,
         ge=1,

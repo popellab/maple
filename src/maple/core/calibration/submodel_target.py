@@ -23,6 +23,7 @@ from maple.core.calibration.enums import (
 from maple.core.calibration.code_validator import find_accessed_params
 from maple.core.calibration.exceptions import DimensionalityMismatchError
 from maple.core.calibration.shared_models import (
+    DistributionShape,
     FigureExcerpt,
     ObservedDistribution,
     SourceRelevanceAssessment,
@@ -1864,6 +1865,55 @@ class SubmodelTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_normal_error_stays_positive(self) -> "SubmodelTarget":
+        """Warn when an UN-clipped observation_code pushes a positive quantity negative.
+
+        ``validate_clipping_suggests_lognormal`` catches additive-normal error models
+        that CLIP to avoid negatives. The complementary failure is an additive normal
+        that does NOT clip and simply emits unphysical negative samples for a
+        positive-only measurement — a constant additive SD over a low central value
+        (e.g. an MFI or count near the noise floor). Detected at runtime: a positive
+        median with a material negative tail and no clipping in the code. A genuinely
+        signed quantity (median ~ 0) is exempt; a clipped one is covered elsewhere.
+        """
+        import numpy as np
+
+        inputs_dict = {inp.name: inp.value for inp in self.inputs}
+        clip_patterns = ["np.clip", "np.maximum", "np.minimum", "max(0", "min("]
+
+        for entry in self.calibration.error_model:
+            code = entry.observation_code
+            if not code or any(p in code for p in clip_patterns):
+                continue
+            try:
+                local_scope = {"np": np, "numpy": np}
+                exec(code, local_scope)
+                derive_observation = local_scope.get("derive_observation")
+                if derive_observation is None:
+                    continue
+                sample_size = int(inputs_dict.get(entry.sample_size_input, 1))
+                rng = np.random.default_rng(42)
+                result = derive_observation(inputs_dict, sample_size, rng, entry.n_bootstrap)
+                if not isinstance(result, np.ndarray) or result.size == 0:
+                    continue
+                median = float(np.median(result))
+                neg_frac = float(np.mean(result < 0))
+                if median > 0 and neg_frac > 0.05:
+                    warnings.warn(
+                        f"Error model '{entry.name}': observation_code puts {neg_frac:.0%} of "
+                        f"samples below zero for a positive-valued quantity (median={median:.3g}). "
+                        "An additive normal with constant SD fits poorly near a low central value "
+                        "— it emits unphysical negatives. Use a multiplicative/lognormal error "
+                        "(rng.lognormal, or scale the width with the center) so samples stay "
+                        "positive.",
+                        UserWarning,
+                    )
+            except Exception:
+                pass  # execution errors handled by other validators
+
+        return self
+
+    @model_validator(mode="after")
     def validate_evaluation_points_within_span(self) -> "SubmodelTarget":
         """
         Validate that evaluation_points fall within independent_variable.span.
@@ -2944,6 +2994,80 @@ class SubmodelTarget(BaseModel):
                     UserWarning,
                 )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_center_channel_sem_scale(self) -> "SubmodelTarget":
+        """Enforce the two-channel contract when a population spread is declared.
+
+        A target uses two channels: ``observation_code`` pins the CENTER (must be
+        SEM-scale, i.e. divide the per-draw width by ``sqrt(sample_size)``), and
+        ``observed_distribution`` carries the POPULATION spread (omega). SEM-scaling
+        is impossible without ``sample_size``, so an ``observation_code`` that never
+        references it is returning population-scale spread as the center likelihood —
+        encoding the spread TWICE (here AND in observed_distribution). This is the
+        prompt's "do not double-encode spread in both" rule made enforceable. Only
+        checked when the entry declares a population-spread ``observed_distribution``;
+        center-only / omitted-distribution entries are exempt.
+        """
+        import ast
+
+        for entry in self.calibration.error_model:
+            od = entry.observed_distribution
+            if od is None or not od.feeds_population_spread:
+                continue
+            code = entry.observation_code or ""
+            # 'sample_size' is always in the signature; detect BODY usage (a Name
+            # load), since SEM-scaling is impossible without referencing it.
+            try:
+                uses_sample_size = any(
+                    isinstance(n, ast.Name) and n.id == "sample_size"
+                    for n in ast.walk(ast.parse(code))
+                )
+            except SyntaxError:
+                continue  # syntax errors handled by other validators
+            if not uses_sample_size:
+                raise ValueError(
+                    f"Error model '{entry.name}' declares a population observed_distribution "
+                    f"(spread_source='{od.spread_source.value}') but its observation_code never "
+                    "uses 'sample_size' in its body. The observation_code is the CENTER channel "
+                    "and must be SEM-scale: divide the per-draw width by sqrt(sample_size) so it "
+                    "pins the mean, not the population. Without that, the population spread is "
+                    "double-encoded — once here and once in observed_distribution (omega). "
+                    "Return e.g. rng.normal(center, sd / np.sqrt(sample_size), n_bootstrap) and "
+                    "let observed_distribution be the single source of population-spread truth."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_bounded_observable_uses_logit_normal(self) -> "SubmodelTarget":
+        """A bounded observable's population spread (``moments`` form) must use
+        ``shape: logit_normal``, not normal/lognormal.
+
+        For a fraction / proportion / probability / percent observable, ``normal``
+        puts mass outside the bound and ``lognormal`` is unbounded above (a near-1
+        fraction's upper quartile escapes past 1). ``logit_normal`` expands the
+        quartiles in logit space so they stay in (0, 1). Only applies to the
+        ``moments`` form — the ``quantiles`` form carries the empirical shape (and
+        skew) directly and is exempt.
+        """
+        BOUNDED_UNITS = {"percent", "%", "fraction", "proportion", "probability"}
+        for entry in self.calibration.error_model:
+            od = entry.observed_distribution
+            if od is None or od.moments is None:
+                continue
+            if od.moments.shape == DistributionShape.LOGIT_NORMAL:
+                continue
+            if (entry.units or "").strip().lower() not in BOUNDED_UNITS:
+                continue
+            raise ValueError(
+                f"Error model '{entry.name}' is a bounded observable (units='{entry.units}') "
+                f"but its observed_distribution.moments uses shape='{od.moments.shape.value}'. "
+                "Bounded fractions/percentages must use shape='logit_normal', which expands "
+                "quartiles in logit space so they never escape (0, 1); normal puts mass outside "
+                "the bound and lognormal is unbounded above. logit_normal requires center in "
+                "(0, 1) with center_type='median' — express a percent as a fraction (12% -> 0.12)."
+            )
         return self
 
     @model_validator(mode="after")
