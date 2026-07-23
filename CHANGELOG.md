@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.0](https://github.com/popellab/maple/compare/v0.7.1...v0.8.0) (2026-07-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* explicit observable time-series reduction; drop vector index ([#70](https://github.com/popellab/maple/issues/70))
+
+### Features
+
+* explicit observable time-series reduction; drop vector index ([#70](https://github.com/popellab/maple/issues/70)) ([0d83bbb](https://github.com/popellab/maple/commit/0d83bbbcc262b6265a202a20d7cce4052ca12b30))
+* unit_group panels + logit_normal shape for population spread ([#62](https://github.com/popellab/maple/issues/62)) ([3013dcd](https://github.com/popellab/maple/commit/3013dcdc325ed57d22cf2e18cadfb59fa40c4838))
+
+
+### Bug Fixes
+
+* defer model-structure CalibrationTarget validators when no validation context ([#64](https://github.com/popellab/maple/issues/64)) ([6454612](https://github.com/popellab/maple/commit/6454612170937773d62a77822d5b14f2d468fd45))
+* harden staged-extraction pipeline (PDF fetch, timeouts, DOI matching) ([#60](https://github.com/popellab/maple/issues/60)) ([41fcca9](https://github.com/popellab/maple/commit/41fcca97478c600f544947f1f034c7d74876e07e))
+* run context-free observable signature check in the agent loop ([#65](https://github.com/popellab/maple/issues/65)) ([5be741e](https://github.com/popellab/maple/commit/5be741e94c7b8e7f0eb1197de5b80e04ce0dc8af))
+* unit_group allows unbalanced n_biological across members ([#63](https://github.com/popellab/maple/issues/63)) ([648d5bf](https://github.com/popellab/maple/commit/648d5bf064b45570d6477e52410be0d4c689e7a9))
+
 ## [0.7.1](https://github.com/popellab/maple/compare/v0.7.0...v0.7.1) (2026-07-08)
 
 
