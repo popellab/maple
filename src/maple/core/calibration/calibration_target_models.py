@@ -1203,56 +1203,114 @@ class CalibrationTarget(BaseModel):
 
         return self
 
+    def _all_source_relevances(self) -> List[tuple]:
+        """Yield ``(source_tag, SourceRelevanceAssessment)`` for every declared source.
+
+        Parity with ``SubmodelTarget._all_source_relevances``. The calibration-target
+        validators used to inspect ``primary_data_source`` alone, so a secondary
+        source could carry ``non_peer_reviewed`` quality, an unjustified
+        perturbation, or a low TME compatibility with no notes and never be seen.
+        """
+        out: List[tuple] = []
+        if self.primary_data_source is not None and self.primary_data_source.source_relevance:
+            out.append(
+                (self.primary_data_source.source_tag, self.primary_data_source.source_relevance)
+            )
+        for src in self.secondary_data_sources or []:
+            if src.source_relevance:
+                out.append((src.source_tag, src.source_relevance))
+        return out
+
     @model_validator(mode="after")
     def validate_source_relevance_warnings(self) -> "CalibrationTarget":
         """Emit warnings for source-relevance issues (non-peer-reviewed, cross-indication,
-        cross-species, low TME compatibility, perturbation without justification)."""
-        if self.primary_data_source is None or self.primary_data_source.source_relevance is None:
-            return self
+        cross-species) across primary AND secondary sources.
 
+        Ported from ``SubmodelTarget.validate_source_quality_peer_reviewed`` /
+        ``warn_cross_indication_extrapolation`` / ``warn_cross_species_extrapolation``,
+        which walk every source rather than the primary only. A non-peer-reviewed
+        secondary that supplies a value used in the derivation is the case worth
+        seeing — the submodel message says so explicitly, so this one does too.
+
+        The hard requirements (perturbation justification, low-TME notes) moved out
+        to ``validate_context_mismatch_justified``, where they raise.
+        """
         import warnings
 
-        sr = self.primary_data_source.source_relevance
+        for tag, sr in self._all_source_relevances():
+            if sr.source_quality == SourceQuality.NON_PEER_REVIEWED:
+                used_for_values = any(inp.source_ref == tag for inp in self.empirical_data.inputs)
+                severity = " AND supplies values used in the derivation" if used_for_values else ""
+                warnings.warn(
+                    f"Source '{tag}' quality is 'non_peer_reviewed'{severity}. "
+                    "This includes Wikipedia, preprints, and unreviewed databases. "
+                    "Prefer peer-reviewed primary literature; if this source must be "
+                    "used, document the rationale in key_assumptions or "
+                    "key_study_limitations.",
+                    UserWarning,
+                )
 
-        if sr.source_quality == SourceQuality.NON_PEER_REVIEWED:
-            warnings.warn(
-                "source_relevance.source_quality is 'non_peer_reviewed'. "
-                "Prefer peer-reviewed primary literature for calibration targets. "
-                "If this source must be used, document the rationale in key_assumptions.",
-                UserWarning,
-            )
+            if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
+                warnings.warn(
+                    f"Cross-indication extrapolation in source '{tag}': "
+                    f"indication_match='{sr.indication_match.value}'. "
+                    "Translation sigma inflation will be applied automatically during "
+                    "prior construction.",
+                    UserWarning,
+                )
 
-        if sr.indication_match in (IndicationMatch.PROXY, IndicationMatch.UNRELATED):
-            warnings.warn(
-                f"Cross-indication extrapolation: indication_match='{sr.indication_match.value}'. "
-                "Translation sigma inflation will be applied automatically during prior construction.",
-                UserWarning,
-            )
+            if sr.species_source != sr.species_target:
+                warnings.warn(
+                    f"Cross-species extrapolation in source '{tag}': "
+                    f"{sr.species_source} → {sr.species_target}. "
+                    "Translation sigma inflation will be applied automatically during "
+                    "prior construction.",
+                    UserWarning,
+                )
 
-        if sr.species_source != sr.species_target:
-            warnings.warn(
-                f"Cross-species extrapolation: {sr.species_source} → {sr.species_target}. "
-                "Translation sigma inflation will be applied automatically during prior construction.",
-                UserWarning,
-            )
+        return self
 
-        if (
-            sr.perturbation_type in (PerturbationType.PHARMACOLOGICAL, PerturbationType.GENETIC)
-            and not sr.perturbation_relevance
-        ):
-            warnings.warn(
-                f"source_relevance.perturbation_type is '{sr.perturbation_type.value}' but "
-                "perturbation_relevance is not provided. Document how the perturbed "
-                "measurement relates to the physiological parameter being estimated.",
-                UserWarning,
-            )
+    @model_validator(mode="after")
+    def validate_context_mismatch_justified(self) -> "CalibrationTarget":
+        """A declared context mismatch must carry its justification.
 
-        if sr.tme_compatibility == TMECompatibility.LOW and not sr.tme_compatibility_notes:
-            warnings.warn(
-                "source_relevance.tme_compatibility is 'low' but tme_compatibility_notes "
-                "is not provided. Document the TME differences and their expected impact.",
-                UserWarning,
-            )
+        Ported from ``SubmodelTarget.validate_pharmacological_perturbation_justification``,
+        ``validate_genetic_perturbation_justification`` and
+        ``validate_low_tme_compatibility_notes``, which raise where the calibration
+        side only warned. Warnings do not survive a batch load: nobody reads 50
+        targets' worth of stderr, so an unjustified mismatch entered the likelihood
+        at full weight with the bias undocumented. Both checks now cover secondary
+        sources as well as the primary.
+        """
+        from maple.core.calibration.exceptions import MissingFieldError
+
+        for tag, sr in self._all_source_relevances():
+            if (
+                sr.perturbation_type in (PerturbationType.PHARMACOLOGICAL, PerturbationType.GENETIC)
+                and not sr.perturbation_relevance
+            ):
+                raise MissingFieldError(
+                    f"Source '{tag}': perturbation_type is "
+                    f"'{sr.perturbation_type.value}' but perturbation_relevance is not "
+                    "provided.\n\n"
+                    "A perturbed measurement is not the physiological quantity. "
+                    "Document:\n"
+                    "  - whether the value is an upper bound, a lower bound, or typical\n"
+                    "  - whether scaling or adjustment is needed\n"
+                    "  - for drugs, how supraphysiological exposure affects the reading\n"
+                    "  - for KO/knockdown/overexpression, compensatory mechanisms"
+                )
+
+            if sr.tme_compatibility == TMECompatibility.LOW and not sr.tme_compatibility_notes:
+                raise MissingFieldError(
+                    f"Source '{tag}': tme_compatibility is 'low' but "
+                    "tme_compatibility_notes is not provided.\n\n"
+                    "Document the specific TME differences and their expected impact:\n"
+                    "  - stromal density differences\n"
+                    "  - immune infiltration patterns\n"
+                    "  - chemokine / cytokine milieu\n"
+                    "  - expected DIRECTION and MAGNITUDE of the bias"
+                )
 
         return self
 
@@ -1559,6 +1617,9 @@ class CalibrationTarget(BaseModel):
                             f"median ({median_reported[0]:.4g}) within 10% — the declared "
                             f"'samples' array must be the population draw the median/CI summarize"
                         )
+                    self._check_center_channel_is_not_population(
+                        finite, ci95_reported[0], self.empirical_data.sample_size
+                    )
 
         except CalibrationTargetValidationError:
             # Re-raise all our custom validation errors
@@ -1600,6 +1661,76 @@ class CalibrationTarget(BaseModel):
             ) from e
 
         return self
+
+    @staticmethod
+    def _check_center_channel_is_not_population(
+        finite: "np.ndarray", ci95_pair: List[float], sample_size: int
+    ) -> None:
+        """The two channels must not both carry the population spread.
+
+        Calibration-target analogue of
+        ``SubmodelTarget.validate_center_channel_sem_scale``. A target that declares
+        ``population_spread='across_patient'`` uses two channels: ``median`` +
+        ``ci95`` pin the CENTER (so the interval must shrink with n — a bootstrap or
+        SEM-scale interval on the median), and ``samples`` carries the POPULATION
+        spread that hierarchical inference reads as omega. Returning the population's
+        own 2.5th / 97.5th percentiles as ``ci95`` encodes the spread TWICE: omega
+        gets it from ``samples``, and the flat likelihood reads it as measurement
+        noise, so the target is weighted as though a single simulated patient were
+        allowed to land anywhere in the cohort.
+
+        This is the ``notes/calibration`` position — biological variability is the
+        theta term, not the noise — made enforceable.
+
+        The trap is ``population.summarize()``, whose ``ci95_lower`` /``ci95_upper``
+        ARE ``np.percentile(samples, 2.5 / 97.5)``. It is the obvious helper to call
+        and it silently produces a population-scale center channel. Pair
+        ``population.empirical_population()`` with ``population.bootstrap_median()``
+        instead, which bootstraps the median and so shrinks with n.
+
+        Detection compares the reported interval against the sample's own 95% range.
+        Agreement within 15% on both edges means the center channel is the population
+        range. ``sample_size=1`` (a single subject) is exempt: there the two
+        coincide legitimately.
+        """
+        if sample_size is not None and sample_size <= 1:
+            return
+        lo_rep, hi_rep = float(ci95_pair[0]), float(ci95_pair[1])
+        lo_pop = float(np.percentile(finite, 2.5))
+        hi_pop = float(np.percentile(finite, 97.5))
+        if lo_rep == 0 or hi_rep == 0:
+            return
+
+        def _agrees(a: float, b: float) -> bool:
+            scale = max(abs(a), abs(b))
+            return scale > 0 and abs(a - b) <= 0.15 * scale
+
+        if not (_agrees(lo_rep, lo_pop) and _agrees(hi_rep, hi_pop)):
+            return
+
+        raise ScaleMismatchError(
+            f"population_spread='across_patient' but ci95 = [{lo_rep:.4g}, {hi_rep:.4g}] "
+            f"is the POPULATION range of 'samples' "
+            f"([{lo_pop:.4g}, {hi_pop:.4g}] at the 2.5th/97.5th percentiles), not the "
+            f"uncertainty on the center.\n\n"
+            "The spread is then encoded twice — once in 'samples' (the omega signal "
+            "hierarchical inference reads) and once in ci95 (which flat inference reads "
+            "as measurement noise). The target is weighted as if one simulated patient "
+            "could land anywhere in the cohort, so it constrains far less than its n "
+            f"(n={sample_size}) justifies.\n\n"
+            "FIX — keep 'samples' exactly as it is (that channel is correct) and give "
+            "the center its own interval that shrinks with n. Pass the study's real "
+            "sample size to summarize(); it subsample-bootstraps the median and leaves "
+            "'samples' untouched:\n\n"
+            "    return pop.summarize(samples, n=int(inputs['sample_size'].magnitude))\n\n"
+            "For a target built from per-patient values, pop.bootstrap_median(values, "
+            "rng=rng) gives the same center interval directly.\n\n"
+            "DO NOT clear this error by setting population_spread='center_only' unless "
+            "the reported width was never real across-patient spread (a pooled-mean / "
+            "SEM interval, or an assumed CV). That switch DELETES the population "
+            "channel — the target stops contributing to omega. Here the spread looks "
+            "genuine, so the center channel is what needs fixing, not the spread one."
+        )
 
     @model_validator(mode="after")
     def validate_source_refs(self) -> "CalibrationTarget":
@@ -2047,6 +2178,113 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_no_hardcoded_values_in_distribution_code(self) -> "CalibrationTarget":
+        """Reject measured values written as literals inside ``distribution_code``.
+
+        Calibration-target analogue of
+        ``SubmodelTarget.validate_no_hardcoded_values_in_observation_code``. A number
+        that came from a paper must arrive through ``empirical_data.inputs``, where it
+        carries a ``value_snippet``, a ``source_ref`` and a unit — that is what makes
+        it auditable and what lets ``validate_input_values_in_snippets`` check it. A
+        literal in the body has none of that, and no validator can tell it from
+        arithmetic.
+
+        The submodel rule allows only ``{0, 1, 2, 1.96, 1.645}``. Measured against the
+        live corpus that rule fails 50 of 50 targets, because ``distribution_code`` is
+        Monte-Carlo statistics: it is full of legitimate seeds (``42``), draw counts
+        (``10000``), percentile arguments (``2.5``, ``97.5``, ``25``, ``75``) and
+        reconstruction constants (``1.349`` for IQR→SD). A ban that flags every target
+        gets switched off, so this one is scoped to the class that actually hides data:
+
+        * **Integer literals are exempt.** In this corpus every one is a seed, a draw
+          count, a ``range()`` bound, an index or a comparison threshold. *Known gap:
+          an integer-valued measurement (``n_cells = 500``) would pass. Tighten by
+          claiming literals by syntactic role if one ever appears.*
+        * **Non-integer floats are candidates**, minus the statistical constants below
+          and minus numerical guards under ``1e-5``.
+
+        Scoped this way it flags two live targets, both real: a fraction range
+        (``0.02``, ``0.21``) read straight out of a paper into ``np.log()`` with no
+        input declared, and a detection floor plus tolerance band (``0.001``,
+        ``0.005``) that are modeling choices belonging in ``assumptions``.
+        """
+        if type(self).__name__ == "IsolatedSystemTarget":
+            return self
+
+        # Arithmetic, percentile arguments, normal quantiles, IQR->SD reconstruction.
+        ALLOWED_FLOATS = {
+            0.0,
+            0.5,
+            1.0,
+            1.5,
+            2.0,
+            3.0,
+            10.0,
+            100.0,  # arithmetic / decimal scaling
+            2.5,
+            5.0,
+            25.0,
+            50.0,
+            75.0,
+            95.0,
+            97.5,  # percentile arguments
+            1.96,
+            1.959963984540054,  # z(0.975)
+            1.645,
+            1.6448536269514722,  # z(0.95)
+            0.6744897501960817,
+            0.67448975329236258,  # z(0.75), IQR half-width
+            1.349,
+            1.35,  # IQR -> SD
+        }
+        EPSILON_GUARD = 1e-5  # numerical floors (1e-6, 1e-9) are not measurements
+
+        code = self.empirical_data.distribution_code or ""
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return self  # reported by validate_derivation_code
+
+        src = code.splitlines()
+        offenders: Dict[float, str] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant):
+                continue
+            value = node.value
+            if isinstance(value, bool) or not isinstance(value, float):
+                continue
+            if value.is_integer():
+                continue
+            if any(abs(value - a) < 1e-10 for a in ALLOWED_FLOATS):
+                continue
+            if abs(value) < EPSILON_GUARD:
+                continue
+            line = src[node.lineno - 1].strip() if 0 < node.lineno <= len(src) else ""
+            offenders.setdefault(value, line)
+
+        if offenders:
+            listing = "\n".join(f"  • {v!r}  in: {line}" for v, line in sorted(offenders.items()))
+            raise HardcodedConstantError(
+                "distribution_code contains hardcoded non-integer values:\n"
+                f"{listing}\n\n"
+                "Every number taken from a paper must enter through "
+                "empirical_data.inputs, so it carries a value_snippet, a source_ref "
+                "and units — a literal in the body is untraceable and is not checked "
+                "against the source.\n\n"
+                "  • measured in the paper  -> empirical_data.inputs, "
+                "input_type='direct_measurement' with value_snippet\n"
+                "  • a reference constant   -> empirical_data.inputs, "
+                "input_type='reference_value' or 'unit_conversion'\n"
+                "  • a modeling choice (detection floor, tolerance band) -> "
+                "empirical_data.assumptions, with a rationale\n\n"
+                "Seeds, draw counts, percentile arguments and normal/IQR constants are "
+                "already exempt; if a legitimate statistical constant is flagged here, "
+                "add it to ALLOWED_FLOATS rather than declaring it as data."
+            )
+
+        return self
+
+    @model_validator(mode="after")
     def validate_no_extreme_dimensionless_constants(self) -> "CalibrationTarget":
         """
         Validator (ERROR): Flag dimensionless constants with extreme magnitude.
@@ -2166,6 +2404,109 @@ class CalibrationTarget(BaseModel):
                     f"If measuring total CD8+ via pan-CD8 antibody, include both CD8 and CD8_exh.",
                     UserWarning,
                 )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_snippets_against_pdfs(self, info: ValidationInfo) -> "CalibrationTarget":
+        """Fuzzy-match each input's ``value_snippet`` against the source PDF text.
+
+        Ported verbatim in intent from
+        ``SubmodelTarget.validate_snippets_against_pdfs``. ``validate_input_values_in_snippets``
+        already checks that the VALUE appears in the SNIPPET — but the snippet itself
+        is LLM-written, so that pair can be internally consistent and jointly invented.
+        This is the check that closes the loop: the snippet must appear in the paper.
+
+        Requires ``context={'papers_dir': ...}``; skipped silently otherwise, so
+        loading existing YAMLs outside the extraction pipeline costs nothing.
+        Mechanistic targets are exempt — they have no measured source text.
+        """
+        if not info.context or "papers_dir" not in info.context:
+            return self
+        if self.epistemic_basis == "mechanistic":
+            return self
+        if self.primary_data_source is None:
+            return self
+
+        from maple.core.calibration.snippet_validator import load_paper_texts
+        from maple.core.calibration.validators import fuzzy_find_snippet_in_text
+
+        papers_dir = info.context["papers_dir"]
+
+        source_tags = {self.primary_data_source.source_tag}
+        source_metadata = {
+            self.primary_data_source.source_tag: {
+                "doi": self.primary_data_source.doi,
+                "url": None,
+            }
+        }
+        for src in self.secondary_data_sources or []:
+            source_tags.add(src.source_tag)
+            doi_or_url = getattr(src, "doi_or_url", None) or ""
+            is_url = doi_or_url.startswith("http")
+            source_metadata[src.source_tag] = {
+                "doi": None if is_url else (doi_or_url or None),
+                "url": doi_or_url if is_url else None,
+            }
+
+        paper_data = load_paper_texts(source_tags, source_metadata, papers_dir)
+
+        # Same exemptions as the value-in-snippet check: these inputs are not
+        # verbatim paper text. (The submodel schema's InputType also has
+        # REFERENCE_VALUE / UNIT_CONVERSION; the calibration one does not.)
+        SKIP_TYPES = {
+            InputType.DERIVED_ARITHMETIC,
+            InputType.INFERRED_ESTIMATE,
+        }
+
+        errors = []
+        for inp in self.empirical_data.inputs:
+            if inp.input_type in SKIP_TYPES:
+                continue
+            if getattr(inp, "source_type", None) == SourceType.FIGURE:
+                continue
+            if not inp.value_snippet and not inp.table_excerpt:
+                continue
+            if inp.source_ref not in paper_data:
+                continue
+
+            text, source_type = paper_data[inp.source_ref]
+
+            if inp.value_snippet:
+                found, score, _ = fuzzy_find_snippet_in_text(inp.value_snippet, text, threshold=0.7)
+                if not found:
+                    errors.append(
+                        f"Input '{inp.name}': value_snippet not found in "
+                        f"{inp.source_ref} [{source_type}] (best score: {score:.2f}). "
+                        "The snippet may be hallucinated or paraphrased — use verbatim "
+                        "text from the paper."
+                    )
+
+            if inp.table_excerpt:
+                te = inp.table_excerpt
+                for field_name, threshold in [
+                    ("table_id", 0.7),
+                    ("column", 0.7),
+                    ("value", 0.7),
+                    ("row", 0.6),
+                ]:
+                    field_val = getattr(te, field_name, None)
+                    if not field_val:
+                        continue
+                    found, score, _ = fuzzy_find_snippet_in_text(
+                        str(field_val), text, threshold=threshold
+                    )
+                    if not found:
+                        errors.append(
+                            f"Input '{inp.name}': table_excerpt.{field_name}="
+                            f"'{field_val}' not found in {inp.source_ref} "
+                            f"[{source_type}] (best score: {score:.2f})."
+                        )
+
+        if errors:
+            from maple.core.calibration.exceptions import SnippetNotInSourceError
+
+            raise SnippetNotInSourceError.from_errors(errors)
 
         return self
 

@@ -303,17 +303,64 @@ def midpoint(low, high):
     return 0.5 * (low + high)
 
 
-def summarize(samples):
+def summarize(samples, *, n=None, rng=None, n_boot=2_000):
     """Reduce a population sample to the ``derive_distribution`` return dict.
 
     ``samples`` may be 1-D (scalar observable) or 2-D ``(n_patients, k)`` (joint); the
     median / ci95 reduce over the patient axis (axis 0).
+
+    **Pass ``n`` (the study's real sample size) whenever the target declares
+    ``population_spread='across_patient'``.** The two channels mean different things:
+    ``samples`` carries the POPULATION spread that hierarchical inference reads as
+    omega, while ``median`` / ``ci95`` pin the CENTER, so the interval must shrink
+    with n. Without ``n`` this returns the population's own 2.5th / 97.5th
+    percentiles as ``ci95``, which encodes the spread twice — omega gets it from
+    ``samples``, and flat inference reads the same width as measurement noise, so the
+    target is weighted as though one simulated patient could land anywhere in the
+    cohort. ``CalibrationTarget`` rejects that (see
+    ``_check_center_channel_is_not_population``).
+
+    With ``n``, ``ci95`` becomes a subsample-bootstrap interval on the median: draw
+    ``n`` patients from the population sample, take the median, repeat. This is
+    shape-agnostic (no normality assumption, correct for the skewed lognormal
+    marginals most density targets use) and it is the right width for a cohort of
+    that size. ``rng`` defaults to a fixed seed so the target stays reproducible.
+
+    Bare ``summarize(samples)`` remains correct for a ``center_only`` target, where
+    there is no second channel to double-encode.
     """
     axis = 0 if getattr(samples, "ndim", 1) > 1 else None
+    median_obs = np.median(samples, axis=axis)
+
+    if n is None:
+        return {
+            "median_obs": median_obs,
+            "ci95_lower": np.percentile(samples, 2.5, axis=axis),
+            "ci95_upper": np.percentile(samples, 97.5, axis=axis),
+            "samples": samples,
+        }
+
+    n = int(n)
+    if n < 1:
+        raise ValueError(f"summarize(n=...) needs a positive sample size, got {n}")
+    if rng is None:
+        rng = np.random.default_rng(_SHUFFLE_SEED)
+
+    units = getattr(samples, "units", None)
+    mag = np.asarray(getattr(samples, "magnitude", samples), dtype=float)
+    flat = mag if mag.ndim == 1 else mag  # index patients on axis 0 either way
+    n_pop = flat.shape[0]
+    idx = rng.integers(0, n_pop, size=(n_boot, n))
+    boots = np.median(flat[idx], axis=1)  # (n_boot,) or (n_boot, k)
+    lo = np.percentile(boots, 2.5, axis=0)
+    hi = np.percentile(boots, 97.5, axis=0)
+    if units is not None:
+        lo = lo * units
+        hi = hi * units
     return {
-        "median_obs": np.median(samples, axis=axis),
-        "ci95_lower": np.percentile(samples, 2.5, axis=axis),
-        "ci95_upper": np.percentile(samples, 97.5, axis=axis),
+        "median_obs": median_obs,
+        "ci95_lower": lo,
+        "ci95_upper": hi,
         "samples": samples,
     }
 

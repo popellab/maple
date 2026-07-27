@@ -32,6 +32,7 @@ either ``readout_time`` (+ ``readout_time_unit``) or ``reduce_observable``.
 """
 
 import copy
+import warnings
 import pytest
 from unittest.mock import Mock, patch
 from pydantic import ValidationError
@@ -703,6 +704,18 @@ class TestCalibrationTargetValidators:
     ):
         """Validator should warn when distribution_code uses clipping."""
         data = copy.deepcopy(golden_calibration_target_data)
+        # The clip floor is a modeling choice, so it is declared as an assumption
+        # rather than written inline — validate_no_hardcoded_values_in_distribution_code
+        # rejects a bare float literal. Orthogonal to the rule under test.
+        data["empirical_data"]["assumptions"] = [
+            {
+                "name": "clip_floor",
+                "value": 0.01,
+                "units": "dimensionless",
+                "description": "Clip floor for the lognormal draw.",
+                "rationale": "Lower bound applied to avoid non-positive draws.",
+            }
+        ]
         # Add clipping to distribution_code (use new input names)
         data["empirical_data"]["distribution_code"] = (
             "def derive_distribution(inputs, ureg):\n"
@@ -714,7 +727,8 @@ class TestCalibrationTargetValidators:
             "    n = 10000\n"
             "    mu_log = math.log(mean.magnitude)\n"
             "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, n)\n"
-            "    samples = np.clip(samples, 0.01, None) * mean.units  # Clipping!\n"
+            "    floor = inputs['clip_floor'].magnitude\n"
+            "    samples = np.clip(samples, floor, None) * mean.units  # Clipping!\n"
             "    median_obs = np.median(samples)\n"
             "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
             "    ci95_lower = ci95[0]\n"
@@ -1589,23 +1603,31 @@ class TestCalibrationTargetPopulationSample:
     """The optional declared 'samples' population draw + population_spread gate."""
 
     # A lognormal population draw whose median matches the golden reported median (1.0).
+    #
+    # The centre channel is SEM-scale: summarize(n=42) subsample-bootstraps the
+    # median, so ci95 shrinks with n while `samples` stays the population draw.
+    # Returning np.percentile(samples, [2.5, 97.5]) as ci95 instead would put the
+    # SAME width in both channels, which _check_center_channel_is_not_population
+    # now rejects (see TestCalCenterChannelNotPopulation).
     _GOOD_CODE = (
         "def derive_distribution(inputs, ureg):\n"
         "    import numpy as np, math\n"
+        "    from maple.core.calibration import population as pop\n"
         "    np.random.seed(42)\n"
         "    mean = inputs['cd8_ratio_mean']\n"
         "    sigma_log = inputs['cd8_ratio_sigma_log']\n"
         "    mu_log = math.log(mean.magnitude)\n"
         "    samples = np.random.lognormal(mu_log, sigma_log.magnitude, 10000) * mean.units\n"
-        "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-        "    return {'median_obs': np.median(samples), 'ci95_lower': ci95[0],\n"
-        "            'ci95_upper': ci95[1], 'samples': samples}"
+        "    return pop.summarize(samples, n=42)"
     )
+    # The centre interval _GOOD_CODE produces, for fixtures that use it.
+    _GOOD_CI95 = [[0.829794, 1.196636]]
 
     def _with_code(self, golden, code=None, **ed_overrides):
         data = copy.deepcopy(golden)
         if code is not None:
             data["empirical_data"]["distribution_code"] = code
+            data["empirical_data"]["ci95"] = copy.deepcopy(self._GOOD_CI95)
         data["empirical_data"].update(ed_overrides)
         return data
 
@@ -1652,7 +1674,15 @@ class TestCalibrationTargetPopulationSample:
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         # samples centered 5x off the reported/computed median -> rejected
-        code = self._GOOD_CODE.replace("'samples': samples}", "'samples': samples * 5.0}")
+        # Override only the samples key: median/ci95 stay tied to the good draw,
+        # so the mismatch this test targets is reached rather than the earlier
+        # computed-vs-reported median check.
+        code = self._GOOD_CODE.replace(
+            "    return pop.summarize(samples, n=42)",
+            "    out = pop.summarize(samples, n=42)\n"
+            "    out['samples'] = samples * 5.0\n"
+            "    return out",
+        )
         data = self._with_code(
             golden_calibration_target_data, code, population_spread="across_patient"
         )
@@ -1664,8 +1694,10 @@ class TestCalibrationTargetPopulationSample:
     ):
         # A flat (zero-variance) sample is not a usable population spread.
         code = self._GOOD_CODE.replace(
-            "'samples': samples}",
-            "'samples': np.ones(10000) * mean.magnitude * mean.units}",
+            "    return pop.summarize(samples, n=42)",
+            "    out = pop.summarize(samples, n=42)\n"
+            "    out['samples'] = np.ones(10000) * mean.magnitude * mean.units\n"
+            "    return out",
         )
         data = self._with_code(
             golden_calibration_target_data, code, population_spread="across_patient"
@@ -1809,3 +1841,431 @@ class TestCalNoAssumedOrUncertaintyInputs:
         CalibrationTargetEstimates.model_validate(
             _estimates_with_input("cv_reported_by_authors", "direct_parameter")
         )
+
+
+# ============================================================================
+# Tier-1 ports from SubmodelTarget (see
+# notes/calibration/cal_target_schema_hardening_2026-07-26.md in pdac-build).
+# Each block names the submodel validator it mirrors and the live defect it
+# was measured against.
+# ============================================================================
+
+
+def _secondary_source(**relevance_overrides) -> dict:
+    """A secondary source carrying its own source_relevance block."""
+    sr = dict(DEFAULT_CLINICAL_SOURCE_RELEVANCE)
+    sr.update(relevance_overrides)
+    return {
+        "source_tag": "uniprot_ccl2",
+        "title": "UniProt entry P13500 (CCL2)",
+        "first_author": "UniProt",
+        "year": 2023,
+        "doi_or_url": "https://www.uniprot.org/uniprot/P13500",
+        "source_relevance": sr,
+    }
+
+
+class TestCalSourceRelevanceCoversSecondarySources:
+    """Ported from SubmodelTarget.validate_source_quality_peer_reviewed.
+
+    The calibration side inspected primary_data_source alone, so a secondary
+    source could be a wiki, a preprint or an unreviewed database and never be
+    reported. The live case is a UniProt molecular-weight lookup on
+    pdac_tumor_ccl2_mcp1_concentration_ghassemzadeh2017.
+    """
+
+    def test_non_peer_reviewed_secondary_now_warns(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["secondary_data_sources"] = [_secondary_source(source_quality="non_peer_reviewed")]
+        with pytest.warns(UserWarning, match="uniprot_ccl2.*non_peer_reviewed"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_warning_flags_a_secondary_that_supplies_values(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """A non-peer-reviewed source used only for context is milder than one
+        whose numbers reach the derivation; the message must say which."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["secondary_data_sources"] = [_secondary_source(source_quality="non_peer_reviewed")]
+        data["empirical_data"]["inputs"][0]["source_ref"] = "uniprot_ccl2"
+        with pytest.warns(UserWarning, match="supplies values used in the derivation"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_cross_species_secondary_now_warns(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["secondary_data_sources"] = [_secondary_source(species_source="mouse")]
+        with pytest.warns(UserWarning, match="Cross-species extrapolation in source"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_clean_sources_emit_no_relevance_warning(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["secondary_data_sources"] = [_secondary_source()]
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+        assert not [
+            w for w in caught if "extrapolation" in str(w.message) or "quality is" in str(w.message)
+        ]
+
+
+class TestCalContextMismatchJustified:
+    """Ported from SubmodelTarget.validate_pharmacological_perturbation_justification,
+    validate_genetic_perturbation_justification and
+    validate_low_tme_compatibility_notes — all of which raise where the
+    calibration side only warned.
+
+    Measured against the live corpus first: zero targets violate either rule, so
+    escalating warning -> error costs no migration.
+    """
+
+    def test_pharmacological_without_relevance_raises(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        sr = data["primary_data_source"]["source_relevance"]
+        sr["perturbation_type"] = "pharmacological"
+        sr["perturbation_relevance"] = ""
+        with pytest.raises(ValidationError, match="perturbation_relevance is not"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_genetic_without_relevance_raises(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        sr = data["primary_data_source"]["source_relevance"]
+        sr["perturbation_type"] = "genetic_perturbation"
+        sr["perturbation_relevance"] = ""
+        with pytest.raises(ValidationError, match="perturbation_relevance is not"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_low_tme_without_notes_raises(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        sr = data["primary_data_source"]["source_relevance"]
+        sr["tme_compatibility"] = "low"
+        sr["tme_compatibility_notes"] = ""
+        with pytest.raises(ValidationError, match="tme_compatibility_notes is not"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_secondary_source_mismatch_also_raises(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """The whole point of the port: secondary sources are checked too."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["secondary_data_sources"] = [
+            _secondary_source(tme_compatibility="low", tme_compatibility_notes="")
+        ]
+        with pytest.raises(ValidationError, match="uniprot_ccl2.*tme_compatibility_notes"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_justified_mismatch_passes(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        sr = data["primary_data_source"]["source_relevance"]
+        sr["perturbation_type"] = "pharmacological"
+        sr["perturbation_relevance"] = "Gemcitabine-exposed specimens; value is an upper bound."
+        CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+
+class TestCalCenterChannelNotPopulation:
+    """Ported from SubmodelTarget.validate_center_channel_sem_scale.
+
+    An across_patient target has two channels: `samples` is the population
+    spread (omega), median/ci95 pin the centre and must shrink with n. Returning
+    the population percentiles as ci95 encodes the spread twice. Measured
+    against the live corpus: 26 targets do exactly this, all via
+    population.summarize() without an n.
+    """
+
+    # Population draw whose median matches the golden reported median (1.0).
+    _POP = (
+        "def derive_distribution(inputs, ureg):\n"
+        "    import numpy as np, math\n"
+        "    rng = np.random.default_rng(42)\n"
+        "    mean = inputs['cd8_ratio_mean']\n"
+        "    sigma_log = inputs['cd8_ratio_sigma_log']\n"
+        "    mu_log = math.log(mean.magnitude)\n"
+        "    samples = rng.lognormal(mu_log, sigma_log.magnitude, 10000) * mean.units\n"
+        "{body}"
+    )
+
+    _POPULATION_CI = _POP.format(
+        body=(
+            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
+            "    return {'median_obs': np.median(samples), 'ci95_lower': ci95[0],\n"
+            "            'ci95_upper': ci95[1], 'samples': samples}"
+        )
+    )
+
+    _SEM_CI = _POP.format(
+        body=(
+            "    from maple.core.calibration import population as pop\n"
+            "    return pop.summarize(samples, n=42, rng=rng)"
+        )
+    )
+
+    def _data(self, golden, code, **ed):
+        data = copy.deepcopy(golden)
+        data["empirical_data"]["distribution_code"] = code
+        data["empirical_data"]["population_spread"] = "across_patient"
+        data["empirical_data"].update(ed)
+        return data
+
+    def test_population_range_as_ci95_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = self._data(golden_calibration_target_data, self._POPULATION_CI)
+        with pytest.raises(ValidationError, match="is the POPULATION range"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_error_names_the_channel_that_needs_fixing(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Clearing the error with population_spread='center_only' would delete
+        the omega channel. The message must steer to summarize(n=...) instead."""
+        data = self._data(golden_calibration_target_data, self._POPULATION_CI)
+        with pytest.raises(ValidationError) as exc:
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+        msg = str(exc.value)
+        assert "summarize(samples, n=" in msg
+        assert "DELETES the population channel" in msg
+
+    def test_sem_scale_ci95_passes(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        # summarize(n=42) bootstraps the median, so ci95 is far narrower than the
+        # population range; median and samples are unchanged.
+        data = self._data(golden_calibration_target_data, self._SEM_CI, ci95=[[0.888, 1.124]])
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        lo, hi = target.empirical_data.ci95[0]
+        assert 0.8 < lo < 1.0 and 1.0 < hi < 1.3
+
+    def test_single_subject_exempt(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """With n=1 the centre's uncertainty IS the population spread; no double
+        encoding is possible, so the check must not fire."""
+        data = self._data(
+            golden_calibration_target_data,
+            self._POPULATION_CI,
+            sample_size=1,
+            sample_size_rationale="single reported subject",
+        )
+        CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_center_only_targets_unaffected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """A center_only target has no second channel, so a wide ci95 is fine."""
+        CalibrationTarget.model_validate(
+            golden_calibration_target_data, context={"model_structure": model_structure}
+        )
+
+
+class TestCalNoHardcodedValuesInDistributionCode:
+    """Ported from SubmodelTarget.validate_no_hardcoded_values_in_observation_code,
+    scoped to non-integer floats.
+
+    The submodel allowlist ({0,1,2,1.96,1.645}) fails 50 of 50 live targets,
+    because distribution_code is Monte-Carlo statistics. Scoped to non-integer
+    floats it flags 5, all real: a fraction range read straight out of a paper
+    into np.log(), and a detection floor / tolerance band that belong in
+    assumptions.
+    """
+
+    def _with_code(self, golden, extra_lines):
+        """Inject extra statements into the golden derivation.
+
+        The golden code already returns values matching the fixture's declared
+        median/ci95, so injecting keeps validate_derivation_code happy and
+        isolates the rule under test. The golden body is itself clean under this
+        validator (seed 42, n=10000, percentiles 2.5/97.5 are all exempt).
+        """
+        data = copy.deepcopy(golden)
+        code = data["empirical_data"]["distribution_code"]
+        anchor = "    import math\n"
+        assert anchor in code
+        data["empirical_data"]["distribution_code"] = code.replace(anchor, anchor + extra_lines, 1)
+        return data
+
+    def test_paper_value_as_literal_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """The live catch: apcaf_fraction_of_caf hardcodes its 2%-21% range."""
+        data = self._with_code(
+            golden_calibration_target_data,
+            "    lo, hi = math.log(0.02), math.log(0.21)\n",
+        )
+        with pytest.raises(ValidationError, match="hardcoded non-integer values"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_error_lists_the_offending_line(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = self._with_code(
+            golden_calibration_target_data,
+            "    EPS_FLOOR = 0.001\n",
+        )
+        with pytest.raises(ValidationError) as exc:
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+        assert "EPS_FLOOR = 0.001" in str(exc.value)
+
+    def test_statistical_constants_stay_legal(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Seeds, draw counts, percentile arguments, z-values and the IQR->SD
+        factor are the vocabulary of the file — banning them switches the
+        validator off."""
+        data = self._with_code(
+            golden_calibration_target_data,
+            "    rng2 = np.random.default_rng(42)\n"
+            "    draws = rng2.normal(1.0, 0.5, 10000)\n"
+            "    q1, q3 = np.percentile(draws, [25, 75])\n"
+            "    sd = (q3 - q1) / 1.349\n"
+            "    half = 1.959963984540054 * sd\n"
+            "    guard = max(sd, 1e-6)\n",
+        )
+        CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_integers_are_exempt(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """Known gap, documented on the validator: every integer in the live
+        corpus is a count, index or bound, so integers are not candidates."""
+        data = self._with_code(
+            golden_calibration_target_data,
+            "    n_mc = 200000\n" "    vals = [inputs['cd8_ratio_mean'] for _ in range(1, 11)]\n",
+        )
+        CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+
+class TestCalSnippetsAgainstPdfs:
+    """Ported from SubmodelTarget.validate_snippets_against_pdfs.
+
+    validate_input_values_in_snippets checks the VALUE against the SNIPPET, but
+    both are LLM-written and can be jointly invented. This closes the loop by
+    checking the snippet against the paper.
+    """
+
+    def test_skipped_without_papers_dir(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        """No papers_dir in context -> no PDF work, no network, no failure."""
+        with patch("maple.core.calibration.snippet_validator.load_paper_texts") as loader:
+            CalibrationTarget.model_validate(
+                golden_calibration_target_data, context={"model_structure": model_structure}
+            )
+            loader.assert_not_called()
+
+    def test_snippet_absent_from_paper_rejected(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success, tmp_path
+    ):
+        with patch(
+            "maple.core.calibration.snippet_validator.load_paper_texts",
+            return_value={"smith_2020": ("The paper says nothing of the sort.", "pdf")},
+        ):
+            with pytest.raises(ValidationError, match="value_snippet not found"):
+                CalibrationTarget.model_validate(
+                    golden_calibration_target_data,
+                    context={"model_structure": model_structure, "papers_dir": tmp_path},
+                )
+
+    def test_snippet_present_in_paper_passes(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success, tmp_path
+    ):
+        snippet = golden_calibration_target_data["empirical_data"]["inputs"][0]["value_snippet"]
+        with patch(
+            "maple.core.calibration.snippet_validator.load_paper_texts",
+            return_value={"smith_2020": (f"Results. {snippet} See Table 2.", "pdf")},
+        ):
+            CalibrationTarget.model_validate(
+                golden_calibration_target_data,
+                context={"model_structure": model_structure, "papers_dir": tmp_path},
+            )
+
+    def test_mechanistic_targets_exempt(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success, tmp_path
+    ):
+        """A mechanistic target encodes reasoning, not measured text."""
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["epistemic_basis"] = "mechanistic"
+        with patch(
+            "maple.core.calibration.snippet_validator.load_paper_texts",
+            return_value={"smith_2020": ("Nothing matching.", "pdf")},
+        ):
+            CalibrationTarget.model_validate(
+                data, context={"model_structure": model_structure, "papers_dir": tmp_path}
+            )
+
+
+class TestPopulationSummarizeSemScale:
+    """population.summarize(n=...) must narrow the CENTRE only."""
+
+    def _samples(self):
+        import numpy as np
+
+        from maple.core.unit_registry import ureg
+
+        rng = np.random.default_rng(7)
+        return rng.lognormal(0.0, 0.8, 20000) * ureg.dimensionless
+
+    def test_bare_summarize_returns_population_range(self):
+        import numpy as np
+
+        from maple.core.calibration import population as pop
+
+        s = self._samples()
+        out = pop.summarize(s)
+        assert np.isclose(out["ci95_lower"].magnitude, np.percentile(s.magnitude, 2.5))
+        assert np.isclose(out["ci95_upper"].magnitude, np.percentile(s.magnitude, 97.5))
+
+    def test_n_narrows_center_and_leaves_samples_alone(self):
+        import numpy as np
+
+        from maple.core.calibration import population as pop
+
+        s = self._samples()
+        wide = pop.summarize(s)
+        tight = pop.summarize(s, n=100)
+
+        # The population channel is untouched, in both value and centre.
+        assert np.array_equal(tight["samples"].magnitude, s.magnitude)
+        assert np.isclose(tight["median_obs"].magnitude, wide["median_obs"].magnitude)
+
+        # The centre channel narrows by roughly sqrt(n).
+        w = np.log(wide["ci95_upper"].magnitude / wide["ci95_lower"].magnitude)
+        t = np.log(tight["ci95_upper"].magnitude / tight["ci95_lower"].magnitude)
+        assert 5.0 < w / t < 15.0, f"expected ~sqrt(100)=10x narrowing, got {w / t:.1f}x"
+
+    def test_center_interval_brackets_the_median(self):
+        from maple.core.calibration import population as pop
+
+        s = self._samples()
+        out = pop.summarize(s, n=50)
+        assert (
+            out["ci95_lower"].magnitude < out["median_obs"].magnitude < out["ci95_upper"].magnitude
+        )
+
+    def test_units_are_preserved(self):
+        from maple.core.calibration import population as pop
+
+        s = self._samples()
+        out = pop.summarize(s, n=30)
+        assert out["ci95_lower"].units == s.units
+        assert out["ci95_upper"].units == s.units
+
+    def test_rejects_nonpositive_n(self):
+        from maple.core.calibration import population as pop
+
+        with pytest.raises(ValueError, match="positive sample size"):
+            pop.summarize(self._samples(), n=0)
