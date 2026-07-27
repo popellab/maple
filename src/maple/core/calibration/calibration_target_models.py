@@ -10,6 +10,7 @@ See docs/calibration_target_design.md for full specification.
 """
 
 import ast
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -393,6 +394,79 @@ class CalibrationTargetEstimates(BaseModel):
             raise ValueError(
                 f"ci95 must be [[lower, upper]], got {len(self.ci95[0])} elements in the pair."
             )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_no_assumed_or_uncertainty_inputs(self) -> "CalibrationTargetEstimates":
+        """
+        Reject inputs that encode a modeling assumption rather than paper data.
+
+        Ported from ``SubmodelTarget.validate_no_assumed_or_uncertainty_inputs``.
+        Calibration targets were never held to this rule, which is how a target
+        reached the corpus carrying ``assumed_cv_fraction = 1.0`` with the snippet
+        "Neither standard deviation nor interquartile range was reported for any
+        immune cell density measurement; CV assumed at 1.0 as a conservative
+        estimate." A fabricated spread is not a conservative estimate — it sets the
+        weight the target pulls with in the likelihood.
+
+        Two checks:
+
+        1. ``assumed`` anywhere in an input name, regardless of input_type. Naming
+           something ``assumed_*`` is an admission that it is a modeling choice.
+        2. Uncertainty-smelling names on *non-measurement* input types. Dispersion
+           that a paper actually reports is a measurement and belongs on
+           ``direct_parameter`` / ``proxy_measurement`` with a snippet to prove it;
+           the same name on ``experimental_condition`` / ``inferred_estimate`` /
+           ``derived_arithmetic`` means it was invented.
+
+        Reported spread stays legal — ``sd_*``, ``sem_*``, ``*_q1``, ``*_q3`` and
+        friends are untouched, because they are values the paper printed.
+        """
+        UNCERTAINTY_PATTERNS = [
+            "cv",
+            "sigma",
+            "uncertainty",
+            "fold_uncertainty",
+            "translation_sd",
+        ]
+        NON_MEASUREMENT_TYPES = {
+            InputType.EXPERIMENTAL_CONDITION,
+            InputType.INFERRED_ESTIMATE,
+            InputType.DERIVED_ARITHMETIC,
+        }
+
+        errors = []
+        for inp in self.inputs:
+            name_lower = inp.name.lower()
+
+            if "assumed" in name_lower:
+                errors.append(
+                    f"Input '{inp.name}' contains 'assumed' in its name, indicating a "
+                    f"modeling choice rather than extracted data. If the paper reports "
+                    f"no dispersion, that is a property of the source and must be "
+                    f"handled in the error model downstream — not fabricated here as "
+                    f"an input. Derive it in distribution_code if it is a genuine "
+                    f"transformation of reported values, or drop it."
+                )
+                continue
+
+            if inp.input_type in NON_MEASUREMENT_TYPES:
+                for pattern in UNCERTAINTY_PATTERNS:
+                    if re.search(rf"\b{pattern}\b|_{pattern}$|^{pattern}_", name_lower):
+                        errors.append(
+                            f"Input '{inp.name}' looks like an uncertainty factor "
+                            f"(matches '{pattern}') but has "
+                            f"input_type='{inp.input_type.value}'. Dispersion the paper "
+                            f"actually reports should be typed as a measurement "
+                            f"(direct_parameter / proxy_measurement) and carry a "
+                            f"value_snippet; on a non-measurement type it is an "
+                            f"invented uncertainty factor."
+                        )
+                        break
+
+        if errors:
+            raise ValueError("\n".join(errors))
 
         return self
 

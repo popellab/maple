@@ -37,6 +37,7 @@ from unittest.mock import Mock, patch
 from pydantic import ValidationError
 
 from maple.core.calibration import CalibrationTarget, Observable
+from maple.core.calibration.calibration_target_models import CalibrationTargetEstimates
 
 
 DEFAULT_CLINICAL_SOURCE_RELEVANCE = {
@@ -1678,8 +1679,6 @@ class TestCalibrationTargetPopulationSample:
 # observable's moments-form observed_distribution must use shape=logit_normal.
 # ============================================================================
 
-from maple.core.calibration.calibration_target_models import CalibrationTargetEstimates
-
 
 def _bounded_cal_estimates(shape: str) -> dict:
     return {
@@ -1727,3 +1726,86 @@ class TestCalBoundedObservableLogitNormal:
 
     def test_percent_with_logit_normal_passes(self):
         CalibrationTargetEstimates.model_validate(_bounded_cal_estimates("logit_normal"))
+
+
+def _estimates_with_input(
+    name: str, input_type: str | None = None, dispersion_type: str | None = None
+) -> dict:
+    """Minimal valid estimates payload carrying one named input."""
+    inp = {
+        "name": name,
+        "value": 0.5,
+        "units": "dimensionless",
+        "description": "an input",
+        "source_ref": "smith_2020",
+        "value_location": "Table 1",
+        "value_snippet": "reported value 0.5",
+    }
+    if input_type is not None:
+        inp["input_type"] = input_type
+    if dispersion_type is not None:
+        inp["dispersion_type"] = dispersion_type
+        inp["dispersion_type_rationale"] = "Paper states this explicitly in the legend."
+    return {
+        "median": [0.5],
+        "ci95": [[0.3, 0.7]],
+        "units": "dimensionless",
+        "sample_size": 40,
+        "sample_size_rationale": "n=40 patients, Table 1",
+        "inputs": [inp],
+        "distribution_code": (
+            "def derive_distribution(inputs, ureg):\n"
+            f"    v = inputs['{name}']\n"
+            "    return {'median_obs': v, 'ci95_lower': v * 0.6, 'ci95_upper': v * 1.4}"
+        ),
+        "population_spread": "center_only",
+    }
+
+
+class TestCalNoAssumedOrUncertaintyInputs:
+    """CalibrationTargetEstimates: fabricated spread must not enter as an input.
+
+    Ported from SubmodelTarget. The live catch is treg_fraction_baseline, which
+    carried assumed_cv_fraction = 1.0 because the source reported no dispersion.
+    """
+
+    def test_assumed_in_name_raises(self):
+        with pytest.raises(ValidationError, match="assumed"):
+            CalibrationTargetEstimates.model_validate(
+                _estimates_with_input("assumed_cv_fraction", "inferred_estimate")
+            )
+
+    def test_assumed_raises_regardless_of_input_type(self):
+        """'assumed' is rejected even when typed as a real measurement."""
+        with pytest.raises(ValidationError, match="assumed"):
+            CalibrationTargetEstimates.model_validate(
+                _estimates_with_input("assumed_baseline_density", "direct_parameter")
+            )
+
+    def test_uncertainty_name_on_non_measurement_type_raises(self):
+        with pytest.raises(ValidationError, match="uncertainty factor"):
+            CalibrationTargetEstimates.model_validate(
+                _estimates_with_input("cv_translation", "derived_arithmetic")
+            )
+
+    def test_reported_dispersion_stays_legal(self):
+        """sd_/sem_/q3 are values the paper printed — must not be rejected.
+
+        Dispersion-named inputs separately owe a dispersion_type (the existing
+        SEM-vs-SD guard in shared_models); that is orthogonal to this validator
+        and supplied here so the test isolates the rule under test.
+        """
+        for nm, dt in (
+            ("sd_nk_fraction_til", "sd"),
+            ("sem_frac_pd1_cd4_tumor", "se"),
+            ("treg_density_q3", None),
+        ):
+            CalibrationTargetEstimates.model_validate(
+                _estimates_with_input(nm, "direct_parameter", dispersion_type=dt)
+            )
+
+    def test_uncertainty_name_on_measurement_type_stays_legal(self):
+        """A paper may genuinely report a CV; typed as a measurement it is data."""
+        CalibrationTargetEstimates.model_validate(
+            _estimates_with_input("cv_reported_by_authors", "direct_parameter")
+        )
