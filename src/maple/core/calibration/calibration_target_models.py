@@ -1203,7 +1203,7 @@ class CalibrationTarget(BaseModel):
 
         return self
 
-    def _all_source_relevances(self) -> List[tuple]:
+    def _all_source_relevances(self) -> list[tuple]:
         """Yield ``(source_tag, SourceRelevanceAssessment)`` for every declared source.
 
         Parity with ``SubmodelTarget._all_source_relevances``. The calibration-target
@@ -1211,7 +1211,7 @@ class CalibrationTarget(BaseModel):
         source could carry ``non_peer_reviewed`` quality, an unjustified
         perturbation, or a low TME compatibility with no notes and never be seen.
         """
-        out: List[tuple] = []
+        out: list[tuple] = []
         if self.primary_data_source is not None and self.primary_data_source.source_relevance:
             out.append(
                 (self.primary_data_source.source_tag, self.primary_data_source.source_relevance)
@@ -1664,7 +1664,7 @@ class CalibrationTarget(BaseModel):
 
     @staticmethod
     def _check_center_channel_is_not_population(
-        finite: "np.ndarray", ci95_pair: List[float], sample_size: int
+        finite: "np.ndarray", ci95_pair: list[float], sample_size: int
     ) -> None:
         """The two channels must not both carry the population spread.
 
@@ -2246,7 +2246,7 @@ class CalibrationTarget(BaseModel):
             return self  # reported by validate_derivation_code
 
         src = code.splitlines()
-        offenders: Dict[float, str] = {}
+        offenders: dict[float, str] = {}
         for node in ast.walk(tree):
             if not isinstance(node, ast.Constant):
                 continue

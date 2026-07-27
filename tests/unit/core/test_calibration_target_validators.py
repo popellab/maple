@@ -33,6 +33,7 @@ either ``readout_time`` (+ ``readout_time_unit``) or ``reduce_observable``.
 
 import copy
 import warnings
+from typing import ClassVar
 import pytest
 from unittest.mock import Mock, patch
 from pydantic import ValidationError
@@ -1621,7 +1622,7 @@ class TestCalibrationTargetPopulationSample:
         "    return pop.summarize(samples, n=42)"
     )
     # The centre interval _GOOD_CODE produces, for fixtures that use it.
-    _GOOD_CI95 = [[0.829794, 1.196636]]
+    _GOOD_CI95: ClassVar[list[list[float]]] = [[0.829794, 1.196636]]
 
     def _with_code(self, golden, code=None, **ed_overrides):
         data = copy.deepcopy(golden)
@@ -2170,15 +2171,17 @@ class TestCalSnippetsAgainstPdfs:
     def test_snippet_absent_from_paper_rejected(
         self, model_structure, golden_calibration_target_data, mock_crossref_success, tmp_path
     ):
-        with patch(
-            "maple.core.calibration.snippet_validator.load_paper_texts",
-            return_value={"smith_2020": ("The paper says nothing of the sort.", "pdf")},
+        with (
+            patch(
+                "maple.core.calibration.snippet_validator.load_paper_texts",
+                return_value={"smith_2020": ("The paper says nothing of the sort.", "pdf")},
+            ),
+            pytest.raises(ValidationError, match="value_snippet not found"),
         ):
-            with pytest.raises(ValidationError, match="value_snippet not found"):
-                CalibrationTarget.model_validate(
-                    golden_calibration_target_data,
-                    context={"model_structure": model_structure, "papers_dir": tmp_path},
-                )
+            CalibrationTarget.model_validate(
+                golden_calibration_target_data,
+                context={"model_structure": model_structure, "papers_dir": tmp_path},
+            )
 
     def test_snippet_present_in_paper_passes(
         self, model_structure, golden_calibration_target_data, mock_crossref_success, tmp_path

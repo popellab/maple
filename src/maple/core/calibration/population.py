@@ -347,11 +347,11 @@ def summarize(samples, *, n=None, rng=None, n_boot=2_000):
         rng = np.random.default_rng(_SHUFFLE_SEED)
 
     units = getattr(samples, "units", None)
+    # Patients index axis 0 whether the observable is scalar (1-D) or joint (2-D),
+    # so one indexing path covers both.
     mag = np.asarray(getattr(samples, "magnitude", samples), dtype=float)
-    flat = mag if mag.ndim == 1 else mag  # index patients on axis 0 either way
-    n_pop = flat.shape[0]
-    idx = rng.integers(0, n_pop, size=(n_boot, n))
-    boots = np.median(flat[idx], axis=1)  # (n_boot,) or (n_boot, k)
+    idx = rng.integers(0, mag.shape[0], size=(n_boot, n))
+    boots = np.median(mag[idx], axis=1)  # (n_boot,) or (n_boot, k)
     lo = np.percentile(boots, 2.5, axis=0)
     hi = np.percentile(boots, 97.5, axis=0)
     if units is not None:
