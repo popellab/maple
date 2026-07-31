@@ -93,10 +93,8 @@ class SpreadSource(str, Enum):
     """Provenance of a reported spread — what kind of variability it measures.
 
     This drives whether a spread feeds the population-spread hyperparameter
-    (omega) in hierarchical inference or only the center's error budget.
-    Subsumes the calibration side's earlier two-valued ``population_spread``
-    (``across_patient`` / ``center_only``) and adds the finer provenance the
-    submodel (in-vitro / ex-vivo) targets need.
+    (omega) in hierarchical inference or only the center's error budget. It is
+    the sole declaration of that, on both calibration and submodel targets.
     """
 
     ACROSS_PATIENT = "across_patient"

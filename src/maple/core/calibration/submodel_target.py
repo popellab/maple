@@ -30,7 +30,6 @@ from maple.core.calibration.shared_models import (
     TableExcerpt,
 )
 
-
 # =============================================================================
 # ENUMS
 # =============================================================================
@@ -3261,19 +3260,19 @@ class SubmodelTarget(BaseModel):
         # Characters that are invisible or cause issues
         INVISIBLE_CHARS = {
             # Zero-width characters
-            "\u200B",  # Zero-width space
-            "\u200C",  # Zero-width non-joiner
-            "\u200D",  # Zero-width joiner
-            "\uFEFF",  # Byte order mark / zero-width no-break space
+            "\u200b",  # Zero-width space
+            "\u200c",  # Zero-width non-joiner
+            "\u200d",  # Zero-width joiner
+            "\ufeff",  # Byte order mark / zero-width no-break space
             # Soft hyphen
-            "\u00AD",  # Soft hyphen (invisible in most contexts)
+            "\u00ad",  # Soft hyphen (invisible in most contexts)
             # Other problematic invisibles
             "\u2060",  # Word joiner
             "\u2061",  # Function application
             "\u2062",  # Invisible times
             "\u2063",  # Invisible separator
             "\u2064",  # Invisible plus
-            "\u180E",  # Mongolian vowel separator
+            "\u180e",  # Mongolian vowel separator
         }
 
         def check_invisible(value: str, location: str) -> None:

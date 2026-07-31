@@ -15,7 +15,6 @@ from maple.core.calibration.enums import ExtractionMethod, SourceType
 # Import SubmodelInput directly (not under TYPE_CHECKING) so Pydantic can resolve it
 from maple.core.calibration.shared_models import SubmodelInput
 
-
 # Support types for measurement output constraints
 SupportType = Literal["positive", "non_negative", "unit_interval", "positive_unbounded", "real"]
 
@@ -382,6 +381,13 @@ class Observable(BaseModel):
 
     units: str = Field(
         description="Pint-parseable units of the observable output (must match empirical_data.units)"
+    )
+
+    readout_id: str = Field(
+        description=(
+            "Registered readout this observable measures, from the project's readout registry. "
+            "Two targets measuring the same quantity in different cohorts share one readout_id."
+        )
     )
 
     readout_time: Optional[float] = Field(

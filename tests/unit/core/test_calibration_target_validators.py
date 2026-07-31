@@ -41,7 +41,6 @@ from pydantic import ValidationError
 from maple.core.calibration import CalibrationTarget, Observable
 from maple.core.calibration.calibration_target_models import CalibrationTargetEstimates
 
-
 DEFAULT_CLINICAL_SOURCE_RELEVANCE = {
     "indication_match": "exact",
     "indication_match_justification": "Human PDAC resection specimens with quantitative IHC, directly matching the model indication.",
@@ -103,7 +102,9 @@ def model_structure():
 def golden_calibration_target_data():
     """Complete valid CalibrationTarget data that passes all validators."""
     return {
+        "cohort_id": "smith2020_resected",
         "observable": {
+            "readout_id": "cd8_tumor_ratio",
             "code": (
                 "def compute_observable(time, species_dict, constants):\n"
                 "    cd8 = species_dict['V_T.CD8']\n"
@@ -148,6 +149,16 @@ def golden_calibration_target_data():
             "units": "dimensionless",
             "sample_size": 42,
             "sample_size_rationale": "n=42 patients in resected PDAC cohort, Table 1",
+            "observed_distribution": {
+                "moments": {
+                    "center": 1.0,
+                    "center_type": "mean",
+                    "scale": 0.5,
+                    "scale_type": "sd",
+                    "shape": "lognormal",
+                },
+                "spread_source": "center_only",
+            },
             "inputs": [
                 {
                     "name": "cd8_ratio_mean",
@@ -1530,6 +1541,7 @@ class TestObservableDenominatorAudit:
     def _make_observable(self, **overrides):
         """Helper to create Observable with sensible defaults."""
         base = {
+            "readout_id": "cd8_count",
             "code": (
                 "def compute_observable(time, species_dict, constants):\n"
                 "    return species_dict['V_T.CD8']"
@@ -1601,7 +1613,7 @@ class TestObservableDenominatorAudit:
 
 
 class TestCalibrationTargetPopulationSample:
-    """The optional declared 'samples' population draw + population_spread gate."""
+    """The declared 'samples' population draw + the spread_source gate."""
 
     # A lognormal population draw whose median matches the golden reported median (1.0).
     #
@@ -1640,25 +1652,24 @@ class TestCalibrationTargetPopulationSample:
         target = CalibrationTarget.model_validate(
             golden_calibration_target_data, context={"model_structure": model_structure}
         )
-        assert target.empirical_data.population_spread == "center_only"
+        assert target.empirical_data.feeds_population_spread is False
 
     def test_across_patient_with_samples_validates(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
-        data = self._with_code(
-            golden_calibration_target_data, self._GOOD_CODE, population_spread="across_patient"
-        )
+        data = self._with_code(golden_calibration_target_data, self._GOOD_CODE)
+        _spread_source(data, "across_patient")
         target = CalibrationTarget.model_validate(
             data, context={"model_structure": model_structure}
         )
-        assert target.empirical_data.population_spread == "across_patient"
+        assert target.empirical_data.feeds_population_spread is True
 
     def test_across_patient_without_samples_rejected(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
         # Declaring across_patient but returning no samples is a hard error.
-        data = self._with_code(golden_calibration_target_data, population_spread="across_patient")
-        with pytest.raises(ValidationError, match="requires distribution_code to"):
+        data = _spread_source(self._with_code(golden_calibration_target_data), "across_patient")
+        with pytest.raises(ValidationError, match="must return a 'samples' key"):
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_center_only_with_samples_rejected(
@@ -1684,9 +1695,8 @@ class TestCalibrationTargetPopulationSample:
             "    out['samples'] = samples * 5.0\n"
             "    return out",
         )
-        data = self._with_code(
-            golden_calibration_target_data, code, population_spread="across_patient"
-        )
+        data = self._with_code(golden_calibration_target_data, code)
+        _spread_source(data, "across_patient")
         with pytest.raises(ValidationError, match=r"median\(samples\)"):
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
@@ -1700,9 +1710,8 @@ class TestCalibrationTargetPopulationSample:
             "    out['samples'] = np.ones(10000) * mean.magnitude * mean.units\n"
             "    return out",
         )
-        data = self._with_code(
-            golden_calibration_target_data, code, population_spread="across_patient"
-        )
+        data = self._with_code(golden_calibration_target_data, code)
+        _spread_source(data, "across_patient")
         with pytest.raises(ValidationError, match="zero variance"):
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
@@ -1711,6 +1720,20 @@ class TestCalibrationTargetPopulationSample:
 # Cal-side parity for the submodel bounded->logit_normal validator: a bounded
 # observable's moments-form observed_distribution must use shape=logit_normal.
 # ============================================================================
+
+
+def _spread_source(data: dict, source: str) -> dict:
+    """Set the target's spread provenance, with the provenance a population claim needs."""
+    ed = data["empirical_data"]
+    od = ed["observed_distribution"]
+    od["spread_source"] = source
+    if source in ("across_patient", "biological_experimental"):
+        od["n_biological"] = ed["sample_size"]
+        od["experimental_unit_type"] = "biological"
+    else:
+        od.pop("n_biological", None)
+        od.pop("experimental_unit_type", None)
+    return data
 
 
 def _bounded_cal_estimates(shape: str) -> dict:
@@ -1736,7 +1759,6 @@ def _bounded_cal_estimates(shape: str) -> dict:
             "    v = inputs['resp_fraction']\n"
             "    return {'median_obs': v, 'ci95_lower': v * 0.6, 'ci95_upper': v * 1.4}"
         ),
-        "population_spread": "center_only",
         "observed_distribution": {
             "moments": {
                 "center": 0.5,
@@ -1791,7 +1813,6 @@ def _estimates_with_input(
             f"    v = inputs['{name}']\n"
             "    return {'median_obs': v, 'ci95_lower': v * 0.6, 'ci95_upper': v * 1.4}"
         ),
-        "population_spread": "center_only",
     }
 
 
@@ -2016,9 +2037,8 @@ class TestCalCenterChannelNotPopulation:
     def _data(self, golden, code, **ed):
         data = copy.deepcopy(golden)
         data["empirical_data"]["distribution_code"] = code
-        data["empirical_data"]["population_spread"] = "across_patient"
         data["empirical_data"].update(ed)
-        return data
+        return _spread_source(data, "across_patient")
 
     def test_population_range_as_ci95_rejected(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
@@ -2030,7 +2050,7 @@ class TestCalCenterChannelNotPopulation:
     def test_error_names_the_channel_that_needs_fixing(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
-        """Clearing the error with population_spread='center_only' would delete
+        """Clearing the error with a center-only spread_source would delete
         the omega channel. The message must steer to summarize(n=...) instead."""
         data = self._data(golden_calibration_target_data, self._POPULATION_CI)
         with pytest.raises(ValidationError) as exc:

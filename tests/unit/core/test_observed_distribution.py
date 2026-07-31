@@ -28,7 +28,6 @@ from maple.core.calibration.enums import HeterogeneityTransfer
 from maple.core.calibration.calibration_target_models import CalibrationTargetEstimates
 from maple.core.calibration.submodel_target import ErrorModel
 
-
 _SOURCE_RELEVANCE = dict(
     indication_match="exact",
     indication_match_justification="exact PDAC match",
@@ -362,34 +361,28 @@ def test_population_spread_sources_membership():
 # ---------------------------------------------------------------------------
 
 
-def test_cal_resolved_spread_source_legacy_fallback():
-    # No observed_distribution -> maps from legacy population_spread
-    assert _cal_estimates().resolved_spread_source == SpreadSource.CENTER_ONLY
-    assert (
-        _cal_estimates(population_spread="across_patient").resolved_spread_source
-        == SpreadSource.ACROSS_PATIENT
-    )
+def test_cal_no_observed_distribution_is_center_only():
+    """A target with nothing declared contributes no population spread."""
+    e = _cal_estimates()
+    assert e.resolved_spread_source == SpreadSource.CENTER_ONLY
+    assert e.feeds_population_spread is False
 
 
-def test_cal_resolved_spread_source_prefers_observed_distribution():
+def test_cal_spread_source_comes_from_observed_distribution():
     od = _median_iqr(10.0, 15.0, 25.0, spread_source=SpreadSource.ACROSS_PATIENT, n_biological=42)
-    e = _cal_estimates(population_spread="across_patient", observed_distribution=od)
+    e = _cal_estimates(observed_distribution=od)
     assert e.resolved_spread_source == SpreadSource.ACROSS_PATIENT
+    assert e.feeds_population_spread is True
     assert e.observed_distribution.median() == 15.0
 
 
-def test_cal_observed_distribution_contradiction_rejected():
-    od = _median_iqr(10.0, 15.0, 25.0, spread_source=SpreadSource.ACROSS_PATIENT)
-    with pytest.raises(ValidationError, match="contradicts"):
-        _cal_estimates(population_spread="center_only", observed_distribution=od)
-
-
-def test_cal_observed_distribution_center_only_consistent():
+def test_cal_center_only_observed_distribution_does_not_feed_omega():
     od = ObservedDistribution(
         quantiles=[QuantileAnchor(p=0.5, value=15.0)], spread_source=SpreadSource.CENTER_ONLY
     )
-    e = _cal_estimates(population_spread="center_only", observed_distribution=od)
+    e = _cal_estimates(observed_distribution=od)
     assert e.resolved_spread_source == SpreadSource.CENTER_ONLY
+    assert e.feeds_population_spread is False
 
 
 # ---------------------------------------------------------------------------

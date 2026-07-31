@@ -24,7 +24,6 @@ from maple.core.calibration.submodel_target import (
 )
 from maple.core.model_structure import ModelStructure, ModelParameter
 
-
 # ============================================================================
 # Default observation code — single source of truth for the current signature.
 # Tests that don't specifically test observation_code behavior should use this.
@@ -568,9 +567,7 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
         data["calibration"]["parameters"][0]["units"] = "nanomolar/cell/day"
         data["calibration"]["error_model"][0]["units"] = "nanomolar/cell/day"
         # Update forward model code to access the renamed parameter
-        data["calibration"]["forward_model"][
-            "code"
-        ] = """
+        data["calibration"]["forward_model"]["code"] = """
 def compute(params, inputs):
     return params['k_CCL2_sec']
 """
@@ -598,9 +595,7 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
         data["calibration"]["parameters"][0]["units"] = "nanomole/cell/day"
         data["calibration"]["error_model"][0]["units"] = "nanomole/cell/day"
         # Update forward model code to access the renamed parameter
-        data["calibration"]["forward_model"][
-            "code"
-        ] = """
+        data["calibration"]["forward_model"]["code"] = """
 def compute(params, inputs):
     return params['k_CCL2_sec']
 """
@@ -904,9 +899,7 @@ class TestValidateCustomCodeSyntax:
             input_value=10.0,
         )
         # Introduce syntax error in model code
-        data["calibration"]["forward_model"][
-            "code"
-        ] = """
+        data["calibration"]["forward_model"]["code"] = """
 def compute(params, inputs):
     return params['k_test'  # Missing closing bracket - syntax error
 """
@@ -922,9 +915,7 @@ def compute(params, inputs):
             input_value=10.0,
         )
         # Wrong function name (should be 'compute')
-        data["calibration"]["forward_model"][
-            "code"
-        ] = """
+        data["calibration"]["forward_model"]["code"] = """
 def wrong_name(params, inputs, ureg):
     return params['k_test']
 """
@@ -1352,7 +1343,7 @@ class TestValidateNoInvisibleCharacters:
             input_value=10.0,
         )
         # Add zero-width space in a text field
-        data["study_interpretation"] = "Test interpretation\u200Bwith invisible character"
+        data["study_interpretation"] = "Test interpretation\u200bwith invisible character"
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)

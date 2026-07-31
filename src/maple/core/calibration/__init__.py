@@ -90,6 +90,28 @@ from maple.core.calibration.shared_models import (
     UncertaintyType,
 )
 
+# Cohort and readout registries
+from maple.core.calibration.cohort import (
+    Cohort,
+    CohortRegistry,
+    EligibilityInterval,
+    load_cohorts,
+)
+from maple.core.calibration.readout import (
+    Readout,
+    ReadoutReference,
+    ReadoutRegistry,
+    VocabularyEntry,
+    load_readouts,
+)
+from maple.core.calibration.registry_audit import (
+    RegistryProblem,
+    check_registries,
+    find_registry_problems,
+    resolve_n,
+    warn_unused_registry_entries,
+)
+
 # Validators
 from maple.core.calibration.validators import (
     check_value_in_text,
@@ -184,6 +206,21 @@ __all__ = [
     "SourceType",
     "ExtractionMethod",
     "enum_field_description",
+    # Cohort and readout registries
+    "Cohort",
+    "CohortRegistry",
+    "EligibilityInterval",
+    "load_cohorts",
+    "Readout",
+    "ReadoutReference",
+    "ReadoutRegistry",
+    "VocabularyEntry",
+    "load_readouts",
+    "RegistryProblem",
+    "check_registries",
+    "find_registry_problems",
+    "resolve_n",
+    "warn_unused_registry_entries",
     # Scenario
     "Intervention",
     "Scenario",
