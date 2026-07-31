@@ -38,6 +38,11 @@ from typing import List
 import pandas as pd
 import yaml
 
+from maple.core.calibration.denominator_audit import (
+    check_mapping_collisions,
+    warn_declared_biases,
+)
+
 # Column order used by both loaders (calibration-only columns are the
 # canonical layout; the prediction loader appends ``is_prediction_only``
 # for callers that need to distinguish rows after concat).
@@ -145,10 +150,19 @@ def load_calibration_targets(yaml_dir: Path | str | List) -> pd.DataFrame:
         joined = ", ".join(str(d) for d in dirs)
         raise ValueError(f"No YAML files found in {joined}")
 
-    rows: List[dict] = []
+    parsed: dict[str, dict] = {}
     for yaml_file in yaml_files:
         with open(yaml_file, "r") as f:
-            data = yaml.safe_load(f)
+            parsed[yaml_file.name] = yaml.safe_load(f)
+
+    # Cross-target checks. These cannot live on the pydantic model, which only
+    # ever sees one target: a mapping collision is a property of a pair.
+    check_mapping_collisions(parsed)
+    warn_declared_biases(parsed)
+
+    rows: List[dict] = []
+    for yaml_file in yaml_files:
+        data = parsed[yaml_file.name]
 
         target_id = data["calibration_target_id"]
         observable = data["observable"]

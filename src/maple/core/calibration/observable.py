@@ -511,6 +511,30 @@ class Observable(BaseModel):
         ),
     )
 
+    duplicate_mapping_justification: Optional[str] = Field(
+        default=None,
+        description=(
+            "Why it is legitimate for this target to compute the SAME model "
+            "expression (same numerator species over the same denominator species, "
+            "at the same readout time) as another target in the same scenario.\n\n"
+            "Required only when such a collision exists — "
+            "``check_mapping_collisions`` raises otherwise. Two targets that reduce "
+            "to one model quantity are making one claim twice, and there are only "
+            "two ways that is sound:\n\n"
+            "  - REPLICATE: different cohorts measuring the same thing. State the "
+            "cohorts and note that the two values must be mutually compatible; if "
+            "they disagree beyond their CIs that is a real cross-study conflict to "
+            "adjudicate, not something to average away.\n"
+            "  - DELIBERATE POOLING: the targets are known duplicates kept on "
+            "purpose (e.g. a sensitivity check). Say so.\n\n"
+            "If instead the two targets measure genuinely DIFFERENT experimental "
+            "quantities, this field is the wrong fix — one of the model mappings is "
+            "wrong. That was the Treg case: one source counted Treg over "
+            "polarised CD4 only, the other over all CD4, and both mapped to "
+            "``Treg / (Treg + Th + Th_exh)``."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_denominator_fields(self) -> "Observable":
         """Validate denominator audit fields for density/fraction observables."""
