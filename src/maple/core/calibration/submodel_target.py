@@ -961,6 +961,19 @@ class Calibration(BaseModel):
         return self.forward_model.independent_variable
 
     @model_validator(mode="after")
+    def _spread_source_states_its_units(self) -> "Calibration":
+        """A population ``spread_source`` must state its unit count and unit type.
+
+        Submodel targets carry unit accounting on the distribution itself, having no
+        cohort registry to hold it.
+        """
+        for entry in self.error_model:
+            od = getattr(entry, "observed_distribution", None)
+            if od is not None:
+                od.require_unit_provenance(f"Error model '{entry.name}'")
+        return self
+
+    @model_validator(mode="after")
     def _unit_groups_consistent(self) -> "Calibration":
         """Validate ``observed_distribution.unit_group`` across error-model entries.
 
@@ -3046,26 +3059,24 @@ class SubmodelTarget(BaseModel):
         For a fraction / proportion / probability / percent observable, ``normal``
         puts mass outside the bound and ``lognormal`` is unbounded above (a near-1
         fraction's upper quartile escapes past 1). ``logit_normal`` expands the
-        quartiles in logit space so they stay in (0, 1). Only applies to the
-        ``moments`` form — the ``quantiles`` form carries the empirical shape (and
-        skew) directly and is exempt.
+        quartiles in logit space so they stay in (0, 1). A distribution with no
+        declared shape is exempt: it reports its quantiles directly and nothing is
+        expanded.
         """
         BOUNDED_UNITS = {"percent", "%", "fraction", "proportion", "probability"}
         for entry in self.calibration.error_model:
             od = entry.observed_distribution
-            if od is None or od.moments is None:
-                continue
-            if od.moments.shape == DistributionShape.LOGIT_NORMAL:
+            if od is None or od.shape is None or od.shape == DistributionShape.LOGIT_NORMAL:
                 continue
             if (entry.units or "").strip().lower() not in BOUNDED_UNITS:
                 continue
             raise ValueError(
                 f"Error model '{entry.name}' is a bounded observable (units='{entry.units}') "
-                f"but its observed_distribution.moments uses shape='{od.moments.shape.value}'. "
-                "Bounded fractions/percentages must use shape='logit_normal', which expands "
-                "quartiles in logit space so they never escape (0, 1); normal puts mass outside "
-                "the bound and lognormal is unbounded above. logit_normal requires center in "
-                "(0, 1) with center_type='median' — express a percent as a fraction (12% -> 0.12)."
+                f"but its observed_distribution declares shape='{od.shape.value}'. Bounded "
+                "fractions/percentages must use shape='logit_normal', which expands quartiles "
+                "in logit space so they never escape (0, 1); normal puts mass outside the "
+                "bound and lognormal is unbounded above. Express a percent as a fraction "
+                "(12% -> 0.12)."
             )
         return self
 

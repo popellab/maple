@@ -150,13 +150,11 @@ def golden_calibration_target_data():
             "sample_size": 42,
             "sample_size_rationale": "n=42 patients in resected PDAC cohort, Table 1",
             "observed_distribution": {
-                "moments": {
-                    "center": 1.0,
-                    "center_type": "mean",
-                    "scale": 0.5,
-                    "scale_type": "sd",
-                    "shape": "lognormal",
-                },
+                "statistics": [
+                    {"stat": "mean", "value": 1.0},
+                    {"stat": "sd", "value": 0.5},
+                ],
+                "shape": "lognormal",
                 "spread_source": "center_only",
             },
             "inputs": [
@@ -1723,16 +1721,8 @@ class TestCalibrationTargetPopulationSample:
 
 
 def _spread_source(data: dict, source: str) -> dict:
-    """Set the target's spread provenance, with the provenance a population claim needs."""
-    ed = data["empirical_data"]
-    od = ed["observed_distribution"]
-    od["spread_source"] = source
-    if source in ("across_patient", "biological_experimental"):
-        od["n_biological"] = ed["sample_size"]
-        od["experimental_unit_type"] = "biological"
-    else:
-        od.pop("n_biological", None)
-        od.pop("experimental_unit_type", None)
+    """Set the target's spread provenance. Unit accounting lives on the cohort."""
+    data["empirical_data"]["observed_distribution"]["spread_source"] = source
     return data
 
 
@@ -1760,20 +1750,18 @@ def _bounded_cal_estimates(shape: str) -> dict:
             "    return {'median_obs': v, 'ci95_lower': v * 0.6, 'ci95_upper': v * 1.4}"
         ),
         "observed_distribution": {
-            "moments": {
-                "center": 0.5,
-                "center_type": "median",
-                "scale": 0.1,
-                "scale_type": "sd",
-                "shape": shape,
-            },
+            "statistics": [
+                {"stat": "quantile", "p": 0.5, "value": 0.5},
+                {"stat": "sd", "value": 0.1},
+            ],
+            "shape": shape,
             "spread_source": "center_only",
         },
     }
 
 
 class TestCalBoundedObservableLogitNormal:
-    """CalibrationTargetEstimates: bounded moments-form observable must use logit_normal."""
+    """CalibrationTargetEstimates: a bounded observable declaring a shape must use logit_normal."""
 
     def test_percent_with_normal_shape_raises(self):
         with pytest.raises(ValidationError, match="logit_normal"):

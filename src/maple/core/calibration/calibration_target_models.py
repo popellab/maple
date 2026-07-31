@@ -303,31 +303,54 @@ class CalibrationTargetEstimates(BaseModel):
         return od is not None and od.feeds_population_spread
 
     @model_validator(mode="after")
-    def validate_bounded_observable_uses_logit_normal(self) -> "CalibrationTargetEstimates":
-        """A bounded observable's population spread (``moments`` form) must use
-        ``shape: logit_normal``, not normal/lognormal.
+    def validate_units_are_carried_by_the_cohort(self) -> "CalibrationTargetEstimates":
+        """The cohort owns the unit accounting, so the distribution must not restate it.
 
-        Parity with the SubmodelTarget validator of the same name: for a
-        fraction / proportion / probability / percent observable, ``normal`` puts
-        mass outside the bound and ``lognormal`` is unbounded above; ``logit_normal``
-        keeps expanded quartiles in (0, 1). Only applies to the ``moments`` form —
-        the ``quantiles`` form carries the empirical shape directly and is exempt.
+        ``n_biological`` / ``experimental_unit_type`` / ``unit_group`` exist for submodel
+        targets, which have no cohort registry. A calibration target names a cohort, and
+        two places for one count is how the two drift apart.
         """
         od = self.observed_distribution
-        if od is None or od.moments is None:
+        if od is None:
             return self
-        if od.moments.shape == DistributionShape.LOGIT_NORMAL:
+        set_here = [
+            name
+            for name in ("n_biological", "n_technical", "experimental_unit_type", "unit_group")
+            if getattr(od, name) is not None
+        ]
+        if od.n_biological_is_floor:
+            set_here.append("n_biological_is_floor")
+        if set_here:
+            raise ValueError(
+                f"observed_distribution sets {set_here}, which a calibration target's cohort "
+                "already carries (cohort_id, n_c, n_c_is_floor). Set n_evaluable on "
+                "empirical_data if this readout has fewer evaluable patients than the cohort. "
+                "Those fields are for submodel targets, which have no cohort."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_bounded_observable_uses_logit_normal(self) -> "CalibrationTargetEstimates":
+        """A bounded observable that declares a shape must use ``logit_normal``.
+
+        For a fraction / proportion / probability / percent observable, ``normal``
+        puts mass outside the bound and ``lognormal`` is unbounded above; only
+        ``logit_normal`` keeps derived quartiles in (0, 1). A distribution with no
+        declared shape is exempt: it reports its quantiles directly and nothing is
+        expanded.
+        """
+        od = self.observed_distribution
+        if od is None or od.shape is None or od.shape == DistributionShape.LOGIT_NORMAL:
             return self
         BOUNDED_UNITS = {"percent", "%", "fraction", "proportion", "probability"}
         if (self.units or "").strip().lower() not in BOUNDED_UNITS:
             return self
         raise ValueError(
             f"Observable units='{self.units}' are a bounded fraction/percentage, but "
-            f"observed_distribution.moments uses shape='{od.moments.shape.value}'. "
-            "Bounded observables must use shape='logit_normal', which expands quartiles "
-            "in logit space so they never escape (0, 1); normal puts mass outside the "
-            "bound and lognormal is unbounded above. logit_normal requires center in "
-            "(0, 1) with center_type='median' — express a percent as a fraction (12% -> 0.12)."
+            f"observed_distribution declares shape='{od.shape.value}'. Bounded observables "
+            "must use shape='logit_normal', which expands quartiles in logit space so they "
+            "never escape (0, 1); normal puts mass outside the bound and lognormal is "
+            "unbounded above. Express a percent as a fraction (12% -> 0.12)."
         )
 
     @field_validator("sample_size")

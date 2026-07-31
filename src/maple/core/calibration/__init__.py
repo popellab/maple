@@ -88,6 +88,13 @@ from maple.core.calibration.shared_models import (
     SourceRelevanceAssessment,
     SubmodelInput,
     UncertaintyType,
+    DistributionShape,
+    ExperimentalUnitType,
+    ObservedDistribution,
+    POPULATION_SPREAD_SOURCES,
+    ReportedStatistic,
+    SpreadSource,
+    StatKind,
 )
 
 # Cohort and readout registries
@@ -206,6 +213,14 @@ __all__ = [
     "SourceType",
     "ExtractionMethod",
     "enum_field_description",
+    # Reported distribution
+    "DistributionShape",
+    "ExperimentalUnitType",
+    "ObservedDistribution",
+    "POPULATION_SPREAD_SOURCES",
+    "ReportedStatistic",
+    "SpreadSource",
+    "StatKind",
     # Cohort and readout registries
     "Cohort",
     "CohortRegistry",
