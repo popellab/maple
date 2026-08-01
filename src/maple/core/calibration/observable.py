@@ -10,7 +10,13 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from maple.core.calibration.enums import ExtractionMethod, SourceType
+from maple.core.calibration.enums import (
+    REQUIRES_REFERENCE,
+    AssayModality,
+    ExtractionMethod,
+    QuantityKind,
+    SourceType,
+)
 
 # Import SubmodelInput directly (not under TYPE_CHECKING) so Pydantic can resolve it
 from maple.core.calibration.shared_models import SubmodelInput
@@ -346,6 +352,35 @@ class AuxiliaryParameter(BaseModel):
     )
 
 
+class ObservableReference(BaseModel):
+    """What a relative observable is measured against."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["timepoint", "scenario"] = Field(
+        description="Whether the reference is another time in this trajectory or another scenario."
+    )
+    timepoint: Optional[float] = Field(default=None, description="Reference time.")
+    timepoint_unit: Optional[str] = Field(
+        default=None, description="Pint-parseable unit for ``timepoint``."
+    )
+    scenario: Optional[str] = Field(default=None, description="Reference scenario name.")
+
+    @model_validator(mode="after")
+    def _matches_kind(self) -> "ObservableReference":
+        if self.kind == "timepoint":
+            if self.timepoint is None or not self.timepoint_unit:
+                raise ValueError("reference kind='timepoint' needs timepoint and timepoint_unit.")
+            if self.scenario is not None:
+                raise ValueError("reference kind='timepoint' must not set scenario.")
+        else:
+            if not self.scenario:
+                raise ValueError("reference kind='scenario' needs scenario.")
+            if self.timepoint is not None:
+                raise ValueError("reference kind='scenario' must not set timepoint.")
+        return self
+
+
 class Observable(BaseModel):
     """
     Observable specification for CalibrationTarget (full model).
@@ -383,11 +418,22 @@ class Observable(BaseModel):
         description="Pint-parseable units of the observable output (must match empirical_data.units)"
     )
 
-    readout_id: str = Field(
+    quantity_kind: QuantityKind = Field(
         description=(
-            "Registered readout this observable measures, from the project's readout registry. "
-            "Two targets measuring the same quantity in different cohorts share one readout_id."
+            "What kind of quantity this observable is. Inference reads it, with "
+            "assay_modality, to build the measurement-discrepancy design matrix: two "
+            "observables agreeing on both share a location and scale correction."
         )
+    )
+
+    assay_modality: AssayModality = Field(description="How this observable was measured.")
+
+    reference: Optional["ObservableReference"] = Field(
+        default=None,
+        description=(
+            "What a relative quantity is measured against. Required when quantity_kind is "
+            "'foldchange', forbidden otherwise."
+        ),
     )
 
     readout_time: Optional[float] = Field(
@@ -542,6 +588,23 @@ class Observable(BaseModel):
     )
 
     @model_validator(mode="after")
+    def validate_reference_matches_quantity_kind(self) -> "Observable":
+        """A relative quantity must say what it is relative to, and only it may."""
+        needs = self.quantity_kind in REQUIRES_REFERENCE
+        if needs and self.reference is None:
+            raise ValueError(
+                f"quantity_kind='{self.quantity_kind.value}' is a relative quantity but no "
+                "reference is declared. Say what it is measured against: a timepoint in this "
+                "trajectory, or another scenario."
+            )
+        if not needs and self.reference is not None:
+            raise ValueError(
+                f"quantity_kind='{self.quantity_kind.value}' is an absolute quantity but a "
+                "reference is declared. Only relative quantities take one."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_denominator_fields(self) -> "Observable":
         """Validate denominator audit fields for density/fraction observables."""
         if self.experimental_denominator and not self.model_denominator_species:
@@ -591,9 +654,7 @@ class Observable(BaseModel):
             )
 
         if has_time and not self.readout_time_unit:
-            raise ValueError(
-                "readout_time_unit is required when readout_time is set " "(e.g. 'day')."
-            )
+            raise ValueError("readout_time_unit is required when readout_time is set (e.g. 'day').")
         if not has_time and self.readout_time_unit:
             raise ValueError(
                 "readout_time_unit is only meaningful with readout_time; "
@@ -653,8 +714,7 @@ class SubmodelStateVariable(BaseModel):
     figure_id: Optional[str] = Field(
         None,
         description=(
-            "Figure identifier (e.g., 'Figure 2A', 'Fig. 3B'). "
-            "Required when source_type='figure'."
+            "Figure identifier (e.g., 'Figure 2A', 'Fig. 3B'). Required when source_type='figure'."
         ),
     )
 

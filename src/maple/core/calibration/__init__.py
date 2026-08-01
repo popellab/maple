@@ -27,7 +27,10 @@ from maple.core.calibration.bootstrap_capture import (
 
 # Enums
 from maple.core.calibration.enums import (
+    AssayModality,
     Compartment,
+    QuantityKind,
+    REQUIRES_REFERENCE,
     ExtractionMethod,
     Indication,
     IndicationMatch,
@@ -54,6 +57,7 @@ from maple.core.calibration.scenario import (
 # Observable models
 from maple.core.calibration.observable import (
     AggregationType,
+    ObservableReference,
     AuxiliaryParameter,
     ConstantSourceType,
     Observable,
@@ -104,19 +108,12 @@ from maple.core.calibration.cohort import (
     EligibilityInterval,
     load_cohorts,
 )
-from maple.core.calibration.readout import (
-    Readout,
-    ReadoutReference,
-    ReadoutRegistry,
-    VocabularyEntry,
-    load_readouts,
-)
 from maple.core.calibration.registry_audit import (
     RegistryProblem,
     check_registries,
     find_registry_problems,
     resolve_n,
-    warn_unused_registry_entries,
+    warn_unused_cohorts,
 )
 
 # Validators
@@ -213,6 +210,9 @@ __all__ = [
     "SourceType",
     "ExtractionMethod",
     "enum_field_description",
+    "AssayModality",
+    "QuantityKind",
+    "REQUIRES_REFERENCE",
     # Reported distribution
     "DistributionShape",
     "ExperimentalUnitType",
@@ -226,16 +226,11 @@ __all__ = [
     "CohortRegistry",
     "EligibilityInterval",
     "load_cohorts",
-    "Readout",
-    "ReadoutReference",
-    "ReadoutRegistry",
-    "VocabularyEntry",
-    "load_readouts",
     "RegistryProblem",
     "check_registries",
     "find_registry_problems",
     "resolve_n",
-    "warn_unused_registry_entries",
+    "warn_unused_cohorts",
     # Scenario
     "Intervention",
     "Scenario",
@@ -245,6 +240,7 @@ __all__ = [
     "ConstantSourceType",
     "PopulationAggregation",
     "Observable",
+    "ObservableReference",
     "ObservableConstant",
     "SupportType",
     "Submodel",

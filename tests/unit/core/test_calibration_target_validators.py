@@ -104,7 +104,8 @@ def golden_calibration_target_data():
     return {
         "cohort_id": "smith2020_resected",
         "observable": {
-            "readout_id": "cd8_tumor_ratio",
+            "quantity_kind": "ratio",
+            "assay_modality": "ihc",
             "code": (
                 "def compute_observable(time, species_dict, constants):\n"
                 "    cd8 = species_dict['V_T.CD8']\n"
@@ -542,9 +543,9 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Change value but keep snippet the same (snippet says 1.0, value is 999)
         data["empirical_data"]["inputs"][0]["value"] = 999.0
-        data["empirical_data"]["inputs"][0][
-            "value_snippet"
-        ] = "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
+        data["empirical_data"]["inputs"][0]["value_snippet"] = (
+            "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
+        )
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
@@ -560,9 +561,9 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Ensure snippet contains the value
         data["empirical_data"]["inputs"][0]["value"] = 1.0
-        data["empirical_data"]["inputs"][0][
-            "value_snippet"
-        ] = "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
+        data["empirical_data"]["inputs"][0]["value_snippet"] = (
+            "CD8+ T cell to tumor cell ratio: 1.0 ± 0.5 (lognormal)"
+        )
 
         # Should pass
         target = CalibrationTarget.model_validate(
@@ -578,9 +579,9 @@ class TestCalibrationTargetValidators:
         # Use value with Unicode superscript notation in snippet
         # Value 1.0 can be written as 1×10⁰ to test superscript parsing
         data["empirical_data"]["inputs"][0]["value"] = 1.0
-        data["empirical_data"]["inputs"][0][
-            "value_snippet"
-        ] = "CD8+ T cell to tumor cell ratio: 1×10⁰ (mean from Figure 2)"
+        data["empirical_data"]["inputs"][0]["value_snippet"] = (
+            "CD8+ T cell to tumor cell ratio: 1×10⁰ (mean from Figure 2)"
+        )
 
         # Should pass - Unicode superscript notation is handled
         target = CalibrationTarget.model_validate(
@@ -596,9 +597,9 @@ class TestCalibrationTargetValidators:
         # Use value that matches the observable scale (~1.0) but expressed as percentage
         # The check_value_in_text function should recognize 0.5 in "50%"
         data["empirical_data"]["inputs"][1]["value"] = 0.5
-        data["empirical_data"]["inputs"][1][
-            "value_snippet"
-        ] = "The log-scale SD was 50% of the mean"
+        data["empirical_data"]["inputs"][1]["value_snippet"] = (
+            "The log-scale SD was 50% of the mean"
+        )
 
         # Should pass - percentage format is handled (0.5 matches "50%")
         target = CalibrationTarget.model_validate(
@@ -613,9 +614,9 @@ class TestCalibrationTargetValidators:
         data = copy.deepcopy(golden_calibration_target_data)
         # Vector input where one value is not in snippet
         data["empirical_data"]["inputs"][0]["value"] = [1.0, 2.0, 999.0]
-        data["empirical_data"]["inputs"][0][
-            "value_snippet"
-        ] = "Values were 1.0 at baseline, 2.0 at day 7"  # Missing 999.0
+        data["empirical_data"]["inputs"][0]["value_snippet"] = (
+            "Values were 1.0 at baseline, 2.0 at day 7"  # Missing 999.0
+        )
         # The estimate itself stays scalar (median/ci95 are length-1); only the
         # INPUT is list-valued, and every element must appear in the snippet.
 
@@ -1289,9 +1290,9 @@ class TestRegressionBugsFromLogfire:
 
         # Value not in snippet (without inferred_estimate flag)
         data["empirical_data"]["inputs"][0]["value"] = 0.95
-        data["empirical_data"]["inputs"][0][
-            "value_snippet"
-        ] = "cultures maintained without losing viability"  # No 0.95 here
+        data["empirical_data"]["inputs"][0]["value_snippet"] = (
+            "cultures maintained without losing viability"  # No 0.95 here
+        )
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
@@ -1359,9 +1360,9 @@ class TestRegressionBugsFromLogfire:
 
         # Value not in snippet and no escape hatch set
         data["empirical_data"]["inputs"][0]["value"] = 42.7
-        data["empirical_data"]["inputs"][0][
-            "value_snippet"
-        ] = "See Figure 3B for CD8 density across the cohort"
+        data["empirical_data"]["inputs"][0]["value_snippet"] = (
+            "See Figure 3B for CD8 density across the cohort"
+        )
 
         with pytest.raises(ValidationError) as exc_info:
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
@@ -1539,7 +1540,8 @@ class TestObservableDenominatorAudit:
     def _make_observable(self, **overrides):
         """Helper to create Observable with sensible defaults."""
         base = {
-            "readout_id": "cd8_count",
+            "quantity_kind": "density",
+            "assay_modality": "ihc",
             "code": (
                 "def compute_observable(time, species_dict, constants):\n"
                 "    return species_dict['V_T.CD8']"
@@ -2153,7 +2155,7 @@ class TestCalNoHardcodedValuesInDistributionCode:
         corpus is a count, index or bound, so integers are not candidates."""
         data = self._with_code(
             golden_calibration_target_data,
-            "    n_mc = 200000\n" "    vals = [inputs['cd8_ratio_mean'] for _ in range(1, 11)]\n",
+            "    n_mc = 200000\n    vals = [inputs['cd8_ratio_mean'] for _ in range(1, 11)]\n",
         )
         CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 

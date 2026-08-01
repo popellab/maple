@@ -1,9 +1,9 @@
 """Cohorts: one study's patients, measured once.
 
-A calibration target is a ``(readout, cohort)`` pair and names a row of the
-observation vector. The cohort is the unit of independence: population inference
-forms one covariance block per cohort, whose off-diagonal comes from resampling
-whole patients. Cross-target checks live in ``registry_audit``.
+A calibration target names one row of the observation vector. The cohort is the
+unit of independence: population inference forms one covariance block per cohort,
+whose off-diagonal comes from resampling whole patients. Cross-target checks live
+in ``registry_audit``.
 """
 
 from __future__ import annotations
@@ -16,15 +16,18 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class EligibilityInterval(BaseModel):
-    """An inclusion criterion the study applied, as an interval on a readout.
+    """An inclusion criterion the study applied, as an interval on a measurement.
 
-    Stated in reported units on the reported readout, since that is what the
-    study screened on.
+    Stated in the reported units of the named target, since that is what the study
+    screened on.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    readout_id: str = Field(description="Readout the criterion applies to.")
+    target_id: str = Field(
+        description="Calibration target whose observable the criterion is applied to. "
+        "Eligibility is stated in that measurement's reported units."
+    )
     lo: Optional[float] = Field(
         default=None, description="Inclusive lower bound in ``units``. Omit if one-sided."
     )
@@ -38,12 +41,12 @@ class EligibilityInterval(BaseModel):
     def _bounds_are_usable(self) -> "EligibilityInterval":
         if self.lo is None and self.hi is None:
             raise ValueError(
-                f"EligibilityInterval on '{self.readout_id}' has neither lo nor hi; it selects "
+                f"EligibilityInterval on '{self.target_id}' has neither lo nor hi; it selects "
                 "everyone. Drop it instead."
             )
         if self.lo is not None and self.hi is not None and self.lo >= self.hi:
             raise ValueError(
-                f"EligibilityInterval on '{self.readout_id}' has lo={self.lo} >= hi={self.hi}, "
+                f"EligibilityInterval on '{self.target_id}' has lo={self.lo} >= hi={self.hi}, "
                 "which selects nobody."
             )
         return self
@@ -56,14 +59,13 @@ class Cohort(BaseModel):
 
     cohort_id: str = Field(
         description="Stable identifier referenced by ``CalibrationTarget.cohort_id``. Name it "
-        "for the patients, not for a readout or scenario."
+        "for the patients, not for a measurement or scenario."
     )
     description: str = Field(
-        description="Who these patients are and what measurement occasion the statistics "
-        "come from."
+        description="Who these patients are and what measurement occasion the statistics come from."
     )
     scenarios: List[str] = Field(
-        description="QSP scenario(s) this cohort's readouts are evaluated under. More than one "
+        description="QSP scenario(s) this cohort's targets are evaluated under. More than one "
         "when the cohort reports a contrast between scenarios in the same patients, such as a "
         "paired pre/post fold change."
     )
@@ -82,8 +84,7 @@ class Cohort(BaseModel):
     )
     eligibility: List[EligibilityInterval] = Field(
         default_factory=list,
-        description="Inclusion criteria the study applied. Empty when it reports its full "
-        "sample.",
+        description="Inclusion criteria the study applied. Empty when it reports its full sample.",
     )
     shares_patients_with: List[str] = Field(
         default_factory=list,
