@@ -269,6 +269,33 @@ class TestCalibrationTargetGolden:
         assert target.observable.reduce_observable is None
 
 
+class TestReadoutIsForMeasurements:
+    """A readout describes an assay, so only a literature target has one."""
+
+    def test_literature_target_requires_a_readout(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"].pop("readout")
+        with pytest.raises(ValidationError, match="observable.readout"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_mechanistic_target_needs_none(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["epistemic_basis"] = "mechanistic"
+        data.pop("cohort_id")
+        data["observable"].pop("readout")
+        data["empirical_data"]["observed_distribution"] = None
+        data["empirical_data"]["sample_size"] = 1
+        data["empirical_data"]["sample_size_rationale"] = "Asserted, not measured."
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        assert target.observable.readout is None
+
+
 class TestSampleSizeOwnership:
     """Whoever owns the patients owns the count."""
 

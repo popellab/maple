@@ -82,6 +82,30 @@ class TestCodeReadoutAgreement:
     def test_undeclared_denominator_is_not_compared(self):
         assert find_code_readout_mismatches({"a": _target(denominator=[])}) == []
 
+    def test_aggregate_matches_the_declaration_it_expands_to(self):
+        aggregated = _FRACTION.replace("V_T.nucleated", "CD8_total_T")
+        target = _target(denominator=["V_T.CD8_a", "V_T.CD8_b"], code=aggregated)
+        aliases = {"CD8_total_T": {"V_T.CD8_a", "V_T.CD8_b"}}
+        assert find_code_readout_mismatches({"a": target}, aliases) == []
+
+    def test_aggregate_expansion_still_catches_a_stale_declaration(self):
+        """The declaration missing a member of the aggregate is the drift to catch."""
+        aggregated = _FRACTION.replace("V_T.nucleated", "CD8_total_T")
+        target = _target(denominator=["V_T.CD8_a"], code=aggregated)
+        aliases = {"CD8_total_T": {"V_T.CD8_a", "V_T.CD8_b"}}
+        found = find_code_readout_mismatches({"a": target}, aliases)
+        assert len(found) == 1
+        assert found[0].in_code == ("V_T.CD8_a", "V_T.CD8_b")
+
+    def test_nested_aggregates_expand(self):
+        aggregated = _FRACTION.replace("V_T.nucleated", "nucleated_total_T")
+        target = _target(denominator=["V_T.CD8_a", "V_T.CD8_b", "V_T.Treg"], code=aggregated)
+        aliases = {
+            "nucleated_total_T": {"CD8_total_T", "V_T.Treg"},
+            "CD8_total_T": {"V_T.CD8_a", "V_T.CD8_b"},
+        }
+        assert find_code_readout_mismatches({"a": target}, aliases) == []
+
     def test_mismatch_warns(self):
         aggregated = _FRACTION.replace("V_T.nucleated", "CD8_total_T")
         with warnings.catch_warnings(record=True) as caught:

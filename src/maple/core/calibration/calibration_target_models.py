@@ -1270,10 +1270,11 @@ class CalibrationTarget(BaseModel):
 
     @model_validator(mode="after")
     def validate_literature_target_is_placed(self) -> "CalibrationTarget":
-        """A literature target must say whose patients it measured and how they were reported.
+        """A literature target must say whose patients it measured, what it measured, and
+        how it was reported.
 
-        Both are meaningless for ``epistemic_basis='mechanistic'``, which asserts a
-        constraint rather than measuring anyone, so both are skipped there.
+        All three are meaningless for ``epistemic_basis='mechanistic'``, which asserts a
+        constraint rather than measuring anyone, so all three are skipped there.
         """
         if self.epistemic_basis != "literature":
             return self
@@ -1284,6 +1285,12 @@ class CalibrationTarget(BaseModel):
                 "cohort_id: name the registered cohort these patients belong to. Targets "
                 "sharing a cohort form one covariance block, so an unplaced target is either "
                 "silently independent of its siblings or silently merged with strangers."
+            )
+        if self.observable.readout is None:
+            missing.append(
+                "observable.readout: say what was measured. Inference builds the "
+                "measurement-discrepancy design from its attributes, and its species "
+                "composition is the row's identity."
             )
         if self.empirical_data.observed_distribution is None:
             missing.append(

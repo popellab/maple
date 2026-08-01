@@ -473,7 +473,7 @@ The top-level `observable:` block describes a single experimental observable. (T
    - `positive_unbounded`: Output must be > 0, no upper bound (fold-changes, ratios)
    - `real`: Any real value (log-ratios, change scores)
 
-7. **observable.readout** (required) — what the EXPERIMENT measured, as opposed to how the model computes it. The rest of `observable` is the computation; this block is the measurement, and inference reads it to decide which rows share a measurement correction and which rows are the same quantity.
+7. **observable.readout** (required for `epistemic_basis: literature`; omit for `mechanistic`) — what the EXPERIMENT measured, as opposed to how the model computes it. The rest of `observable` is the computation; this block is the measurement, and inference reads it to decide which rows share a measurement correction and which rows are the same quantity. A mechanistic target ran no assay, so it has no readout.
 
 ```yaml
 readout:
@@ -487,7 +487,7 @@ readout:
 
    - **`quantity_kind`**: `density` (cells or mass per area/volume of tissue) · `fraction` (a part over a whole containing it, in (0,1)) · `ratio` (one quantity over another not containing it) · `foldchange` (a quantity over its own value at a reference) · `concentration` · `intensity` · `time`. A percentage is a `fraction`, not its own kind; the compartment it is a percentage OF is named by the denominator fields.
    - **`assay_modality`**: `mihc` · `ihc` · `mif` · `flow_cytometry` · `scrnaseq` · `multiplex_immunoassay` · `elisa` · `multiphoton_microscopy` · `digital_histopathology` · `imaging` · `clinical`. Describe the measurement, not the cell type: two readouts agreeing on kind and modality share one correction whatever they count.
-   - **`numerator_species`** (required) and **`denominator_species`** (empty for an absolute quantity) — which model species compose the row. This is the row's identity, so it must not depend on how you spelled the arithmetic in `code`: declare the components even when the code divides by a single pre-aggregated species. A cross-target audit holds `code` to this declaration and reports any disagreement.
+   - **`numerator_species`** (required) and **`denominator_species`** (empty for an absolute quantity) — which model species compose the row. This is the row's identity, so it must not depend on how you spelled the arithmetic in `code`: declare the components even when the code divides by a single pre-aggregated species, and expand that aggregate to the species the model currently sums into it. A cross-target audit holds `code` to this declaration and reports any disagreement.
    - **`experimental_denominator`** — what the experiment divided by, in the paper's own words. **Conditionally required:** an observable that is a density or per-mass concentration (units like `cell/mm**2`, `pg/mg`, with `support: positive`) is rejected without it. Setting it requires `denominator_species` too.
    - **`reference`** (required for `quantity_kind: foldchange`, forbidden otherwise) — what the fold change is measured against. Do not rely on a `species[0]` or `series[0]` convention inside the code.
      - An earlier time in the same scenario: `{kind: timepoint, timepoint: 0.0, timepoint_unit: day}`

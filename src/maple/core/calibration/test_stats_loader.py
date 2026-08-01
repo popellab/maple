@@ -33,7 +33,7 @@ Public API:
 import hashlib
 import textwrap
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Set
 
 import pandas as pd
 import yaml
@@ -141,7 +141,9 @@ def _resolve_sample_size(
 
 
 def load_calibration_targets(
-    yaml_dir: Path | str | List, cohorts: Path | str | CohortRegistry | None = None
+    yaml_dir: Path | str | List,
+    cohorts: Path | str | CohortRegistry | None = None,
+    species_aliases: Dict[str, Set[str]] | None = None,
 ) -> pd.DataFrame:
     """
     Load calibration target YAMLs from one or more directories into a
@@ -166,6 +168,11 @@ def load_calibration_targets(
             ``CohortRegistry``. Required whenever a literature target is loaded:
             those carry no ``sample_size`` of their own, and n resolves to
             ``n_evaluable`` else the named cohort's ``n_c``.
+
+        species_aliases: Model aggregates mapped to the species they total (e.g.
+            ``{"CD8_total_T": {"V_T.CD8", "V_T.CD8_exh"}}``). Code dividing by an
+            aggregate is compared against the declaration it expands to; without
+            this the code/readout audit reports every such target.
 
     Returns:
         DataFrame with columns:
@@ -197,7 +204,7 @@ def load_calibration_targets(
     # ever sees one target: a mapping collision is a property of a pair.
     check_mapping_collisions(parsed)
     warn_declared_biases(parsed)
-    warn_code_readout_mismatches(parsed)
+    warn_code_readout_mismatches(parsed, species_aliases)
 
     registry = _as_registry(cohorts)
     rows: List[dict] = []

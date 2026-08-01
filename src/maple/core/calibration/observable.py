@@ -387,9 +387,12 @@ class Observable(BaseModel):
         description="Pint-parseable units of the observable output (must match empirical_data.units)"
     )
 
-    readout: Readout = Field(
+    readout: Optional[Readout] = Field(
+        default=None,
         description="What the experiment measured: quantity kind, assay, denominator, and "
-        "reference. The rest of this model is how to compute it."
+        "reference. The rest of this model is how to compute it. Required for a literature "
+        "target; null for a mechanistic one, which asserts a constraint rather than running "
+        "an assay.",
     )
 
     readout_time: Optional[float] = Field(
@@ -522,6 +525,9 @@ class Observable(BaseModel):
     @model_validator(mode="after")
     def validate_denominator_fields(self) -> "Observable":
         """Validate denominator audit fields for density/fraction observables."""
+        if self.readout is None:
+            return self
+
         if self.readout.experimental_denominator and not self.readout.denominator_species:
             raise ValueError(
                 f"readout.experimental_denominator='{self.readout.experimental_denominator}' "

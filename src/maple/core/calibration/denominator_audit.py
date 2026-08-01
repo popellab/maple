@@ -327,21 +327,43 @@ class CodeReadoutMismatch:
     in_code: Tuple[str, ...]
 
 
+def _expand_aliases(species: Set[str], aliases: Optional[Dict[str, Set[str]]]) -> Set[str]:
+    """Replace each aggregate with the species it totals, to a fixed point."""
+    if not aliases:
+        return species
+    out, seen = set(), set()
+    stack = list(species)
+    while stack:
+        name = stack.pop()
+        members = aliases.get(name)
+        if members is None:
+            out.add(name)
+        elif name not in seen:
+            seen.add(name)
+            stack.extend(members)
+    return out
+
+
 def find_code_readout_mismatches(
     targets: Dict[str, Dict[str, Any]],
+    aliases: Optional[Dict[str, Set[str]]] = None,
 ) -> List[CodeReadoutMismatch]:
     """Targets whose ``observable.code`` disagrees with ``readout.denominator_species``.
 
     The declaration carries the row's identity, so the code has to compute what it
     says. Only checked where the code divides: an observable that reaches its
-    denominator some other way (a species that is already a total, an area built
-    from a constant) is not comparable this way.
+    denominator some other way (an area built from a constant) is not comparable
+    this way.
+
+    ``aliases`` maps a model aggregate to the species it totals, so code dividing
+    by a running total is compared against the declaration it expands to.
     """
     out = []
     for tid, data in sorted(targets.items()):
         observable = data.get("observable") or {}
         declared = set((observable.get("readout") or {}).get("denominator_species") or [])
         _, in_code = numerator_and_denominator(observable.get("code") or "")
+        in_code = _expand_aliases(in_code, aliases)
         if not declared or not in_code or declared == in_code:
             continue
         out.append(CodeReadoutMismatch(tid, tuple(sorted(declared)), tuple(sorted(in_code))))
@@ -350,14 +372,15 @@ def find_code_readout_mismatches(
 
 def warn_code_readout_mismatches(
     targets: Dict[str, Dict[str, Any]],
+    aliases: Optional[Dict[str, Set[str]]] = None,
 ) -> List[CodeReadoutMismatch]:
     """Warn on each mismatch. Returns them."""
-    found = find_code_readout_mismatches(targets)
+    found = find_code_readout_mismatches(targets, aliases)
     for m in found:
         warnings.warn(
             f"{m.target_id}: readout.denominator_species={list(m.declared)} but the code "
-            f"divides by {list(m.in_code)}. Reconcile them, or record the alias if the "
-            "code divides by a species that already totals the declared ones.",
+            f"divides by {list(m.in_code)}. Reconcile them, or pass the aggregate in "
+            "``aliases`` if the code divides by a species that already totals the declared ones.",
             UserWarning,
         )
     return found
