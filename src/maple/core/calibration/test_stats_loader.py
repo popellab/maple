@@ -38,10 +38,13 @@ from typing import List
 import pandas as pd
 import yaml
 
+from maple.core.calibration.cohort import CohortRegistry, load_cohorts
 from maple.core.calibration.denominator_audit import (
     check_mapping_collisions,
+    warn_code_readout_mismatches,
     warn_declared_biases,
 )
+from maple.core.calibration.registry_audit import resolve_n
 
 # Column order used by both loaders (calibration-only columns are the
 # canonical layout; the prediction loader appends ``is_prediction_only``
@@ -109,7 +112,37 @@ def _gather_yaml_files(dirs: List[Path]) -> List[Path]:
     return [seen[name] for name in sorted(seen)]
 
 
-def load_calibration_targets(yaml_dir: Path | str | List) -> pd.DataFrame:
+def _as_registry(cohorts: Path | str | CohortRegistry | None) -> CohortRegistry | None:
+    if cohorts is None or isinstance(cohorts, CohortRegistry):
+        return cohorts
+    return load_cohorts(cohorts)
+
+
+def _resolve_sample_size(
+    target_id: str, data: dict, registry: CohortRegistry | None
+) -> float | int:
+    """The patients behind this target: its own ``sample_size``, else the cohort's."""
+    declared = (data.get("empirical_data") or {}).get("sample_size")
+    if declared is not None:
+        return declared
+    if registry is None:
+        raise ValueError(
+            f"'{target_id}' declares no sample_size, so its n lives on the cohort, but no "
+            "cohort registry was passed. Call load_calibration_targets(..., cohorts=...) "
+            "with the path to cohorts.yaml."
+        )
+    resolved = resolve_n(data, registry)
+    if resolved is None:
+        raise ValueError(
+            f"'{target_id}' declares no sample_size and its cohort_id "
+            f"'{data.get('cohort_id')}' does not resolve in the registry."
+        )
+    return resolved
+
+
+def load_calibration_targets(
+    yaml_dir: Path | str | List, cohorts: Path | str | CohortRegistry | None = None
+) -> pd.DataFrame:
     """
     Load calibration target YAMLs from one or more directories into a
     test-statistics DataFrame.
@@ -128,6 +161,11 @@ def load_calibration_targets(yaml_dir: Path | str | List) -> pd.DataFrame:
             scenario — e.g.
             ``["calibration_targets/clinical_progression",
                "calibration_targets/mechanistic/clinical_progression"]``.
+
+        cohorts: The cohort registry, as a path to ``cohorts.yaml`` or a loaded
+            ``CohortRegistry``. Required whenever a literature target is loaded:
+            those carry no ``sample_size`` of their own, and n resolves to
+            ``n_evaluable`` else the named cohort's ``n_c``.
 
     Returns:
         DataFrame with columns:
@@ -159,7 +197,9 @@ def load_calibration_targets(yaml_dir: Path | str | List) -> pd.DataFrame:
     # ever sees one target: a mapping collision is a property of a pair.
     check_mapping_collisions(parsed)
     warn_declared_biases(parsed)
+    warn_code_readout_mismatches(parsed)
 
+    registry = _as_registry(cohorts)
     rows: List[dict] = []
     for yaml_file in yaml_files:
         data = parsed[yaml_file.name]
@@ -194,7 +234,7 @@ def load_calibration_targets(yaml_dir: Path | str | List) -> pd.DataFrame:
             ci95_upper = float("nan")
 
         units = observable.get("units", "")
-        sample_size = empirical.get("sample_size", float("nan"))
+        sample_size = _resolve_sample_size(target_id, data, registry)
 
         # Generate wrapper code. The time-series reduction is declared on the
         # observable: readout_time (interpolate at that time) XOR

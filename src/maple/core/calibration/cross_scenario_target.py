@@ -361,6 +361,12 @@ class CrossScenarioCalibrationTarget(BaseModel):
                 "same patients measured twice, so the contrast is paired and belongs in a "
                 "single CalibrationTarget whose observable declares a reference."
             )
+        if self.empirical_data.sample_size is not None:
+            raise ValueError(
+                f"sample_size={self.empirical_data.sample_size} is set on a literature "
+                "contrast, but its arms are different people with their own cohorts. A sum "
+                "across arms is not a resampling n. Declare n_evaluable per role instead."
+            )
         return self
 
     @model_validator(mode="after")

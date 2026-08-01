@@ -153,6 +153,8 @@ def load_cross_scenario_targets(yaml_dir: Path | str) -> pd.DataFrame:
             ci95_lower = float("nan")
             ci95_upper = float("nan")
 
+        # A literature contrast has no single n: each arm is its own cohort, and
+        # they are resampled independently. Only a mechanistic target states one.
         sample_size = empirical.get("sample_size", float("nan"))
         if isinstance(sample_size, list):
             # Vector sample_size doesn't apply to cross-scenario scalar

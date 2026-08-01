@@ -29,7 +29,7 @@ You produce a single `CalibrationTarget` YAML with these top-level fields. **Req
 | `observable` | dict | How to compute the observable from QSP species. See "Observable" section below |
 | `experimental_context` | dict | The source paper's context: `{species, system, indication, treatment, stage?, mouse_subspecifier?, cell_lines?, culture_conditions?, tissue_source?, assay_type?}` — describes WHERE the data came from, not the model target |
 | `scenario` | dict (optional) | Interventions + measurement timing. Omit if untreated baseline and no perturbations |
-| `empirical_data` | dict | Computed `median`, `ci95`, `units`, `sample_size`, `inputs[]`, `assumptions[]`, `distribution_code`. See "Empirical Data" section |
+| `empirical_data` | dict | Computed `median`, `ci95`, `units`, `inputs[]`, `assumptions[]`, `distribution_code`. See "Empirical Data" section |
 | `primary_data_source` | dict | Single paper with verified DOI. See "Source Requirements". Required when `epistemic_basis: literature` (default) |
 | `secondary_data_sources` | List[dict] | Reference values / conversion-factor sources. Empty list OK |
 | `epistemic_basis` | `"literature"` (default) or `"mechanistic"` | Use `"mechanistic"` only for biological-invariant priors with no primary measurement (live in `calibration_targets/mechanistic/`); requires deliberately wide CIs and rationale in `key_assumptions`. Otherwise leave at default |
@@ -725,7 +725,9 @@ When `observable.code` includes conversion factors (cells → volume, IHC score 
 
 ### Sample Size
 
-`empirical_data.sample_size` (int) and `empirical_data.sample_size_rationale` (str) are required. Look for `n =`, `N =`, figure legends, patient counts, replicate counts. If unreported, back-calculate from SD/SEM (if both given), or use a conservative type-based estimate and note the uncertainty in `sample_size_rationale`.
+**A literature target must NOT set `sample_size`.** Its cohort carries the patient count as `n_c`, and stating it twice is how the two drift apart. Consumers resolve n as `n_evaluable` if set, else the cohort's `n_c`. A validator rejects `sample_size` on an `epistemic_basis: literature` target.
+
+`empirical_data.sample_size` (int) and `empirical_data.sample_size_rationale` (str) are **required for `epistemic_basis: mechanistic` only**, which names no cohort because it measures nobody.
 
 `empirical_data.n_evaluable` (int, optional) is the patient count behind THIS statistic when it is smaller than the cohort's `n_c` — paired fold changes evaluable in 6 of 9 arm patients, a stain scorable on 7 of 9 slides. Set it whenever the source states a per-readout denominator; leave it null when the whole cohort contributed. It may never exceed the cohort's `n_c`.
 
@@ -735,8 +737,7 @@ empirical_data:
   median: [149.94]                       # List[float] — length-1 (scalar target)
   ci95: [[100.79, 199.35]]               # List[List[float]] — a single [lo, hi] pair
   units: cell / mm**2
-  sample_size: 42
-  sample_size_rationale: "n=42 patients with resected PDAC tumors, stated in Table 1"
+  n_evaluable: 38                        # optional; omit when the whole cohort contributed
   inputs: [...]                           # List[EstimateInput] — paper-reported values used by distribution_code
   assumptions: [...]                      # Optional List[ModelingAssumption] — values NOT from the paper but needed for computation (e.g., n_mc_samples=10000, assumed_cv when not reported); each requires a rationale
   distribution_code: |

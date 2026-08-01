@@ -150,7 +150,7 @@ class CalibrationTargetEstimates(BaseModel):
 
     median: List[float] = Field(
         description=(
-            "COMPUTED median value from distribution_code, as a length-1 list " "(e.g. ``[42.0]``)."
+            "COMPUTED median value from distribution_code, as a length-1 list (e.g. ``[42.0]``)."
         )
     )
     ci95: List[List[float]] = Field(
@@ -162,10 +162,12 @@ class CalibrationTargetEstimates(BaseModel):
     units: str = Field(description="Units of the observable (Pint-parseable)")
 
     # Sample size metadata
-    sample_size: int = Field(
+    sample_size: Optional[int] = Field(
+        default=None,
         description=(
-            "Sample size (n) for the measurement. CRITICAL for uncertainty quantification "
-            "and pooling across studies.\n\n"
+            "Sample size (n) for the measurement. Mechanistic targets only: a literature "
+            "target names a cohort, which owns the patient count, and declaring it here "
+            "too lets the two disagree.\n\n"
             "WHERE TO LOOK:\n"
             "- 'n = X' or 'N = X' in methods/results sections\n"
             "- Sample sizes in figure legends (e.g., 'n=5 per group')\n"
@@ -176,17 +178,18 @@ class CalibrationTargetEstimates(BaseModel):
             "- Check figure error bars - if SEM is reported, can back-calculate n from SD/SEM\n"
             "- Use conservative estimate based on study type\n"
             "- Document uncertainty in sample_size_rationale"
-        )
+        ),
     )
-    sample_size_rationale: str = Field(
+    sample_size_rationale: Optional[str] = Field(
+        default=None,
         description=(
-            "Explanation of how sample_size was determined.\n\n"
+            "Explanation of how sample_size was determined. Required with sample_size.\n\n"
             "Examples:\n"
             "- 'n=5 per group stated in Methods section 2.3'\n"
             "- 'n inferred from figure error bars using SEM formula: n = (SD/SEM)²'\n"
             "- 'n estimated as typical for this study type; not explicitly reported'\n"
             "- 'n=3 replicates per condition, standard for in vitro T cell assays'"
-        )
+        ),
     )
 
     n_evaluable: Optional[int] = Field(
@@ -355,9 +358,9 @@ class CalibrationTargetEstimates(BaseModel):
 
     @field_validator("sample_size")
     @classmethod
-    def validate_sample_size_positive(cls, v: int) -> int:
+    def validate_sample_size_positive(cls, v: Optional[int]) -> Optional[int]:
         """Validate sample size is at least 1."""
-        if v < 1:
+        if v is not None and v < 1:
             raise ValueError(f"sample_size must be at least 1, got {v}")
         return v
 
@@ -1295,6 +1298,32 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_n_is_carried_by_the_cohort(self) -> "CalibrationTarget":
+        """Whoever owns the patients owns the count.
+
+        A literature target names a cohort, whose ``n_c`` is the count; a mechanistic
+        one measures nobody and states its own. Consumers resolve a literature n as
+        ``n_evaluable`` else the cohort's ``n_c``.
+        """
+        has_n = self.empirical_data.sample_size is not None
+        if self.epistemic_basis == "literature":
+            if has_n:
+                raise ValueError(
+                    f"sample_size={self.empirical_data.sample_size} is set on a literature "
+                    "target, but its cohort already carries n_c. Two places for one count is "
+                    "how they drift apart. Drop it, and set empirical_data.n_evaluable if "
+                    "fewer patients contributed to this readout than the cohort holds."
+                )
+        elif not has_n:
+            raise ValueError(
+                "epistemic_basis='mechanistic' requires sample_size and "
+                "sample_size_rationale: there is no cohort to read the count from."
+            )
+        if has_n and not self.empirical_data.sample_size_rationale:
+            raise ValueError("sample_size requires sample_size_rationale.")
+        return self
+
+    @model_validator(mode="after")
     def validate_context_mismatch_justified(self) -> "CalibrationTarget":
         """A declared context mismatch must carry its justification.
 
@@ -1645,7 +1674,9 @@ class CalibrationTarget(BaseModel):
                             f"'samples' array must be the population draw the median/CI summarize"
                         )
                     self._check_center_channel_is_not_population(
-                        finite, ci95_reported[0], self.empirical_data.sample_size
+                        finite,
+                        ci95_reported[0],
+                        self.empirical_data.n_evaluable or self.empirical_data.sample_size,
                     )
 
         except CalibrationTargetValidationError:
@@ -1691,7 +1722,7 @@ class CalibrationTarget(BaseModel):
 
     @staticmethod
     def _check_center_channel_is_not_population(
-        finite: "np.ndarray", ci95_pair: list[float], sample_size: int
+        finite: "np.ndarray", ci95_pair: list[float], sample_size: Optional[int]
     ) -> None:
         """The two channels must not both carry the population spread.
 

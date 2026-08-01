@@ -152,8 +152,6 @@ def golden_calibration_target_data():
             "median": [1.0],
             "ci95": [[0.3737, 2.7]],
             "units": "dimensionless",
-            "sample_size": 42,
-            "sample_size_rationale": "n=42 patients in resected PDAC cohort, Table 1",
             "observed_distribution": {
                 "statistics": [
                     {"stat": "mean", "value": 1.0},
@@ -269,6 +267,49 @@ class TestCalibrationTargetGolden:
         assert target.observable.readout_time == 0.0
         assert target.observable.readout_time_unit == "day"
         assert target.observable.reduce_observable is None
+
+
+class TestSampleSizeOwnership:
+    """Whoever owns the patients owns the count."""
+
+    def test_literature_target_rejects_sample_size(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["empirical_data"]["sample_size"] = 42
+        data["empirical_data"]["sample_size_rationale"] = "Table 1"
+        with pytest.raises(ValidationError, match="its cohort already carries n_c"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_literature_target_may_declare_n_evaluable(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["empirical_data"]["n_evaluable"] = 6
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        assert target.empirical_data.n_evaluable == 6
+        assert target.empirical_data.sample_size is None
+
+    def test_mechanistic_target_requires_sample_size(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["epistemic_basis"] = "mechanistic"
+        data.pop("cohort_id")
+        with pytest.raises(ValidationError, match="requires sample_size"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_sample_size_requires_its_rationale(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["epistemic_basis"] = "mechanistic"
+        data.pop("cohort_id")
+        data["empirical_data"]["sample_size"] = 42
+        with pytest.raises(ValidationError, match="requires sample_size_rationale"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
 
 class TestCalibrationTargetContextOptional:
@@ -2082,8 +2123,7 @@ class TestCalCenterChannelNotPopulation:
         data = self._data(
             golden_calibration_target_data,
             self._POPULATION_CI,
-            sample_size=1,
-            sample_size_rationale="single reported subject",
+            n_evaluable=1,
         )
         CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
@@ -2225,6 +2265,10 @@ class TestCalSnippetsAgainstPdfs:
         """A mechanistic target encodes reasoning, not measured text."""
         data = copy.deepcopy(golden_calibration_target_data)
         data["epistemic_basis"] = "mechanistic"
+        # No cohort to read n from once it stops being a measurement.
+        data.pop("cohort_id")
+        data["empirical_data"]["sample_size"] = 42
+        data["empirical_data"]["sample_size_rationale"] = "assumed cohort scale"
         with patch(
             "maple.core.calibration.snippet_validator.load_paper_texts",
             return_value={"smith_2020": ("Nothing matching.", "pdf")},

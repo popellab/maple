@@ -192,6 +192,69 @@ def mixed_files_dir(temp_dir):
 # ============================================================================
 
 
+class TestSampleSizeFromTheCohort:
+    """A literature target carries no n; it resolves through the registry."""
+
+    def _placed_dir(self, temp_dir, **over):
+        import copy
+
+        data = copy.deepcopy(BASELINE_YAML)
+        data["empirical_data"].pop("sample_size")
+        data["cohort_id"] = "smith2020"
+        data.update(over)
+        yaml_dir = temp_dir / "placed"
+        yaml_dir.mkdir()
+        with open(yaml_dir / "m1_m2_ratio.yaml", "w") as f:
+            yaml.dump(data, f)
+        return yaml_dir
+
+    def _registry(self, temp_dir, n_c=113):
+        path = temp_dir / "cohorts.yaml"
+        with open(path, "w") as f:
+            yaml.dump(
+                {
+                    "cohorts": [
+                        {
+                            "cohort_id": "smith2020",
+                            "description": "Resected PDAC.",
+                            "scenarios": ["baseline_no_treatment"],
+                            "n_c": n_c,
+                            "source_tag": "Smith2020",
+                        }
+                    ]
+                },
+                f,
+            )
+        return path
+
+    def test_resolves_from_the_cohort(self, temp_dir):
+        df = load_calibration_targets(self._placed_dir(temp_dir), cohorts=self._registry(temp_dir))
+        assert df.iloc[0]["sample_size"] == 113
+
+    def test_n_evaluable_wins_over_the_cohort(self, temp_dir):
+        yaml_dir = self._placed_dir(temp_dir)
+        path = yaml_dir / "m1_m2_ratio.yaml"
+        data = yaml.safe_load(path.read_text())
+        data["empirical_data"]["n_evaluable"] = 6
+        with open(path, "w") as f:
+            yaml.dump(data, f)
+        df = load_calibration_targets(yaml_dir, cohorts=self._registry(temp_dir))
+        assert df.iloc[0]["sample_size"] == 6
+
+    def test_missing_registry_raises(self, temp_dir):
+        with pytest.raises(ValueError, match="no cohort registry was passed"):
+            load_calibration_targets(self._placed_dir(temp_dir))
+
+    def test_unresolvable_cohort_raises(self, temp_dir):
+        yaml_dir = self._placed_dir(temp_dir, cohort_id="ghost")
+        with pytest.raises(ValueError, match="does not resolve"):
+            load_calibration_targets(yaml_dir, cohorts=self._registry(temp_dir))
+
+    def test_declared_sample_size_needs_no_registry(self, single_baseline_dir):
+        """A mechanistic target states its own n."""
+        assert load_calibration_targets(single_baseline_dir).iloc[0]["sample_size"] == 30
+
+
 class TestLoadCalibrationTargets:
     def test_load_single_baseline_yaml(self, single_baseline_dir):
         """Load one YAML, check DataFrame columns and values."""
@@ -499,7 +562,7 @@ class TestGenerateWrapperCode:
         """Wrapper with no constants still passes _constants={} to observable."""
         code = _generate_wrapper_code(
             observable_code=(
-                "def compute_observable(time, species_dict, constants):\n" "    return 42\n"
+                "def compute_observable(time, species_dict, constants):\n    return 42\n"
             ),
             constants=[],
             readout_time=0.0,
@@ -513,7 +576,7 @@ class TestGenerateWrapperCode:
         """Wrapper that returns a plain scalar works correctly."""
         code = _generate_wrapper_code(
             observable_code=(
-                "def compute_observable(time, species_dict, constants):\n" "    return 42.0\n"
+                "def compute_observable(time, species_dict, constants):\n    return 42.0\n"
             ),
             constants=[],
             readout_time=0.0,
