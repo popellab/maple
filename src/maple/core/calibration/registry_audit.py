@@ -2,7 +2,8 @@
 
 Pydantic validators see one target at a time. These need the whole loaded set:
 whether a cohort_id resolves, whether a target pools several sources, whether two
-targets give one cohort the same quantity twice.
+targets give one cohort the same quantity twice, and whether a cohort's rows are
+deterministic functions of each other.
 """
 
 from __future__ import annotations
@@ -100,6 +101,7 @@ def find_registry_problems(
             )
 
     problems.extend(_duplicate_rows(targets))
+    problems.extend(_singular_blocks(targets))
     return problems
 
 
@@ -131,6 +133,104 @@ def _duplicate_rows(targets: Dict[str, Dict[str, Any]]) -> List[RegistryProblem]
         for key, members in sorted(seen.items())
         if len(members) > 1
     ]
+
+
+#: Relative agreement at which two reported fractions count as complementary.
+_SUM_TOL = 1e-3
+
+
+def _reported_center(target: Dict[str, Any]) -> Optional[float]:
+    """The location the source printed: a reported median, else a mean, else ``median``."""
+    od = _estimates(target).get("observed_distribution") or {}
+    stats = od.get("statistics") or []
+    for want, p in (("quantile", 0.5), ("mean", None), ("geometric_mean", None)):
+        for s in stats:
+            if s.get("stat") == want and s.get("p") == p:
+                return float(s["value"])
+    med = _estimates(target).get("median")
+    return float(med[0]) if med else None
+
+
+def _singular_blocks(targets: Dict[str, Dict[str, Any]]) -> List[RegistryProblem]:
+    """Rows of one cohort that are deterministic functions of each other.
+
+    Such a block is singular, and the ridge that keeps it invertible turns into a
+    huge direction in its inverse rather than an error. Two cheap detectors: a set
+    of fractions whose numerators partition their shared denominator, and a pair
+    whose printed centers sum to one.
+    """
+    fractions: Dict[str, List[Tuple[str, frozenset, frozenset, Optional[float]]]] = {}
+    for tid, data in targets.items():
+        cid = data.get("cohort_id")
+        if not cid:
+            continue
+        num, den = numerator_and_denominator(_observable(data).get("code") or "")
+        if not den:
+            continue
+        fractions.setdefault(cid, []).append(
+            (tid, frozenset(num), frozenset(den), _reported_center(data))
+        )
+
+    problems: List[RegistryProblem] = []
+    for cid, rows in sorted(fractions.items()):
+        problems.extend(_partitioning_rows(cid, rows))
+        problems.extend(_centers_summing_to_one(cid, rows))
+    return problems
+
+
+def _partitioning_rows(
+    cid: str, rows: List[Tuple[str, frozenset, frozenset, Any]]
+) -> List[RegistryProblem]:
+    """Fractions over one denominator whose numerators exactly partition it sum to 1."""
+    by_den: Dict[frozenset, List[Tuple[str, frozenset]]] = {}
+    for tid, num, den, _ in rows:
+        by_den.setdefault(den, []).append((tid, num))
+
+    out: List[RegistryProblem] = []
+    for den, members in sorted(by_den.items(), key=lambda kv: sorted(t for t, _ in kv[1])):
+        if len(members) < 2:
+            continue
+        union: set = set()
+        disjoint = True
+        for _, num in members:
+            if union & num:
+                disjoint = False
+                break
+            union |= num
+        if not disjoint or union != set(den):
+            continue
+        out.append(
+            RegistryProblem(
+                "singular_block",
+                tuple(sorted(tid for tid, _ in members)),
+                f"cohort '{cid}' has {len(members)} fractions over {sorted(den)} whose "
+                f"numerators partition it, so they sum to 1 by construction and the block "
+                "is singular. Drop one, or widen the denominator so they do not exhaust it.",
+            )
+        )
+    return out
+
+
+def _centers_summing_to_one(
+    cid: str, rows: List[Tuple[str, frozenset, frozenset, Any]]
+) -> List[RegistryProblem]:
+    """Two printed fractions summing to one are one number reported twice."""
+    out: List[RegistryProblem] = []
+    centers = sorted((tid, c) for tid, _, _, c in rows if c is not None)
+    for i, (tid_a, a) in enumerate(centers):
+        for tid_b, b in centers[i + 1 :]:
+            total = 1.0 if max(a, b) <= 1.0 else 100.0
+            if abs(a + b - total) <= _SUM_TOL * total:
+                out.append(
+                    RegistryProblem(
+                        "singular_block",
+                        tuple(sorted((tid_a, tid_b))),
+                        f"cohort '{cid}' reports {a} and {b}, which sum to {total}. As data "
+                        "these are one number reported twice and the block is singular, even "
+                        "where the model observables are not exactly complementary.",
+                    )
+                )
+    return out
 
 
 def check_registries(targets: Dict[str, Dict[str, Any]], cohorts: CohortRegistry) -> None:

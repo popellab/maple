@@ -65,6 +65,27 @@ def _target(**over):
     return base
 
 
+def _fraction(numerator, denominator, center=None, **over):
+    """A target whose code divides ``numerator`` by the sum of ``denominator``."""
+    den = " + ".join(f"species_dict['{s}']" for s in denominator)
+    t = _target(
+        observable={
+            "code": (
+                "def compute_observable(time, species_dict, constants):\n"
+                f"    return species_dict['{numerator}'] / ({den})\n"
+            ),
+            "readout_time": 0.0,
+        },
+        **over,
+    )
+    if center is not None:
+        t["empirical_data"]["observed_distribution"] = {
+            "statistics": [{"stat": "quantile", "p": 0.5, "value": center}],
+            "spread_source": "across_patient",
+        }
+    return t
+
+
 # --------------------------------------------------------------------------- #
 # Cohort                                                                       #
 # --------------------------------------------------------------------------- #
@@ -307,6 +328,86 @@ class TestRegistryAudit:
         with pytest.warns(UserWarning, match="no target uses"):
             unused = warn_unused_cohorts({"t1": _target()}, cohorts)
         assert unused == ["unused"]
+
+
+class TestSingularBlocks:
+    """Rows of one cohort that are deterministic functions of each other."""
+
+    _CAF = ["V_T.iCAF", "V_T.myCAF"]
+
+    def _kinds(self, targets, cohorts=None):
+        return [p.kind for p in find_registry_problems(targets, cohorts or _registry())]
+
+    def test_numerators_partitioning_their_denominator_flagged(self):
+        targets = {
+            "icaf": _fraction("V_T.iCAF", self._CAF),
+            "mycaf": _fraction("V_T.myCAF", self._CAF),
+        }
+        problems = find_registry_problems(targets, _registry())
+        assert [p.kind for p in problems] == ["singular_block"]
+        assert problems[0].target_ids == ("icaf", "mycaf")
+        assert "partition" in problems[0].detail
+
+    def test_numerators_not_exhausting_the_denominator_are_fine(self):
+        targets = {
+            "cd8": _fraction("V_T.CD8", ["V_T.nucleated"]),
+            "cd4": _fraction("V_T.CD4", ["V_T.nucleated"]),
+        }
+        assert self._kinds(targets) == []
+
+    def test_centers_summing_to_one_flagged(self):
+        """The model observables need not be complementary for the data to be."""
+        den = self._CAF + ["V_T.apCAF"]
+        targets = {
+            "icaf": _fraction("V_T.iCAF", den, center=0.284),
+            "mycaf": _fraction("V_T.myCAF", den, center=0.716),
+        }
+        problems = find_registry_problems(targets, _registry())
+        assert [p.kind for p in problems] == ["singular_block"]
+        assert "one number reported twice" in problems[0].detail
+
+    def test_centers_summing_to_one_hundred_flagged(self):
+        den = self._CAF + ["V_T.apCAF"]
+        targets = {
+            "icaf": _fraction("V_T.iCAF", den, center=28.4),
+            "mycaf": _fraction("V_T.myCAF", den, center=71.6),
+        }
+        assert self._kinds(targets) == ["singular_block"]
+
+    def test_centers_falling_short_of_one_are_fine(self):
+        den = self._CAF + ["V_T.apCAF"]
+        targets = {
+            "icaf": _fraction("V_T.iCAF", den, center=0.28),
+            "mycaf": _fraction("V_T.myCAF", den, center=0.61),
+        }
+        assert self._kinds(targets) == []
+
+    def test_centers_in_different_cohorts_are_fine(self):
+        cohorts = CohortRegistry(cohorts=[_cohort(), _cohort(cohort_id="other")])
+        den = self._CAF + ["V_T.apCAF"]
+        targets = {
+            "icaf": _fraction("V_T.iCAF", den, center=0.284),
+            "mycaf": _fraction("V_T.myCAF", den, center=0.716, cohort_id="other"),
+        }
+        assert self._kinds(targets, cohorts) == []
+
+    def test_center_falls_back_to_the_computed_median(self):
+        den = self._CAF + ["V_T.apCAF"]
+        a = _fraction("V_T.iCAF", den)
+        b = _fraction("V_T.myCAF", den)
+        a["empirical_data"]["median"] = [0.284]
+        b["empirical_data"]["median"] = [0.716]
+        assert self._kinds({"icaf": a, "mycaf": b}) == ["singular_block"]
+
+    def test_a_non_fraction_pair_is_not_checked(self):
+        """Two densities summing to 1 in their own units is a coincidence, not a constraint."""
+        code = "def compute_observable(time, species_dict, constants):\n    return species_dict['V_T.CD8']\n"
+        targets = {}
+        for tid, center in (("a", 0.284), ("b", 0.716)):
+            t = _target(observable={"code": code, "readout_time": 0.0})
+            t["empirical_data"]["median"] = [center]
+            targets[tid] = t
+        assert self._kinds(targets) == []
 
 
 class TestResolveN:
