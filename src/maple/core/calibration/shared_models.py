@@ -166,6 +166,10 @@ class StatKind(str, Enum):
 LOCATION_STATS: frozenset = frozenset({StatKind.MEAN, StatKind.GEOMETRIC_MEAN})
 #: Statistics that describe a width, in the value's own units unless noted.
 WIDTH_STATS: frozenset = frozenset({StatKind.SD, StatKind.CV, StatKind.IQR, StatKind.RANGE})
+#: Widths of an estimator rather than of the sample. These carry a population
+#: width too, but only alongside the n they were computed over: sd = se * sqrt(n).
+#: Kept apart from WIDTH_STATS so nothing reads one as the other by accident.
+SAMPLING_WIDTH_STATS: frozenset = frozenset({StatKind.SE})
 
 
 class ReportedStatistic(BaseModel):
@@ -192,7 +196,7 @@ class ReportedStatistic(BaseModel):
                 raise ValueError(f"quantile p must be in (0, 1), got {self.p}.")
         elif self.p is not None:
             raise ValueError(f"stat='{self.stat.value}' must not set p; only quantiles have one.")
-        if self.stat in WIDTH_STATS and self.value < 0:
+        if self.stat in (WIDTH_STATS | SAMPLING_WIDTH_STATS) and self.value < 0:
             raise ValueError(f"stat='{self.stat.value}' is a width and cannot be negative.")
         return self
 
@@ -335,14 +339,19 @@ class ObservedDistribution(BaseModel):
         return self
 
     def _has_width(self) -> bool:
-        """Whether any entry carries a width, explicit or as a pair that spans one."""
-        if any(s.stat in WIDTH_STATS for s in self.statistics):
+        """Whether any entry carries a width, explicit or recoverable from one.
+
+        An SE counts: it is the sample width divided by sqrt(n), so it determines
+        one given the n it was computed over. Recovering it needs that n, which
+        the derivation accessors take as an argument rather than assume.
+        """
+        kinds = {s.stat for s in self.statistics}
+        if kinds & (WIDTH_STATS | SAMPLING_WIDTH_STATS):
             return True
         if len({s.p for s in self.statistics if s.stat == StatKind.QUANTILE}) >= 2:
             return True
         # A min/max pair is the sample range stated as its two endpoints, which is
         # what a source prints when it gives an observed span rather than a width.
-        kinds = {s.stat for s in self.statistics}
         return {StatKind.MIN, StatKind.MAX} <= kinds
 
     # ---- Accessors --------------------------------------------------------
@@ -361,11 +370,12 @@ class ObservedDistribution(BaseModel):
 
     # ---- Derivations ------------------------------------------------------
 
-    def _anchor_pairs(self) -> List[tuple]:
+    def _anchor_pairs(self, n: Optional[int] = None) -> List[tuple]:
         """Effective (p, value) quantile anchors, p-sorted.
 
         Explicit quantiles are used as reported. With fewer than two of them, a
-        center and a scale are expanded through ``shape``.
+        center and a scale are expanded through ``shape``. ``n`` is the count the
+        statistics were computed over, needed only to widen an SE into a sample SD.
         """
         quants = sorted(
             ((s.p, s.value) for s in self.statistics if s.stat == StatKind.QUANTILE),
@@ -374,13 +384,18 @@ class ObservedDistribution(BaseModel):
         if len(quants) >= 2:
             return quants
 
-        sd = self._normal_equivalent_sd()
+        sd = self._normal_equivalent_sd(n)
         center = self.center()
         if sd is None or center is None:
+            missing = "no center" if center is None else "no width"
+            if center is not None and n is None and self.get(StatKind.SE) is not None:
+                missing = (
+                    "only an SE, which is a width per sqrt(n); pass n (the cohort's n_c) "
+                    "to widen it into a sample SD"
+                )
             raise ValueError(
                 "observed_distribution cannot produce quantiles: it reports "
-                f"{[s.stat.value for s in self.statistics]}, which gives "
-                f"{'no center' if center is None else 'no width'}."
+                f"{[s.stat.value for s in self.statistics]}, which gives {missing}."
             )
         if self.shape is None:
             raise ValueError(
@@ -391,8 +406,13 @@ class ObservedDistribution(BaseModel):
         q25, q50, q75 = _quartiles_from_center_scale(center, center_is_mean, sd, self.shape)
         return [(0.25, q25), (0.5, q50), (0.75, q75)]
 
-    def _normal_equivalent_sd(self) -> Optional[float]:
-        """A linear SD implied by whichever width statistic was reported."""
+    def _normal_equivalent_sd(self, n: Optional[int] = None) -> Optional[float]:
+        """A linear SD implied by whichever width statistic was reported.
+
+        An SE is used last and only with ``n``: it is the sample SD over sqrt(n),
+        so without n it is not a sample width at all. At n=10 the two differ by a
+        factor of 3.2, which is why this never guesses.
+        """
         sd = self.get(StatKind.SD)
         if sd is not None:
             return sd
@@ -406,14 +426,28 @@ class ObservedDistribution(BaseModel):
         lo, hi = self.get(StatKind.CI95_LO), self.get(StatKind.CI95_HI)
         if lo is not None and hi is not None:
             return (hi - lo) / (2.0 * _Z_95)
+        se = self.get(StatKind.SE)
+        if se is not None and n is not None:
+            if n < 1:
+                raise ValueError(f"widening an SE needs a positive n, got {n}.")
+            return se * math.sqrt(n)
         return None
 
-    def quantile(self, p: float) -> float:
+    def population_sd(self, n: Optional[int] = None) -> Optional[float]:
+        """The sample SD the statistics imply, or None if none is recoverable.
+
+        ``n`` is the count the statistics were computed over: a calibration
+        target's cohort ``n_c``, or a submodel target's ``n_biological``. It is
+        read only when the reported width is an SE.
+        """
+        return self._normal_equivalent_sd(n)
+
+    def quantile(self, p: float, n: Optional[int] = None) -> float:
         """Value at ``p``: reported if the source printed it, else interpolated."""
         reported = self.get(StatKind.QUANTILE, p)
         if reported is not None:
             return reported
-        anchors = self._anchor_pairs()
+        anchors = self._anchor_pairs(n)
         if p <= anchors[0][0]:
             return anchors[0][1]
         if p >= anchors[-1][0]:
@@ -425,19 +459,19 @@ class ObservedDistribution(BaseModel):
                 return v_lo + (p - p_lo) / (p_hi - p_lo) * (v_hi - v_lo)
         return anchors[-1][1]  # pragma: no cover
 
-    def median(self) -> float:
+    def median(self, n: Optional[int] = None) -> float:
         """Value at p=0.5, reported if given and interpolated otherwise."""
-        return self.quantile(0.5)
+        return self.quantile(0.5, n)
 
-    def iqr(self) -> Optional[float]:
+    def iqr(self, n: Optional[int] = None) -> Optional[float]:
         """Interquartile range, reported if given, else from the quantile anchors."""
         reported = self.get(StatKind.IQR)
         if reported is not None:
             return reported
-        ps = [p for p, _ in self._anchor_pairs()]
+        ps = [p for p, _ in self._anchor_pairs(n)]
         if min(ps) > 0.25 or max(ps) < 0.75:
             return None
-        return self.quantile(0.75) - self.quantile(0.25)
+        return self.quantile(0.75, n) - self.quantile(0.25, n)
 
     @property
     def feeds_population_spread(self) -> bool:

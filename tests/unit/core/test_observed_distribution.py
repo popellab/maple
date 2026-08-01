@@ -676,3 +676,53 @@ def test_unit_group_mismatched_spread_source_rejected():
                 ),
             ]
         )
+
+
+# ---------------------------------------------------------------------------
+# A standard error is a width per sqrt(n)
+# ---------------------------------------------------------------------------
+
+
+def test_se_satisfies_the_population_width_requirement():
+    """An SE determines a sample width given n, so it is not a center-only spread."""
+    d = ObservedDistribution(
+        statistics=[_s(StatKind.MEAN, 9.84), _s(StatKind.SE, 1.16)],
+        spread_source=SpreadSource.ACROSS_PATIENT,
+    )
+    assert d.feeds_population_spread
+
+
+def test_se_widens_to_a_sample_sd_only_with_n():
+    d = ObservedDistribution(
+        statistics=[_s(StatKind.MEAN, 9.84), _s(StatKind.SE, 1.16)],
+        spread_source=SpreadSource.ACROSS_PATIENT,
+        shape=DistributionShape.LOGNORMAL,
+    )
+    assert d.population_sd() is None
+    assert d.population_sd(40) == pytest.approx(1.16 * 40**0.5)
+
+
+def test_quantiles_from_an_se_need_n_and_say_so():
+    d = ObservedDistribution(
+        statistics=[_s(StatKind.MEAN, 9.84), _s(StatKind.SE, 1.16)],
+        spread_source=SpreadSource.ACROSS_PATIENT,
+        shape=DistributionShape.LOGNORMAL,
+    )
+    with pytest.raises(ValueError, match="pass n"):
+        d.median()
+    # With n the SE widens and the lognormal stays log-symmetric about its median.
+    assert d.quantile(0.25, 40) * d.quantile(0.75, 40) == pytest.approx(d.median(40) ** 2)
+
+
+def test_a_reported_sd_is_preferred_over_an_se():
+    """Both reported: the sample width is the printed one, not the widened SE."""
+    d = ObservedDistribution(
+        statistics=[_s(StatKind.MEAN, 10.0), _s(StatKind.SD, 4.0), _s(StatKind.SE, 1.0)],
+        spread_source=SpreadSource.ACROSS_PATIENT,
+    )
+    assert d.population_sd(100) == 4.0
+
+
+def test_negative_se_is_rejected():
+    with pytest.raises(ValidationError, match="cannot be negative"):
+        ReportedStatistic(stat=StatKind.SE, value=-1.0)
