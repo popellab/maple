@@ -348,7 +348,7 @@ When the calibration target requests a fold-change (pre-to-post treatment change
 
 3. **If no paired pre/post data exists** for the requested comparison, clearly state this limitation rather than substituting a cross-arm ratio.
 
-4. **Declare the reference.** Set `observable.quantity_kind: foldchange` and `observable.reference` to whatever the change is measured against — a timepoint of the same scenario, or another scenario. Both are required for a fold change and the reference must not be left implicit in the code.
+4. **Declare the reference.** Set `observable.readout.quantity_kind: foldchange` and `observable.readout.reference` to whatever the change is measured against — a timepoint of the same scenario, or another scenario. Both are required for a fold change and the reference must not be left implicit in the code.
 
 ### Scaling Factor Red Flag
 
@@ -473,21 +473,30 @@ The top-level `observable:` block describes a single experimental observable. (T
    - `positive_unbounded`: Output must be > 0, no upper bound (fold-changes, ratios)
    - `real`: Any real value (log-ratios, change scores)
 
-7. **observable.experimental_denominator** / **observable.model_denominator_species** — describe what the experiment normalizes by, and which model species form the matching model-side denominator. **Conditionally required:** when the observable is a density or per-mass concentration (units like `cell/mm**2`, `pg/mg`, `cell/g`, etc., with `support: positive`), validation REQUIRES `experimental_denominator` to be set. Omitting it triggers a `value_error: "Observable with units='pg/mg' and support='positive' is a density but experimental_denominator is not set"` failure. Optional only for unitless ratios (`support: unit_interval`) or absolute counts.
+7. **observable.readout** (required) — what the EXPERIMENT measured, as opposed to how the model computes it. The rest of `observable` is the computation; this block is the measurement, and inference reads it to decide which rows share a measurement correction and which rows are the same quantity.
+
+```yaml
+readout:
+  quantity_kind: fraction
+  assay_modality: mihc
+  numerator_species: ['V_T.CD8']
+  denominator_species: ['V_T.CD8', 'V_T.Th', 'V_T.Treg']
+  experimental_denominator: "CD3+ T cells (all T cell subsets)"
+  reference:                       # fold changes only; omit otherwise
+```
+
+   - **`quantity_kind`**: `density` (cells or mass per area/volume of tissue) · `fraction` (a part over a whole containing it, in (0,1)) · `ratio` (one quantity over another not containing it) · `foldchange` (a quantity over its own value at a reference) · `concentration` · `intensity` · `time`. A percentage is a `fraction`, not its own kind; the compartment it is a percentage OF is named by the denominator fields.
+   - **`assay_modality`**: `mihc` · `ihc` · `mif` · `flow_cytometry` · `scrnaseq` · `multiplex_immunoassay` · `elisa` · `multiphoton_microscopy` · `digital_histopathology` · `imaging` · `clinical`. Describe the measurement, not the cell type: two readouts agreeing on kind and modality share one correction whatever they count.
+   - **`numerator_species`** (required) and **`denominator_species`** (empty for an absolute quantity) — which model species compose the row. This is the row's identity, so it must not depend on how you spelled the arithmetic in `code`: declare the components even when the code divides by a single pre-aggregated species. A cross-target audit holds `code` to this declaration and reports any disagreement.
+   - **`experimental_denominator`** — what the experiment divided by, in the paper's own words. **Conditionally required:** an observable that is a density or per-mass concentration (units like `cell/mm**2`, `pg/mg`, with `support: positive`) is rejected without it. Setting it requires `denominator_species` too.
+   - **`reference`** (required for `quantity_kind: foldchange`, forbidden otherwise) — what the fold change is measured against. Do not rely on a `species[0]` or `series[0]` convention inside the code.
+     - An earlier time in the same scenario: `{kind: timepoint, timepoint: 0.0, timepoint_unit: day}`
+     - Another scenario: `{kind: scenario, scenario: baseline_no_treatment}`
 
 8. **observable.readout_time / observable.reduce_observable** (**required — set EXACTLY ONE**) — how the observable time-series from `observable.code` is reduced to the single scalar compared against `empirical_data`. There is NO implicit default; a target that sets neither is rejected.
    - **`readout_time`** (float) + **`readout_time_unit`** (str, e.g. `day`) — the common case: the series is linearly interpolated to this simulation time. For a treatment-arm biopsy at day 21, use `readout_time: 21.0`, `readout_time_unit: day`. For a **baseline / diagnosis-snapshot** measurement (treatment-naive resection, the reference state), set `readout_time: 0.0` explicitly (the trajectory's `t=0` is diagnosis).
    - **`reduce_observable`** (executable Python) — use ONLY when the measurement is NOT a value at a fixed time: a peak/Cmax, an AUC, a final value, a time-to-threshold. Signature `reduce_observable(time, series) -> float` (numpy arrays in, one float out; `np.*` only). Example (peak): `def reduce_observable(time, series):\n    import numpy as np\n    return float(np.max(series))`.
    - Dose-response / multi-timepoint data is NOT a single vector target — author one scalar target per readout (or per dose arm).
-
-9. **observable.quantity_kind** and **observable.assay_modality** (both required) — what kind of quantity this is and how it was measured. Population inference gives every observable a measurement correction, and two observables agreeing on these two attributes share one correction, so they must describe the measurement rather than the cell type.
-   - `quantity_kind`: `density` (cells or mass per area/volume of tissue) · `fraction` (a part over a whole containing it, in (0,1)) · `ratio` (one quantity over another not containing it) · `foldchange` (a quantity over its own value at a reference) · `concentration` · `intensity` · `time`
-   - `assay_modality`: `mihc` · `ihc` · `mif` · `flow_cytometry` · `scrnaseq` · `multiplex_immunoassay` · `elisa` · `multiphoton_microscopy` · `digital_histopathology` · `imaging` · `clinical`
-   - A percentage is a `fraction`, not its own kind — the compartment it is a percentage OF is already named by `experimental_denominator` / `model_denominator_species`.
-
-10. **observable.reference** (required for `quantity_kind: foldchange`, forbidden otherwise) — what the fold change is measured against. Do not rely on a `species[0]` or `series[0]` convention inside the code.
-   - Against an earlier time in the same scenario: `{kind: timepoint, timepoint: 0.0, timepoint_unit: day}`
-   - Against another scenario: `{kind: scenario, scenario: baseline_no_treatment}`
 
 **Example observable (absolute density with stroma correction):**
 ```yaml
@@ -503,8 +512,12 @@ observable:
         return (cd8 / tumor_area).to('cell/mm**2')
   units: cell/mm**2
   species: ['V_T.CD8', 'V_T.C1']
-  quantity_kind: density
-  assay_modality: ihc
+  readout:
+    quantity_kind: density
+    assay_modality: ihc
+    numerator_species: ['V_T.CD8']
+    denominator_species: ['V_T.C1']
+    experimental_denominator: "mm^2 of tumor tissue section (cancer cells + stroma)"
   constants:
     - name: area_per_cancer_cell
       value: 2.27e-4
@@ -519,8 +532,6 @@ observable:
       source_type: reference_db
       reference_db_name: pdac_stromal_fraction
   support: positive
-  experimental_denominator: "mm^2 of tumor tissue section (cancer cells + stroma)"
-  model_denominator_species: ['V_T.C1']
 ```
 
 **Example observable (dimensionless ratio — preferred when available):**
@@ -534,12 +545,14 @@ observable:
         return (treg / total_t).to('dimensionless')
   units: dimensionless
   species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
-  quantity_kind: fraction
-  assay_modality: mihc
+  readout:
+    quantity_kind: fraction
+    assay_modality: mihc
+    numerator_species: ['V_T.Treg']
+    denominator_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
+    experimental_denominator: "CD3+ T cells (all T cell subsets)"
   constants: []
   support: unit_interval
-  experimental_denominator: "CD3+ T cells (all T cell subsets)"
-  model_denominator_species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
 ```
 
 **Example observable (compartment bridge via auxiliary parameter — serum→tumor TGFβ):**
@@ -558,8 +571,10 @@ observable:
         return predicted_serum.to('nanomolar')
   units: nanomolar
   species: ['V_T.TGFb']
-  quantity_kind: concentration
-  assay_modality: multiplex_immunoassay
+  readout:
+    quantity_kind: concentration
+    assay_modality: multiplex_immunoassay
+    numerator_species: ['V_T.TGFb']
   constants:
     - name: active_fraction
       value: 0.10
