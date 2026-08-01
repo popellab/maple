@@ -47,6 +47,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from maple.core.calibration.calibration_target_models import (
     CalibrationTargetEstimates,
 )
+from maple.core.calibration.enums import QuantityKind
+from maple.core.calibration.readout import Readout
 from maple.core.calibration.shared_models import SecondarySource, Source
 
 
@@ -124,6 +126,27 @@ class CrossScenarioInput(BaseModel):
             "required_species (series / param / template / missing)."
         ),
     )
+    readout: Readout = Field(
+        description="What this arm measures. Its declared composition is what lets an arm "
+        "be compared against a standalone target on the same cohort."
+    )
+    cohort_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Registered cohort whose patients this arm measures. Required when the "
+            "target is epistemic_basis='literature'. Two roles may not name one cohort: "
+            "the same patients under both conditions is a paired contrast, which belongs "
+            "in a single CalibrationTarget with an Observable.reference."
+        ),
+    )
+    n_evaluable: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Patients with an evaluable value for this arm, when fewer than the cohort's "
+            "n_c. Omit when every patient in the cohort contributes."
+        ),
+    )
 
 
 class CrossScenarioObservable(BaseModel):
@@ -163,6 +186,13 @@ class CrossScenarioObservable(BaseModel):
             "(event times), 'cell/mm**2' (density differences)."
         )
     )
+    quantity_kind: QuantityKind = Field(
+        description=(
+            "What kind of quantity the reduction produces. Each arm declares its own "
+            "readout; this is the composed output. No `reference` is needed: the roles "
+            "and their cohorts are the reference."
+        )
+    )
     inputs: List[CrossScenarioInput] = Field(
         min_length=2,
         description=(
@@ -171,6 +201,17 @@ class CrossScenarioObservable(BaseModel):
             "observable). Roles must be unique."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_arms_share_an_assay(self) -> "CrossScenarioObservable":
+        """The arms are one measurement made in different people."""
+        modalities = sorted({i.readout.assay_modality.value for i in self.inputs})
+        if len(modalities) > 1:
+            raise ValueError(
+                f"Arms declare different assay_modality values {modalities}. A contrast "
+                "between assays measures the assays, not the treatment."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_unique_roles(self) -> "CrossScenarioObservable":
@@ -183,8 +224,7 @@ class CrossScenarioObservable(BaseModel):
                     dupes.append(r)
                 seen.add(r)
             raise ValueError(
-                f"CrossScenarioObservable roles must be unique; "
-                f"duplicates: {sorted(set(dupes))}"
+                f"CrossScenarioObservable roles must be unique; duplicates: {sorted(set(dupes))}"
             )
         return self
 
@@ -269,7 +309,7 @@ class CrossScenarioCalibrationTarget(BaseModel):
     primary_data_source: Optional[Source] = Field(
         default=None,
         description=(
-            "Required when epistemic_basis='literature'. May be null for " "mechanistic targets."
+            "Required when epistemic_basis='literature'. May be null for mechanistic targets."
         ),
     )
     secondary_data_sources: List[SecondarySource] = Field(
@@ -292,6 +332,34 @@ class CrossScenarioCalibrationTarget(BaseModel):
                 "reasoning rather than a published measurement, set "
                 "epistemic_basis='mechanistic' and document the rationale "
                 "in key_assumptions."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_literature_arms_are_placed(self) -> "CrossScenarioCalibrationTarget":
+        """A measured contrast must say whose patients each arm is.
+
+        The arms are different people, so the contrast is not a row of any one
+        cohort: it is a derived row over the cohorts it draws on, and inference
+        resamples each of them independently to get its variance. That is only
+        possible once each arm names its own.
+        """
+        if self.epistemic_basis != "literature":
+            return self
+        unplaced = [i.role for i in self.observable.inputs if not i.cohort_id]
+        if unplaced:
+            raise ValueError(
+                f"epistemic_basis='literature' but these roles name no cohort: {unplaced}. "
+                "Each arm measures a different set of patients and must name the registered "
+                "cohort they belong to."
+            )
+        cohorts = [i.cohort_id for i in self.observable.inputs]
+        repeated = sorted({c for c in cohorts if cohorts.count(c) > 1})
+        if repeated:
+            raise ValueError(
+                f"Roles share cohort(s) {repeated}. One cohort under both conditions is the "
+                "same patients measured twice, so the contrast is paired and belongs in a "
+                "single CalibrationTarget whose observable declares a reference."
             )
         return self
 

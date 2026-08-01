@@ -110,11 +110,12 @@ class MappingCollision:
 
 def _mapping_key(target: Dict[str, Any]) -> Optional[tuple]:
     observable = target.get("observable") or {}
-    numerator, denominator = numerator_and_denominator(observable.get("code") or "")
+    readout = observable.get("readout") or {}
+    denominator = readout.get("denominator_species") or []
     if not denominator:
         return None
     return (
-        tuple(sorted(numerator)),
+        tuple(sorted(readout.get("numerator_species") or [])),
         tuple(sorted(denominator)),
         observable.get("readout_time"),
     )
@@ -123,11 +124,10 @@ def _mapping_key(target: Dict[str, Any]) -> Optional[tuple]:
 def find_mapping_collisions(targets: Dict[str, Dict[str, Any]]) -> List[MappingCollision]:
     """Group ``{target_id: parsed_yaml}`` by model quantity; return the groups of >1.
 
-    The key is (numerator species, denominator species, readout time), read from
-    the code rather than from ``model_denominator_species`` — the declaration can
-    be stale, the code is what runs. Including the numerator matters: nine density
-    targets divide by ``V_T`` and are not in conflict, because they count
-    different cells.
+    The key is (numerator species, denominator species, readout time) as declared
+    on the readout; ``check_code_matches_readout`` separately holds the code to that
+    declaration. Including the numerator matters: nine density targets divide by
+    ``V_T`` and are not in conflict, because they count different cells.
 
     Callers pass one scenario at a time. Across scenarios the same expression is
     expected (a baseline and a day-21 arm), and is not a collision.
@@ -152,7 +152,8 @@ def find_mapping_collisions(targets: Dict[str, Dict[str, Any]]) -> List[MappingC
                 readout_time=key[2],
                 members=tuple(members),
                 experimental_denominators=tuple(
-                    o.get("experimental_denominator") or "" for o in observables
+                    (o.get("readout") or {}).get("experimental_denominator") or ""
+                    for o in observables
                 ),
                 justified_by=tuple(
                     m
@@ -262,7 +263,9 @@ def collect_declared_biases(
         out.append(
             DeclaredDenominatorBias(
                 target_id=target_id,
-                experimental_denominator=(observable.get("experimental_denominator") or "").strip(),
+                experimental_denominator=(
+                    (observable.get("readout") or {}).get("experimental_denominator") or ""
+                ).strip(),
                 unmodeled_components=unmodeled,
                 states_direction_or_magnitude=bool(_DIRECTION_OR_MAGNITUDE.search(unmodeled)),
             )
@@ -315,8 +318,56 @@ def warn_declared_biases(targets: Dict[str, Dict[str, Any]]) -> List[DeclaredDen
     return biases
 
 
+@dataclass(frozen=True)
+class CodeReadoutMismatch:
+    """A target whose code divides by something other than its declared readout."""
+
+    target_id: str
+    declared: Tuple[str, ...]
+    in_code: Tuple[str, ...]
+
+
+def find_code_readout_mismatches(
+    targets: Dict[str, Dict[str, Any]],
+) -> List[CodeReadoutMismatch]:
+    """Targets whose ``observable.code`` disagrees with ``readout.denominator_species``.
+
+    The declaration carries the row's identity, so the code has to compute what it
+    says. Only checked where the code divides: an observable that reaches its
+    denominator some other way (a species that is already a total, an area built
+    from a constant) is not comparable this way.
+    """
+    out = []
+    for tid, data in sorted(targets.items()):
+        observable = data.get("observable") or {}
+        declared = set((observable.get("readout") or {}).get("denominator_species") or [])
+        _, in_code = numerator_and_denominator(observable.get("code") or "")
+        if not declared or not in_code or declared == in_code:
+            continue
+        out.append(CodeReadoutMismatch(tid, tuple(sorted(declared)), tuple(sorted(in_code))))
+    return out
+
+
+def warn_code_readout_mismatches(
+    targets: Dict[str, Dict[str, Any]],
+) -> List[CodeReadoutMismatch]:
+    """Warn on each mismatch. Returns them."""
+    found = find_code_readout_mismatches(targets)
+    for m in found:
+        warnings.warn(
+            f"{m.target_id}: readout.denominator_species={list(m.declared)} but the code "
+            f"divides by {list(m.in_code)}. Reconcile them, or record the alias if the "
+            "code divides by a species that already totals the declared ones.",
+            UserWarning,
+        )
+    return found
+
+
 __all__ = [
     "numerator_and_denominator",
+    "CodeReadoutMismatch",
+    "find_code_readout_mismatches",
+    "warn_code_readout_mismatches",
     "MappingCollision",
     "find_mapping_collisions",
     "check_mapping_collisions",

@@ -104,8 +104,12 @@ def golden_calibration_target_data():
     return {
         "cohort_id": "smith2020_resected",
         "observable": {
-            "quantity_kind": "ratio",
-            "assay_modality": "ihc",
+            "readout": {
+                "quantity_kind": "ratio",
+                "assay_modality": "ihc",
+                "numerator_species": ["V_T.CD8"],
+                "denominator_species": ["V_T.C1"],
+            },
             "code": (
                 "def compute_observable(time, species_dict, constants):\n"
                 "    cd8 = species_dict['V_T.CD8']\n"
@@ -1540,8 +1544,11 @@ class TestObservableDenominatorAudit:
     def _make_observable(self, **overrides):
         """Helper to create Observable with sensible defaults."""
         base = {
-            "quantity_kind": "density",
-            "assay_modality": "ihc",
+            "readout": {
+                "quantity_kind": "density",
+                "assay_modality": "ihc",
+                "numerator_species": ["V_T.CD8"],
+            },
             "code": (
                 "def compute_observable(time, species_dict, constants):\n"
                 "    return species_dict['V_T.CD8']"
@@ -1554,14 +1561,16 @@ class TestObservableDenominatorAudit:
             "readout_time": 0.0,
             "readout_time_unit": "day",
         }
+        readout = dict(base["readout"], **overrides.pop("readout", {}))
         base.update(overrides)
+        base["readout"] = readout
         return Observable(**base)
 
     def test_observable_without_denominator_fields_passes(self):
         """Observable without denominator fields passes for non-density units."""
         obs = self._make_observable()
-        assert obs.experimental_denominator is None
-        assert obs.model_denominator_species is None
+        assert obs.readout.experimental_denominator is None
+        assert obs.readout.denominator_species == []
 
     def test_density_observable_without_experimental_denominator_fails(self):
         """Density observable (cell/mm**2) must declare experimental_denominator."""
@@ -1576,17 +1585,19 @@ class TestObservableDenominatorAudit:
         obs = self._make_observable(
             units="cell / millimeter**2",
             support="positive",
-            experimental_denominator="mm^2 of tumor tissue (whole section including stroma)",
-            model_denominator_species=["V_T.C1"],
+            readout={
+                "experimental_denominator": "mm^2 of tumor tissue (whole section)",
+                "denominator_species": ["V_T.C1"],
+            },
         )
-        assert obs.experimental_denominator is not None
-        assert obs.model_denominator_species == ["V_T.C1"]
+        assert obs.readout.experimental_denominator is not None
+        assert obs.readout.denominator_species == ["V_T.C1"]
 
     def test_experimental_denominator_without_model_species_fails(self):
         """Setting experimental_denominator without model_denominator_species fails."""
-        with pytest.raises(ValidationError, match="model_denominator_species"):
+        with pytest.raises(ValidationError, match="denominator_species"):
             self._make_observable(
-                experimental_denominator="CD3+ T cells",
+                readout={"experimental_denominator": "CD3+ T cells"},
             )
 
     def test_fraction_with_full_denominator_audit_passes(self):
@@ -1594,8 +1605,10 @@ class TestObservableDenominatorAudit:
         obs = self._make_observable(
             units="dimensionless",
             support="unit_interval",
-            experimental_denominator="all cells in ROI (all nucleated cells)",
-            model_denominator_species=["V_T.CD8", "V_T.Th", "V_T.Treg", "V_T.Mac_M1"],
+            readout={
+                "experimental_denominator": "all cells in ROI (all nucleated cells)",
+                "denominator_species": ["V_T.CD8", "V_T.Th", "V_T.Treg", "V_T.Mac_M1"],
+            },
             unmodeled_denominator_components=(
                 "B cells (50-70% of LA cells) not modeled; model prediction "
                 "will be ~2-3x higher than experimental value."
@@ -1609,7 +1622,7 @@ class TestObservableDenominatorAudit:
             units="nanomolarity",
             support="positive",
         )
-        assert obs.experimental_denominator is None
+        assert obs.readout.experimental_denominator is None
 
 
 class TestCalibrationTargetPopulationSample:

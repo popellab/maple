@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from maple.core.calibration.cohort import CohortRegistry
-from maple.core.calibration.denominator_audit import numerator_and_denominator
 
 
 @dataclass(frozen=True)
@@ -41,6 +40,30 @@ def _source_refs(target: Dict[str, Any]) -> List[str]:
 
 def _is_literature(target: Dict[str, Any]) -> bool:
     return (target.get("epistemic_basis") or "literature") == "literature"
+
+
+def _arms(target: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Per-role inputs of a cross-scenario target; empty for a scalar target."""
+    return _observable(target).get("inputs") or []
+
+
+def _readout(target: Dict[str, Any]) -> Dict[str, Any]:
+    return _observable(target).get("readout") or {}
+
+
+def _composition(readout: Dict[str, Any]) -> Optional[Tuple[tuple, tuple]]:
+    """Declared (numerator, denominator) species, or None when nothing is declared."""
+    num = tuple(sorted(readout.get("numerator_species") or []))
+    den = tuple(sorted(readout.get("denominator_species") or []))
+    return (num, den) if num else None
+
+
+def _cohort_ids(target: Dict[str, Any]) -> List[str]:
+    """Cohorts this target draws on: one for a scalar target, one per arm for a contrast."""
+    cid = target.get("cohort_id")
+    if cid:
+        return [cid]
+    return [a["cohort_id"] for a in _arms(target) if a.get("cohort_id")]
 
 
 def find_registry_problems(
@@ -100,35 +123,147 @@ def find_registry_problems(
                 )
             )
 
+    problems.extend(_cross_scenario_arms(targets, cohorts))
     problems.extend(_duplicate_rows(targets))
     problems.extend(_singular_blocks(targets))
+    return problems
+
+
+def _cross_scenario_arms(
+    targets: Dict[str, Dict[str, Any]], cohorts: CohortRegistry
+) -> List[RegistryProblem]:
+    """Each arm of a contrast against the cohort it names."""
+    by_cohort = cohorts.as_dict()
+    problems: List[RegistryProblem] = []
+
+    for tid, data in sorted(targets.items()):
+        arms = _arms(data)
+        if not arms:
+            continue
+        for arm in arms:
+            cid = arm.get("cohort_id")
+            if not cid:
+                continue
+            cohort = by_cohort.get(cid)
+            if cohort is None:
+                problems.append(
+                    RegistryProblem(
+                        "unknown_cohort",
+                        (tid,),
+                        f"role '{arm.get('role')}' names cohort '{cid}', which is not in the "
+                        "cohort registry.",
+                    )
+                )
+                continue
+            if arm.get("scenario") and arm["scenario"] not in cohort.scenarios:
+                problems.append(
+                    RegistryProblem(
+                        "scenario_not_in_cohort",
+                        (tid,),
+                        f"role '{arm.get('role')}' runs scenario '{arm['scenario']}' but "
+                        f"cohort '{cid}' declares {cohort.scenarios}. The arm's patients were "
+                        "not measured under that condition.",
+                    )
+                )
+            n_eval = arm.get("n_evaluable")
+            if n_eval is not None and n_eval > cohort.n_c:
+                problems.append(
+                    RegistryProblem(
+                        "n_evaluable_exceeds_cohort",
+                        (tid,),
+                        f"role '{arm.get('role')}' has n_evaluable={n_eval}, above cohort "
+                        f"'{cid}' n_c={cohort.n_c}.",
+                    )
+                )
+
+        named = [c for c in _cohort_ids(data) if c in by_cohort]
+        overlapping = sorted(
+            {
+                tuple(sorted((a, b)))
+                for a in named
+                for b in by_cohort[a].shares_patients_with
+                if b in named
+            }
+        )
+        if overlapping:
+            problems.append(
+                RegistryProblem(
+                    "paired_contrast_as_cross_scenario",
+                    (tid,),
+                    f"arms name cohorts that declare shared patients: {overlapping}. The "
+                    "contrast is then within-patient, and a paired contrast belongs in a "
+                    "single CalibrationTarget whose observable declares a reference. Arms of "
+                    "a cross-scenario target must be disjoint sets of people, since its "
+                    "variance comes from resampling each arm independently.",
+                )
+            )
+
+    problems.extend(_redundant_arms(targets))
+    return problems
+
+
+def _arm_composition(arm: Dict[str, Any]) -> Optional[Tuple[tuple, tuple]]:
+    """An arm's declared composition, in the same shape as a scalar target's."""
+    return _composition(arm.get("readout") or {})
+
+
+def _redundant_arms(targets: Dict[str, Dict[str, Any]]) -> List[RegistryProblem]:
+    """An arm duplicating a standalone target on its cohort double-counts that number.
+
+    A cross-scenario term earns a likelihood only when its per-arm constituents are
+    deliberately kept out of the fit. Once a constituent is also a target, the fit
+    conditions on it and on the contrast, which is the same belief twice.
+    """
+    scalar: Dict[Tuple[str, tuple], List[str]] = {}
+    for tid, data in targets.items():
+        cid = data.get("cohort_id")
+        if not cid or _arms(data):
+            continue
+        key = _composition(_readout(data))
+        if key:
+            scalar.setdefault((cid, key), []).append(tid)
+
+    problems = []
+    for tid, data in sorted(targets.items()):
+        for arm in _arms(data):
+            cid = arm.get("cohort_id")
+            key = _arm_composition(arm)
+            if not cid or not key:
+                continue
+            for other in sorted(scalar.get((cid, key), [])):
+                problems.append(
+                    RegistryProblem(
+                        "redundant_cross_scenario_arm",
+                        tuple(sorted((tid, other))),
+                        f"role '{arm.get('role')}' computes what target '{other}' already "
+                        f"reports for cohort '{cid}'. Conditioning on the constituent and on "
+                        "the contrast counts one measurement twice; drop one.",
+                    )
+                )
     return problems
 
 
 def _duplicate_rows(targets: Dict[str, Dict[str, Any]]) -> List[RegistryProblem]:
     """Two targets computing one model quantity for one cohort are one row reported twice.
 
-    Keyed on the species expression parsed from ``observable.code``, so it cannot
-    go stale against the code that actually runs.
+    Keyed on the readout's declared composition, so it covers absolute quantities
+    as well as ratios.
     """
     seen: Dict[Tuple[str, tuple, tuple, Any], List[str]] = {}
     for tid, data in targets.items():
         cid = data.get("cohort_id")
-        if not cid:
+        comp = _composition(_readout(data))
+        if not cid or comp is None:
             continue
-        obs = _observable(data)
-        num, den = numerator_and_denominator(obs.get("code") or "")
-        if not num and not den:
-            continue
-        key = (cid, tuple(sorted(num)), tuple(sorted(den)), obs.get("readout_time"))
+        key = (cid, comp[0], comp[1], _observable(data).get("readout_time"))
         seen.setdefault(key, []).append(tid)
     return [
         RegistryProblem(
             "duplicate_row",
             tuple(sorted(members)),
-            f"cohort '{key[0]}' has {len(members)} targets computing {key[1]} / {key[2]} at "
-            f"t={key[3]}. One cohort reports a quantity once; a second target is either a "
-            "duplicate or belongs to another cohort.",
+            f"cohort '{key[0]}' has {len(members)} targets computing {list(key[1])} / "
+            f"{list(key[2])} at t={key[3]}. One cohort reports a quantity once; a second "
+            "target is either a duplicate or belongs to another cohort.",
         )
         for key, members in sorted(seen.items())
         if len(members) > 1
@@ -162,13 +297,12 @@ def _singular_blocks(targets: Dict[str, Dict[str, Any]]) -> List[RegistryProblem
     fractions: Dict[str, List[Tuple[str, frozenset, frozenset, Optional[float]]]] = {}
     for tid, data in targets.items():
         cid = data.get("cohort_id")
-        if not cid:
-            continue
-        num, den = numerator_and_denominator(_observable(data).get("code") or "")
-        if not den:
+        readout = _readout(data)
+        comp = _composition(readout)
+        if not cid or comp is None or readout.get("quantity_kind") != "fraction":
             continue
         fractions.setdefault(cid, []).append(
-            (tid, frozenset(num), frozenset(den), _reported_center(data))
+            (tid, frozenset(comp[0]), frozenset(comp[1]), _reported_center(data))
         )
 
     problems: List[RegistryProblem] = []
@@ -234,9 +368,10 @@ def _centers_summing_to_one(
 
 
 def check_registries(targets: Dict[str, Dict[str, Any]], cohorts: CohortRegistry) -> None:
-    """Raise on any registry defect; warn on cohorts no target uses."""
+    """Raise on any registry defect; warn on unused cohorts and on merged blocks."""
     problems = find_registry_problems(targets, cohorts)
     warn_unused_cohorts(targets, cohorts)
+    warn_merged_blocks(targets, cohorts)
     if not problems:
         return
     lines = [f"{len(problems)} registry problem(s):"]
@@ -256,6 +391,61 @@ def warn_unused_cohorts(targets: Dict[str, Dict[str, Any]], cohorts: CohortRegis
             UserWarning,
         )
     return unused
+
+
+def covariance_blocks(
+    targets: Dict[str, Dict[str, Any]], cohorts: CohortRegistry
+) -> List[FrozenSet[str]]:
+    """Cohorts that must share one covariance block, as connected components.
+
+    Blocks are assumed independent, so two cohorts must sit in one whenever a row
+    depends on both. Two ways that happens, and they merge for the same reason:
+    the cohorts share patients, or a target draws on both. A block is drawn by
+    resampling each of its cohorts independently and evaluating every row on the
+    result, which puts the zeros between disjoint arms and the covariance around a
+    derived row where each belongs.
+    """
+    parent = {c.cohort_id: c.cohort_id for c in cohorts.cohorts}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    for c in cohorts.cohorts:
+        for other in c.shares_patients_with:
+            if other in parent:
+                union(c.cohort_id, other)
+
+    for data in targets.values():
+        named = [c for c in _cohort_ids(data) if c in parent]
+        for other in named[1:]:
+            union(named[0], other)
+
+    blocks: Dict[str, set] = {}
+    for cid in parent:
+        blocks.setdefault(find(cid), set()).add(cid)
+    return sorted((frozenset(b) for b in blocks.values()), key=lambda b: sorted(b))
+
+
+def warn_merged_blocks(
+    targets: Dict[str, Dict[str, Any]], cohorts: CohortRegistry
+) -> List[FrozenSet[str]]:
+    """Warn on blocks spanning several cohorts. Returns them."""
+    merged = [b for b in covariance_blocks(targets, cohorts) if len(b) > 1]
+    for block in merged:
+        warnings.warn(
+            f"Cohorts {sorted(block)} form one covariance block: a row depends on more than "
+            "one of them, so they are not independent. Inference must draw them together.",
+            UserWarning,
+        )
+    return merged
 
 
 def resolve_n(target: Dict[str, Any], cohorts: CohortRegistry) -> Optional[int]:

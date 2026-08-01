@@ -11,12 +11,10 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from maple.core.calibration.enums import (
-    REQUIRES_REFERENCE,
-    AssayModality,
     ExtractionMethod,
-    QuantityKind,
     SourceType,
 )
+from maple.core.calibration.readout import Readout
 
 # Import SubmodelInput directly (not under TYPE_CHECKING) so Pydantic can resolve it
 from maple.core.calibration.shared_models import SubmodelInput
@@ -352,35 +350,6 @@ class AuxiliaryParameter(BaseModel):
     )
 
 
-class ObservableReference(BaseModel):
-    """What a relative observable is measured against."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["timepoint", "scenario"] = Field(
-        description="Whether the reference is another time in this trajectory or another scenario."
-    )
-    timepoint: Optional[float] = Field(default=None, description="Reference time.")
-    timepoint_unit: Optional[str] = Field(
-        default=None, description="Pint-parseable unit for ``timepoint``."
-    )
-    scenario: Optional[str] = Field(default=None, description="Reference scenario name.")
-
-    @model_validator(mode="after")
-    def _matches_kind(self) -> "ObservableReference":
-        if self.kind == "timepoint":
-            if self.timepoint is None or not self.timepoint_unit:
-                raise ValueError("reference kind='timepoint' needs timepoint and timepoint_unit.")
-            if self.scenario is not None:
-                raise ValueError("reference kind='timepoint' must not set scenario.")
-        else:
-            if not self.scenario:
-                raise ValueError("reference kind='scenario' needs scenario.")
-            if self.timepoint is not None:
-                raise ValueError("reference kind='scenario' must not set timepoint.")
-        return self
-
-
 class Observable(BaseModel):
     """
     Observable specification for CalibrationTarget (full model).
@@ -418,22 +387,9 @@ class Observable(BaseModel):
         description="Pint-parseable units of the observable output (must match empirical_data.units)"
     )
 
-    quantity_kind: QuantityKind = Field(
-        description=(
-            "What kind of quantity this observable is. Inference reads it, with "
-            "assay_modality, to build the measurement-discrepancy design matrix: two "
-            "observables agreeing on both share a location and scale correction."
-        )
-    )
-
-    assay_modality: AssayModality = Field(description="How this observable was measured.")
-
-    reference: Optional["ObservableReference"] = Field(
-        default=None,
-        description=(
-            "What a relative quantity is measured against. Required when quantity_kind is "
-            "'foldchange', forbidden otherwise."
-        ),
+    readout: Readout = Field(
+        description="What the experiment measured: quantity kind, assay, denominator, and "
+        "reference. The rest of this model is how to compute it."
     )
 
     readout_time: Optional[float] = Field(
@@ -525,30 +481,6 @@ class Observable(BaseModel):
         ),
     )
 
-    experimental_denominator: Optional[str] = Field(
-        default=None,
-        description=(
-            "What the experimental measurement divides by. Required when the "
-            "observable is a density or fraction.\n\n"
-            "Examples:\n"
-            "- 'mm^2 of tumor tissue (whole section including stroma)'\n"
-            "- 'all cells in ROI (all nucleated cells)'\n"
-            "- 'CD3+ T cells (pan-T-cell marker)'\n"
-            "- 'CD45+ leukocytes'"
-        ),
-    )
-
-    model_denominator_species: Optional[List[str]] = Field(
-        default=None,
-        description=(
-            "Which model species compose the denominator in the observable code. "
-            "Required when experimental_denominator is set.\n"
-            "Format: 'compartment.species' (e.g., ['V_T.CD8', 'V_T.Th', 'V_T.Treg']).\n"
-            "For area-based denominators, list the species used to compute area "
-            "(e.g., ['V_T.C1'] when tumor area = C1 * area_per_cell)."
-        ),
-    )
-
     unmodeled_denominator_components: Optional[str] = Field(
         default=None,
         description=(
@@ -588,30 +520,13 @@ class Observable(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_reference_matches_quantity_kind(self) -> "Observable":
-        """A relative quantity must say what it is relative to, and only it may."""
-        needs = self.quantity_kind in REQUIRES_REFERENCE
-        if needs and self.reference is None:
-            raise ValueError(
-                f"quantity_kind='{self.quantity_kind.value}' is a relative quantity but no "
-                "reference is declared. Say what it is measured against: a timepoint in this "
-                "trajectory, or another scenario."
-            )
-        if not needs and self.reference is not None:
-            raise ValueError(
-                f"quantity_kind='{self.quantity_kind.value}' is an absolute quantity but a "
-                "reference is declared. Only relative quantities take one."
-            )
-        return self
-
-    @model_validator(mode="after")
     def validate_denominator_fields(self) -> "Observable":
         """Validate denominator audit fields for density/fraction observables."""
-        if self.experimental_denominator and not self.model_denominator_species:
+        if self.readout.experimental_denominator and not self.readout.denominator_species:
             raise ValueError(
-                f"Observable has experimental_denominator='{self.experimental_denominator}' "
-                f"but model_denominator_species is not set. Specify which model species "
-                f"compose the denominator to complete the denominator audit."
+                f"readout.experimental_denominator='{self.readout.experimental_denominator}' "
+                "but readout.denominator_species is empty. Name the model species that "
+                "compose the denominator."
             )
 
         # Density observables (units like cell/mm**2) must have denominator audit
@@ -620,10 +535,10 @@ class Observable(BaseModel):
             and "/" in self.units
             and self.support in ("positive", "non_negative")
         )
-        if is_density and not self.experimental_denominator:
+        if is_density and not self.readout.experimental_denominator:
             raise ValueError(
                 f"Observable with units='{self.units}' and support='{self.support}' "
-                f"is a density but experimental_denominator is not set. "
+                f"is a density but readout.experimental_denominator is not set. "
                 f"Document what the experiment divides by (e.g., 'mm^2 of tumor "
                 f"tissue including stroma') to enable denominator audit."
             )

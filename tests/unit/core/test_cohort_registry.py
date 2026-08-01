@@ -11,8 +11,10 @@ from maple.core.calibration.enums import AssayModality, QuantityKind
 from maple.core.calibration.observable import Observable
 from maple.core.calibration.registry_audit import (
     check_registries,
+    covariance_blocks,
     find_registry_problems,
     resolve_n,
+    warn_merged_blocks,
     warn_unused_cohorts,
 )
 
@@ -39,9 +41,18 @@ def _registry(**over):
 
 
 def _observable(**over):
-    base = dict(
+    readout = dict(
         quantity_kind=QuantityKind.FRACTION,
         assay_modality=AssayModality.MIHC,
+        numerator_species=["V_T.CD8"],
+        denominator_species=["V_T.nucleated"],
+    )
+    readout.update(over.pop("readout", {}))
+    for key in ("quantity_kind", "assay_modality", "reference"):
+        if key in over:
+            readout[key] = over.pop(key)
+    base = dict(
+        readout=readout,
         code=_CODE,
         units="dimensionless",
         species=["V_T.CD8", "V_T.nucleated"],
@@ -57,7 +68,16 @@ def _target(**over):
     base = dict(
         cohort_id="li2022_arm_a",
         epistemic_basis="literature",
-        observable={"code": _CODE, "readout_time": 0.0},
+        observable={
+            "code": _CODE,
+            "readout_time": 0.0,
+            "readout": {
+                "quantity_kind": "fraction",
+                "assay_modality": "mihc",
+                "numerator_species": ["V_T.CD8"],
+                "denominator_species": ["V_T.nucleated"],
+            },
+        },
         empirical_data={"inputs": [{"source_ref": "Li2022_CancerCell_PDAC_AntiPD1"}]},
         primary_data_source={"source_tag": "Li2022_CancerCell_PDAC_AntiPD1"},
     )
@@ -75,6 +95,12 @@ def _fraction(numerator, denominator, center=None, **over):
                 f"    return species_dict['{numerator}'] / ({den})\n"
             ),
             "readout_time": 0.0,
+            "readout": {
+                "quantity_kind": "fraction",
+                "assay_modality": "mihc",
+                "numerator_species": [numerator],
+                "denominator_species": list(denominator),
+            },
         },
         **over,
     )
@@ -173,18 +199,43 @@ class TestCohortRegistry:
 
 
 # --------------------------------------------------------------------------- #
-# Observable measurement attributes                                            #
+# Readout                                                                      #
 # --------------------------------------------------------------------------- #
-class TestObservableMeasurementAttributes:
-    """The attributes inference reads to build the measurement-discrepancy design.
+class TestReadoutComposition:
+    """The declared composition is the row's identity; the code is audited against it."""
 
-    They live on the observable rather than in a registry: two observables
-    agreeing on kind and modality already share a design row, so a shared
-    identifier would add nothing.
-    """
+    def test_numerator_is_required(self):
+        with pytest.raises(ValidationError):
+            _observable(readout={"numerator_species": []})
+
+    def test_denominator_defaults_to_empty(self):
+        obs = _observable(readout={"denominator_species": []})
+        assert obs.readout.denominator_species == []
+
+    def test_identical_numerator_and_denominator_rejected(self):
+        with pytest.raises(ValidationError, match="constant at 1"):
+            _observable(
+                readout={
+                    "numerator_species": ["V_T.CD8"],
+                    "denominator_species": ["V_T.CD8"],
+                }
+            )
+
+    def test_experimental_denominator_needs_model_species(self):
+        with pytest.raises(ValidationError, match="denominator_species"):
+            _observable(
+                readout={
+                    "denominator_species": [],
+                    "experimental_denominator": "all nucleated cells",
+                }
+            )
+
+
+class TestObservableMeasurementAttributes:
+    """The attributes inference reads to build the measurement-discrepancy design."""
 
     def test_minimal_observable_validates(self):
-        assert _observable().quantity_kind == QuantityKind.FRACTION
+        assert _observable().readout.quantity_kind == QuantityKind.FRACTION
 
     def test_quantity_kind_is_required(self):
         with pytest.raises(ValidationError):
@@ -211,14 +262,14 @@ class TestObservableMeasurementAttributes:
             quantity_kind=QuantityKind.FOLDCHANGE,
             reference={"kind": "timepoint", "timepoint": 0.0, "timepoint_unit": "day"},
         )
-        assert obs.reference.timepoint == 0.0
+        assert obs.readout.reference.timepoint == 0.0
 
     def test_foldchange_with_a_scenario_reference(self):
         obs = _observable(
             quantity_kind=QuantityKind.FOLDCHANGE,
             reference={"kind": "scenario", "scenario": "baseline_no_treatment"},
         )
-        assert obs.reference.scenario == "baseline_no_treatment"
+        assert obs.readout.reference.scenario == "baseline_no_treatment"
 
     def test_absolute_quantity_may_not_declare_a_reference(self):
         with pytest.raises(ValidationError, match="absolute quantity"):
@@ -241,8 +292,11 @@ class TestObservableMeasurementAttributes:
     def test_same_kind_and_modality_share_a_design_row(self):
         """No identifier needed: the attributes are the row."""
         a = _observable()
-        b = _observable(code=_CODE.replace("V_T.CD8", "V_T.Treg"), species=["V_T.Treg"])
-        assert (a.quantity_kind, a.assay_modality) == (b.quantity_kind, b.assay_modality)
+        b = _observable(readout={"numerator_species": ["V_T.Treg"]})
+        assert (a.readout.quantity_kind, a.readout.assay_modality) == (
+            b.readout.quantity_kind,
+            b.readout.assay_modality,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -300,12 +354,12 @@ class TestRegistryAudit:
         assert len(dup) == 1
         assert dup[0].target_ids == ("t1", "t2")
 
-    def test_duplicate_row_keys_on_the_computed_expression(self):
-        """Not on any declared id, so it cannot go stale against the code that runs."""
+    def test_duplicate_row_keys_on_the_declared_composition(self):
+        """Different numerators over one denominator are different rows."""
         t2 = _target()
-        t2["observable"] = dict(
-            t2["observable"],
-            code=_CODE.replace("V_T.CD8", "V_T.CD4"),
+        t2["observable"] = dict(t2["observable"])
+        t2["observable"]["readout"] = dict(
+            t2["observable"]["readout"], numerator_species=["V_T.CD4"]
         )
         problems = find_registry_problems({"t1": _target(), "t2": t2}, _registry())
         assert [p.kind for p in problems] == []
@@ -408,6 +462,151 @@ class TestSingularBlocks:
             t["empirical_data"]["median"] = [center]
             targets[tid] = t
         assert self._kinds(targets) == []
+
+
+def _arm(role, scenario, cohort_id, numerator=("V_T.CD8_TLA",), **over):
+    base = dict(
+        role=role,
+        scenario=scenario,
+        cohort_id=cohort_id,
+        required_species=list(numerator),
+        observable_code="def compute_test_statistic(t, s):\n    return s['V_T.CD8_TLA']\n",
+        readout={
+            "quantity_kind": "density",
+            "assay_modality": "mihc",
+            "numerator_species": list(numerator),
+        },
+    )
+    base.update(over)
+    return base
+
+
+def _contrast(**over):
+    """A two-arm cross-scenario target, as parsed YAML."""
+    base = dict(
+        epistemic_basis="literature",
+        observable={
+            "inputs": [
+                _arm("nivo", "gvax_nivo_neoadjuvant", "arm_b"),
+                _arm("urelumab", "gvax_nivo_urelumab_neoadjuvant", "arm_c"),
+            ]
+        },
+        empirical_data={"inputs": []},
+    )
+    base.update(over)
+    return base
+
+
+def _two_arms(**over):
+    b = _cohort(cohort_id="arm_b", scenarios=["gvax_nivo_neoadjuvant"], n_c=10)
+    c = _cohort(cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8, **over)
+    return CohortRegistry(cohorts=[b, c])
+
+
+class TestCrossScenarioArms:
+    """A contrast over disjoint arms is a derived row over several cohorts."""
+
+    def _kinds(self, targets, cohorts):
+        return [p.kind for p in find_registry_problems(targets, cohorts)]
+
+    def test_placed_arms_pass(self):
+        assert self._kinds({"inv": _contrast()}, _two_arms()) == []
+
+    def test_unknown_cohort_on_an_arm_reported(self):
+        t = _contrast()
+        t["observable"]["inputs"][1]["cohort_id"] = "ghost"
+        assert self._kinds({"inv": t}, _two_arms()) == ["unknown_cohort"]
+
+    def test_arm_scenario_must_belong_to_its_cohort(self):
+        t = _contrast()
+        t["observable"]["inputs"][1]["scenario"] = "baseline_no_treatment"
+        assert self._kinds({"inv": t}, _two_arms()) == ["scenario_not_in_cohort"]
+
+    def test_arm_n_evaluable_may_not_exceed_its_cohort(self):
+        t = _contrast()
+        t["observable"]["inputs"][1]["n_evaluable"] = 99
+        assert self._kinds({"inv": t}, _two_arms()) == ["n_evaluable_exceeds_cohort"]
+
+    def test_arms_sharing_patients_are_a_paired_contrast(self):
+        b = _cohort(
+            cohort_id="arm_b",
+            scenarios=["gvax_nivo_neoadjuvant"],
+            n_c=10,
+            shares_patients_with=["arm_c"],
+        )
+        c = _cohort(
+            cohort_id="arm_c",
+            scenarios=["gvax_nivo_urelumab_neoadjuvant"],
+            n_c=8,
+            shares_patients_with=["arm_b"],
+        )
+        problems = find_registry_problems({"inv": _contrast()}, CohortRegistry(cohorts=[b, c]))
+        assert [p.kind for p in problems] == ["paired_contrast_as_cross_scenario"]
+        assert "resampling each arm independently" in problems[0].detail
+
+    def test_arm_duplicating_a_standalone_target_reported(self):
+        """Conditioning on the constituent and the contrast counts one number twice."""
+        standalone = _target(cohort_id="arm_b")
+        standalone["observable"] = dict(
+            standalone["observable"],
+            readout={
+                "quantity_kind": "density",
+                "assay_modality": "mihc",
+                "numerator_species": ["V_T.CD8_TLA"],
+            },
+        )
+        kinds = self._kinds({"inv": _contrast(), "cd8_tla": standalone}, _two_arms())
+        assert "redundant_cross_scenario_arm" in kinds
+
+    def test_mechanistic_contrast_needs_no_cohorts(self):
+        t = _contrast(epistemic_basis="mechanistic")
+        for arm in t["observable"]["inputs"]:
+            arm.pop("cohort_id")
+        assert self._kinds({"inv": t}, _two_arms()) == []
+
+
+class TestCovarianceBlocks:
+    def test_independent_cohorts_are_their_own_blocks(self):
+        assert covariance_blocks({}, _two_arms()) == [frozenset({"arm_b"}), frozenset({"arm_c"})]
+
+    def test_a_contrast_merges_the_cohorts_it_draws_on(self):
+        assert covariance_blocks({"inv": _contrast()}, _two_arms()) == [
+            frozenset({"arm_b", "arm_c"})
+        ]
+
+    def test_shared_patients_merge_without_any_target(self):
+        a = _cohort(cohort_id="a", shares_patients_with=["b"])
+        b = _cohort(cohort_id="b", shares_patients_with=["a"])
+        c = _cohort(cohort_id="c")
+        blocks = covariance_blocks({}, CohortRegistry(cohorts=[a, b, c]))
+        assert blocks == [frozenset({"a", "b"}), frozenset({"c"})]
+
+    def test_both_edge_kinds_compose_into_one_component(self):
+        b = _cohort(cohort_id="arm_b", scenarios=["gvax_nivo_neoadjuvant"], n_c=10)
+        c = _cohort(
+            cohort_id="arm_c",
+            scenarios=["gvax_nivo_urelumab_neoadjuvant"],
+            n_c=8,
+            shares_patients_with=["arm_d"],
+        )
+        d = _cohort(cohort_id="arm_d", shares_patients_with=["arm_c"])
+        blocks = covariance_blocks({"inv": _contrast()}, CohortRegistry(cohorts=[b, c, d]))
+        assert blocks == [frozenset({"arm_b", "arm_c", "arm_d"})]
+
+    def test_a_scalar_target_merges_nothing(self):
+        cohorts = CohortRegistry(cohorts=[_cohort(), _cohort(cohort_id="other")])
+        blocks = covariance_blocks({"t1": _target()}, cohorts)
+        assert blocks == [frozenset({"li2022_arm_a"}), frozenset({"other"})]
+
+    def test_merged_blocks_warn(self):
+        with pytest.warns(UserWarning, match="one covariance block"):
+            merged = warn_merged_blocks({"inv": _contrast()}, _two_arms())
+        assert merged == [frozenset({"arm_b", "arm_c"})]
+
+    def test_independent_blocks_do_not_warn(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert warn_merged_blocks({}, _two_arms()) == []
 
 
 class TestResolveN:

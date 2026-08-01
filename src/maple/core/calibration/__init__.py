@@ -57,7 +57,6 @@ from maple.core.calibration.scenario import (
 # Observable models
 from maple.core.calibration.observable import (
     AggregationType,
-    ObservableReference,
     AuxiliaryParameter,
     ConstantSourceType,
     Observable,
@@ -68,6 +67,11 @@ from maple.core.calibration.observable import (
     SubmodelPattern,
     SubmodelStateVariable,
     SupportType,
+)
+
+from maple.core.calibration.readout import (
+    Readout,
+    ReadoutReference,
 )
 
 # Experimental context
@@ -101,7 +105,7 @@ from maple.core.calibration.shared_models import (
     StatKind,
 )
 
-# Cohort and readout registries
+# Cohort registry
 from maple.core.calibration.cohort import (
     Cohort,
     CohortRegistry,
@@ -111,8 +115,10 @@ from maple.core.calibration.cohort import (
 from maple.core.calibration.registry_audit import (
     RegistryProblem,
     check_registries,
+    covariance_blocks,
     find_registry_problems,
     resolve_n,
+    warn_merged_blocks,
     warn_unused_cohorts,
 )
 
@@ -221,15 +227,17 @@ __all__ = [
     "ReportedStatistic",
     "SpreadSource",
     "StatKind",
-    # Cohort and readout registries
+    # Cohort registry
     "Cohort",
     "CohortRegistry",
     "EligibilityInterval",
     "load_cohorts",
     "RegistryProblem",
     "check_registries",
+    "covariance_blocks",
     "find_registry_problems",
     "resolve_n",
+    "warn_merged_blocks",
     "warn_unused_cohorts",
     # Scenario
     "Intervention",
@@ -240,7 +248,8 @@ __all__ = [
     "ConstantSourceType",
     "PopulationAggregation",
     "Observable",
-    "ObservableReference",
+    "Readout",
+    "ReadoutReference",
     "ObservableConstant",
     "SupportType",
     "Submodel",
