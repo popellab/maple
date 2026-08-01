@@ -264,20 +264,19 @@ class CalibrationTargetEstimates(BaseModel):
             "        'ci95_lower': np.array(lowers) * means.units,\n"
             "        'ci95_upper': np.array(uppers) * means.units,\n"
             "    }\n\n"
-            "POPULATION SAMPLE (for hierarchical inference), gated by "
-            "observed_distribution.spread_source:\n"
-            "If spread_source is a population source (across_patient / "
-            "biological_experimental), you MUST ALSO return a 'samples' key\n"
-            "holding the across-patient population draw (a Pint Quantity array, one value per\n"
-            "patient-equivalent; 1-D for a scalar observable, or 2-D (n_patients, k) for a\n"
-            "joint/compositional/trajectory observable). Its empirical spread (IQR/SD) is the\n"
-            "population-variability (omega) signal, read directly with no parametric refit.\n"
-            "It MUST be the POPULATION sample (dispersion = genuine patient-to-patient\n"
-            "variability), not the sampling distribution of an estimator (e.g. a pooled-mean /\n"
-            "SEM draw). median_obs/ci95 are UNAFFECTED — they remain the center + measurement\n"
-            "uncertainty that non-hierarchical inference reads (and may legitimately differ\n"
-            "from the sample spread, e.g. a meta-analytic anchor CI vs a wider population).\n"
-            "For a center/technical spread_source, do NOT return 'samples'."
+            "POPULATION SAMPLE (optional):\n"
+            "A reported width is a ROW of the observation vector, carried by "
+            "observed_distribution.statistics, not an error bar — population inference "
+            "builds its own error bars by resampling the predicted cohort. So a "
+            "population spread_source does not oblige this code to return anything "
+            "extra.\n"
+            "You MAY return a 'samples' key holding the across-patient population draw "
+            "(a Pint Quantity array, one value per patient-equivalent; 1-D for a scalar "
+            "observable, or 2-D (n_patients, k) for a joint/compositional/trajectory "
+            "one). When present it MUST be the POPULATION sample (dispersion = genuine "
+            "patient-to-patient variability), not the sampling distribution of an "
+            "estimator (e.g. a pooled-mean / SEM draw), and its median must match the "
+            "reported median. For a center/technical spread_source, do NOT return it."
         )
     )
     observed_distribution: Optional[ObservedDistribution] = Field(
@@ -1612,21 +1611,14 @@ class CalibrationTarget(BaseModel):
                         f"reported CI95[{i}] upper ({ci_rep[1]:.4g}) within 10% tolerance"
                     )
 
-            # --- Population sample, gated by spread_source (hierarchical omega) ---
-            # A population spread_source MUST return a 'samples' key (the draw feeding
-            # omega); a center / technical one MUST NOT, since a population sample would
-            # contradict the declaration that the width is center uncertainty.
+            # --- Population sample, when the target supplies one ---
+            # A reported width is a ROW of the observation vector, not an error bar,
+            # so a population spread_source does not oblige the target to hand over a
+            # population array as well. A center / technical one still must not: a
+            # population sample would contradict the declaration.
             feeds = self.empirical_data.feeds_population_spread
             declared = self.empirical_data.resolved_spread_source.value
             has_samples = "samples" in result
-            if feeds and not has_samples:
-                raise ReturnStructureError(
-                    f"observed_distribution.spread_source='{declared}' is a population "
-                    "spread, so distribution_code must return a 'samples' key — the "
-                    "across-patient population draw used as the omega signal. Return one, "
-                    "or declare a center/technical spread_source if the width is not a "
-                    "real spread."
-                )
             if not feeds and has_samples:
                 raise ReturnStructureError(
                     f"observed_distribution.spread_source='{declared}' is not a population "
@@ -1680,11 +1672,6 @@ class CalibrationTarget(BaseModel):
                             f"median ({median_reported[0]:.4g}) within 10% — the declared "
                             f"'samples' array must be the population draw the median/CI summarize"
                         )
-                    self._check_center_channel_is_not_population(
-                        finite,
-                        ci95_reported[0],
-                        self.empirical_data.n_evaluable or self.empirical_data.sample_size,
-                    )
 
         except CalibrationTargetValidationError:
             # Re-raise all our custom validation errors
@@ -1726,76 +1713,6 @@ class CalibrationTarget(BaseModel):
             ) from e
 
         return self
-
-    @staticmethod
-    def _check_center_channel_is_not_population(
-        finite: "np.ndarray", ci95_pair: list[float], sample_size: Optional[int]
-    ) -> None:
-        """The two channels must not both carry the population spread.
-
-        Calibration-target analogue of
-        ``SubmodelTarget.validate_center_channel_sem_scale``. A target that declares
-        a population ``spread_source`` uses two channels: ``median`` +
-        ``ci95`` pin the CENTER (so the interval must shrink with n — a bootstrap or
-        SEM-scale interval on the median), and ``samples`` carries the POPULATION
-        spread that hierarchical inference reads as omega. Returning the population's
-        own 2.5th / 97.5th percentiles as ``ci95`` encodes the spread TWICE: omega
-        gets it from ``samples``, and the flat likelihood reads it as measurement
-        noise, so the target is weighted as though a single simulated patient were
-        allowed to land anywhere in the cohort.
-
-        This is the ``notes/calibration`` position — biological variability is the
-        theta term, not the noise — made enforceable.
-
-        The trap is ``population.summarize()``, whose ``ci95_lower`` /``ci95_upper``
-        ARE ``np.percentile(samples, 2.5 / 97.5)``. It is the obvious helper to call
-        and it silently produces a population-scale center channel. Pair
-        ``population.empirical_population()`` with ``population.bootstrap_median()``
-        instead, which bootstraps the median and so shrinks with n.
-
-        Detection compares the reported interval against the sample's own 95% range.
-        Agreement within 15% on both edges means the center channel is the population
-        range. ``sample_size=1`` (a single subject) is exempt: there the two
-        coincide legitimately.
-        """
-        if sample_size is not None and sample_size <= 1:
-            return
-        lo_rep, hi_rep = float(ci95_pair[0]), float(ci95_pair[1])
-        lo_pop = float(np.percentile(finite, 2.5))
-        hi_pop = float(np.percentile(finite, 97.5))
-        if lo_rep == 0 or hi_rep == 0:
-            return
-
-        def _agrees(a: float, b: float) -> bool:
-            scale = max(abs(a), abs(b))
-            return scale > 0 and abs(a - b) <= 0.15 * scale
-
-        if not (_agrees(lo_rep, lo_pop) and _agrees(hi_rep, hi_pop)):
-            return
-
-        raise ScaleMismatchError(
-            f"spread_source is a population spread but ci95 = [{lo_rep:.4g}, {hi_rep:.4g}] "
-            f"is the POPULATION range of 'samples' "
-            f"([{lo_pop:.4g}, {hi_pop:.4g}] at the 2.5th/97.5th percentiles), not the "
-            f"uncertainty on the center.\n\n"
-            "The spread is then encoded twice — once in 'samples' (the omega signal "
-            "hierarchical inference reads) and once in ci95 (which flat inference reads "
-            "as measurement noise). The target is weighted as if one simulated patient "
-            "could land anywhere in the cohort, so it constrains far less than its n "
-            f"(n={sample_size}) justifies.\n\n"
-            "FIX — keep 'samples' exactly as it is (that channel is correct) and give "
-            "the center its own interval that shrinks with n. Pass the study's real "
-            "sample size to summarize(); it subsample-bootstraps the median and leaves "
-            "'samples' untouched:\n\n"
-            "    return pop.summarize(samples, n=int(inputs['sample_size'].magnitude))\n\n"
-            "For a target built from per-patient values, pop.bootstrap_median(values, "
-            "rng=rng) gives the same center interval directly.\n\n"
-            "DO NOT clear this error by declaring a center/technical spread_source unless "
-            "the reported width was never real across-patient spread (a pooled-mean / "
-            "SEM interval, or an assumed CV). That switch DELETES the population "
-            "channel — the target stops contributing to omega. Here the spread looks "
-            "genuine, so the center channel is what needs fixing, not the spread one."
-        )
 
     @model_validator(mode="after")
     def validate_source_refs(self) -> "CalibrationTarget":

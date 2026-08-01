@@ -1745,13 +1745,16 @@ class TestCalibrationTargetPopulationSample:
         )
         assert target.empirical_data.feeds_population_spread is True
 
-    def test_across_patient_without_samples_rejected(
+    def test_across_patient_without_samples_accepted(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
     ):
-        # Declaring across_patient but returning no samples is a hard error.
+        # A reported width is a row of the observation vector, not an error bar, so
+        # declaring across_patient does not oblige the target to hand over an array.
         data = _spread_source(self._with_code(golden_calibration_target_data), "across_patient")
-        with pytest.raises(ValidationError, match="must return a 'samples' key"):
-            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+        target = CalibrationTarget.model_validate(
+            data, context={"model_structure": model_structure}
+        )
+        assert target.empirical_data.feeds_population_spread is True
 
     def test_center_only_with_samples_rejected(
         self, model_structure, golden_calibration_target_data, mock_crossref_success
@@ -2066,101 +2069,6 @@ class TestCalContextMismatchJustified:
         sr["perturbation_type"] = "pharmacological"
         sr["perturbation_relevance"] = "Gemcitabine-exposed specimens; value is an upper bound."
         CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
-
-
-class TestCalCenterChannelNotPopulation:
-    """Ported from SubmodelTarget.validate_center_channel_sem_scale.
-
-    An across_patient target has two channels: `samples` is the population
-    spread (omega), median/ci95 pin the centre and must shrink with n. Returning
-    the population percentiles as ci95 encodes the spread twice. Measured
-    against the live corpus: 26 targets do exactly this, all via
-    population.summarize() without an n.
-    """
-
-    # Population draw whose median matches the golden reported median (1.0).
-    _POP = (
-        "def derive_distribution(inputs, ureg):\n"
-        "    import numpy as np, math\n"
-        "    rng = np.random.default_rng(42)\n"
-        "    mean = inputs['cd8_ratio_mean']\n"
-        "    sigma_log = inputs['cd8_ratio_sigma_log']\n"
-        "    mu_log = math.log(mean.magnitude)\n"
-        "    samples = rng.lognormal(mu_log, sigma_log.magnitude, 10000) * mean.units\n"
-        "{body}"
-    )
-
-    _POPULATION_CI = _POP.format(
-        body=(
-            "    ci95 = np.percentile(samples, [2.5, 97.5])\n"
-            "    return {'median_obs': np.median(samples), 'ci95_lower': ci95[0],\n"
-            "            'ci95_upper': ci95[1], 'samples': samples}"
-        )
-    )
-
-    _SEM_CI = _POP.format(
-        body=(
-            "    from maple.core.calibration import population as pop\n"
-            "    return pop.summarize(samples, n=42, rng=rng)"
-        )
-    )
-
-    def _data(self, golden, code, **ed):
-        data = copy.deepcopy(golden)
-        data["empirical_data"]["distribution_code"] = code
-        data["empirical_data"].update(ed)
-        return _spread_source(data, "across_patient")
-
-    def test_population_range_as_ci95_rejected(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        data = self._data(golden_calibration_target_data, self._POPULATION_CI)
-        with pytest.raises(ValidationError, match="is the POPULATION range"):
-            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
-
-    def test_error_names_the_channel_that_needs_fixing(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        """Clearing the error with a center-only spread_source would delete
-        the omega channel. The message must steer to summarize(n=...) instead."""
-        data = self._data(golden_calibration_target_data, self._POPULATION_CI)
-        with pytest.raises(ValidationError) as exc:
-            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
-        msg = str(exc.value)
-        assert "summarize(samples, n=" in msg
-        assert "DELETES the population channel" in msg
-
-    def test_sem_scale_ci95_passes(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        # summarize(n=42) bootstraps the median, so ci95 is far narrower than the
-        # population range; median and samples are unchanged.
-        data = self._data(golden_calibration_target_data, self._SEM_CI, ci95=[[0.888, 1.124]])
-        target = CalibrationTarget.model_validate(
-            data, context={"model_structure": model_structure}
-        )
-        lo, hi = target.empirical_data.ci95[0]
-        assert 0.8 < lo < 1.0 and 1.0 < hi < 1.3
-
-    def test_single_subject_exempt(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        """With n=1 the centre's uncertainty IS the population spread; no double
-        encoding is possible, so the check must not fire."""
-        data = self._data(
-            golden_calibration_target_data,
-            self._POPULATION_CI,
-            n_evaluable=1,
-        )
-        CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
-
-    def test_center_only_targets_unaffected(
-        self, model_structure, golden_calibration_target_data, mock_crossref_success
-    ):
-        """A center_only target has no second channel, so a wide ci95 is fine."""
-        CalibrationTarget.model_validate(
-            golden_calibration_target_data, context={"model_structure": model_structure}
-        )
 
 
 class TestCalNoHardcodedValuesInDistributionCode:
