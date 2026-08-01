@@ -335,10 +335,15 @@ class ObservedDistribution(BaseModel):
         return self
 
     def _has_width(self) -> bool:
-        """Whether any entry carries a width, explicit or as a quantile pair."""
+        """Whether any entry carries a width, explicit or as a pair that spans one."""
         if any(s.stat in WIDTH_STATS for s in self.statistics):
             return True
-        return len({s.p for s in self.statistics if s.stat == StatKind.QUANTILE}) >= 2
+        if len({s.p for s in self.statistics if s.stat == StatKind.QUANTILE}) >= 2:
+            return True
+        # A min/max pair is the sample range stated as its two endpoints, which is
+        # what a source prints when it gives an observed span rather than a width.
+        kinds = {s.stat for s in self.statistics}
+        return {StatKind.MIN, StatKind.MAX} <= kinds
 
     # ---- Accessors --------------------------------------------------------
 
