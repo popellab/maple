@@ -3053,8 +3053,7 @@ class SubmodelTarget(BaseModel):
 
     @model_validator(mode="after")
     def validate_bounded_observable_uses_logit_normal(self) -> "SubmodelTarget":
-        """A bounded observable's population spread (``moments`` form) must use
-        ``shape: logit_normal``, not normal/lognormal.
+        """A bounded observable that declares a ``shape`` must use ``logit_normal``.
 
         For a fraction / proportion / probability / percent observable, ``normal``
         puts mass outside the bound and ``lognormal`` is unbounded above (a near-1

@@ -280,8 +280,8 @@ class CalibrationTargetEstimates(BaseModel):
     observed_distribution: Optional[ObservedDistribution] = Field(
         default=None,
         description=(
-            "The reported distribution: what the source actually printed, as a center + "
-            "scale + scale_type, or as explicit quantile anchors. The data layer shared with "
+            "The reported distribution: every statistic the source actually printed, as a "
+            "flat list. The data layer shared with "
             "SubmodelTarget, and the sole declaration of whether the reported width is "
             "genuine population spread (`spread_source`). Required for "
             "epistemic_basis='literature'; null for 'mechanistic', which asserts a constraint "
@@ -1284,10 +1284,9 @@ class CalibrationTarget(BaseModel):
             )
         if self.empirical_data.observed_distribution is None:
             missing.append(
-                "empirical_data.observed_distribution: declare what the source actually "
-                "printed (center + scale + scale_type, or explicit quantiles). Without it the "
-                "reported shape is whatever distribution_code fitted, and an SD cannot be told "
-                "from an SE."
+                "empirical_data.observed_distribution: list the statistics the source "
+                "actually printed. Without them the reported shape is whatever "
+                "distribution_code fitted, and an SD cannot be told from an SE."
             )
         if missing:
             raise ValueError(

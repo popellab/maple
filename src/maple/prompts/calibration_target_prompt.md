@@ -25,6 +25,7 @@ You produce a single `CalibrationTarget` YAML with these top-level fields. **Req
 | `study_interpretation` | str | One-paragraph narrative: what is being measured, how the experimental context maps to the model, key methodological points |
 | `key_assumptions` | List[str] (≥1) | Biological + statistical assumptions made in extraction (e.g., cell-type equivalence, normal-distribution assumption) |
 | `key_study_limitations` | List[str] | Issues that bias estimates or limit generalizability (e.g., small cohort, figure-extracted values) |
+| `cohort_id` | str | The registered cohort in `calibration_targets/cohorts.yaml` whose patients this measures. Required when `epistemic_basis: literature`. See "Cohort" below |
 | `observable` | dict | How to compute the observable from QSP species. See "Observable" section below |
 | `experimental_context` | dict | The source paper's context: `{species, system, indication, treatment, stage?, mouse_subspecifier?, cell_lines?, culture_conditions?, tissue_source?, assay_type?}` — describes WHERE the data came from, not the model target |
 | `scenario` | dict (optional) | Interventions + measurement timing. Omit if untreated baseline and no perturbations |
@@ -179,43 +180,49 @@ observable:
     rationale: "ORR per RECIST 1.1 (≥30% decrease in longest diameter)"
 ```
 
-### Population Spread (across-patient variability)
+### Cohort
 
-For hierarchical / virtual-patient inference, a target declares whether its reported width is genuine patient-to-patient spread (usable as the population-spread / omega signal) or just uncertainty on the mean. Default is `center_only` (excluded from omega); opt in explicitly. Two interoperable ways to declare it:
+`cohort_id` names one entry of `calibration_targets/cohorts.yaml`: one study's patients, measured once. It is required for every `epistemic_basis: literature` target and must be omitted for `mechanistic` ones, which assert a constraint rather than measuring anyone.
 
-1. **`population_spread` + a `samples` array.** Set `empirical_data.population_spread: across_patient` and have `distribution_code` ALSO return a `samples` key — the across-patient population draw (one value per patient-equivalent); its empirical spread is the omega signal. Keep the default `center_only` (and do NOT return `samples`) when the width is a pooled-mean / SEM CI that shrinks with n. `median_obs` / `ci95` are unaffected either way.
+Population inference forms one covariance block per cohort, so the cohort decides which reported statistics are treated as correlated. Consequences when authoring:
 
-2. **`observed_distribution`** (general representation, shared with submodel targets). Author it in whichever form the paper reports — **prefer `moments`** (mean +/- SD, median +/- IQR, CV, CI); the framework expands it to quartiles, so do not hand-convert:
+- **One target, one source.** A target whose `inputs` cite several papers is a meta-analysis, not a cohort: its patients were never measured together, so there is no resampling distribution over them. Split it into one target per source. A validator rejects the pooled form.
+- **Do not invent a cohort per readout.** Ten measurements on the same 9 patients are ten targets naming one cohort.
+- **Per-readout evaluability goes on the target.** When fewer patients contributed to this statistic than the cohort holds (paired fold changes evaluable in 6 of 9), set `empirical_data.n_evaluable`. The cohort's `n_c` stays the patient count.
+- If the cohort you need is not in the registry, add it there rather than inventing the id.
+
+### Reported Distribution
+
+`empirical_data.observed_distribution` records what the source actually printed. It is required for `epistemic_basis: literature`, and it is the sole declaration of whether the reported width is genuine patient-to-patient variability.
+
+**Record the statistics on the page. Do not convert between them.** A median with quartiles is three entries; a mean with an SD is two. Converting an SE to an SD, or a mean+SD to quartiles, destroys the distinction the consumer needs.
 
 ```yaml
 empirical_data:
-  population_spread: across_patient
   observed_distribution:
-    moments:
-      center: 17
-      center_type: median
-      scale: 21            # full IQR here
-      scale_type: iqr      # sd | sem | cv | iqr | ci95_halfwidth
-      shape: lognormal     # lognormal | normal | logit_normal (for [0,1] fractions)
-    spread_source: across_patient       # or center_only (SEM/CI on the mean; default)
-    n_biological: 40
-    experimental_unit_type: biological
+    statistics:
+      - {stat: quantile, p: 0.5,  value: 17}
+      - {stat: quantile, p: 0.25, value: 9}
+      - {stat: quantile, p: 0.75, value: 30}
+    spread_source: across_patient
 ```
-
-Use the `quantiles` form when the paper gives quartiles/percentiles/samples directly:
 
 ```yaml
   observed_distribution:
-    quantiles:
-      - {p: 0.25, value: 9}
-      - {p: 0.5,  value: 17}
-      - {p: 0.75, value: 30}
+    statistics:
+      - {stat: mean, value: 227.7}
+      - {stat: se,   value: 15.0}     # an SE, because that is what the paper printed
     spread_source: across_patient
-    n_biological: 40
-    experimental_unit_type: biological
+    shape: lognormal
 ```
 
-Provide EXACTLY ONE of `moments` / `quantiles`. A population spread (`spread_source: across_patient`) REQUIRES `n_biological` + `experimental_unit_type: biological`. When both `observed_distribution` and `population_spread` are present they must agree that the width is (or is not) genuine spread — a validator enforces this. For a `[0,1]`-bounded observable (a fraction / proportion / response rate), use `shape: logit_normal` (with `center_type: median`) so expanded quartiles stay in-bounds — **a validator rejects a `percent`/`fraction`/`proportion`/`probability` observable whose `moments` shape is `normal` or `lognormal`.** If the source reports the unit count as a LOWER BOUND ("n≥40", "at least 40 patients"), set `n_biological_is_floor: true` (with the floor value for `n_biological`) so precision-weighting consumers don't over-weight the panel. If a target ever carries several observables measured on the SAME patients/units and you want them treated as one shared spread, tag them with a common `unit_group` string (rare for full-model calibration targets, which are usually one observable each — omit it otherwise).
+`stat` is one of: `quantile` (needs `p`; the median is `p: 0.5`) · `mean` · `geometric_mean` · `sd` · `cv` · `iqr` · `range` · `se` · `ci95_lo` · `ci95_hi` · `min` · `max`.
+
+`spread_source` says what the width measures: `across_patient` (inter-individual spread in the target population) · `biological_experimental` · `translation` · `technical` · `assumed` · `center_only` (an SE or CI on the mean, which shrinks with n and is not spread). A `spread_source` that claims population spread requires at least one width statistic.
+
+`shape` is needed only when the source printed no quartiles and a consumer has to expand a center and a scale into them. Recording it here makes the assumption explicit rather than silent. Use `logit_normal` for a `[0,1]`-bounded observable so expanded quartiles cannot escape the bound; `lognormal` on a near-1 fraction pushes the upper quartile past 1.
+
+**`n_biological`, `n_technical`, `experimental_unit_type`, `unit_group` are submodel-target fields and must not appear on a calibration target.** The cohort owns the unit accounting; a validator rejects them here.
 
 ### Source Relevance Assessment
 
@@ -296,10 +303,12 @@ When a paper reports `mean ± value`, you must determine whether the dispersion 
 
 **Encoding:**
 
-| Identified as | Input name prefix | `dispersion_type` | In `distribution_code` |
+| Identified as | Input name prefix | `dispersion_type` | `observed_distribution.statistics` |
 |---|---|---|---|
-| SD | `sd_*` | `sd` | use directly |
-| SEM | `sem_*` | `se` | convert: `sd = sem * np.sqrt(n)` |
+| SD | `sd_*` | `sd` | `{stat: sd, value: ...}` |
+| SEM | `sem_*` | `se` | `{stat: se, value: ...}` |
+
+Record whichever was printed. `distribution_code` may still scale an SEM to an SD to fit the center's CI, but `observed_distribution` must keep the raw statistic: which one the paper printed is data, what a consumer does with it is that consumer's decision, and they differ by √n (a factor of 3.2 at n=10).
 
 Always populate `dispersion_type_rationale` with your evidence (label, √n test arithmetic, or CV check).
 
@@ -338,6 +347,8 @@ When the calibration target requests a fold-change (pre-to-post treatment change
 2. **NEVER compute fold change as a cross-arm ratio** (Arm A value / Arm B value). Cross-arm comparisons confound the treatment effect with baseline differences and inter-patient variability. They are a completely different quantity from within-patient fold changes.
 
 3. **If no paired pre/post data exists** for the requested comparison, clearly state this limitation rather than substituting a cross-arm ratio.
+
+4. **Declare the reference.** Set `observable.quantity_kind: foldchange` and `observable.reference` to whatever the change is measured against — a timepoint of the same scenario, or another scenario. Both are required for a fold change and the reference must not be left implicit in the code.
 
 ### Scaling Factor Red Flag
 
@@ -469,6 +480,15 @@ The top-level `observable:` block describes a single experimental observable. (T
    - **`reduce_observable`** (executable Python) — use ONLY when the measurement is NOT a value at a fixed time: a peak/Cmax, an AUC, a final value, a time-to-threshold. Signature `reduce_observable(time, series) -> float` (numpy arrays in, one float out; `np.*` only). Example (peak): `def reduce_observable(time, series):\n    import numpy as np\n    return float(np.max(series))`.
    - Dose-response / multi-timepoint data is NOT a single vector target — author one scalar target per readout (or per dose arm).
 
+9. **observable.quantity_kind** and **observable.assay_modality** (both required) — what kind of quantity this is and how it was measured. Population inference gives every observable a measurement correction, and two observables agreeing on these two attributes share one correction, so they must describe the measurement rather than the cell type.
+   - `quantity_kind`: `density` (cells or mass per area/volume of tissue) · `fraction` (a part over a whole containing it, in (0,1)) · `ratio` (one quantity over another not containing it) · `foldchange` (a quantity over its own value at a reference) · `concentration` · `intensity` · `time`
+   - `assay_modality`: `mihc` · `ihc` · `mif` · `flow_cytometry` · `scrnaseq` · `multiplex_immunoassay` · `elisa` · `multiphoton_microscopy` · `digital_histopathology` · `imaging` · `clinical`
+   - A percentage is a `fraction`, not its own kind — the compartment it is a percentage OF is already named by `experimental_denominator` / `model_denominator_species`.
+
+10. **observable.reference** (required for `quantity_kind: foldchange`, forbidden otherwise) — what the fold change is measured against. Do not rely on a `species[0]` or `series[0]` convention inside the code.
+   - Against an earlier time in the same scenario: `{kind: timepoint, timepoint: 0.0, timepoint_unit: day}`
+   - Against another scenario: `{kind: scenario, scenario: baseline_no_treatment}`
+
 **Example observable (absolute density with stroma correction):**
 ```yaml
 observable:
@@ -483,6 +503,8 @@ observable:
         return (cd8 / tumor_area).to('cell/mm**2')
   units: cell/mm**2
   species: ['V_T.CD8', 'V_T.C1']
+  quantity_kind: density
+  assay_modality: ihc
   constants:
     - name: area_per_cancer_cell
       value: 2.27e-4
@@ -512,6 +534,8 @@ observable:
         return (treg / total_t).to('dimensionless')
   units: dimensionless
   species: ['V_T.Treg', 'V_T.CD8', 'V_T.Th', 'V_T.CD8_exh', 'V_T.Th_exh']
+  quantity_kind: fraction
+  assay_modality: mihc
   constants: []
   support: unit_interval
   experimental_denominator: "CD3+ T cells (all T cell subsets)"
@@ -534,6 +558,8 @@ observable:
         return predicted_serum.to('nanomolar')
   units: nanomolar
   species: ['V_T.TGFb']
+  quantity_kind: concentration
+  assay_modality: multiplex_immunoassay
   constants:
     - name: active_fraction
       value: 0.10
@@ -685,6 +711,8 @@ When `observable.code` includes conversion factors (cells → volume, IHC score 
 ### Sample Size
 
 `empirical_data.sample_size` (int) and `empirical_data.sample_size_rationale` (str) are required. Look for `n =`, `N =`, figure legends, patient counts, replicate counts. If unreported, back-calculate from SD/SEM (if both given), or use a conservative type-based estimate and note the uncertainty in `sample_size_rationale`.
+
+`empirical_data.n_evaluable` (int, optional) is the patient count behind THIS statistic when it is smaller than the cohort's `n_c` — paired fold changes evaluable in 6 of 9 arm patients, a stain scorable on 7 of 9 slides. Set it whenever the source states a per-readout denominator; leave it null when the whole cohort contributed. It may never exceed the cohort's `n_c`.
 
 **Reference example with all `empirical_data` fields:**
 ```yaml
