@@ -399,11 +399,16 @@ def covariance_blocks(
     """Cohorts that must share one covariance block, as connected components.
 
     Blocks are assumed independent, so two cohorts must sit in one whenever a row
-    depends on both. Two ways that happens, and they merge for the same reason:
-    the cohorts share patients, or a target draws on both. A block is drawn by
-    resampling each of its cohorts independently and evaluating every row on the
-    result, which puts the zeros between disjoint arms and the covariance around a
-    derived row where each belongs.
+    depends on both. Two ways that happens, and they need opposite draws.
+
+    A target drawing on both joins disjoint sets of people: resample each cohort
+    independently, which puts the zeros between arms and the covariance around the
+    derived row. Cohorts that share patients are resampled once from the block's
+    patient set, each cohort's rows evaluated on its own members; drawing those
+    independently would restore the independence the block exists to deny.
+
+    The return keeps the partition and not which relation joined a pair, so a
+    caller building V has to recover that from ``shares_patients_with``.
     """
     parent = {c.cohort_id: c.cohort_id for c in cohorts.cohorts}
 
