@@ -6,7 +6,13 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from maple.core.calibration.cohort import Cohort, CohortRegistry, load_cohorts
+from maple.core.calibration.cohort import (
+    Cohort,
+    CohortRegistry,
+    PatientBlock,
+    Stratum,
+    load_cohorts,
+)
 from maple.core.calibration.enums import AssayModality, QuantityKind
 from maple.core.calibration.observable import Observable
 from maple.core.calibration.registry_audit import (
@@ -38,6 +44,29 @@ def _cohort(**over):
 
 def _registry(**over):
     return CohortRegistry(cohorts=[_cohort(**over)])
+
+
+def _block(**over):
+    """Two cohorts of 9 and 10 sharing 6 patients, which is Li 2022 in miniature."""
+    base = dict(
+        block_id="li2022",
+        description="One trial, two reported occasions.",
+        cohorts=["a", "b"],
+        strata=[
+            Stratum(cohorts=["a", "b"], n=6),
+            Stratum(cohorts=["a"], n=3),
+            Stratum(cohorts=["b"], n=4),
+        ],
+    )
+    base.update(over)
+    return PatientBlock(**base)
+
+
+def _ab_registry(**over):
+    return CohortRegistry(
+        cohorts=[_cohort(cohort_id="a", n_c=9), _cohort(cohort_id="b", n_c=10)],
+        blocks=[_block(**over)],
+    )
 
 
 def _observable(**over):
@@ -127,9 +156,10 @@ class TestCohort:
         with pytest.raises(ValueError, match="repeats a scenario"):
             _cohort(scenarios=["a", "a"])
 
-    def test_self_overlap_rejected(self):
-        with pytest.raises(ValueError, match="lists itself"):
-            _cohort(shares_patients_with=["li2022_arm_a"])
+    def test_overlap_is_not_a_cohort_field(self):
+        """Sharing is a property of a set of cohorts, so it lives on the block."""
+        with pytest.raises(ValidationError):
+            _cohort(shares_patients_with=["arm_b"])
 
     def test_zero_n_rejected(self):
         with pytest.raises(ValueError):
@@ -168,20 +198,15 @@ class TestCohortRegistry:
         with pytest.raises(ValueError, match="Duplicate cohort_id"):
             CohortRegistry(cohorts=[_cohort(), _cohort()])
 
-    def test_overlap_must_resolve(self):
+    def test_block_members_must_resolve(self):
         with pytest.raises(ValueError, match="not in the registry"):
-            CohortRegistry(cohorts=[_cohort(shares_patients_with=["ghost"])])
+            CohortRegistry(
+                cohorts=[_cohort(cohort_id="a", n_c=9)],
+                blocks=[_block(cohorts=["a", "ghost"], strata=None)],
+            )
 
-    def test_overlap_must_be_symmetric(self):
-        a = _cohort(cohort_id="a", shares_patients_with=["b"])
-        b = _cohort(cohort_id="b")
-        with pytest.raises(ValueError, match="does not declare it back"):
-            CohortRegistry(cohorts=[a, b])
-
-    def test_symmetric_overlap_accepted(self):
-        a = _cohort(cohort_id="a", shares_patients_with=["b"])
-        b = _cohort(cohort_id="b", shares_patients_with=["a"])
-        assert len(CohortRegistry(cohorts=[a, b]).cohorts) == 2
+    def test_counted_block_accepted(self):
+        assert len(_ab_registry().blocks) == 1
 
     def test_load_from_yaml(self, tmp_path):
         p = tmp_path / "cohorts.yaml"
@@ -528,21 +553,52 @@ class TestCrossScenarioArms:
         assert self._kinds({"inv": t}, _two_arms()) == ["n_evaluable_exceeds_cohort"]
 
     def test_arms_sharing_patients_are_a_paired_contrast(self):
-        b = _cohort(
-            cohort_id="arm_b",
-            scenarios=["gvax_nivo_neoadjuvant"],
-            n_c=10,
-            shares_patients_with=["arm_c"],
-        )
+        b = _cohort(cohort_id="arm_b", scenarios=["gvax_nivo_neoadjuvant"], n_c=10)
         c = _cohort(
-            cohort_id="arm_c",
-            scenarios=["gvax_nivo_urelumab_neoadjuvant"],
-            n_c=8,
-            shares_patients_with=["arm_b"],
+            cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8
         )
-        problems = find_registry_problems({"inv": _contrast()}, CohortRegistry(cohorts=[b, c]))
+        reg = CohortRegistry(
+            cohorts=[b, c],
+            blocks=[
+                PatientBlock(
+                    block_id="trial",
+                    description="One trial, two arms with crossover.",
+                    cohorts=["arm_b", "arm_c"],
+                    strata=[
+                        Stratum(cohorts=["arm_b", "arm_c"], n=4),
+                        Stratum(cohorts=["arm_b"], n=6),
+                        Stratum(cohorts=["arm_c"], n=4),
+                    ],
+                )
+            ],
+        )
+        problems = find_registry_problems({"inv": _contrast()}, reg)
         assert [p.kind for p in problems] == ["paired_contrast_as_cross_scenario"]
         assert "resampling each arm independently" in problems[0].detail
+
+    def test_disjoint_arms_of_one_block_are_not_a_paired_contrast(self):
+        """Two arms of one trial share a block and no patients; zero overlap is a fact."""
+        b = _cohort(cohort_id="arm_b", scenarios=["gvax_nivo_neoadjuvant"], n_c=10)
+        c = _cohort(
+            cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8
+        )
+        d = _cohort(cohort_id="baseline", n_c=18)
+        reg = CohortRegistry(
+            cohorts=[b, c, d],
+            blocks=[
+                PatientBlock(
+                    block_id="trial",
+                    description="Both arms biopsied at baseline, neither crosses over.",
+                    cohorts=["arm_b", "arm_c", "baseline"],
+                    strata=[
+                        Stratum(cohorts=["arm_b", "baseline"], n=10),
+                        Stratum(cohorts=["arm_c", "baseline"], n=8),
+                    ],
+                )
+            ],
+        )
+        kinds = [p.kind for p in find_registry_problems({"inv": _contrast()}, reg)]
+        assert "paired_contrast_as_cross_scenario" not in kinds
 
     def test_arm_duplicating_a_standalone_target_reported(self):
         """Conditioning on the constituent and the contrast counts one number twice."""
@@ -575,22 +631,35 @@ class TestCovarianceBlocks:
         ]
 
     def test_shared_patients_merge_without_any_target(self):
-        a = _cohort(cohort_id="a", shares_patients_with=["b"])
-        b = _cohort(cohort_id="b", shares_patients_with=["a"])
-        c = _cohort(cohort_id="c")
-        blocks = covariance_blocks({}, CohortRegistry(cohorts=[a, b, c]))
-        assert blocks == [frozenset({"a", "b"}), frozenset({"c"})]
+        reg = CohortRegistry(
+            cohorts=[
+                _cohort(cohort_id="a", n_c=9),
+                _cohort(cohort_id="b", n_c=10),
+                _cohort(cohort_id="c"),
+            ],
+            blocks=[_block()],
+        )
+        assert covariance_blocks({}, reg) == [frozenset({"a", "b"}), frozenset({"c"})]
+
+    def test_an_uncounted_block_merges_the_same_way(self):
+        """It cannot say how much they overlap, only that they do."""
+        reg = CohortRegistry(
+            cohorts=[_cohort(cohort_id="a", n_c=9), _cohort(cohort_id="b", n_c=10)],
+            blocks=[_block(strata=None)],
+        )
+        assert covariance_blocks({}, reg) == [frozenset({"a", "b"})]
 
     def test_both_edge_kinds_compose_into_one_component(self):
         b = _cohort(cohort_id="arm_b", scenarios=["gvax_nivo_neoadjuvant"], n_c=10)
         c = _cohort(
-            cohort_id="arm_c",
-            scenarios=["gvax_nivo_urelumab_neoadjuvant"],
-            n_c=8,
-            shares_patients_with=["arm_d"],
+            cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8
         )
-        d = _cohort(cohort_id="arm_d", shares_patients_with=["arm_c"])
-        blocks = covariance_blocks({"inv": _contrast()}, CohortRegistry(cohorts=[b, c, d]))
+        d = _cohort(cohort_id="arm_d", n_c=9)
+        reg = CohortRegistry(
+            cohorts=[b, c, d],
+            blocks=[_block(block_id="shared", cohorts=["arm_c", "arm_d"], strata=None)],
+        )
+        blocks = covariance_blocks({"inv": _contrast()}, reg)
         assert blocks == [frozenset({"arm_b", "arm_c", "arm_d"})]
 
     def test_a_scalar_target_merges_nothing(self):
@@ -620,3 +689,110 @@ class TestResolveN:
 
     def test_unknown_cohort_gives_none(self):
         assert resolve_n(_target(cohort_id="ghost"), _registry()) is None
+
+
+class TestPatientBlock:
+    def test_strata_count_the_overlap(self):
+        b = _block()
+        assert b.overlap("a", "b") == 6
+        assert b.size_of("a") == 9
+        assert b.size_of("b") == 10
+        assert b.n_patients == 13
+
+    def test_zero_overlap_is_a_fact_not_a_gap(self):
+        """Cohorts in one block that share nobody, as two arms of one trial do."""
+        b = _block(
+            cohorts=["a", "b", "c"],
+            strata=[
+                Stratum(cohorts=["a", "c"], n=9),
+                Stratum(cohorts=["b", "c"], n=10),
+            ],
+        )
+        assert b.overlap("a", "b") == 0
+        assert b.n_patients == 19
+
+    def test_a_block_of_one_cohort_is_rejected(self):
+        with pytest.raises(ValidationError):
+            _block(cohorts=["a"], strata=[Stratum(cohorts=["a"], n=9)])
+
+    def test_repeated_stratum_rejected(self):
+        with pytest.raises(ValueError, match="repeats a stratum"):
+            _block(
+                strata=[
+                    Stratum(cohorts=["a", "b"], n=6),
+                    Stratum(cohorts=["b", "a"], n=1),
+                ]
+            )
+
+    def test_stratum_naming_a_non_member_rejected(self):
+        with pytest.raises(ValueError, match="not in its cohorts"):
+            _block(strata=[Stratum(cohorts=["a", "b"], n=6), Stratum(cohorts=["z"], n=1)])
+
+    def test_member_with_no_patients_rejected(self):
+        with pytest.raises(ValueError, match="no stratum places them"):
+            _block(cohorts=["a", "b", "c"])
+
+    def test_empty_strata_list_rejected(self):
+        """Omitting the key declares an uncounted overlap; an empty list says nothing."""
+        with pytest.raises(ValueError, match="empty strata list"):
+            _block(strata=[])
+
+    def test_zero_count_stratum_rejected(self):
+        with pytest.raises(ValidationError):
+            Stratum(cohorts=["a"], n=0)
+
+
+class TestBlocksInTheRegistry:
+    def test_strata_must_add_up_to_each_n_c(self):
+        with pytest.raises(ValueError, match="declares n_c=10"):
+            CohortRegistry(
+                cohorts=[_cohort(cohort_id="a", n_c=9), _cohort(cohort_id="b", n_c=10)],
+                blocks=[_block(strata=[Stratum(cohorts=["a", "b"], n=6), Stratum(cohorts=["a"], n=3)])],
+            )
+
+    def test_a_cohort_is_counted_by_at_most_one_block(self):
+        with pytest.raises(ValueError, match="Its patients can be divided up once"):
+            CohortRegistry(
+                cohorts=[_cohort(cohort_id="a", n_c=9), _cohort(cohort_id="b", n_c=10)],
+                blocks=[_block(), _block(block_id="other")],
+            )
+
+    def test_an_uncounted_block_may_overlay_a_counted_one(self):
+        """Li's internal split is reported; its overlap with a second paper is not."""
+        reg = CohortRegistry(
+            cohorts=[
+                _cohort(cohort_id="a", n_c=9),
+                _cohort(cohort_id="b", n_c=10),
+                _cohort(cohort_id="other_paper", n_c=7),
+            ],
+            blocks=[
+                _block(),
+                _block(
+                    block_id="one_trial",
+                    cohorts=["a", "b", "other_paper"],
+                    strata=None,
+                ),
+            ],
+        )
+        assert reg.counted_block_for("a").block_id == "li2022"
+        assert [b.block_id for b in reg.uncounted_blocks] == ["one_trial"]
+        assert [b.block_id for b in reg.uncounted_blocks_for("other_paper")] == ["one_trial"]
+        assert reg.counted_block_for("other_paper") is None
+
+    def test_an_uncounted_block_reports_no_counts(self):
+        b = _block(strata=None)
+        assert not b.is_quantified
+        assert b.n_patients is None
+        assert b.overlap("a", "b") is None
+        assert b.size_of("a") is None
+
+    def test_duplicate_block_ids_rejected(self):
+        with pytest.raises(ValueError, match="Duplicate block_id"):
+            CohortRegistry(
+                cohorts=[_cohort(cohort_id="a", n_c=9), _cohort(cohort_id="b", n_c=10)],
+                blocks=[_block(strata=None), _block(strata=None)],
+            )
+
+    def test_cohorts_without_a_block_are_untouched(self):
+        assert _registry().counted_block_for("li2022_arm_a") is None
+        assert _registry().uncounted_blocks == []

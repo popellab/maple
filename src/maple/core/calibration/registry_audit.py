@@ -180,9 +180,10 @@ def _cross_scenario_arms(
         overlapping = sorted(
             {
                 tuple(sorted((a, b)))
+                for block in cohorts.blocks
                 for a in named
-                for b in by_cohort[a].shares_patients_with
-                if b in named
+                for b in named
+                if a < b and {a, b} <= block.members and block.overlap(a, b) != 0
             }
         )
         if overlapping:
@@ -407,8 +408,10 @@ def covariance_blocks(
     patient set, each cohort's rows evaluated on its own members; drawing those
     independently would restore the independence the block exists to deny.
 
-    The return keeps the partition and not which relation joined a pair, so a
-    caller building V has to recover that from ``shares_patients_with``.
+    The return keeps the partition and not which relation joined a pair, nor
+    whether the sharing was counted. A caller building V reads the registry's
+    blocks for both: a counted block supplies the strata a joint draw needs, an
+    uncounted one only says that drawing its cohorts apart is wrong.
     """
     parent = {c.cohort_id: c.cohort_id for c in cohorts.cohorts}
 
@@ -423,10 +426,12 @@ def covariance_blocks(
         if ra != rb:
             parent[max(ra, rb)] = min(ra, rb)
 
-    for c in cohorts.cohorts:
-        for other in c.shares_patients_with:
-            if other in parent:
-                union(c.cohort_id, other)
+    # Counted and uncounted alike: both say the cohorts are not independent, and
+    # they differ in whether a joint resample is defined, not in the partition.
+    for block in cohorts.blocks:
+        members = [c for c in block.cohorts if c in parent]
+        for other in members[1:]:
+            union(members[0], other)
 
     for data in targets.values():
         named = [c for c in _cohort_ids(data) if c in parent]
