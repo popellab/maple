@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from maple.core.calibration.shared_models import (
+    QuantileConvention,
     DistributionShape,
     ExperimentalUnitType,
     ObservedDistribution,
@@ -726,3 +727,30 @@ def test_a_reported_sd_is_preferred_over_an_se():
 def test_negative_se_is_rejected():
     with pytest.raises(ValidationError, match="cannot be negative"):
         ReportedStatistic(stat=StatKind.SE, value=-1.0)
+
+
+def test_quantile_convention_defaults_to_unrecorded():
+    """Papers do not state it, so the schema must not invent one."""
+    d = _median_iqr(1.0, 2.0, 3.0, spread_source=SpreadSource.ACROSS_PATIENT)
+    assert d.quantile_convention is None
+
+
+def test_quantile_convention_records_the_estimator():
+    d = _median_iqr(1.0, 2.0, 3.0, spread_source=SpreadSource.ACROSS_PATIENT,
+                    quantile_convention=QuantileConvention.TYPE6)
+    assert d.quantile_convention is QuantileConvention.TYPE6
+
+
+def test_quantile_convention_needs_a_quantile():
+    with pytest.raises(ValidationError, match="no quantile was reported"):
+        ObservedDistribution(
+            statistics=[_s(StatKind.MEAN, 10.0), _s(StatKind.SD, 4.0)],
+            spread_source=SpreadSource.ACROSS_PATIENT,
+            quantile_convention=QuantileConvention.TYPE7,
+        )
+
+
+def test_quantile_convention_rejects_an_unknown_type():
+    with pytest.raises(ValidationError):
+        _median_iqr(1.0, 2.0, 3.0, spread_source=SpreadSource.ACROSS_PATIENT,
+                    quantile_convention="type99")

@@ -101,6 +101,7 @@ from maple.core.calibration.shared_models import (
     ObservedDistribution,
     POPULATION_SPREAD_SOURCES,
     ReportedStatistic,
+    QuantileConvention,
     SpreadSource,
     StatKind,
 )
@@ -225,6 +226,7 @@ __all__ = [
     "ObservedDistribution",
     "POPULATION_SPREAD_SOURCES",
     "ReportedStatistic",
+    "QuantileConvention",
     "SpreadSource",
     "StatKind",
     # Cohort registry

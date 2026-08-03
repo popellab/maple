@@ -162,6 +162,22 @@ class StatKind(str, Enum):
     MAX = "max"
 
 
+class QuantileConvention(str, Enum):
+    """Which order statistic a package returns for a quantile, by Hyndman-Fan type.
+
+    At small n the choice moves the answer: asking for a lower quartile of 9 points
+    gives the population's 0.30 quantile under ``type7`` and its 0.25 under
+    ``type6``, some 0.4 sampling standard errors apart. Papers do not state it, so
+    this is usually unknown and left unset.
+    """
+
+    TYPE2 = "type2"  # averaged inverted cdf; SAS
+    TYPE4 = "type4"  # interpolated inverted cdf
+    TYPE6 = "type6"  # SPSS, Minitab, Excel PERCENTILE.EXC
+    TYPE7 = "type7"  # R, numpy, pandas, Excel PERCENTILE
+    TYPE8 = "type8"  # median-unbiased; Hyndman and Fan's recommendation
+
+
 #: Statistics that locate the distribution.
 LOCATION_STATS: frozenset = frozenset({StatKind.MEAN, StatKind.GEOMETRIC_MEAN})
 #: Statistics that describe a width, in the value's own units unless noted.
@@ -276,6 +292,13 @@ class ObservedDistribution(BaseModel):
         "needed when the source printed no quartiles and a consumer asks for them; recorded "
         "here so the assumption is explicit rather than applied silently.",
     )
+    quantile_convention: Optional[QuantileConvention] = Field(
+        default=None,
+        description="Which order statistic the source's software returned for a quantile "
+        "(see QuantileConvention). Set it only where the paper or its methods say so, which "
+        "is rare. Unset means unrecorded, and a consumer that needs one has to pick a "
+        "default and report what the choice costs.",
+    )
     n_biological: Optional[int] = Field(
         default=None,
         ge=1,
@@ -335,6 +358,14 @@ class ObservedDistribution(BaseModel):
                 f"spread_source='{self.spread_source.value}' declares a population spread but "
                 "no width statistic was reported. Provide quartiles, an sd/iqr/cv/range, or "
                 "declare a center-only spread_source."
+            )
+
+        if self.quantile_convention is not None and not any(
+            s.stat == StatKind.QUANTILE for s in self.statistics
+        ):
+            raise ValueError(
+                f"quantile_convention='{self.quantile_convention.value}' was set but no "
+                "quantile was reported; it describes how a quantile was computed."
             )
         return self
 
