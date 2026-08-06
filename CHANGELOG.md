@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0](https://github.com/popellab/maple/compare/v0.8.0...v0.9.0) (2026-08-06)
+
+
+### Features
+
+* **cal:** reported distributions as a flat statistics list; cohort and readout registries ([f159dbb](https://github.com/popellab/maple/commit/f159dbb94c2e55b82cd2e0dbb07bd47b9626542e))
+* **cal:** Tier-1 validator ports from SubmodelTarget ([#77](https://github.com/popellab/maple/issues/77)) ([3433fbc](https://github.com/popellab/maple/commit/3433fbc5242e6bc7518fe295e562c7ae1a7d18bf))
+
+
+### Bug Fixes
+
+* **cal:** bounded-observable logit_normal validator + n_biological_is_floor prompt ([#76](https://github.com/popellab/maple/issues/76)) ([4a65226](https://github.com/popellab/maple/commit/4a6522661cda586657c542aabeb8d28c923520e0))
+* migrate extraction lit-search agent to pydantic-ai 2.x ([#72](https://github.com/popellab/maple/issues/72)) ([5fca667](https://github.com/popellab/maple/commit/5fca667f934c59d359a1cbee9394d47e10d3525e))
+* **submodel:** allow 1.645 as an observation_code constant ([#75](https://github.com/popellab/maple/issues/75)) ([15d0e3e](https://github.com/popellab/maple/commit/15d0e3e50254b2e02d0e482311c21033ba7bc0aa))
+
 ## [0.8.0](https://github.com/popellab/maple/compare/v0.7.1...v0.8.0) (2026-07-23)
 
 
