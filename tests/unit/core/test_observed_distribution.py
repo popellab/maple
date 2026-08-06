@@ -736,8 +736,13 @@ def test_quantile_convention_defaults_to_unrecorded():
 
 
 def test_quantile_convention_records_the_estimator():
-    d = _median_iqr(1.0, 2.0, 3.0, spread_source=SpreadSource.ACROSS_PATIENT,
-                    quantile_convention=QuantileConvention.TYPE6)
+    d = _median_iqr(
+        1.0,
+        2.0,
+        3.0,
+        spread_source=SpreadSource.ACROSS_PATIENT,
+        quantile_convention=QuantileConvention.TYPE6,
+    )
     assert d.quantile_convention is QuantileConvention.TYPE6
 
 
@@ -752,5 +757,6 @@ def test_quantile_convention_needs_a_quantile():
 
 def test_quantile_convention_rejects_an_unknown_type():
     with pytest.raises(ValidationError):
-        _median_iqr(1.0, 2.0, 3.0, spread_source=SpreadSource.ACROSS_PATIENT,
-                    quantile_convention="type99")
+        _median_iqr(
+            1.0, 2.0, 3.0, spread_source=SpreadSource.ACROSS_PATIENT, quantile_convention="type99"
+        )

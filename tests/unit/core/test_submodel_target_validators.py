@@ -567,7 +567,9 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
         data["calibration"]["parameters"][0]["units"] = "nanomolar/cell/day"
         data["calibration"]["error_model"][0]["units"] = "nanomolar/cell/day"
         # Update forward model code to access the renamed parameter
-        data["calibration"]["forward_model"]["code"] = """
+        data["calibration"]["forward_model"][
+            "code"
+        ] = """
 def compute(params, inputs):
     return params['k_CCL2_sec']
 """
@@ -595,7 +597,9 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
         data["calibration"]["parameters"][0]["units"] = "nanomole/cell/day"
         data["calibration"]["error_model"][0]["units"] = "nanomole/cell/day"
         # Update forward model code to access the renamed parameter
-        data["calibration"]["forward_model"]["code"] = """
+        data["calibration"]["forward_model"][
+            "code"
+        ] = """
 def compute(params, inputs):
     return params['k_CCL2_sec']
 """
@@ -899,7 +903,9 @@ class TestValidateCustomCodeSyntax:
             input_value=10.0,
         )
         # Introduce syntax error in model code
-        data["calibration"]["forward_model"]["code"] = """
+        data["calibration"]["forward_model"][
+            "code"
+        ] = """
 def compute(params, inputs):
     return params['k_test'  # Missing closing bracket - syntax error
 """
@@ -915,7 +921,9 @@ def compute(params, inputs):
             input_value=10.0,
         )
         # Wrong function name (should be 'compute')
-        data["calibration"]["forward_model"]["code"] = """
+        data["calibration"]["forward_model"][
+            "code"
+        ] = """
 def wrong_name(params, inputs, ureg):
     return params['k_test']
 """

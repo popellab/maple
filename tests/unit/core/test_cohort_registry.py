@@ -554,9 +554,7 @@ class TestCrossScenarioArms:
 
     def test_arms_sharing_patients_are_a_paired_contrast(self):
         b = _cohort(cohort_id="arm_b", scenarios=["gvax_nivo_neoadjuvant"], n_c=10)
-        c = _cohort(
-            cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8
-        )
+        c = _cohort(cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8)
         reg = CohortRegistry(
             cohorts=[b, c],
             blocks=[
@@ -579,9 +577,7 @@ class TestCrossScenarioArms:
     def test_disjoint_arms_of_one_block_are_not_a_paired_contrast(self):
         """Two arms of one trial share a block and no patients; zero overlap is a fact."""
         b = _cohort(cohort_id="arm_b", scenarios=["gvax_nivo_neoadjuvant"], n_c=10)
-        c = _cohort(
-            cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8
-        )
+        c = _cohort(cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8)
         d = _cohort(cohort_id="baseline", n_c=18)
         reg = CohortRegistry(
             cohorts=[b, c, d],
@@ -651,9 +647,7 @@ class TestCovarianceBlocks:
 
     def test_both_edge_kinds_compose_into_one_component(self):
         b = _cohort(cohort_id="arm_b", scenarios=["gvax_nivo_neoadjuvant"], n_c=10)
-        c = _cohort(
-            cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8
-        )
+        c = _cohort(cohort_id="arm_c", scenarios=["gvax_nivo_urelumab_neoadjuvant"], n_c=8)
         d = _cohort(cohort_id="arm_d", n_c=9)
         reg = CohortRegistry(
             cohorts=[b, c, d],
@@ -747,7 +741,9 @@ class TestBlocksInTheRegistry:
         with pytest.raises(ValueError, match="declares n_c=10"):
             CohortRegistry(
                 cohorts=[_cohort(cohort_id="a", n_c=9), _cohort(cohort_id="b", n_c=10)],
-                blocks=[_block(strata=[Stratum(cohorts=["a", "b"], n=6), Stratum(cohorts=["a"], n=3)])],
+                blocks=[
+                    _block(strata=[Stratum(cohorts=["a", "b"], n=6), Stratum(cohorts=["a"], n=3)])
+                ],
             )
 
     def test_a_cohort_is_counted_by_at_most_one_block(self):
