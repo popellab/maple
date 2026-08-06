@@ -19,7 +19,6 @@ from maple.core.calibration import (
     CrossScenarioObservable,
 )
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -34,7 +33,7 @@ def _scalar_empirical():
         "units": "dimensionless",
         "sample_size": 1,
         "sample_size_rationale": (
-            "Mechanistic prior; sample_size=1 denotes a single soft-prior " "assertion."
+            "Mechanistic prior; sample_size=1 denotes a single soft-prior assertion."
         ),
         "inputs": [],
         "assumptions": [],
@@ -76,20 +75,31 @@ def invariance_target():
     return {
         "cross_scenario_target_id": "cd8_intla_number_invariance_nivo_vs_urelumab",
         "observable": {
-            "code": ("def compute(inputs):\n" "    return inputs['urelumab'] / inputs['nivo']\n"),
+            "code": ("def compute(inputs):\n    return inputs['urelumab'] / inputs['nivo']\n"),
             "units": "dimensionless",
+            "quantity_kind": "ratio",
             "inputs": [
                 {
                     "role": "nivo",
                     "scenario": "gvax_nivo_neoadjuvant_zheng2022",
                     "observable_code": code,
                     "required_species": ["V_T.CD8_TLA", "V_T.CD8_TLA_act"],
+                    "readout": {
+                        "quantity_kind": "density",
+                        "assay_modality": "mihc",
+                        "numerator_species": ["V_T.CD8_TLA", "V_T.CD8_TLA_act"],
+                    },
                 },
                 {
                     "role": "urelumab",
                     "scenario": "gvax_nivo_urelumab_neoadjuvant_heumann2023",
                     "observable_code": code,
                     "required_species": ["V_T.CD8_TLA", "V_T.CD8_TLA_act"],
+                    "readout": {
+                        "quantity_kind": "density",
+                        "assay_modality": "mihc",
+                        "numerator_species": ["V_T.CD8_TLA", "V_T.CD8_TLA_act"],
+                    },
                 },
             ],
         },
@@ -191,6 +201,11 @@ def _one_input():
         "scenario": "s",
         "observable_code": "def compute_test_statistic(time, species_dict): return 0.0",
         "required_species": ["V_T.C1"],
+        "readout": {
+            "quantity_kind": "density",
+            "assay_modality": "mihc",
+            "numerator_species": ["V_T.C1"],
+        },
     }
 
 
@@ -200,6 +215,7 @@ def test_observable_requires_at_least_two_inputs():
         CrossScenarioObservable(
             code="def compute(inputs): return inputs['only']",
             units="dimensionless",
+            quantity_kind="ratio",
             inputs=[_one_input()],
         )
 
@@ -213,6 +229,7 @@ def test_observable_rejects_duplicate_roles():
         CrossScenarioObservable(
             code="def compute(inputs): return inputs['a']",
             units="dimensionless",
+            quantity_kind="ratio",
             inputs=[a, b],
         )
 

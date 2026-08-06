@@ -27,7 +27,10 @@ from maple.core.calibration.bootstrap_capture import (
 
 # Enums
 from maple.core.calibration.enums import (
+    AssayModality,
     Compartment,
+    QuantityKind,
+    REQUIRES_REFERENCE,
     ExtractionMethod,
     Indication,
     IndicationMatch,
@@ -66,6 +69,11 @@ from maple.core.calibration.observable import (
     SupportType,
 )
 
+from maple.core.calibration.readout import (
+    Readout,
+    ReadoutReference,
+)
+
 # Experimental context
 from maple.core.calibration.experimental_context import (
     ExperimentalContext,
@@ -88,6 +96,31 @@ from maple.core.calibration.shared_models import (
     SourceRelevanceAssessment,
     SubmodelInput,
     UncertaintyType,
+    DistributionShape,
+    ExperimentalUnitType,
+    ObservedDistribution,
+    POPULATION_SPREAD_SOURCES,
+    ReportedStatistic,
+    QuantileConvention,
+    SpreadSource,
+    StatKind,
+)
+
+# Cohort registry
+from maple.core.calibration.cohort import (
+    Cohort,
+    CohortRegistry,
+    EligibilityInterval,
+    load_cohorts,
+)
+from maple.core.calibration.registry_audit import (
+    RegistryProblem,
+    check_registries,
+    covariance_blocks,
+    find_registry_problems,
+    resolve_n,
+    warn_merged_blocks,
+    warn_unused_cohorts,
 )
 
 # Validators
@@ -184,6 +217,30 @@ __all__ = [
     "SourceType",
     "ExtractionMethod",
     "enum_field_description",
+    "AssayModality",
+    "QuantityKind",
+    "REQUIRES_REFERENCE",
+    # Reported distribution
+    "DistributionShape",
+    "ExperimentalUnitType",
+    "ObservedDistribution",
+    "POPULATION_SPREAD_SOURCES",
+    "ReportedStatistic",
+    "QuantileConvention",
+    "SpreadSource",
+    "StatKind",
+    # Cohort registry
+    "Cohort",
+    "CohortRegistry",
+    "EligibilityInterval",
+    "load_cohorts",
+    "RegistryProblem",
+    "check_registries",
+    "covariance_blocks",
+    "find_registry_problems",
+    "resolve_n",
+    "warn_merged_blocks",
+    "warn_unused_cohorts",
     # Scenario
     "Intervention",
     "Scenario",
@@ -193,6 +250,8 @@ __all__ = [
     "ConstantSourceType",
     "PopulationAggregation",
     "Observable",
+    "Readout",
+    "ReadoutReference",
     "ObservableConstant",
     "SupportType",
     "Submodel",

@@ -150,7 +150,7 @@ class CalibrationTargetEstimates(BaseModel):
 
     median: List[float] = Field(
         description=(
-            "COMPUTED median value from distribution_code, as a length-1 list " "(e.g. ``[42.0]``)."
+            "COMPUTED median value from distribution_code, as a length-1 list (e.g. ``[42.0]``)."
         )
     )
     ci95: List[List[float]] = Field(
@@ -162,10 +162,12 @@ class CalibrationTargetEstimates(BaseModel):
     units: str = Field(description="Units of the observable (Pint-parseable)")
 
     # Sample size metadata
-    sample_size: int = Field(
+    sample_size: Optional[int] = Field(
+        default=None,
         description=(
-            "Sample size (n) for the measurement. CRITICAL for uncertainty quantification "
-            "and pooling across studies.\n\n"
+            "Sample size (n) for the measurement. Mechanistic targets only: a literature "
+            "target names a cohort, which owns the patient count, and declaring it here "
+            "too lets the two disagree.\n\n"
             "WHERE TO LOOK:\n"
             "- 'n = X' or 'N = X' in methods/results sections\n"
             "- Sample sizes in figure legends (e.g., 'n=5 per group')\n"
@@ -176,17 +178,29 @@ class CalibrationTargetEstimates(BaseModel):
             "- Check figure error bars - if SEM is reported, can back-calculate n from SD/SEM\n"
             "- Use conservative estimate based on study type\n"
             "- Document uncertainty in sample_size_rationale"
-        )
+        ),
     )
-    sample_size_rationale: str = Field(
+    sample_size_rationale: Optional[str] = Field(
+        default=None,
         description=(
-            "Explanation of how sample_size was determined.\n\n"
+            "Explanation of how sample_size was determined. Required with sample_size.\n\n"
             "Examples:\n"
             "- 'n=5 per group stated in Methods section 2.3'\n"
             "- 'n inferred from figure error bars using SEM formula: n = (SD/SEM)²'\n"
             "- 'n estimated as typical for this study type; not explicitly reported'\n"
             "- 'n=3 replicates per condition, standard for in vitro T cell assays'"
-        )
+        ),
+    )
+
+    n_evaluable: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Patients with an evaluable value for THIS readout, when fewer than the cohort's "
+            "n_c (a panel that failed on some patients, a fold change needing both timepoints). "
+            "Omit when every patient in the cohort contributes; consumers then read the "
+            "cohort's n_c, so the two cannot drift apart."
+        ),
     )
 
     inputs: List[EstimateInput] = Field(
@@ -250,130 +264,102 @@ class CalibrationTargetEstimates(BaseModel):
             "        'ci95_lower': np.array(lowers) * means.units,\n"
             "        'ci95_upper': np.array(uppers) * means.units,\n"
             "    }\n\n"
-            "POPULATION SAMPLE (for hierarchical inference), gated by population_spread:\n"
-            "If population_spread='across_patient', you MUST ALSO return a 'samples' key\n"
-            "holding the across-patient population draw (a Pint Quantity array, one value per\n"
-            "patient-equivalent; 1-D for a scalar observable, or 2-D (n_patients, k) for a\n"
-            "joint/compositional/trajectory observable). Its empirical spread (IQR/SD) is the\n"
-            "population-variability (omega) signal, read directly with no parametric refit.\n"
-            "It MUST be the POPULATION sample (dispersion = genuine patient-to-patient\n"
-            "variability), not the sampling distribution of an estimator (e.g. a pooled-mean /\n"
-            "SEM draw). median_obs/ci95 are UNAFFECTED — they remain the center + measurement\n"
-            "uncertainty that non-hierarchical inference reads (and may legitimately differ\n"
-            "from the sample spread, e.g. a meta-analytic anchor CI vs a wider population).\n"
-            "If population_spread='center_only' (the default), do NOT return 'samples'."
+            "POPULATION SAMPLE (optional):\n"
+            "A reported width is a ROW of the observation vector, carried by "
+            "observed_distribution.statistics, not an error bar — population inference "
+            "builds its own error bars by resampling the predicted cohort. So a "
+            "population spread_source does not oblige this code to return anything "
+            "extra.\n"
+            "You MAY return a 'samples' key holding the across-patient population draw "
+            "(a Pint Quantity array, one value per patient-equivalent; 1-D for a scalar "
+            "observable, or 2-D (n_patients, k) for a joint/compositional/trajectory "
+            "one). When present it MUST be the POPULATION sample (dispersion = genuine "
+            "patient-to-patient variability), not the sampling distribution of an "
+            "estimator (e.g. a pooled-mean / SEM draw), and its median must match the "
+            "reported median. For a center/technical spread_source, do NOT return it."
         )
-    )
-    population_spread: Literal["across_patient", "center_only"] = Field(
-        default="center_only",
-        description=(
-            "What this target's reported width MEANS, and whether it feeds the population-"
-            "variability (omega) signal in hierarchical inference. This is an OPT-IN "
-            "contract: a target contributes to omega only if it explicitly declares "
-            "'across_patient' AND returns a population `samples` array.\n\n"
-            "  - 'center_only' (default): the width is NOT genuine across-patient spread — "
-            "e.g. a pooled-mean / SEM confidence interval (shrinks with n), a transcript-vs-"
-            "protein method bound, or an assumed CV with no dispersion data. The target "
-            "still constrains the population CENTER via `median`, but is EXCLUDED from omega "
-            "conditioning. distribution_code must NOT return a `samples` key (that would "
-            "contradict the declaration).\n"
-            "  - 'across_patient': the width is real patient-to-patient variability, usable "
-            "as the omega signal. distribution_code MUST return a `samples` key holding the "
-            "across-patient population draw; the validator rejects the target otherwise. "
-            "The conservative default keeps a fabricated or sample-size-shrinking width from "
-            "silently polluting inferred diversity — you have to assert the spread is real."
-        ),
     )
     observed_distribution: Optional[ObservedDistribution] = Field(
         default=None,
         description=(
-            "Optional quantile-anchor representation of the reported distribution "
-            "(median plus whatever scale anchors the source gives: IQR edges, quartiles, "
-            "deciles, or a dense empirical quantile function). This is the general, "
-            "shape-preserving data layer shared with SubmodelTarget; the framework can "
-            "derive median/IQR/scale from it on demand. ADDITIVE and OPTIONAL — when "
-            "omitted, the target behaves exactly as before (median/ci95 from "
-            "distribution_code, omega gated by population_spread). Its `spread_source` "
-            "carries finer provenance than the two-valued population_spread; when both "
-            "are present they must agree on whether the width is genuine population spread "
-            "(see resolved_spread_source)."
+            "The reported distribution: every statistic the source actually printed, as a "
+            "flat list. The data layer shared with "
+            "SubmodelTarget, and the sole declaration of whether the reported width is "
+            "genuine population spread (`spread_source`). Required for "
+            "epistemic_basis='literature'; null for 'mechanistic', which asserts a constraint "
+            "rather than measuring anyone."
         ),
     )
 
     @property
     def resolved_spread_source(self) -> SpreadSource:
-        """Unified spread provenance for downstream inference.
-
-        Prefers the richer ``observed_distribution.spread_source`` when present;
-        otherwise maps the legacy two-valued ``population_spread`` literal onto the
-        shared enum. Lets consumers read one field regardless of which layer the
-        target was authored against.
-        """
+        """Spread provenance for downstream inference."""
         if self.observed_distribution is not None:
             return self.observed_distribution.spread_source
-        return (
-            SpreadSource.ACROSS_PATIENT
-            if self.population_spread == "across_patient"
-            else SpreadSource.CENTER_ONLY
-        )
+        return SpreadSource.CENTER_ONLY
+
+    @property
+    def feeds_population_spread(self) -> bool:
+        """Whether this target's width feeds the population-variability signal."""
+        od = self.observed_distribution
+        return od is not None and od.feeds_population_spread
 
     @model_validator(mode="after")
-    def validate_observed_distribution_consistency(self) -> "CalibrationTargetEstimates":
-        """When both spread declarations are present, they must not contradict.
+    def validate_units_are_carried_by_the_cohort(self) -> "CalibrationTargetEstimates":
+        """The cohort owns the unit accounting, so the distribution must not restate it.
 
-        ``observed_distribution`` is additive, so the legacy ``population_spread``
-        contract still governs the ``samples`` gate; this only forbids the two from
-        disagreeing about whether the reported width is genuine population spread.
+        ``n_biological`` / ``experimental_unit_type`` / ``unit_group`` exist for submodel
+        targets, which have no cohort registry. A calibration target names a cohort, and
+        two places for one count is how the two drift apart.
         """
         od = self.observed_distribution
         if od is None:
             return self
-        feeds = od.feeds_population_spread
-        declared = self.population_spread == "across_patient"
-        if feeds != declared:
+        set_here = [
+            name
+            for name in ("n_biological", "n_technical", "experimental_unit_type", "unit_group")
+            if getattr(od, name) is not None
+        ]
+        if od.n_biological_is_floor:
+            set_here.append("n_biological_is_floor")
+        if set_here:
             raise ValueError(
-                f"observed_distribution.spread_source='{od.spread_source.value}' "
-                f"({'feeds' if feeds else 'does not feed'} population spread) contradicts "
-                f"population_spread='{self.population_spread}'. Align them: a population "
-                f"spread source (across_patient / biological_experimental) requires "
-                f"population_spread='across_patient'; a center/technical source requires "
-                f"'center_only'."
+                f"observed_distribution sets {set_here}, which a calibration target's cohort "
+                "already carries (cohort_id, n_c, n_c_is_floor). Set n_evaluable on "
+                "empirical_data if this readout has fewer evaluable patients than the cohort. "
+                "Those fields are for submodel targets, which have no cohort."
             )
         return self
 
     @model_validator(mode="after")
     def validate_bounded_observable_uses_logit_normal(self) -> "CalibrationTargetEstimates":
-        """A bounded observable's population spread (``moments`` form) must use
-        ``shape: logit_normal``, not normal/lognormal.
+        """A bounded observable that declares a shape must use ``logit_normal``.
 
-        Parity with the SubmodelTarget validator of the same name: for a
-        fraction / proportion / probability / percent observable, ``normal`` puts
-        mass outside the bound and ``lognormal`` is unbounded above; ``logit_normal``
-        keeps expanded quartiles in (0, 1). Only applies to the ``moments`` form —
-        the ``quantiles`` form carries the empirical shape directly and is exempt.
+        For a fraction / proportion / probability / percent observable, ``normal``
+        puts mass outside the bound and ``lognormal`` is unbounded above; only
+        ``logit_normal`` keeps derived quartiles in (0, 1). A distribution with no
+        declared shape is exempt: it reports its quantiles directly and nothing is
+        expanded.
         """
         od = self.observed_distribution
-        if od is None or od.moments is None:
-            return self
-        if od.moments.shape == DistributionShape.LOGIT_NORMAL:
+        if od is None or od.shape is None or od.shape == DistributionShape.LOGIT_NORMAL:
             return self
         BOUNDED_UNITS = {"percent", "%", "fraction", "proportion", "probability"}
         if (self.units or "").strip().lower() not in BOUNDED_UNITS:
             return self
         raise ValueError(
             f"Observable units='{self.units}' are a bounded fraction/percentage, but "
-            f"observed_distribution.moments uses shape='{od.moments.shape.value}'. "
-            "Bounded observables must use shape='logit_normal', which expands quartiles "
-            "in logit space so they never escape (0, 1); normal puts mass outside the "
-            "bound and lognormal is unbounded above. logit_normal requires center in "
-            "(0, 1) with center_type='median' — express a percent as a fraction (12% -> 0.12)."
+            f"observed_distribution declares shape='{od.shape.value}'. Bounded observables "
+            "must use shape='logit_normal', which expands quartiles in logit space so they "
+            "never escape (0, 1); normal puts mass outside the bound and lognormal is "
+            "unbounded above. Express a percent as a fraction (12% -> 0.12)."
         )
 
     @field_validator("sample_size")
     @classmethod
-    def validate_sample_size_positive(cls, v: int) -> int:
+    def validate_sample_size_positive(cls, v: Optional[int]) -> Optional[int]:
         """Validate sample size is at least 1."""
-        if v < 1:
+        if v is not None and v < 1:
             raise ValueError(f"sample_size must be at least 1, got {v}")
         return v
 
@@ -689,6 +675,17 @@ class CalibrationTarget(BaseModel):
             "  visibly distinct from literature targets.\n\n"
             "Note: 'mechanistic' is NOT a backdoor for unverified citations or\n"
             "fabricated CIs — if a paper exists, use 'literature'."
+        ),
+    )
+
+    # --- Cohort (required for literature targets) ---
+    cohort_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Registered cohort whose patients this target's statistics are computed over, from "
+            "the project's cohort registry. Targets sharing a cohort form one covariance block "
+            "in population inference. Required when epistemic_basis='literature'; null when "
+            "'mechanistic', which asserts a constraint rather than measuring patients."
         ),
     )
 
@@ -1271,6 +1268,68 @@ class CalibrationTarget(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_literature_target_is_placed(self) -> "CalibrationTarget":
+        """A literature target must say whose patients it measured, what it measured, and
+        how it was reported.
+
+        All three are meaningless for ``epistemic_basis='mechanistic'``, which asserts a
+        constraint rather than measuring anyone, so all three are skipped there.
+        """
+        if self.epistemic_basis != "literature":
+            return self
+
+        missing = []
+        if not self.cohort_id:
+            missing.append(
+                "cohort_id: name the registered cohort these patients belong to. Targets "
+                "sharing a cohort form one covariance block, so an unplaced target is either "
+                "silently independent of its siblings or silently merged with strangers."
+            )
+        if self.observable.readout is None:
+            missing.append(
+                "observable.readout: say what was measured. Inference builds the "
+                "measurement-discrepancy design from its attributes, and its species "
+                "composition is the row's identity."
+            )
+        if self.empirical_data.observed_distribution is None:
+            missing.append(
+                "empirical_data.observed_distribution: list the statistics the source "
+                "actually printed. Without them the reported shape is whatever "
+                "distribution_code fitted, and an SD cannot be told from an SE."
+            )
+        if missing:
+            raise ValueError(
+                "epistemic_basis='literature' target is missing:\n- " + "\n- ".join(missing)
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_n_is_carried_by_the_cohort(self) -> "CalibrationTarget":
+        """Whoever owns the patients owns the count.
+
+        A literature target names a cohort, whose ``n_c`` is the count; a mechanistic
+        one measures nobody and states its own. Consumers resolve a literature n as
+        ``n_evaluable`` else the cohort's ``n_c``.
+        """
+        has_n = self.empirical_data.sample_size is not None
+        if self.epistemic_basis == "literature":
+            if has_n:
+                raise ValueError(
+                    f"sample_size={self.empirical_data.sample_size} is set on a literature "
+                    "target, but its cohort already carries n_c. Two places for one count is "
+                    "how they drift apart. Drop it, and set empirical_data.n_evaluable if "
+                    "fewer patients contributed to this readout than the cohort holds."
+                )
+        elif not has_n:
+            raise ValueError(
+                "epistemic_basis='mechanistic' requires sample_size and "
+                "sample_size_rationale: there is no cohort to read the count from."
+            )
+        if has_n and not self.empirical_data.sample_size_rationale:
+            raise ValueError("sample_size requires sample_size_rationale.")
+        return self
+
+    @model_validator(mode="after")
     def validate_context_mismatch_justified(self) -> "CalibrationTarget":
         """A declared context mismatch must carry its justification.
 
@@ -1552,25 +1611,21 @@ class CalibrationTarget(BaseModel):
                         f"reported CI95[{i}] upper ({ci_rep[1]:.4g}) within 10% tolerance"
                     )
 
-            # --- Population sample, gated by population_spread (hierarchical omega) ---
-            # 'across_patient' MUST return a 'samples' key (the population draw feeding
-            # omega); 'center_only' MUST NOT (a population sample would contradict the
-            # declaration that the width is center / measurement uncertainty).
-            population_spread = self.empirical_data.population_spread
+            # --- Population sample, when the target supplies one ---
+            # A reported width is a ROW of the observation vector, not an error bar,
+            # so a population spread_source does not oblige the target to hand over a
+            # population array as well. A center / technical one still must not: a
+            # population sample would contradict the declaration.
+            feeds = self.empirical_data.feeds_population_spread
+            declared = self.empirical_data.resolved_spread_source.value
             has_samples = "samples" in result
-            if population_spread == "across_patient" and not has_samples:
+            if not feeds and has_samples:
                 raise ReturnStructureError(
-                    "population_spread='across_patient' requires distribution_code to "
-                    "return a 'samples' key — the across-patient population draw used as "
-                    "the omega signal in hierarchical inference. Return one, or set "
-                    "population_spread='center_only' if the width is not a real spread."
-                )
-            if population_spread == "center_only" and has_samples:
-                raise ReturnStructureError(
-                    "population_spread='center_only' must NOT return a 'samples' key: a "
+                    f"observed_distribution.spread_source='{declared}' is not a population "
+                    "spread, so distribution_code must NOT return a 'samples' key: a "
                     "population sample contradicts the declaration that the width is "
-                    "center / measurement uncertainty. Remove 'samples', or set "
-                    "population_spread='across_patient' if the spread is genuine."
+                    "center / measurement uncertainty. Remove 'samples', or declare a "
+                    "population spread_source if the spread is genuine."
                 )
             if has_samples:
                 samples = result["samples"]
@@ -1603,7 +1658,7 @@ class CalibrationTarget(BaseModel):
                 if np.std(finite) == 0:
                     raise ReturnStructureError(
                         "samples has zero variance (all identical) — not a usable population "
-                        "spread; set population_spread='center_only' if no real spread exists"
+                        "spread; declare a center/technical spread_source if no real spread exists"
                     )
                 # Tie the declared sample to the declared center: for a scalar (1-D)
                 # target its median must match the reported median within MC tolerance.
@@ -1617,9 +1672,6 @@ class CalibrationTarget(BaseModel):
                             f"median ({median_reported[0]:.4g}) within 10% — the declared "
                             f"'samples' array must be the population draw the median/CI summarize"
                         )
-                    self._check_center_channel_is_not_population(
-                        finite, ci95_reported[0], self.empirical_data.sample_size
-                    )
 
         except CalibrationTargetValidationError:
             # Re-raise all our custom validation errors
@@ -1661,76 +1713,6 @@ class CalibrationTarget(BaseModel):
             ) from e
 
         return self
-
-    @staticmethod
-    def _check_center_channel_is_not_population(
-        finite: "np.ndarray", ci95_pair: list[float], sample_size: int
-    ) -> None:
-        """The two channels must not both carry the population spread.
-
-        Calibration-target analogue of
-        ``SubmodelTarget.validate_center_channel_sem_scale``. A target that declares
-        ``population_spread='across_patient'`` uses two channels: ``median`` +
-        ``ci95`` pin the CENTER (so the interval must shrink with n — a bootstrap or
-        SEM-scale interval on the median), and ``samples`` carries the POPULATION
-        spread that hierarchical inference reads as omega. Returning the population's
-        own 2.5th / 97.5th percentiles as ``ci95`` encodes the spread TWICE: omega
-        gets it from ``samples``, and the flat likelihood reads it as measurement
-        noise, so the target is weighted as though a single simulated patient were
-        allowed to land anywhere in the cohort.
-
-        This is the ``notes/calibration`` position — biological variability is the
-        theta term, not the noise — made enforceable.
-
-        The trap is ``population.summarize()``, whose ``ci95_lower`` /``ci95_upper``
-        ARE ``np.percentile(samples, 2.5 / 97.5)``. It is the obvious helper to call
-        and it silently produces a population-scale center channel. Pair
-        ``population.empirical_population()`` with ``population.bootstrap_median()``
-        instead, which bootstraps the median and so shrinks with n.
-
-        Detection compares the reported interval against the sample's own 95% range.
-        Agreement within 15% on both edges means the center channel is the population
-        range. ``sample_size=1`` (a single subject) is exempt: there the two
-        coincide legitimately.
-        """
-        if sample_size is not None and sample_size <= 1:
-            return
-        lo_rep, hi_rep = float(ci95_pair[0]), float(ci95_pair[1])
-        lo_pop = float(np.percentile(finite, 2.5))
-        hi_pop = float(np.percentile(finite, 97.5))
-        if lo_rep == 0 or hi_rep == 0:
-            return
-
-        def _agrees(a: float, b: float) -> bool:
-            scale = max(abs(a), abs(b))
-            return scale > 0 and abs(a - b) <= 0.15 * scale
-
-        if not (_agrees(lo_rep, lo_pop) and _agrees(hi_rep, hi_pop)):
-            return
-
-        raise ScaleMismatchError(
-            f"population_spread='across_patient' but ci95 = [{lo_rep:.4g}, {hi_rep:.4g}] "
-            f"is the POPULATION range of 'samples' "
-            f"([{lo_pop:.4g}, {hi_pop:.4g}] at the 2.5th/97.5th percentiles), not the "
-            f"uncertainty on the center.\n\n"
-            "The spread is then encoded twice — once in 'samples' (the omega signal "
-            "hierarchical inference reads) and once in ci95 (which flat inference reads "
-            "as measurement noise). The target is weighted as if one simulated patient "
-            "could land anywhere in the cohort, so it constrains far less than its n "
-            f"(n={sample_size}) justifies.\n\n"
-            "FIX — keep 'samples' exactly as it is (that channel is correct) and give "
-            "the center its own interval that shrinks with n. Pass the study's real "
-            "sample size to summarize(); it subsample-bootstraps the median and leaves "
-            "'samples' untouched:\n\n"
-            "    return pop.summarize(samples, n=int(inputs['sample_size'].magnitude))\n\n"
-            "For a target built from per-patient values, pop.bootstrap_median(values, "
-            "rng=rng) gives the same center interval directly.\n\n"
-            "DO NOT clear this error by setting population_spread='center_only' unless "
-            "the reported width was never real across-patient spread (a pooled-mean / "
-            "SEM interval, or an assumed CV). That switch DELETES the population "
-            "channel — the target stops contributing to omega. Here the spread looks "
-            "genuine, so the center channel is what needs fixing, not the spread one."
-        )
 
     @model_validator(mode="after")
     def validate_source_refs(self) -> "CalibrationTarget":

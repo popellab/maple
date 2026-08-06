@@ -5,14 +5,12 @@ Tests for the view_figure tool.
 Tests HTML parsing, figure extraction, and fuzzy label matching.
 """
 
-
 from maple.core.tools.view_figure import (
     _normalize_label,
     _label_matches,
     extract_figures_from_html,
     find_figure,
 )
-
 
 # ============================================================================
 # Sample HTML fixtures

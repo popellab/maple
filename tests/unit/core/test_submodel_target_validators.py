@@ -24,7 +24,6 @@ from maple.core.calibration.submodel_target import (
 )
 from maple.core.model_structure import ModelStructure, ModelParameter
 
-
 # ============================================================================
 # Default observation code — single source of truth for the current signature.
 # Tests that don't specifically test observation_code behavior should use this.
@@ -1352,7 +1351,7 @@ class TestValidateNoInvisibleCharacters:
             input_value=10.0,
         )
         # Add zero-width space in a text field
-        data["study_interpretation"] = "Test interpretation\u200Bwith invisible character"
+        data["study_interpretation"] = "Test interpretation\u200bwith invisible character"
 
         with pytest.raises(ValidationError) as exc_info:
             SubmodelTarget(**data)
@@ -1985,10 +1984,10 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
 
 def _population_observed_distribution() -> dict:
     return {
-        "quantiles": [
-            {"p": 0.25, "value": 8.0},
-            {"p": 0.5, "value": 10.0},
-            {"p": 0.75, "value": 13.0},
+        "statistics": [
+            {"stat": "quantile", "p": 0.25, "value": 8.0},
+            {"stat": "quantile", "p": 0.5, "value": 10.0},
+            {"stat": "quantile", "p": 0.75, "value": 13.0},
         ],
         "spread_source": "biological_experimental",
         "n_biological": 10,
@@ -2071,12 +2070,12 @@ class TestNormalErrorStaysPositive:
 
 # ============================================================================
 # Tests for validate_bounded_observable_uses_logit_normal (V-B) — bounded
-# observable in the moments form must use shape='logit_normal'.
+# observable declaring a shape must use shape='logit_normal'.
 # ============================================================================
 
 
 def _percent_target(shape: str) -> dict:
-    """A percent-unit target with a moments-form population spread of the given shape."""
+    """A percent-unit target whose population spread declares the given shape."""
     data = make_algebraic_target(
         input_value=0.12, measurement_error_code=SEM_SCALE_OBSERVATION_CODE
     )
@@ -2086,13 +2085,11 @@ def _percent_target(shape: str) -> dict:
     em = data["calibration"]["error_model"][0]
     em["units"] = "percent"
     em["observed_distribution"] = {
-        "moments": {
-            "center": 0.12,
-            "center_type": "median",
-            "scale": 0.05,
-            "scale_type": "sd",
-            "shape": shape,
-        },
+        "statistics": [
+            {"stat": "quantile", "p": 0.5, "value": 0.12},
+            {"stat": "sd", "value": 0.05},
+        ],
+        "shape": shape,
         "spread_source": "biological_experimental",
         "n_biological": 10,
         "experimental_unit_type": "biological",
@@ -2101,7 +2098,7 @@ def _percent_target(shape: str) -> dict:
 
 
 class TestBoundedObservableLogitNormal:
-    """V-B: bounded moments-form observable must use logit_normal."""
+    """V-B: a bounded observable declaring a shape must use logit_normal."""
 
     def test_percent_with_normal_shape_raises(self):
         with pytest.raises(ValidationError, match="logit_normal"):

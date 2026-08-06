@@ -200,6 +200,77 @@ class ExtractionMethod(str, Enum):
     """Other extraction method (specify in extraction_notes)."""
 
 
+class QuantityKind(str, Enum):
+    """What kind of quantity an observable is.
+
+    Read by inference to build the measurement-discrepancy design matrix. Two
+    observables of the same kind and modality share a row of it, and so share a
+    location and scale correction.
+    """
+
+    DENSITY = "density"
+    """Cells or mass per unit area or volume of tissue."""
+
+    FRACTION = "fraction"
+    """A part over a whole containing it, bounded in (0, 1)."""
+
+    RATIO = "ratio"
+    """One quantity over another not containing it. Unbounded above."""
+
+    FOLDCHANGE = "foldchange"
+    """A quantity relative to its own value at a reference. Needs ``reference``."""
+
+    CONCENTRATION = "concentration"
+    """Amount of a soluble species per unit volume or per unit protein."""
+
+    INTENSITY = "intensity"
+    """A normalised or relative signal level with no absolute scale."""
+
+    TIME = "time"
+    """A duration."""
+
+
+#: Kinds that are meaningless without ``Observable.reference``.
+REQUIRES_REFERENCE = frozenset({QuantityKind.FOLDCHANGE})
+
+
+class AssayModality(str, Enum):
+    """How an observable was measured."""
+
+    MIHC = "mihc"
+    """Multiplex immunohistochemistry with digital image analysis."""
+
+    IHC = "ihc"
+    """Single-plex chromogenic immunohistochemistry."""
+
+    MIF = "mif"
+    """Multiplex or double immunofluorescence."""
+
+    FLOW_CYTOMETRY = "flow_cytometry"
+    """Flow cytometry of digested tissue or whole blood."""
+
+    SCRNASEQ = "scrnaseq"
+    """Single-cell RNA sequencing."""
+
+    MULTIPLEX_IMMUNOASSAY = "multiplex_immunoassay"
+    """Bead-based multiplex immunoassay on tissue homogenate or serum."""
+
+    ELISA = "elisa"
+    """Single-analyte enzyme-linked immunosorbent assay."""
+
+    MULTIPHOTON_MICROSCOPY = "multiphoton_microscopy"
+    """Label-free multiphoton microscopy (SHG / TPEF)."""
+
+    DIGITAL_HISTOPATHOLOGY = "digital_histopathology"
+    """Digital image analysis of stained whole sections or cores."""
+
+    IMAGING = "imaging"
+    """Clinical imaging: CT, MRI, ultrasound."""
+
+    CLINICAL = "clinical"
+    """Recorded clinical observation rather than an assay."""
+
+
 # =============================================================================
 # SOURCE RELEVANCE ENUMS
 # =============================================================================

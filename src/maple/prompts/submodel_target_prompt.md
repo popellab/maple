@@ -331,33 +331,31 @@ def derive_observation(inputs, sample_size, rng, n_bootstrap):
 
 `observation_code` informs the parameter's CENTER. To ALSO inform how much patients *differ* — the population-spread (omega) signal used by virtual-patient inference — add an `observed_distribution` block to the error_model entry whenever the source reports a genuine spread. It is OPTIONAL and additive: omit it and the target behaves exactly as before.
 
-Record the reported distribution in whichever form the paper gives, plus a provenance tag. **Prefer the `moments` form** — most papers report mean +/- SD (or median +/- IQR, CV, CI), and the framework expands it to quartiles for you. Do NOT hand-convert mean +/- SD into quartiles.
+**Record the statistics the paper printed, as a flat list. Do NOT convert between them.** A mean with an SD is two entries; a median with quartiles is three. Converting an SE to an SD, or a mean+SD to quartiles, throws away the distinction the consumer needs.
 
 ```yaml
 observed_distribution:
-  moments:
-    center: 0.178
-    center_type: mean            # or median
-    scale: 0.09
-    scale_type: sd               # sd | sem | cv | iqr | ci95_halfwidth
-    shape: lognormal             # lognormal | normal (how to expand center+scale)
+  statistics:
+    - {stat: mean, value: 0.178}
+    - {stat: sd,   value: 0.09}
+  spread_source: biological_experimental
+  shape: lognormal               # only needed if a consumer must expand these into quartiles
+  n_biological: 45
+  experimental_unit_type: biological
+```
+
+```yaml
+observed_distribution:
+  statistics:
+    - {stat: quantile, p: 0.5,  value: 0.178}
+    - {stat: quantile, p: 0.25, value: 0.12}
+    - {stat: quantile, p: 0.75, value: 0.25}
   spread_source: biological_experimental
   n_biological: 45
   experimental_unit_type: biological
 ```
 
-Use the `quantiles` form only when the source reports quartiles/percentiles/samples directly:
-
-```yaml
-observed_distribution:
-  quantiles:
-    - {p: 0.25, value: 0.12}
-    - {p: 0.5,  value: 0.178}
-    - {p: 0.75, value: 0.25}
-  spread_source: biological_experimental
-  n_biological: 45
-  experimental_unit_type: biological
-```
+`stat` is one of: `quantile` (needs `p`; the median is `p: 0.5`) · `mean` · `geometric_mean` · `sd` · `cv` · `iqr` · `range` · `se` · `ci95_lo` · `ci95_hi` · `min` · `max`.
 
 **Choose `spread_source` by what the reported width actually measures:**
 
@@ -370,14 +368,14 @@ observed_distribution:
 | No spread reported | omit the field | No — a wide default is used |
 
 **Rules (validated):**
-- Provide EXACTLY ONE of `moments` or `quantiles`.
+- A `spread_source` that claims population spread requires at least one WIDTH statistic (quartiles, or an `sd` / `iqr` / `cv` / `range`). An entry carrying only a center must declare `center_only`.
 - A population spread (`biological_experimental` / `across_patient`) REQUIRES `n_biological` and `experimental_unit_type: biological`. A spread over technical/clonal replicates is not population variability — use `technical` or `center_only`.
-- `scale_type: sem` recovers the population SD as `SEM * sqrt(n_biological)` — so give `n_biological`.
+- Record an SE as `{stat: se, ...}`; a consumer recovers the population SD as `SE * sqrt(n_biological)`, so give `n_biological`. Never do that conversion here.
 - If the source reports the unit count as a LOWER BOUND ("n≥8", "at least 8 donors", "n=8–12 across conditions"), set `n_biological_is_floor: true` and use the floor value for `n_biological`. An exact-looking n from a floor over-states precision and over-weights the panel in the finite-sample / inverse-variance weighting downstream.
 - Keep values in paper units; do unit conversion in code, not in the anchors.
 - Most in-vitro submodel data is a donor/animal spread that is a LOWER BOUND on PDAC patient spread — grade that transfer in `source_relevance.heterogeneity_transfer` (see Source Relevance below).
 - `observation_code` still just pins the CENTER (keep it SEM-scale); `observed_distribution` is the single source of population-spread truth. Do not double-encode spread in both.
-- For a `[0,1]`-bounded observable (a fraction, proportion, or probability — e.g. a polarization fraction, a positive-cell %), use `shape: logit_normal` instead of `lognormal` in the `moments` form. It expands the quartiles in logit space so they can never escape `(0, 1)`; `lognormal` on a near-1 fraction would push the upper quartile past 1. `logit_normal` requires `center_type: median`. **This includes `percent` observables** — express the value as a fraction in `(0, 1)` first (12% → 0.12), since `logit_normal` needs the center inside the unit interval. A validator rejects a `percent`/`fraction`/`proportion`/`probability` observable whose `moments` shape is `normal` or `lognormal`. (The `quantiles` form is exempt — explicit anchors carry the empirical shape and skew directly, and are often the better choice for a visibly-skewed donor distribution.)
+- `shape` is needed ONLY when the source printed no quartiles and a consumer has to expand a center and a scale into them. Recording it makes the assumption explicit rather than silent; omit it when you gave quartiles directly. For a `[0,1]`-bounded observable (a fraction, proportion, or probability — a polarization fraction, a positive-cell %), use `shape: logit_normal`: it expands in logit space so the quartiles can never escape `(0, 1)`, where `lognormal` on a near-1 fraction would push the upper quartile past 1. **This includes `percent` observables** — express the value as a fraction in `(0, 1)` first (12% → 0.12). A validator rejects a `percent`/`fraction`/`proportion`/`probability` observable that declares `shape: normal` or `lognormal`.
 
 **`unit_group` — only for multi-observable, SAME-unit targets.** When a single target has SEVERAL `error_model` entries measured on the SAME biological units (the same donor panel across the doses of a dose-response; one cohort followed over a time course), tag those entries with a shared `unit_group` string. This tells the hierarchical layer they share ONE biological random effect, so it moment-matches them jointly instead of treating each dose/timepoint as an independent measurement (which would spuriously shrink the population spread by ~sqrt(number-of-points)).
 
@@ -386,14 +384,16 @@ error_model:
   - name: IFNg_at_0p5_kPa
     observed_distribution:
       unit_group: saitakis_donors        # same 13 donors measured at every stiffness
-      moments: {center: 370.5, center_type: mean, scale: 316.4, scale_type: sd, shape: lognormal}
+      statistics: [{stat: mean, value: 370.5}, {stat: sd, value: 316.4}]
+      shape: lognormal
       spread_source: biological_experimental
       n_biological: 13
       experimental_unit_type: biological
   - name: IFNg_at_2p0_kPa
     observed_distribution:
       unit_group: saitakis_donors        # <- same tag: shared donor panel
-      moments: {center: 210.0, center_type: mean, scale: 180.0, scale_type: sd, shape: lognormal}
+      statistics: [{stat: mean, value: 210.0}, {stat: sd, value: 180.0}]
+      shape: lognormal
       spread_source: biological_experimental
       n_biological: 13
       experimental_unit_type: biological

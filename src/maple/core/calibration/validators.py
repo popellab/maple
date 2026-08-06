@@ -15,7 +15,6 @@ from typing import Optional
 import numpy as np
 import requests
 
-
 # =============================================================================
 # MODULE-LEVEL CACHE FOR PAPER TEXTS
 # =============================================================================

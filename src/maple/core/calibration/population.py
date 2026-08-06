@@ -310,7 +310,7 @@ def summarize(samples, *, n=None, rng=None, n_boot=2_000):
     median / ci95 reduce over the patient axis (axis 0).
 
     **Pass ``n`` (the study's real sample size) whenever the target declares
-    ``population_spread='across_patient'``.** The two channels mean different things:
+    a population ``spread_source``.** The two channels mean different things:
     ``samples`` carries the POPULATION spread that hierarchical inference reads as
     omega, while ``median`` / ``ci95`` pin the CENTER, so the interval must shrink
     with n. Without ``n`` this returns the population's own 2.5th / 97.5th

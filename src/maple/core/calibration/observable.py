@@ -10,11 +10,14 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from maple.core.calibration.enums import ExtractionMethod, SourceType
+from maple.core.calibration.enums import (
+    ExtractionMethod,
+    SourceType,
+)
+from maple.core.calibration.readout import Readout
 
 # Import SubmodelInput directly (not under TYPE_CHECKING) so Pydantic can resolve it
 from maple.core.calibration.shared_models import SubmodelInput
-
 
 # Support types for measurement output constraints
 SupportType = Literal["positive", "non_negative", "unit_interval", "positive_unbounded", "real"]
@@ -384,6 +387,14 @@ class Observable(BaseModel):
         description="Pint-parseable units of the observable output (must match empirical_data.units)"
     )
 
+    readout: Optional[Readout] = Field(
+        default=None,
+        description="What the experiment measured: quantity kind, assay, denominator, and "
+        "reference. The rest of this model is how to compute it. Required for a literature "
+        "target; null for a mechanistic one, which asserts a constraint rather than running "
+        "an assay.",
+    )
+
     readout_time: Optional[float] = Field(
         default=None,
         description=(
@@ -473,30 +484,6 @@ class Observable(BaseModel):
         ),
     )
 
-    experimental_denominator: Optional[str] = Field(
-        default=None,
-        description=(
-            "What the experimental measurement divides by. Required when the "
-            "observable is a density or fraction.\n\n"
-            "Examples:\n"
-            "- 'mm^2 of tumor tissue (whole section including stroma)'\n"
-            "- 'all cells in ROI (all nucleated cells)'\n"
-            "- 'CD3+ T cells (pan-T-cell marker)'\n"
-            "- 'CD45+ leukocytes'"
-        ),
-    )
-
-    model_denominator_species: Optional[List[str]] = Field(
-        default=None,
-        description=(
-            "Which model species compose the denominator in the observable code. "
-            "Required when experimental_denominator is set.\n"
-            "Format: 'compartment.species' (e.g., ['V_T.CD8', 'V_T.Th', 'V_T.Treg']).\n"
-            "For area-based denominators, list the species used to compute area "
-            "(e.g., ['V_T.C1'] when tumor area = C1 * area_per_cell)."
-        ),
-    )
-
     unmodeled_denominator_components: Optional[str] = Field(
         default=None,
         description=(
@@ -511,14 +498,41 @@ class Observable(BaseModel):
         ),
     )
 
+    duplicate_mapping_justification: Optional[str] = Field(
+        default=None,
+        description=(
+            "Why it is legitimate for this target to compute the SAME model "
+            "expression (same numerator species over the same denominator species, "
+            "at the same readout time) as another target in the same scenario.\n\n"
+            "Required only when such a collision exists — "
+            "``check_mapping_collisions`` raises otherwise. Two targets that reduce "
+            "to one model quantity are making one claim twice, and there are only "
+            "two ways that is sound:\n\n"
+            "  - REPLICATE: different cohorts measuring the same thing. State the "
+            "cohorts and note that the two values must be mutually compatible; if "
+            "they disagree beyond their CIs that is a real cross-study conflict to "
+            "adjudicate, not something to average away.\n"
+            "  - DELIBERATE POOLING: the targets are known duplicates kept on "
+            "purpose (e.g. a sensitivity check). Say so.\n\n"
+            "If instead the two targets measure genuinely DIFFERENT experimental "
+            "quantities, this field is the wrong fix — one of the model mappings is "
+            "wrong. That was the Treg case: one source counted Treg over "
+            "polarised CD4 only, the other over all CD4, and both mapped to "
+            "``Treg / (Treg + Th + Th_exh)``."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_denominator_fields(self) -> "Observable":
         """Validate denominator audit fields for density/fraction observables."""
-        if self.experimental_denominator and not self.model_denominator_species:
+        if self.readout is None:
+            return self
+
+        if self.readout.experimental_denominator and not self.readout.denominator_species:
             raise ValueError(
-                f"Observable has experimental_denominator='{self.experimental_denominator}' "
-                f"but model_denominator_species is not set. Specify which model species "
-                f"compose the denominator to complete the denominator audit."
+                f"readout.experimental_denominator='{self.readout.experimental_denominator}' "
+                "but readout.denominator_species is empty. Name the model species that "
+                "compose the denominator."
             )
 
         # Density observables (units like cell/mm**2) must have denominator audit
@@ -527,10 +541,10 @@ class Observable(BaseModel):
             and "/" in self.units
             and self.support in ("positive", "non_negative")
         )
-        if is_density and not self.experimental_denominator:
+        if is_density and not self.readout.experimental_denominator:
             raise ValueError(
                 f"Observable with units='{self.units}' and support='{self.support}' "
-                f"is a density but experimental_denominator is not set. "
+                f"is a density but readout.experimental_denominator is not set. "
                 f"Document what the experiment divides by (e.g., 'mm^2 of tumor "
                 f"tissue including stroma') to enable denominator audit."
             )
@@ -561,9 +575,7 @@ class Observable(BaseModel):
             )
 
         if has_time and not self.readout_time_unit:
-            raise ValueError(
-                "readout_time_unit is required when readout_time is set " "(e.g. 'day')."
-            )
+            raise ValueError("readout_time_unit is required when readout_time is set (e.g. 'day').")
         if not has_time and self.readout_time_unit:
             raise ValueError(
                 "readout_time_unit is only meaningful with readout_time; "
@@ -623,8 +635,7 @@ class SubmodelStateVariable(BaseModel):
     figure_id: Optional[str] = Field(
         None,
         description=(
-            "Figure identifier (e.g., 'Figure 2A', 'Fig. 3B'). "
-            "Required when source_type='figure'."
+            "Figure identifier (e.g., 'Figure 2A', 'Fig. 3B'). Required when source_type='figure'."
         ),
     )
 
