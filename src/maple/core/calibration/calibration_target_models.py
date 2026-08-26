@@ -1291,6 +1291,12 @@ class CalibrationTarget(BaseModel):
                 "measurement-discrepancy design from its attributes, and its species "
                 "composition is the row's identity."
             )
+        elif self.observable.readout.measurement_context is None:
+            missing.append(
+                "observable.readout.measurement_context: record the closed-category "
+                "facts of specimen acquisition, processing, sampling, detection, and "
+                "normalization. Storing a field does not itself activate a correction."
+            )
         if self.empirical_data.observed_distribution is None:
             missing.append(
                 "empirical_data.observed_distribution: list the statistics the source "

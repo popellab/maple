@@ -27,10 +27,19 @@ from maple.core.calibration.bootstrap_capture import (
 
 # Enums
 from maple.core.calibration.enums import (
+    AcquisitionMethod,
+    AnalytePool,
     AssayModality,
     Compartment,
+    DetectionBasis,
+    NormalizationMode,
+    Preservation,
     QuantityKind,
     REQUIRES_REFERENCE,
+    SamplingRegion,
+    SamplingUnit,
+    SpecimenCompartment,
+    SpecimenMaterial,
     ExtractionMethod,
     Indication,
     IndicationMatch,
@@ -70,6 +79,7 @@ from maple.core.calibration.observable import (
 )
 
 from maple.core.calibration.readout import (
+    MeasurementContext,
     Readout,
     ReadoutReference,
 )
@@ -218,6 +228,15 @@ __all__ = [
     "ExtractionMethod",
     "enum_field_description",
     "AssayModality",
+    "AcquisitionMethod",
+    "SpecimenCompartment",
+    "SpecimenMaterial",
+    "Preservation",
+    "SamplingUnit",
+    "SamplingRegion",
+    "DetectionBasis",
+    "AnalytePool",
+    "NormalizationMode",
     "QuantityKind",
     "REQUIRES_REFERENCE",
     # Reported distribution
@@ -252,6 +271,7 @@ __all__ = [
     "Observable",
     "Readout",
     "ReadoutReference",
+    "MeasurementContext",
     "ObservableConstant",
     "SupportType",
     "Submodel",

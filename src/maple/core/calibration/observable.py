@@ -389,10 +389,10 @@ class Observable(BaseModel):
 
     readout: Optional[Readout] = Field(
         default=None,
-        description="What the experiment measured: quantity kind, assay, denominator, and "
-        "reference. The rest of this model is how to compute it. Required for a literature "
-        "target; null for a mechanistic one, which asserts a constraint rather than running "
-        "an assay.",
+        description="What the experiment measured: quantity kind, assay, structured "
+        "measurement context, denominator, and reference. The rest of this model is how "
+        "to compute it. Required for a literature target; null for a mechanistic one, "
+        "which asserts a constraint rather than running an assay.",
     )
 
     readout_time: Optional[float] = Field(

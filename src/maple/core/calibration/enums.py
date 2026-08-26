@@ -203,9 +203,8 @@ class ExtractionMethod(str, Enum):
 class QuantityKind(str, Enum):
     """What kind of quantity an observable is.
 
-    Read by inference to build the measurement-discrepancy design matrix. Two
-    observables of the same kind and modality share a row of it, and so share a
-    location and scale correction.
+    This defines the mathematical readout and its observation scale. It is
+    factual metadata, not a measurement-correction field.
     """
 
     DENSITY = "density"
@@ -235,7 +234,11 @@ REQUIRES_REFERENCE = frozenset({QuantityKind.FOLDCHANGE})
 
 
 class AssayModality(str, Enum):
-    """How an observable was measured."""
+    """How an observable was measured.
+
+    A downstream model may explicitly activate this field for shared
+    corrections; Maple only records the category.
+    """
 
     MIHC = "mihc"
     """Multiplex immunohistochemistry with digital image analysis."""
@@ -269,6 +272,116 @@ class AssayModality(str, Enum):
 
     CLINICAL = "clinical"
     """Recorded clinical observation rather than an assay."""
+
+
+class AcquisitionMethod(str, Enum):
+    """How the biological specimen or image was acquired."""
+
+    RESECTION = "resection"
+    NEEDLE_BIOPSY = "needle_biopsy"
+    BLOOD_DRAW = "blood_draw"
+    IN_SITU_IMAGING = "in_situ_imaging"
+    UNKNOWN = "unknown"
+
+
+class SpecimenCompartment(str, Enum):
+    """Anatomical compartment from which the measurement was obtained."""
+
+    PRIMARY_TUMOR = "primary_tumor"
+    PERIPHERAL_BLOOD = "peripheral_blood"
+    UNKNOWN = "unknown"
+
+
+class SpecimenMaterial(str, Enum):
+    """Physical material presented to the measurement procedure."""
+
+    TISSUE_SECTION = "tissue_section"
+    TISSUE_HOMOGENATE = "tissue_homogenate"
+    DISSOCIATED_CELLS = "dissociated_cells"
+    WHOLE_BLOOD = "whole_blood"
+    IN_SITU_TUMOR = "in_situ_tumor"
+    UNKNOWN = "unknown"
+
+
+class Preservation(str, Enum):
+    """Specimen-preservation state at measurement."""
+
+    FFPE = "ffpe"
+    FRESH = "fresh"
+    FROZEN = "frozen"
+    NOT_APPLICABLE = "not_applicable"
+    UNKNOWN = "unknown"
+
+
+class SamplingUnit(str, Enum):
+    """Physical unit over which the reported measurement was sampled."""
+
+    WHOLE_SECTION = "whole_section"
+    TISSUE_MICROARRAY_CORE = "tissue_microarray_core"
+    REGION_OF_INTEREST = "region_of_interest"
+    BULK_TISSUE_SAMPLE = "bulk_tissue_sample"
+    WHOLE_BLOOD_SAMPLE = "whole_blood_sample"
+    IMAGED_LESION = "imaged_lesion"
+    UNKNOWN = "unknown"
+
+
+class SamplingRegion(str, Enum):
+    """Region within the specimen selected for measurement."""
+
+    WHOLE_TUMOR = "whole_tumor"
+    SELECTED_TUMOR_REGION = "selected_tumor_region"
+    NON_LYMPHOID_TUMOR = "non_lymphoid_tumor"
+    LYMPHOID_AGGREGATE = "lymphoid_aggregate"
+    TUMOR_STROMA = "tumor_stroma"
+    TUMOR_CLUSTER = "tumor_cluster"
+    NOT_APPLICABLE = "not_applicable"
+    UNKNOWN = "unknown"
+
+
+class DetectionBasis(str, Enum):
+    """Operational basis used to identify or quantify the analyte."""
+
+    MARKER_DEFINED_CELLS = "marker_defined_cells"
+    TRANSCRIPTOMIC_CLUSTER = "transcriptomic_cluster"
+    SOLUBLE_ANALYTE = "soluble_analyte"
+    LABEL_FREE_MATRIX_SIGNAL = "label_free_matrix_signal"
+    MORPHOLOGIC_SEGMENTATION = "morphologic_segmentation"
+    ANATOMIC_IMAGING = "anatomic_imaging"
+    UNKNOWN = "unknown"
+
+
+class AnalytePool(str, Enum):
+    """Physical analyte pool represented by the reported quantity."""
+
+    CELLULAR = "cellular"
+    SOLUBLE_TISSUE_EXTRACT = "soluble_tissue_extract"
+    STRUCTURAL_MATRIX = "structural_matrix"
+    TISSUE_MORPHOLOGY = "tissue_morphology"
+    ANATOMIC_LESION = "anatomic_lesion"
+    UNKNOWN = "unknown"
+
+
+class NormalizationMode(str, Enum):
+    """Complete experimental denominator or normalization convention."""
+
+    CELL_COUNT_PER_TISSUE_AREA = "cell_count_per_tissue_area"
+    CELL_COUNT_PER_WHOLE_BLOOD_VOLUME = "cell_count_per_whole_blood_volume"
+    CELL_COUNT_RATIO_WITHIN_SAMPLING_UNIT = "cell_count_ratio_within_sampling_unit"
+    CELL_FRACTION_OF_ALL_NUCLEATED_CELLS = "cell_fraction_of_all_nucleated_cells"
+    CELL_FRACTION_OF_CD4_T_CELLS = "cell_fraction_of_cd4_t_cells"
+    CELL_FRACTION_OF_CD8_T_CELLS = "cell_fraction_of_cd8_t_cells"
+    CELL_FRACTION_OF_CAFS = "cell_fraction_of_cafs"
+    CELL_FRACTION_OF_TOTAL_DENDRITIC_CELLS = "cell_fraction_of_total_dendritic_cells"
+    FIBROBLAST_AREA_FRACTION_OF_CLASSIFIED_FIBROBLAST_AREA = (
+        "fibroblast_area_fraction_of_classified_fibroblast_area"
+    )
+    MATRIX_SIGNAL_AREA_FRACTION_OF_IMAGE_FIELD_AREA = (
+        "matrix_signal_area_fraction_of_image_field_area"
+    )
+    STROMA_AREA_FRACTION_OF_TOTAL_TISSUE_AREA = "stroma_area_fraction_of_total_tissue_area"
+    ANALYTE_AMOUNT_PER_TOTAL_PROTEIN_MASS = "analyte_amount_per_total_protein_mass"
+    ELAPSED_TIME_BETWEEN_SERIAL_IMAGES = "elapsed_time_between_serial_images"
+    UNKNOWN = "unknown"
 
 
 # =============================================================================

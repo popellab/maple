@@ -346,6 +346,16 @@ class CrossScenarioCalibrationTarget(BaseModel):
         """
         if self.epistemic_basis != "literature":
             return self
+        missing_context = [
+            i.role for i in self.observable.inputs if i.readout.measurement_context is None
+        ]
+        if missing_context:
+            raise ValueError(
+                "epistemic_basis='literature' but these roles have no "
+                f"readout.measurement_context: {missing_context}. Each measured arm must "
+                "record how its specimen was acquired, processed, sampled, detected, and "
+                "normalized."
+            )
         unplaced = [i.role for i in self.observable.inputs if not i.cohort_id]
         if unplaced:
             raise ValueError(
