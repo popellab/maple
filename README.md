@@ -105,7 +105,35 @@ source_relevance:
 
 **Nuisance parameters** can be marked `nuisance: true` when needed by the forward model but not part of the QSP model (e.g., a proliferation rate that helps constrain an activation rate). They carry their own inline prior, are sampled during MCMC, but are excluded from the output priors.
 
-There's also a **CalibrationTarget** schema for clinical/in vivo observables (biopsies, blood draws) that require full model simulation — these feed into Stage 2.
+There's also a **CalibrationTarget** schema for clinical/in vivo observables
+(biopsies, blood draws) that require full model simulation — these feed into
+Stage 2. A literature target's `observable.readout` records what was measured and
+the closed-category facts of its measurement process:
+
+```yaml
+readout:
+  quantity_kind: fraction
+  assay_modality: mihc
+  measurement_context:
+    acquisition_method: resection
+    specimen_compartment: primary_tumor
+    specimen_material: tissue_section
+    preservation: ffpe
+    sampling_unit: region_of_interest
+    sampling_region: non_lymphoid_tumor
+    detection_basis: marker_defined_cells
+    analyte_pool: cellular
+    normalization_mode: cell_fraction_of_all_nucleated_cells
+  numerator_species: [V_T.CD8]
+  denominator_species: [V_T.CD8, V_T.Th, V_T.Treg]
+```
+
+Maple stores this factual vocabulary without choosing a statistical correction;
+downstream analyses explicitly select which fields, reference levels, and prior
+weights define a discrepancy model. Mechanistic assertions omit `readout`
+because no experimental measurement was made. See the
+[CalibrationTarget extraction guide](src/maple/prompts/calibration_target_prompt.md)
+for the complete enum vocabulary and authoring rules.
 
 ---
 
