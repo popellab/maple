@@ -12,11 +12,22 @@ from pathlib import Path
 from fastmcp import FastMCP
 
 from maple.core.calibration.enums import (
+    AcquisitionMethod,
+    AnalytePool,
+    AssayModality,
+    DetectionBasis,
     ExperimentalSystem,
     IndicationMatch,
     MeasurementDirectness,
+    NormalizationMode,
     PerturbationType,
+    Preservation,
+    QuantityKind,
+    SamplingRegion,
+    SamplingUnit,
     SourceQuality,
+    SpecimenCompartment,
+    SpecimenMaterial,
     TemporalResolution,
     TMECompatibility,
 )
@@ -126,6 +137,17 @@ def _build_enum_reference() -> str:
         _enum_table(MeasurementDirectness, "measurement_directness"),
         _enum_table(TemporalResolution, "temporal_resolution"),
         _enum_table(ExperimentalSystem, "experimental_system"),
+        _enum_table(QuantityKind, "quantity_kind"),
+        _enum_table(AssayModality, "assay_modality"),
+        _enum_table(AcquisitionMethod, "measurement_context.acquisition_method"),
+        _enum_table(SpecimenCompartment, "measurement_context.specimen_compartment"),
+        _enum_table(SpecimenMaterial, "measurement_context.specimen_material"),
+        _enum_table(Preservation, "measurement_context.preservation"),
+        _enum_table(SamplingUnit, "measurement_context.sampling_unit"),
+        _enum_table(SamplingRegion, "measurement_context.sampling_region"),
+        _enum_table(DetectionBasis, "measurement_context.detection_basis"),
+        _enum_table(AnalytePool, "measurement_context.analyte_pool"),
+        _enum_table(NormalizationMode, "measurement_context.normalization_mode"),
     ]
     return "\n\n".join(sections)
 

@@ -257,7 +257,7 @@ class TestReadoutComposition:
 
 
 class TestObservableMeasurementAttributes:
-    """The attributes inference reads to build the measurement-discrepancy design."""
+    """Factual readout attributes, separate from its model composition."""
 
     def test_minimal_observable_validates(self):
         assert _observable().readout.quantity_kind == QuantityKind.FRACTION
@@ -314,8 +314,7 @@ class TestObservableMeasurementAttributes:
                 reference={"kind": "scenario", "scenario": "baseline", "timepoint": 1.0},
             )
 
-    def test_same_kind_and_modality_share_a_design_row(self):
-        """No identifier needed: the attributes are the row."""
+    def test_composition_does_not_change_factual_categories(self):
         a = _observable()
         b = _observable(readout={"numerator_species": ["V_T.Treg"]})
         assert (a.readout.quantity_kind, a.readout.assay_modality) == (

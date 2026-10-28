@@ -1287,9 +1287,15 @@ class CalibrationTarget(BaseModel):
             )
         if self.observable.readout is None:
             missing.append(
-                "observable.readout: say what was measured. Inference builds the "
-                "measurement-discrepancy design from its attributes, and its species "
-                "composition is the row's identity."
+                "observable.readout: say what was measured. Its species composition "
+                "identifies the modeled quantity; downstream analyses explicitly select "
+                "which factual attributes define measurement corrections."
+            )
+        elif self.observable.readout.measurement_context is None:
+            missing.append(
+                "observable.readout.measurement_context: record the closed-category "
+                "facts of specimen acquisition, processing, sampling, detection, and "
+                "normalization. Storing a field does not itself activate a correction."
             )
         if self.empirical_data.observed_distribution is None:
             missing.append(

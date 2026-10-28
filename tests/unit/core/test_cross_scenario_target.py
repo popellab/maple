@@ -133,6 +133,71 @@ def test_invariance_target_validates(invariance_target):
     assert nivo.role == "nivo"
     assert nivo.required_species == ["V_T.CD8_TLA", "V_T.CD8_TLA_act"]
     assert "compute_test_statistic" in nivo.observable_code
+    assert all(arm.readout.measurement_context is None for arm in target.observable.inputs)
+
+
+@pytest.fixture
+def literature_target(invariance_target):
+    cfg = copy.deepcopy(invariance_target)
+    cfg["epistemic_basis"] = "literature"
+    cfg["primary_data_source"] = {
+        "source_tag": "trial_2020",
+        "title": "Tumor immune response in two treatment arms",
+        "first_author": "Smith",
+        "year": 2020,
+        "source_relevance": {
+            "indication_match": "exact",
+            "indication_match_justification": "Human PDAC trial.",
+            "species_source": "human",
+            "source_quality": "primary_human_clinical",
+            "perturbation_type": "pharmacological",
+            "perturbation_relevance": "The comparison is between treatment arms.",
+            "tme_compatibility": "high",
+            "tme_compatibility_notes": "Both arms contain PDAC patients.",
+        },
+    }
+    cfg["empirical_data"].pop("sample_size")
+    for arm in cfg["observable"]["inputs"]:
+        arm["cohort_id"] = f"trial_2020_{arm['role']}"
+        arm["readout"]["measurement_context"] = {
+            "acquisition_method": "resection",
+            "specimen_compartment": "primary_tumor",
+            "specimen_material": "tissue_section",
+            "preservation": "ffpe",
+            "sampling_unit": "region_of_interest",
+            "sampling_region": "lymphoid_aggregate",
+            "detection_basis": "marker_defined_cells",
+            "analyte_pool": "cellular",
+            "normalization_mode": "cell_count_per_tissue_area",
+        }
+    return cfg
+
+
+def test_literature_context_is_preserved_for_each_arm(literature_target):
+    # Different factual protocols are retained; they do not assign correction roles.
+    literature_target["observable"]["inputs"][1]["readout"]["measurement_context"][
+        "preservation"
+    ] = "fresh"
+    target = CrossScenarioCalibrationTarget(**literature_target)
+    restored = CrossScenarioCalibrationTarget.model_validate_json(target.model_dump_json())
+    assert [
+        arm.readout.measurement_context.preservation.value for arm in restored.observable.inputs
+    ] == [
+        "ffpe",
+        "fresh",
+    ]
+
+
+@pytest.mark.parametrize("role", ["nivo", "urelumab"])
+@pytest.mark.parametrize("explicit_null", [False, True])
+def test_literature_requires_context_on_every_arm(literature_target, role, explicit_null):
+    arm = next(arm for arm in literature_target["observable"]["inputs"] if arm["role"] == role)
+    if explicit_null:
+        arm["readout"]["measurement_context"] = None
+    else:
+        arm["readout"].pop("measurement_context")
+    with pytest.raises(ValidationError, match=f"measurement_context:.*{role}"):
+        CrossScenarioCalibrationTarget(**literature_target)
 
 
 def test_per_input_units_field_forbidden(invariance_target):

@@ -6,7 +6,41 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from maple.core.calibration.enums import REQUIRES_REFERENCE, AssayModality, QuantityKind
+from maple.core.calibration.enums import (
+    REQUIRES_REFERENCE,
+    AcquisitionMethod,
+    AnalytePool,
+    AssayModality,
+    DetectionBasis,
+    NormalizationMode,
+    Preservation,
+    QuantityKind,
+    SamplingRegion,
+    SamplingUnit,
+    SpecimenCompartment,
+    SpecimenMaterial,
+)
+
+
+class MeasurementContext(BaseModel):
+    """Factual categorical description of a literature measurement process.
+
+    Maple records the complete context without deciding which fields create a
+    statistical correction. That activation, its references, and its prior
+    weights belong to the downstream analysis specification.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    acquisition_method: AcquisitionMethod
+    specimen_compartment: SpecimenCompartment
+    specimen_material: SpecimenMaterial
+    preservation: Preservation
+    sampling_unit: SamplingUnit
+    sampling_region: SamplingRegion
+    detection_basis: DetectionBasis
+    analyte_pool: AnalytePool
+    normalization_mode: NormalizationMode
 
 
 class ReadoutReference(BaseModel):
@@ -39,13 +73,24 @@ class ReadoutReference(BaseModel):
 
 
 class Readout(BaseModel):
-    """What was measured. Inference builds the measurement-discrepancy design from
-    these attributes, so two readouts agreeing on them share one correction."""
+    """What was measured, separately from how the model computes it.
+
+    The fields are factual. A downstream analysis explicitly selects which, if
+    any, define shared measurement corrections.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     quantity_kind: QuantityKind = Field(description="What kind of quantity was reported.")
     assay_modality: AssayModality = Field(description="How it was measured.")
+    measurement_context: Optional[MeasurementContext] = Field(
+        default=None,
+        description=(
+            "Closed-category facts about specimen acquisition, processing, sampling, "
+            "detection, and normalization. Required for literature targets; absent on "
+            "mechanistic assertions that do not represent a measurement."
+        ),
+    )
     numerator_species: List[str] = Field(
         min_length=1, description="Model species composing the numerator."
     )

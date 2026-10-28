@@ -107,6 +107,17 @@ def golden_calibration_target_data():
             "readout": {
                 "quantity_kind": "ratio",
                 "assay_modality": "ihc",
+                "measurement_context": {
+                    "acquisition_method": "resection",
+                    "specimen_compartment": "primary_tumor",
+                    "specimen_material": "tissue_section",
+                    "preservation": "ffpe",
+                    "sampling_unit": "whole_section",
+                    "sampling_region": "whole_tumor",
+                    "detection_basis": "marker_defined_cells",
+                    "analyte_pool": "cellular",
+                    "normalization_mode": "cell_count_ratio_within_sampling_unit",
+                },
                 "numerator_species": ["V_T.CD8"],
                 "denominator_species": ["V_T.C1"],
             },
@@ -278,6 +289,14 @@ class TestReadoutIsForMeasurements:
         data = copy.deepcopy(golden_calibration_target_data)
         data["observable"].pop("readout")
         with pytest.raises(ValidationError, match="observable.readout"):
+            CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
+
+    def test_literature_readout_requires_measurement_context(
+        self, model_structure, golden_calibration_target_data, mock_crossref_success
+    ):
+        data = copy.deepcopy(golden_calibration_target_data)
+        data["observable"]["readout"].pop("measurement_context")
+        with pytest.raises(ValidationError, match="measurement_context"):
             CalibrationTarget.model_validate(data, context={"model_structure": model_structure})
 
     def test_mechanistic_target_needs_none(
