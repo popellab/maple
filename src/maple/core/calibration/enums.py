@@ -299,6 +299,8 @@ class SpecimenMaterial(str, Enum):
     TISSUE_HOMOGENATE = "tissue_homogenate"
     DISSOCIATED_CELLS = "dissociated_cells"
     WHOLE_BLOOD = "whole_blood"
+    SERUM = "serum"
+    PLASMA = "plasma"
     IN_SITU_TUMOR = "in_situ_tumor"
     UNKNOWN = "unknown"
 
@@ -321,6 +323,7 @@ class SamplingUnit(str, Enum):
     REGION_OF_INTEREST = "region_of_interest"
     BULK_TISSUE_SAMPLE = "bulk_tissue_sample"
     WHOLE_BLOOD_SAMPLE = "whole_blood_sample"
+    FLUID_ALIQUOT = "fluid_aliquot"
     IMAGED_LESION = "imaged_lesion"
     UNKNOWN = "unknown"
 
@@ -355,6 +358,7 @@ class AnalytePool(str, Enum):
 
     CELLULAR = "cellular"
     SOLUBLE_TISSUE_EXTRACT = "soluble_tissue_extract"
+    CIRCULATING_SOLUBLE = "circulating_soluble"
     STRUCTURAL_MATRIX = "structural_matrix"
     TISSUE_MORPHOLOGY = "tissue_morphology"
     ANATOMIC_LESION = "anatomic_lesion"
@@ -368,6 +372,7 @@ class NormalizationMode(str, Enum):
     CELL_COUNT_PER_WHOLE_BLOOD_VOLUME = "cell_count_per_whole_blood_volume"
     CELL_COUNT_RATIO_WITHIN_SAMPLING_UNIT = "cell_count_ratio_within_sampling_unit"
     CELL_FRACTION_OF_ALL_NUCLEATED_CELLS = "cell_fraction_of_all_nucleated_cells"
+    CELL_FRACTION_OF_T_CELLS = "cell_fraction_of_t_cells"
     CELL_FRACTION_OF_CD4_T_CELLS = "cell_fraction_of_cd4_t_cells"
     CELL_FRACTION_OF_CD8_T_CELLS = "cell_fraction_of_cd8_t_cells"
     CELL_FRACTION_OF_CAFS = "cell_fraction_of_cafs"
@@ -380,6 +385,7 @@ class NormalizationMode(str, Enum):
     )
     STROMA_AREA_FRACTION_OF_TOTAL_TISSUE_AREA = "stroma_area_fraction_of_total_tissue_area"
     ANALYTE_AMOUNT_PER_TOTAL_PROTEIN_MASS = "analyte_amount_per_total_protein_mass"
+    ANALYTE_AMOUNT_PER_FLUID_VOLUME = "analyte_amount_per_fluid_volume"
     ELAPSED_TIME_BETWEEN_SERIAL_IMAGES = "elapsed_time_between_serial_images"
     UNKNOWN = "unknown"
 

@@ -488,7 +488,7 @@ readout:
     sampling_region: non_lymphoid_tumor
     detection_basis: marker_defined_cells
     analyte_pool: cellular
-    normalization_mode: cell_fraction_of_all_nucleated_cells
+    normalization_mode: cell_fraction_of_t_cells
   numerator_species: ['V_T.CD8']
   denominator_species: ['V_T.CD8', 'V_T.Th', 'V_T.Treg']
   experimental_denominator: "CD3+ T cells (all T cell subsets)"
@@ -500,13 +500,13 @@ readout:
    - **`measurement_context`** (required): factual closed-category metadata about how the specimen was acquired, processed, sampled, detected, and normalized. Every field below is required. Recording a field does not itself create a discrepancy effect; downstream analyses predeclare which fields are active.
      - `acquisition_method`: `resection` · `needle_biopsy` · `blood_draw` · `in_situ_imaging` · `unknown`
      - `specimen_compartment`: `primary_tumor` · `peripheral_blood` · `unknown`
-     - `specimen_material`: `tissue_section` · `tissue_homogenate` · `dissociated_cells` · `whole_blood` · `in_situ_tumor` · `unknown`
+     - `specimen_material`: `tissue_section` · `tissue_homogenate` · `dissociated_cells` · `whole_blood` · `serum` · `plasma` · `in_situ_tumor` · `unknown`
      - `preservation`: `ffpe` · `fresh` · `frozen` · `not_applicable` · `unknown`
-     - `sampling_unit`: `whole_section` · `tissue_microarray_core` · `region_of_interest` · `bulk_tissue_sample` · `whole_blood_sample` · `imaged_lesion` · `unknown`
+     - `sampling_unit`: `whole_section` · `tissue_microarray_core` · `region_of_interest` · `bulk_tissue_sample` · `whole_blood_sample` · `fluid_aliquot` · `imaged_lesion` · `unknown`
      - `sampling_region`: `whole_tumor` · `selected_tumor_region` · `non_lymphoid_tumor` · `lymphoid_aggregate` · `tumor_stroma` · `tumor_cluster` · `not_applicable` · `unknown`
      - `detection_basis`: `marker_defined_cells` · `transcriptomic_cluster` · `soluble_analyte` · `label_free_matrix_signal` · `morphologic_segmentation` · `anatomic_imaging` · `unknown`
-     - `analyte_pool`: `cellular` · `soluble_tissue_extract` · `structural_matrix` · `tissue_morphology` · `anatomic_lesion` · `unknown`
-     - `normalization_mode`: `cell_count_per_tissue_area` · `cell_count_per_whole_blood_volume` · `cell_count_ratio_within_sampling_unit` · `cell_fraction_of_all_nucleated_cells` · `cell_fraction_of_cd4_t_cells` · `cell_fraction_of_cd8_t_cells` · `cell_fraction_of_cafs` · `cell_fraction_of_total_dendritic_cells` · `fibroblast_area_fraction_of_classified_fibroblast_area` · `matrix_signal_area_fraction_of_image_field_area` · `stroma_area_fraction_of_total_tissue_area` · `analyte_amount_per_total_protein_mass` · `elapsed_time_between_serial_images` · `unknown`
+     - `analyte_pool`: `cellular` · `soluble_tissue_extract` · `circulating_soluble` · `structural_matrix` · `tissue_morphology` · `anatomic_lesion` · `unknown`
+     - `normalization_mode`: `cell_count_per_tissue_area` · `cell_count_per_whole_blood_volume` · `cell_count_ratio_within_sampling_unit` · `cell_fraction_of_all_nucleated_cells` · `cell_fraction_of_t_cells` · `cell_fraction_of_cd4_t_cells` · `cell_fraction_of_cd8_t_cells` · `cell_fraction_of_cafs` · `cell_fraction_of_total_dendritic_cells` · `fibroblast_area_fraction_of_classified_fibroblast_area` · `matrix_signal_area_fraction_of_image_field_area` · `stroma_area_fraction_of_total_tissue_area` · `analyte_amount_per_total_protein_mass` · `analyte_amount_per_fluid_volume` · `elapsed_time_between_serial_images` · `unknown`
      - Use `unknown` only after reviewing the protocol and finding that it was not reported. Use `not_applicable` only when a field genuinely has no referent. Free text belongs in existing provenance fields and never creates a model category.
    - **`numerator_species`** (required) and **`denominator_species`** (empty for an absolute quantity) — which model species compose the row. This is the row's identity, so it must not depend on how you spelled the arithmetic in `code`: declare the components even when the code divides by a single pre-aggregated species, and expand that aggregate to the species the model currently sums into it. A cross-target audit holds `code` to this declaration and reports any disagreement.
    - **`experimental_denominator`** — what the experiment divided by, in the paper's own words. **Conditionally required:** an observable that is a density or per-mass concentration (units like `cell/mm**2`, `pg/mg`, with `support: positive`) is rejected without it. Setting it requires `denominator_species` too.
@@ -617,13 +617,13 @@ observable:
     measurement_context:
       acquisition_method: blood_draw
       specimen_compartment: peripheral_blood
-      specimen_material: whole_blood
-      preservation: not_applicable
-      sampling_unit: whole_blood_sample
+      specimen_material: serum
+      preservation: unknown
+      sampling_unit: fluid_aliquot
       sampling_region: not_applicable
       detection_basis: soluble_analyte
-      analyte_pool: unknown
-      normalization_mode: unknown
+      analyte_pool: circulating_soluble
+      normalization_mode: analyte_amount_per_fluid_volume
     numerator_species: ['V_T.TGFb']
   constants:
     - name: active_fraction

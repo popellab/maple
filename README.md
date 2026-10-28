@@ -123,7 +123,7 @@ readout:
     sampling_region: non_lymphoid_tumor
     detection_basis: marker_defined_cells
     analyte_pool: cellular
-    normalization_mode: cell_fraction_of_all_nucleated_cells
+    normalization_mode: cell_fraction_of_t_cells
   numerator_species: [V_T.CD8]
   denominator_species: [V_T.CD8, V_T.Th, V_T.Treg]
 ```
@@ -134,6 +134,14 @@ weights define a discrepancy model. Mechanistic assertions omit `readout`
 because no experimental measurement was made. See the
 [CalibrationTarget extraction guide](src/maple/prompts/calibration_target_prompt.md)
 for the complete enum vocabulary and authoring rules.
+
+**Migrating literature targets:** add `observable.readout.measurement_context`
+with all nine fields from the source protocol. For cross-scenario literature
+targets, add it to every `observable.inputs[*].readout`. Missing context raises
+a validation error on the complete target, even though standalone `Readout`
+objects still accept it being absent. Use `unknown` only for unreported facts;
+do not invent metadata to make an old target validate. Mechanistic targets
+remain exempt.
 
 ---
 
